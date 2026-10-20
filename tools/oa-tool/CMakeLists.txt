@@ -28,11 +28,13 @@ target_include_directories(oa-tool-commands SYSTEM PRIVATE
 target_compile_features(oa-tool-commands PUBLIC cxx_std_20)
 target_link_libraries(oa-tool-commands
   PRIVATE oa-options oa-app-package-install oa-app-game-directory oa-data-content-bundles oa-data-languages
-    oa-data-map-pack oa-data-map-fit oa-data-script-host oa-formats-oamod oa-formats-oamut
+    oa-data-map-pack oa-data-map-fit oa-data-script-host oa-data-mutator-import
+    oa-formats-oamod oa-formats-oamut
     oa-formats-soft-mutator oa-formats-json oa-formats-ota oa-formats-tnt
     oa-formats-zip oa-base-sha256 oa-base-text oa-platform-shims oa-base-signing oa-data-catalogue
     oa-data-registry oa-platform-random oa-app-content oa-netgame-http oa-formats-url
   PUBLIC oa-formats-hpi oa-formats-png oa-ui-decoded)
+target_compile_definitions(oa-tool-commands PRIVATE "OA_ENGINE_VERSION=\"${PROJECT_VERSION}\"")
 
 if(BUILD_TESTING)
   add_executable(oa-tool-test tests/oa_tool_test.cpp)
@@ -118,6 +120,13 @@ if(BUILD_TESTING)
     oa-platform-shims ZLIB::ZLIB oa-test-support oa-options)
   add_test(NAME tools-oa-tool-mutator COMMAND oa-tool-mutator-test)
   set_tests_properties(tools-oa-tool-mutator PROPERTIES TIMEOUT 60)
+
+  # mutator import: made-up .tam files and a zip become mutator folders.
+  add_executable(oa-tool-mutator-import-test tests/mutator_import_test.cpp)
+  target_link_libraries(oa-tool-mutator-import-test PRIVATE oa-tool-commands oa-test-support
+    oa-options ZLIB::ZLIB)
+  add_test(NAME tools-oa-tool-mutator-import COMMAND oa-tool-mutator-import-test)
+  set_tests_properties(tools-oa-tool-mutator-import PROPERTIES TIMEOUT 60)
 
   # An expansion packed and checked against the test table, and refused by
   # the commands, which use the built-in table.

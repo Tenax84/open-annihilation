@@ -149,6 +149,28 @@ const Command mutator_commands[] = {
         run_mutator_check,
         {},
     },
+    {
+        "import",
+        "INPUT... --out DIR [--id ID] [--version VERSION] [--tag TAG]... "
+        "[--works-with CODE=ENTRY]... [--pack] [--force]",
+        "Import TA: Mutation mutators into mutator folders.",
+        "Reads each INPUT, a .tam or a zip, and writes one mutator folder under DIR. A .tam's "
+        "companions are read from its own folder, and a zip's names are the names the archive "
+        "recorded. --id and --version set that one mutator's id and version, and are a usage "
+        "error when more than one mutator is named. --tag is repeated and replaces the gameplay "
+        "tag. --works-with CODE=ENTRY maps a compatibility code to a works-with entry; OTA and "
+        "TACC are already mapped. --pack also writes DIR/<id>-<version>.oamut. --force replaces "
+        "an existing folder and, with --pack, an existing package. One line per mutator names "
+        "the id, the input, the rule files and the archives, and its warnings follow indented. "
+        "A refused mutator prints its problem and the others are still written. Exit 0 when "
+        "every mutator was imported, 1 when one was refused or could not be written, and 2 when "
+        "the arguments are not the command's. A link is not followed, and DIR is not a folder "
+        "that holds an input.",
+        1,
+        any_count,
+        run_mutator_import,
+        {},
+    },
 };
 
 const Command command_table[] = {
@@ -270,10 +292,12 @@ const Command command_table[] = {
         "mutator",
         "COMMAND",
         "Pack and check mutators, and import TA: Mutation mutators.",
-        "Packs a mutator folder into a .oamut and checks a .oamut before anyone installs it. "
-        "mutator pack packs a folder whose top holds oamut.yaml, and mutator check reads a "
-        ".oamut. A folder without oamut.yaml, or a file of another kind, is a usage error. "
-        "Each subcommand otherwise runs the same work as pack and check.",
+        "Packs a mutator folder into a .oamut, checks a .oamut before anyone installs it, and "
+        "imports TA: Mutation mutators. mutator pack packs a folder whose top holds oamut.yaml, "
+        "and mutator check reads a .oamut. A folder without oamut.yaml, or a file of another "
+        "kind, is a usage error. Those two subcommands otherwise run the same work as pack and "
+        "check. mutator import reads .tam files or a zip and writes one mutator folder per "
+        "mutator.",
         0,
         0,
         nullptr,
