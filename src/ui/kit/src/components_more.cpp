@@ -655,7 +655,11 @@ place_question(const Question& question, const Measure& regular, const Measure& 
     const bool paragraphs = !text.lines.empty();
     if (paragraphs)
         row += metrics.paragraph_gap;
+    // The design's prompts leave 4 points between item lines, so two badges never touch.
+    constexpr int32_t kItemGap = 4;
     for (const QuestionItem& item : question.items) {
+        if (!placed.items.empty())
+            row += kItemGap;
         placed.items.push_back(place_question_item(item, row, room, small));
         row += kItemLine;
     }

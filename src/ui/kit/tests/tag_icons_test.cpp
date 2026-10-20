@@ -423,9 +423,10 @@ void questions_grow_by_their_items() {
     keep.badge.tag = kit::TagIcon::maps;
     listed.items = {gatehouse, keep};
     const kit::PlacedQuestion with = kit::place_question(listed, &fonts());
-    const int32_t two_lines = kit::compact_metrics.paragraph_gap + 2 * 20;
+    const int32_t two_lines = kit::compact_metrics.paragraph_gap + 2 * 20 + 4;
     OA_CHECK(with.height == without.height + two_lines);
     OA_CHECK(with.items.size() == 2);
+    OA_CHECK(with.items[1].badge.y == with.items[0].badge.y + 20 + 4);
     const kit::DisplayList list = kit::question_list(listed, &fonts());
     const kit::Control* body = nullptr;
     for (const kit::Control& control : list.controls)
