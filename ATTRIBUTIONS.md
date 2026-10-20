@@ -213,7 +213,11 @@ licence text is in
 Lua 5.4.9, from <https://www.lua.org/ftp/lua-5.4.9.tar.gz> (SHA-256
 `2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6`),
 runs the scripts of a mutator. It is compiled into the game unchanged
-from [`third_party/lua/`](third_party/lua/). The licence is the MIT
+from [`third_party/lua/`](third_party/lua/). The script host also keeps a
+changed copy of the pattern matcher from that release, in
+[`src/data/script-host/src/patterns.cpp`](src/data/script-host/src/patterns.cpp),
+which counts each step of `string.find`, `string.match`, `string.gmatch` and
+`string.gsub` against the script's instruction allowance. The licence is the MIT
 licence. The licence text is in
 [`licenses/lua-LICENSE.txt`](licenses/lua-LICENSE.txt).
 
