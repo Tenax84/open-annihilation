@@ -464,7 +464,22 @@ app removes the folder (`Runtime::library_uninstall`,
   word's first three, or the first of up to three words) in the kit's ink
   for the accent (`colour::on_accent`) on `colour::hint`, which reads at
   every class, at 20 points in Compact's rows, 28 in Regular's
-  and Large's, and 40 in the details. The Rules and From facts are shown
+  and Large's, and 40 in the details. A mutator's picture is its listing's
+  badge, or the installed copy's icon when the listing has none. With no
+  picture, the badge is the icon of its first tag on that same hint ground
+  when the id is one of the eight, and its letters when the id is not or it
+  has no tag. The listing's tags are used when that list is not empty, and
+  otherwise the installed manifest's. Large's mutator rows carry those tags
+  as chips under the summary, then "Needs {name}" and "Not compatible with
+  this mod" in the lock colour. When the row cannot hold every chip, those
+  two stay and the tag chips are the ones left off. Compact's mutator rows
+  keep the version on the second line and, after the title, "· needs {name}"
+  or "· not compatible with this mod" in the lock colour, the missing
+  mutator first when both apply. Neither dims the row, and GET stays on.
+  On the Mutators tab the Regular tag pills, Large's filter pane and the
+  details' tag pills show those eight icons beside the label. A tag outside
+  the eight draws no icon, and a mod's, map pack's or language's tag never
+  does. The Rules and From facts are shown
   whole at every class; the other facts take at most two lines at Compact
   and three in the details pane. The list and the details scroll, each with
   the kit's scroll bar while it holds more than it shows. A press on a
@@ -663,7 +678,12 @@ the Mutators tab's GET, INSTALLED and UPDATE rows, an update beside a
 mod's, a mutator that does not work with the mod being played still
 getting with its note naming the mods, an unmet prerequisite that does
 not block, the eight tags ahead of any other id, and each tag's label,
-an unknown id and a different case left as written;
+an unknown id and a different case left as written; a mutator's badge at
+every class and window, its picture, else its first tag's icon, else its
+letters, Large's "Needs {name}" and "Not compatible with this mod" chips
+in the lock colour with the tag chips kept only while they fit, Compact's
+lock-coloured bylines, the tag icons on the pills and in the filter pane,
+and an incompatible row left bright with GET on;
 the Active tab's mod, language and maps in each case, ordered by folded
 title and then pack, with the From link when the pack holds several maps and the minimap when one is set;
 the order with
@@ -799,8 +819,9 @@ its maps, with many maps at
 Regular, and at Compact while the command line chose a mod that needs
 Campaign, whose pill is locked, the Updates tab at Compact and Large, the Registries tab at
 Compact, Regular and Large,
-Languages at Compact, and the Maps tab at Large for one map and for
-several: each twice, byte for byte the same, with nothing
+Languages at Compact, the Maps tab at Large for one map and for
+several, and the Mutators tab at Compact (640x480), Regular (1920x1080
+at 2x) and Large (2560x1440 at 2x): each twice, byte for byte the same, with nothing
 drawn outside the window and every pixel of it drawn, every part inside
 it and every text fitting. The Active and Maps pictures dress the
 fixture's maps with made-up minimaps and a long description, on that
@@ -827,8 +848,12 @@ Built in. `library-languages-zh-compact.png` is the same window with
 `library-updates-compact.png`, `library-updates-large.png`,
 `library-registries-compact.png`, `library-registries-regular.png`,
 `library-registries-large.png`, `library-languages-compact.png`, `library-languages-zh-compact.png`,
-`library-maps-one-large.png` and `library-maps-several-large.png`
-for review.
+`library-maps-one-large.png`, `library-maps-several-large.png`,
+`library-mutators-compact.png`, `library-mutators-regular.png` and
+`library-mutators-large.png`
+for review. The Mutators pictures dress the fixture with made-up mutators
+on that drawing only, so a picture, a tag icon, letters, "Needs Gatehouse"
+and "Not compatible with this mod" are on the list.
 
 ## Limitations
 
