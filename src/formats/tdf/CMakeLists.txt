@@ -8,7 +8,19 @@ include(CTest)
 
 add_library(oa-formats-tdf src/tdf.cpp)
 add_library(oa::formats::tdf ALIAS oa-formats-tdf)
-target_link_libraries(oa-formats-tdf PRIVATE oa-base-text oa-base-game-math)
+# In the engine these targets supply the two header-only helpers tdf.cpp
+# calls. A standalone configure has neither target; the helpers are then
+# found from the source tree beside this module.
+if(TARGET oa-base-text)
+  target_link_libraries(oa-formats-tdf PRIVATE oa-base-text oa-base-game-math)
+else()
+  set(oa_tdf_here "${CMAKE_CURRENT_SOURCE_DIR}")
+  cmake_path(GET oa_tdf_here PARENT_PATH oa_tdf_formats)
+  cmake_path(GET oa_tdf_formats PARENT_PATH oa_tdf_src)
+  cmake_path(APPEND oa_tdf_src "base" "text" "include" OUTPUT_VARIABLE oa_tdf_text_include)
+  cmake_path(APPEND oa_tdf_src "base" "game-math" "include" OUTPUT_VARIABLE oa_tdf_math_include)
+  target_include_directories(oa-formats-tdf PRIVATE "${oa_tdf_text_include}" "${oa_tdf_math_include}")
+endif()
 target_include_directories(oa-formats-tdf PUBLIC include)
 target_compile_features(oa-formats-tdf PUBLIC cxx_std_20)
 if(TARGET oa-options)
