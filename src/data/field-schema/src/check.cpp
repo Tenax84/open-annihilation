@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <string_view>
 
 namespace oa::data::field_schema {
 namespace {
@@ -105,6 +106,8 @@ int64_t cast_width(Storage storage, int32_t parsed) noexcept {
         return static_cast<uint8_t>(parsed);
     case Storage::int16:
         return static_cast<int16_t>(parsed);
+    case Storage::uint16:
+        return static_cast<uint16_t>(parsed);
     case Storage::uint32:
         return static_cast<uint32_t>(parsed);
     default:
@@ -240,6 +243,10 @@ Check storage_warning(const FieldSpec& spec, std::string_view key, double value)
     case Storage::int16:
         if (outside_int(value, -32768.0, 32767.0))
             return outside_range(Verdict::warn, key, value, -32768.0, 32767.0, why);
+        break;
+    case Storage::uint16:
+        if (outside_int(value, 0.0, 65535.0))
+            return outside_range(Verdict::warn, key, value, 0.0, 65535.0, why);
         break;
     case Storage::int32:
         if (outside_int(
@@ -434,6 +441,99 @@ Check check_number(RecordKind record, std::string_view key, double value) {
     return storage_warning(*spec, shown_key, judged);
 }
 
+// Bytes of a number the loader's grammar consumes, or npos when it finds no digit.
+// Integer and flag fields stop at the first non-digit, as parse_int does. Fixed
+// and decimal fields follow parse_double, including an exponent.
+std::size_t consumed_number(FieldType type, const char* text) noexcept {
+    const auto* at = reinterpret_cast<const unsigned char*>(text);
+    const auto* const start = at;
+    while (is_c_space(*at))
+        ++at;
+    if (*at == '-' || *at == '+')
+        ++at;
+    bool digits = false;
+    while (*at >= '0' && *at <= '9') {
+        digits = true;
+        ++at;
+    }
+    if (type == FieldType::integer || type == FieldType::flag) {
+        // A fractional part is the whole number the loader keeps, not trailing
+        // text: workertime 67.5 stays the integer 67.
+        if (!digits)
+            return std::string_view::npos;
+        if (*at == '.') {
+            ++at;
+            while (*at >= '0' && *at <= '9')
+                ++at;
+        }
+        return static_cast<std::size_t>(at - start);
+    }
+    if (*at == '.') {
+        ++at;
+        while (*at >= '0' && *at <= '9') {
+            digits = true;
+            ++at;
+        }
+    }
+    if (!digits)
+        return std::string_view::npos;
+    if (*at == 'e' || *at == 'E' || *at == 'd' || *at == 'D') {
+        const unsigned char* exponent = at + 1;
+        if (*exponent == '-' || *exponent == '+')
+            ++exponent;
+        if (*exponent >= '0' && *exponent <= '9') {
+            at = exponent;
+            while (*at >= '0' && *at <= '9')
+                ++at;
+        }
+    }
+    return static_cast<std::size_t>(at - start);
+}
+
+Check not_a_number(std::string_view key, std::string_view text) {
+    const std::string snippet = printable_snippet(text);
+    char reason[768];
+    std::snprintf(
+        reason,
+        sizeof reason,
+        "%.*s: \"%s\" is not a number",
+        static_cast<int>(key.size()),
+        key.data(),
+        snippet.c_str()
+    );
+    return verdict_reason(Verdict::refuse, reason);
+}
+
+// A parsed number, plus a warning when characters after it are what the loader skips.
+Check judged_number(
+    RecordKind record,
+    std::string_view key,
+    std::string_view shown_key,
+    double value,
+    std::string_view ignored
+) {
+    Check judged = check_number(record, key, value);
+    if (ignored.empty() || judged.verdict == Verdict::refuse)
+        return judged;
+    const std::string snippet = printable_snippet(ignored);
+    char reason[768];
+    std::snprintf(
+        reason,
+        sizeof reason,
+        "%.*s ignores \"%s\"",
+        static_cast<int>(shown_key.size()),
+        shown_key.data(),
+        snippet.c_str()
+    );
+    if (judged.verdict == Verdict::warn && !judged.reason.empty()) {
+        judged.reason.push_back(';');
+        judged.reason.push_back(' ');
+        judged.reason += reason;
+        return judged;
+    }
+    return verdict_reason(Verdict::warn, reason);
+}
+
 Check check_text(RecordKind record, std::string_view key, std::string_view text) {
     const FieldSpec* spec = find_field(record, key);
     if (spec == nullptr)
@@ -457,15 +557,18 @@ Check check_text(RecordKind record, std::string_view key, std::string_view text)
     if (!numeric_type(spec->type))
         return {};
     const std::string owned(text);
+    const std::size_t used = consumed_number(spec->type, owned.c_str());
+    const std::string_view shown_key = spec->key.empty() ? key : spec->key;
+    if (used == std::string_view::npos)
+        return not_a_number(shown_key, text);
+    const std::string_view ignored(owned.data() + used, owned.size() - used);
     if (spec->type == FieldType::integer || spec->type == FieldType::flag) {
         const IntRead scanned = scan_int(owned.c_str());
-        if (scanned.kind == IntScan::none)
-            return {};
-        return check_number(record, key, scanned.magnitude);
+        return judged_number(record, key, shown_key, scanned.magnitude, ignored);
     }
-    if (!has_real_digits(owned.c_str()))
-        return {};
-    return check_number(record, key, oa::formats::tdf::parse_double(owned.c_str()));
+    return judged_number(
+        record, key, shown_key, oa::formats::tdf::parse_double(owned.c_str()), ignored
+    );
 }
 
 Value read_value(const FieldSpec* spec, const char* text) {

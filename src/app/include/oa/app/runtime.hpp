@@ -11947,6 +11947,20 @@ class Runtime final : public menu::Host,
     /// Throws std::runtime_error on a failure.
     void check_side_data_per_match();
 
+    /// Plays three skirmishes and checks a download button's picture follows
+    /// the mod folder.
+    ///
+    /// Needs --mod-dir on a folder that holds neither file this check writes.
+    /// Before the first match, a download file links ARMPW onto ARMLAB's
+    /// download page, in the empty slot after ARMWAR and ARMFLEA. That button
+    /// is linked and has no picture. The bytes of the lab's first build-page
+    /// art, read through the store, are then copied to ARMPW's
+    /// download-button art in the mod folder, and the second match draws that
+    /// picture. With the file removed, the third match's button has no
+    /// picture again. Prints "gadget art per match check: passed".
+    /// Throws std::runtime_error on a failure.
+    void check_gadget_art_per_match();
+
     /// Places a finished structure of the local player's on the first free site in the rings of
     /// cells around a unit.
     ///
@@ -16589,7 +16603,13 @@ class Runtime final : public menu::Host,
     float pointer_x_ = 0;
     float pointer_y_ = 0;
     oa::formats::gaf::Archive cursor_gaf_{};
+    /// Match HUD GAFs this match could not read or parse, folded to lower
+    /// case. Cleared when the match ends, so the next match reads them again.
     std::set<std::string> missing_gaf_paths_{};
+    /// Match HUD GAFs whose failure to parse, or whose other failure to read,
+    /// this run has already logged, by the same key. A file the store does
+    /// not hold stays silent and is not recorded here.
+    std::set<std::string> reported_gaf_paths_{};
     /// The sounds found missing in the run, by audio::game_audio::sound_resource_key.
     std::set<std::string> missing_sounds_{};
     /// The sounds whose failure to play the run has reported, by the same key.

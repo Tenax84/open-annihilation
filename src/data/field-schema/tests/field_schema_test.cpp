@@ -103,6 +103,10 @@ void check_schema() {
     OA_CHECK(yard->type == FieldType::yard_map);
     OA_CHECK(reload->type == FieldType::decimal && reload->storage == Storage::ticks16);
     OA_CHECK(ident->type == FieldType::integer);
+    OA_CHECK(find_field(RecordKind::weapon, "color")->storage == Storage::uint8);
+    OA_CHECK(find_field(RecordKind::weapon, "color2")->storage == Storage::uint8);
+    OA_CHECK(find_field(RecordKind::weapon, "tolerance")->storage == Storage::uint16);
+    OA_CHECK(find_field(RecordKind::unit, "buildangle")->storage == Storage::uint16);
     OA_CHECK(find_field(RecordKind::weapon, "shellweapon")->type == FieldType::flag);
     OA_CHECK(find_field(RecordKind::weapon, "turnrate")->type == FieldType::decimal);
 
@@ -131,14 +135,78 @@ void check_schema() {
     );
     expect_verdict(Verdict::refuse, check_text(RecordKind::unit, "name", "http://ridge"));
     expect_verdict(Verdict::refuse, check_text(RecordKind::unit, "name", "a/*b"));
-    expect_verdict(Verdict::ok, check_text(RecordKind::unit, "footprintx", "abc"));
+    expect_verdict(Verdict::refuse, check_text(RecordKind::unit, "footprintx", "abc"));
+    OA_CHECK(
+        check_text(RecordKind::unit, "footprintx", "abc").reason.find("is not a number") !=
+        std::string::npos
+    );
     expect_verdict(Verdict::ok, check_text(RecordKind::unit, "tedclass", "a;b"));
+
+    // footprintx is an integer, maxvelocity a fixed number, canfly a flag.
+    // A text field (name, description) is unchanged by these samples.
+    const auto not_number = [](RecordKind record, const char* key, const char* text) {
+        const Check result = check_text(record, key, text);
+        OA_CHECK(result.verdict == Verdict::refuse);
+        OA_CHECK(result.reason.find("is not a number") != std::string::npos);
+    };
+    const auto same = [](RecordKind record, const char* key, const char* text, double number) {
+        OA_CHECK(
+            check_text(record, key, text).verdict == check_number(record, key, number).verdict
+        );
+    };
+    for (const char* sample : {"abc", "", " ", "12abc", "-5", "1e3", "0x10"}) {
+        expect_verdict(Verdict::ok, check_text(RecordKind::unit, "name", sample));
+        expect_verdict(Verdict::ok, check_text(RecordKind::unit, "description", sample));
+    }
+    for (const char* key : {"footprintx", "maxvelocity", "canfly"}) {
+        not_number(RecordKind::unit, key, "abc");
+        not_number(RecordKind::unit, key, "");
+        not_number(RecordKind::unit, key, " ");
+    }
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "footprintx", "12abc"));
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "maxvelocity", "12abc"));
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "canfly", "12abc"));
+    OA_CHECK(
+        check_text(RecordKind::unit, "maxvelocity", "12abc").reason.find("abc") != std::string::npos
+    );
+    same(RecordKind::unit, "footprintx", "-5", -5);
+    same(RecordKind::unit, "maxvelocity", "-5", -5);
+    same(RecordKind::unit, "canfly", "-5", -5);
+    // An integer stops at 'e'; a fixed field reads the exponent.
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "footprintx", "1e3"));
+    OA_CHECK(
+        check_text(RecordKind::unit, "footprintx", "1e3").reason.find("e3") != std::string::npos
+    );
+    same(RecordKind::unit, "maxvelocity", "1e3", 1000);
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "canfly", "1e3"));
+    // "0x10" is the digit 0. footprintx 0 is refused; the others only warn
+    // about the letters the loader skips.
+    same(RecordKind::unit, "footprintx", "0x10", 0);
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "maxvelocity", "0x10"));
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "canfly", "0x10"));
+    OA_CHECK(
+        check_text(RecordKind::unit, "maxvelocity", "0x10").reason.find("x10") != std::string::npos
+    );
 
     expect_verdict(Verdict::warn, check_number(RecordKind::unit, "maxdamage", 32768));
     expect_verdict(Verdict::warn, check_number(RecordKind::unit, "maxdamage", 0));
     expect_verdict(Verdict::ok, check_number(RecordKind::unit, "maxdamage", 32767));
     expect_verdict(Verdict::ok, check_number(RecordKind::unit, "maxdamage", 1));
     expect_verdict(Verdict::warn, check_number(RecordKind::unit, "turnrate", 40000));
+    expect_verdict(Verdict::ok, check_number(RecordKind::weapon, "color", 144));
+    expect_verdict(Verdict::ok, check_number(RecordKind::weapon, "color", 255));
+    expect_verdict(Verdict::warn, check_number(RecordKind::weapon, "color", 256));
+    expect_verdict(Verdict::warn, check_number(RecordKind::weapon, "color", -1));
+    expect_verdict(Verdict::ok, check_number(RecordKind::weapon, "color2", 144));
+    expect_verdict(Verdict::ok, check_number(RecordKind::weapon, "color2", 255));
+    expect_verdict(Verdict::warn, check_number(RecordKind::weapon, "color2", 256));
+    expect_verdict(Verdict::warn, check_number(RecordKind::weapon, "color2", -1));
+    expect_verdict(Verdict::ok, check_number(RecordKind::weapon, "tolerance", 37152));
+    expect_verdict(Verdict::ok, check_number(RecordKind::weapon, "tolerance", 65535));
+    expect_verdict(Verdict::warn, check_number(RecordKind::weapon, "tolerance", 65536));
+    expect_verdict(Verdict::warn, check_number(RecordKind::weapon, "tolerance", -1));
+    expect_verdict(Verdict::ok, check_number(RecordKind::unit, "buildangle", 32768));
+    expect_verdict(Verdict::warn, check_number(RecordKind::unit, "buildangle", 65536));
     expect_verdict(Verdict::warn, check_number(RecordKind::unit, "workertime", 32768));
     expect_verdict(Verdict::warn, check_number(RecordKind::unit, "buildtime", 600001));
     expect_verdict(Verdict::ok, check_number(RecordKind::unit, "buildtime", 600000));
@@ -200,6 +268,12 @@ void check_schema() {
     const Value turned = read_value(turn, "40000");
     OA_CHECK(turned.kind == Value::Kind::integer);
     OA_CHECK(turned.integer == -25536);
+    const Value tolerated = read_value(find_field(RecordKind::weapon, "tolerance"), "37152");
+    OA_CHECK(tolerated.kind == Value::Kind::integer && tolerated.integer == 37152);
+    const Value coloured = read_value(find_field(RecordKind::weapon, "color"), "200");
+    OA_CHECK(coloured.kind == Value::Kind::integer && coloured.integer == 200);
+    const Value angled = read_value(find_field(RecordKind::unit, "buildangle"), "32768");
+    OA_CHECK(angled.kind == Value::Kind::integer && angled.integer == 32768);
     const Value flown = read_value(fly, "2");
     OA_CHECK(flown.kind == Value::Kind::boolean && !flown.boolean);
     const Value paced = read_value(velocity, "1.6");
@@ -409,8 +483,16 @@ int run_game_data() {
     }
 
     std::printf("files %d\nkeys %d\nwarnings %zu\n", file_count, key_count, warnings.size());
-    for (const auto& warning : warnings)
+    bool unsigned_key_warned = false;
+    for (const auto& warning : warnings) {
         std::printf("warning %s %s\n", warning.first.c_str(), warning.second.c_str());
+        const std::string& name = warning.first;
+        if (name == "buildangle" || name == "color" || name == "color2" || name == "tolerance")
+            unsigned_key_warned = true;
+    }
+    OA_CHECK(!unsigned_key_warned);
+    if (oa::test::failed_checks() != 0)
+        return oa::test::check_exit_status();
     return refused ? 1 : 0;
 }
 

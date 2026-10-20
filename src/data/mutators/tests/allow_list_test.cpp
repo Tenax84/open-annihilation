@@ -147,8 +147,24 @@ int main() {
         {"anims\\ridgefab1.gaf", mutators::PathRule::allowed},
         {"anims/RIDGEFAB12.GAF", mutators::PathRule::allowed},
         {"Anims-German/ridgefab1.gaf", mutators::PathRule::allowed},
+        {"anims/RIDGEFAB_gadget.gaf", mutators::PathRule::allowed},
+        {"ANIMS\\ridgefab_GADGET.GAF", mutators::PathRule::allowed},
+        {"Anims-German/ridgefab_gadget.gaf", mutators::PathRule::allowed},
     };
     expect_all(allowed, ridge, false);
+    // A download button is refused when the unit is unknown, the name is
+    // empty, the file is not one level down, or the suffix is not exactly
+    // _gadget.gaf.
+    expect_all(
+        {{"anims/ridgejet_gadget.gaf", mutators::PathRule::interface_art},
+         {"anims/_gadget.gaf", mutators::PathRule::interface_art},
+         {"anims/x/ridgefab_gadget.gaf", mutators::PathRule::interface_art},
+         {"anims/ridgefab_gadget1.gaf", mutators::PathRule::interface_art},
+         {"anims/ridgefab_gadget.gaf.bak", mutators::PathRule::interface_art},
+         {"anims/ridgefab_gadgets.gaf", mutators::PathRule::interface_art}},
+        ridge,
+        false
+    );
 
     const std::vector<Expectation> refused = {
         {"guis/RIDGEFAB1.GUI", mutators::PathRule::menus_only},
@@ -269,6 +285,8 @@ int main() {
         {"weapons/laser?.tdf", mutators::PathRule::allowed},
         {"gamedata/*.tdf", mutators::PathRule::not_confirmed},
         {"anims/*.gaf", mutators::PathRule::interface_art},
+        {"anims/*_gadget.gaf", mutators::PathRule::interface_art},
+        {"anims/RIDGEFAB_gadget.gaf", mutators::PathRule::allowed},
         {"**/x.fbi", mutators::PathRule::unknown_folder},
         {"*.fbi", mutators::PathRule::unknown_folder},
         {"guis/**", mutators::PathRule::menus_only},

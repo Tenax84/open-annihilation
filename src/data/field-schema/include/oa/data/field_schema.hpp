@@ -42,6 +42,7 @@ enum class Storage : uint8_t {
     int8,    ///< signed 8 bits
     uint8,   ///< unsigned 8 bits
     int16,   ///< signed 16 bits
+    uint16,  ///< unsigned 16 bits
     int32,   ///< signed 32 bits
     uint32,  ///< unsigned 32 bits
     float32, ///< a decimal kept in a float
@@ -114,8 +115,9 @@ struct Check {
 /// Checks a value written as text, reading it the way the loader would.
 ///
 /// A key the schema does not hold is ok. A numeric field whose text holds no
-/// number is ok: the loader reads 0. Text the writer would reject (a semicolon,
-/// a line break, a zero byte, `//` or `/*`) is refused.
+/// number is refused. A number with text after it is a warning naming what the
+/// loader skips, then judged as that number. Text the writer would reject (a
+/// semicolon, a line break, a zero byte, `//` or `/*`) is refused.
 ///
 /// @param record which record
 /// @param key field name

@@ -35,7 +35,9 @@ struct AllowRow {
     bool whole_tree = false;
     /// True when the folder is allowed file by file, so a mask must name one file.
     bool file_by_file = false;
-    /// True when anims/<unit><digits>.gaf is allowed and every other file is not.
+    /// True when a unit's build picture, anims/<unit><digits>.gaf, and its
+    /// download-button art, anims/<unit>_gadget.gaf, are allowed, and every
+    /// other file under the folder is not.
     bool build_picture = false;
     /// The sentence after the path and its colon.
     const char* sentence = nullptr;
@@ -174,6 +176,8 @@ constexpr AllowRow kAllowRows[] = {
      false,
      false,
      kNotConfirmed},
+    // A unit's build picture and its download-button art are read again for
+    // every match. Every other file under anims/ is interface art.
     {kFixedFolder,
      "anims",
      nullptr,
@@ -389,6 +393,27 @@ std::string build_picture_unit(const std::vector<std::string_view>& segments) {
     return std::string{stem.substr(0, stem_end)};
 }
 
+/// Returns the unit name of anims/<unit>_gadget.gaf, or empty when the
+/// file is not a unit's download-button art.
+///
+/// The path has two pieces. The suffix `_gadget.gaf` matches without case,
+/// and the unit is the non-empty text before that suffix, in the path's
+/// own spelling.
+///
+/// @param segments the path's pieces; the first is the anims folder
+/// @return the unit name, or empty
+std::string download_button_unit(const std::vector<std::string_view>& segments) {
+    if (segments.size() != 2)
+        return {};
+    const std::string_view file = segments[1];
+    constexpr std::string_view kSuffix = "_gadget.gaf";
+    if (file.size() <= kSuffix.size())
+        return {};
+    if (!ascii_equal(file.substr(file.size() - kSuffix.size()), kSuffix))
+        return {};
+    return std::string{file.substr(0, file.size() - kSuffix.size())};
+}
+
 /// Judges a path that has already been split.
 ///
 /// @param path the path as given
@@ -411,6 +436,9 @@ judge_segments(std::string_view path, const SplitPath& split, const PathContext&
     if (folder->build_picture) {
         const std::string unit = build_picture_unit(split.segments);
         if (!unit.empty() && context.is_unit_name && context.is_unit_name(unit))
+            return verdict_for(path, PathRule::allowed, kReadEachMatch);
+        const std::string button = download_button_unit(split.segments);
+        if (!button.empty() && context.is_unit_name && context.is_unit_name(button))
             return verdict_for(path, PathRule::allowed, kReadEachMatch);
     }
     return verdict_for(path, folder->rule, folder->sentence);

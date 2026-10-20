@@ -295,6 +295,8 @@ void Runtime::teardown_match() {
     unit_info_panel_.reset();
     stop_match_tracking();
     match_hud_.reset();
+    // A GAF this match could not read is tried again in the next match.
+    missing_gaf_paths_.clear();
     match_tick_blocked_ = false;
     // The rules the player's overrides changed while it ran apply from here,
     // so that the next match is built with them.

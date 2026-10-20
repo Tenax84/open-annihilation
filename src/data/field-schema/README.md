@@ -38,7 +38,7 @@ sounds, explosion art, movement class, sound category). `token_list` is
 category words. `yard_map` is yard-map cells.
 
 `Storage` is how wide the result is. `none` is a flag bit or text. `int8`,
-`uint8`, `int16`, `int32` and `uint32` are the integer widths. `float32`
+`uint8`, `int16`, `uint16`, `int32` and `uint32` are the integer widths. `float32`
 keeps a decimal in a float. `fixed32` keeps a 16.16 value, or a weapon
 speed scaled into 32 bits. `ticks16` and `ticks32` are seconds times 30
 (`weapon_ticks_per_second`, `weapons.hpp:52`).
@@ -102,8 +102,8 @@ below is the `why` stored on that key.
 - A non-finite number in any numeric field. `parse_double` can return an
   infinity from `1e999` (`tdf.cpp`), and truncating that infinity is not
   defined. An integer text `1e999` is the integer 1 (`parse_int` stops at
-  the first character that is not a digit, `tdf.cpp:450`), so it is not
-  refused.
+  the first character that is not a digit, `tdf.cpp:450`), so the number is
+  not refused. The letters after the 1 are a warning.
 - `footprintx` and `footprintz` below 1 or above 1024, on a unit
   (`move_classes.cpp:31` and `move_classes.cpp:32`, reached from
   `unit_def_loader.cpp:447`) and on a movement class (`move_classes.cpp:31`
@@ -123,15 +123,28 @@ below is the `why` stored on that key.
 - On a key the schema holds, text that contains `;`, a line break, a zero
   byte, `//` or `/*`. That text cannot be written back as one property.
   The same markers on an unknown key, such as `tedclass`, are ok.
-
-A numeric field whose text holds no number is ok. The loader reads 0.
-`read_value` still reports that 0.
+- A numeric field whose text holds no number (`abc`, an empty value, or
+  only spaces). The loader would read 0, and `read_value` still reports
+  that 0, but the check refuses it: `footprintx: "abc" is not a number`.
+  Integer and flag fields read digits only (`parse_int`). Fixed and decimal
+  fields read the same grammar as `parse_double`, including an exponent
+  (`1e3` is 1000). `0x10` is the digit 0; the loader does not read it as 16.
 
 ## Warnings
 
 A warning is kept. Strange values and the wraps below are not refusals.
 A non-whole number in an integer field is not a warning: the loader keeps
 the whole part (`workertime` 67.5 and `buildcostmetal` 412.5 stay ok).
+
+A number with other text after it is a warning that names the text the
+loader ignores (`12abc` is 12 and ignores `abc`). On an integer or a flag
+the fractional part is not that text: the loader keeps the whole part, so
+`workertime` `67.5` stays ok. Anything after the fraction is ignored
+(`67.5abc` ignores `abc`). `1e3` on an integer or a flag is 1 and ignores
+`e3`; on a fixed or decimal field it is 1000. The warning is not added when
+that number is itself refused (`0x10` on `footprintx` is 0, which is
+refused). Shipped 3.1c files may hold a leading number and then other text;
+refusing those would drop records the game already loads.
 
 Named thresholds:
 
@@ -215,16 +228,20 @@ Wraps, by the width the loader keeps. `parse_int` wraps modulo 2^32
 
 - Signed 8 bits, outside −128 to 127: unit `makesmetal`
   (`unit_def_loader.cpp:246`), `waterline` (`unit_def_loader.cpp:238`);
-  weapon `color` (`weapons.cpp:360`), `color2` (`weapons.cpp:361`),
-  `firestarter` (`weapons.cpp:358`), `rendertype` (`weapons.cpp:359`).
+  weapon `firestarter` (`weapons.cpp:358`), `rendertype` (`weapons.cpp:359`).
   `transportsize` and `transportcapacity` refuse below 0 and warn above 127.
 - Unsigned 8 bits, outside 0 to 255: `maxslope` (`move_classes.cpp:39`) and
   `maxwaterslope` (`move_classes.cpp:45`), and `badslope`
   (`move_classes.cpp:42`) and `badwaterslope` (`move_classes.cpp:49`), on a
-  unit and on a movement class.
+  unit and on a movement class. Weapon `color` (`weapons.cpp:360`, read
+  back at `combat_state.cpp:108`) and `color2` (`weapons.cpp:361`, read back
+  at `combat_state.cpp:109`).
+- Unsigned 16 bits, outside 0 to 65535: unit `buildangle`
+  (`unit_def_loader.cpp:291`, read back at `unit-spawn/src/runtime.cpp:90`); weapon
+  `tolerance` (`weapons.cpp:365`, read back at `combat_state.cpp:100`) and
+  `pitchtolerance` (`weapons.cpp:366`, read back at `combat_state.cpp:101`).
 - Signed 16 bits, outside −32768 to 32767: unit `attackrunlength`
-  (`unit_def_loader.cpp:397`), `buildangle` (`unit_def_loader.cpp:291`),
-  `builddistance` (`unit_def_loader.cpp:292`), `cruisealt`
+  (`unit_def_loader.cpp:397`), `builddistance` (`unit_def_loader.cpp:292`), `cruisealt`
   (`unit_def_loader.cpp:294`), `healtime` (`unit_def_loader.cpp:254`),
   `kamikazedistance` (`unit_def_loader.cpp:400`), `maneuverleashlength`
   (`unit_def_loader.cpp:395`), `mincloakdistance`
@@ -236,8 +253,7 @@ Wraps, by the width the loader keeps. `parse_int` wraps modulo 2^32
   `workertime` (`unit_def_loader.cpp:253`), and the movement depths
   `maxwaterdepth` (`move_classes.cpp:33`) and `minwaterdepth`
   (`move_classes.cpp:36`). Weapon `accuracy` (`weapons.cpp:364`),
-  `areaofeffect` (`weapons.cpp:335`), `pitchtolerance` (`weapons.cpp:366`),
-  `sprayangle` (`weapons.cpp:345`), `tolerance` (`weapons.cpp:365`).
+  `areaofeffect` (`weapons.cpp:335`) and `sprayangle` (`weapons.cpp:345`).
   `burst` refuses below 0 and warns above 32767. Footprints refuse outside
   1 to 1024 before this wrap applies.
 - Signed 32 bits, outside ±2147483647: unit `buildcostenergy`
@@ -297,8 +313,9 @@ None. The table is fixed for the process. Pointers from `find_field` and
   lower case.
 - An infinite bound is no bound. A constant default of 0 or empty text is
   omitted from the row.
-- `check_text` and `check_number` agree on a finite number the text parses
-  as. Integer and flag checks use the whole part.
+- `check_text` and `check_number` agree on a finite number the text is, in
+  full. Integer and flag checks use the whole part. Text after that number
+  is a warning, unless the number itself is refused.
 - `default_value` returns the left-out value even when the key is present
   on the block. A derived rule reads the other keys.
 
