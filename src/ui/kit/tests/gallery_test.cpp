@@ -60,6 +60,7 @@ constexpr std::array<std::string_view, kit::all_roles.size()> kRoleNames{
     "progress_track", "progress_fill", "progress_busy", "backdrop",       "sheet",
     "pill",           "language_card", "carousel",      "step_indicator", "setup_chrome",
     "choice_card",    "coach_mark",    "spotlight",     "picture_well",   "call_to_action",
+    "package_badge",  "grip",
 };
 
 /// Returns a role's name.
@@ -252,6 +253,8 @@ std::vector<std::string> texts_of(const kit::Item& part) {
                 texts.push_back(look.caption);
             } else if constexpr (std::is_same_v<Look, kit::CallToActionLook>) {
                 texts.push_back(look.caption);
+            } else if constexpr (std::is_same_v<Look, kit::BadgeLook>) {
+                texts.push_back(look.letters);
             }
         },
         part.look
@@ -609,6 +612,12 @@ void names_are_sound(const Case& shown, const kit::GalleryLayout& laid) {
             shown,
             std::string(name) + " is missing"
         );
+    bool badges = false;
+    each_part(laid, [&](const kit::Item& part, const kit::Rect&) {
+        if (part.text == "BADGES AND TAGS")
+            badges = true;
+    });
+    expect(badges, shown, "the badges section is missing");
     // The switch's halves and the levels are parts automation presses.
     const std::vector<kit::AutomationEntry> entries = kit::automation_parts(laid.list, {});
     for (const std::string_view part :

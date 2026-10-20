@@ -227,12 +227,25 @@ void draw_nav(const Canvas& canvas, const NavLook& look) {
             fill_rect(canvas, entry.rect, colour::hover);
             ink = colour::text;
         }
-        const Rect caption{
+        Rect caption{
             entry.rect.x + kTextOffset,
             entry.rect.y,
             entry.rect.width - kTextOffset - kTextMargin,
             entry.rect.height,
         };
+        if (entry.tag.has_value()) {
+            const int32_t side = std::max(compact_metrics.regular_line - 4, int32_t{0});
+            const Rect icon{
+                caption.x,
+                entry.rect.y + (entry.rect.height - side) / 2,
+                side,
+                side,
+            };
+            draw_tag_icon(canvas, icon, *entry.tag, ink);
+            const int32_t shift = side + compact_metrics.list_row_gap;
+            caption.x += shift;
+            caption.width = std::max(caption.width - shift, int32_t{0});
+        }
         draw_line(canvas, FontRole::regular, entry.caption, caption, Align::left, ink, 0);
         if (entry.focused)
             draw_focus_ring(canvas, entry.rect, false);

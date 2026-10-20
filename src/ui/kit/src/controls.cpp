@@ -353,56 +353,12 @@ void draw_chip_line(
 /// @param badge the badge's square
 /// @param look the row
 void draw_row_badge(const Canvas& canvas, const Rect& badge, const ListRowLook& look) {
-    if (badge.width <= 0 || badge.height <= 0)
-        return;
-    if (renderer::picture_drawable(look.badge)) {
-        draw_picture(canvas, badge, look.badge);
-        outline(canvas, badge, colour::control_border);
-        return;
-    }
-    if (!look.badge_text.empty()) {
-        fill(canvas, badge, look.badge_colour);
-        // A badge keeps as many letters as fit its square, from the start,
-        // and drops the rest. No ellipsis: the square has no room for one.
-        std::string_view letters = look.badge_text;
-        while (!letters.empty() && measure_text(canvas, FontRole::small, letters) > badge.width) {
-            std::size_t end = letters.size();
-            do {
-                --end;
-            } while (end > 0 && continuation_byte(letters[end]));
-            letters.remove_suffix(letters.size() - end);
-        }
-        if (!letters.empty())
-            line(
-                clipped(canvas, badge),
-                FontRole::small,
-                letters,
-                badge,
-                Align::centre,
-                colour::on_accent
-            );
-        return;
-    }
-    const int32_t hairline = kMetrics.hairline;
-    const int32_t period = kMetrics.badge_dash + kMetrics.badge_dash_gap;
-    for (int32_t along = 0; along < badge.width; along += period) {
-        const int32_t dash = std::min(kMetrics.badge_dash, badge.width - along);
-        fill(canvas, {badge.x + along, badge.y, dash, hairline}, colour::control_border);
-        fill(
-            canvas,
-            {badge.x + along, badge.y + badge.height - hairline, dash, hairline},
-            colour::control_border
-        );
-    }
-    for (int32_t along = 0; along < badge.height; along += period) {
-        const int32_t dash = std::min(kMetrics.badge_dash, badge.height - along);
-        fill(canvas, {badge.x, badge.y + along, hairline, dash}, colour::control_border);
-        fill(
-            canvas,
-            {badge.x + badge.width - hairline, badge.y + along, hairline, dash},
-            colour::control_border
-        );
-    }
+    BadgeLook drawn;
+    drawn.picture = look.badge;
+    drawn.tag = look.badge_tag;
+    drawn.letters = look.badge_text;
+    drawn.face = look.badge_colour;
+    draw_badge(canvas, badge, drawn);
 }
 
 // ---- Text and search fields ----
@@ -689,10 +645,24 @@ void draw_list_row(const Canvas& canvas, const Rect& rect, const ListRowLook& lo
         if (!look.by.empty() &&
             text_right - by_left >= measure_text(canvas, FontRole::small, kEllipsis)) {
             const Rect by_box{by_left, title_row, text_right - by_left, kMetrics.regular_line};
-            cut_line(canvas, FontRole::small, look.by, by_box, Align::left, colour::hint);
+            cut_line(
+                canvas,
+                FontRole::small,
+                look.by,
+                by_box,
+                Align::left,
+                look.by_colour.value_or(colour::hint)
+            );
         }
     } else if (canvas.fonts != nullptr && !look.by.empty()) {
-        cut_line(canvas, FontRole::small, look.by, title_box, Align::left, colour::hint);
+        cut_line(
+            canvas,
+            FontRole::small,
+            look.by,
+            title_box,
+            Align::left,
+            look.by_colour.value_or(colour::hint)
+        );
     }
 
     int32_t line_row = top + kMetrics.list_row_line_top;
@@ -850,10 +820,18 @@ int32_t pill_icon_side() noexcept {
 ///
 /// @param look the pill
 /// @return the gap and the icon; 0 when the pill has no icon
-int32_t pill_icon_extra(const PillLook& look) noexcept {
-    if (!look.icon.has_value())
+/// Returns the extra width one icon inside a pill adds.
+///
+/// @param present true when the pill draws that icon
+/// @return the gap and the icon; 0 when it draws none
+int32_t pill_one_icon_extra(bool present) noexcept {
+    if (!present)
         return 0;
     return kPillIconGap + pill_icon_side();
+}
+
+int32_t pill_icon_extra(const PillLook& look) noexcept {
+    return pill_one_icon_extra(look.tag.has_value()) + pill_one_icon_extra(look.icon.has_value());
 }
 
 } // namespace
@@ -892,11 +870,20 @@ void draw_pill(const Canvas& canvas, const Rect& rect, const PillLook& look) {
         fill_round_rect(canvas, rect, radius, colours.ground);
     }
     Rect words = rect;
+    if (look.tag.has_value()) {
+        const int32_t side = std::min(pill_icon_side(), std::max(rect.height - 2, int32_t{0}));
+        const int32_t icon_x = rect.x + 1;
+        const Rect icon{icon_x, rect.y + (rect.height - side) / 2, side, side};
+        const int32_t words_x = icon_x + side + kPillIconGap;
+        words.x = words_x;
+        words.width = std::max(rect.x + rect.width - words_x, int32_t{0});
+        draw_tag_icon(clipped(canvas, rect), icon, *look.tag, colours.text);
+    }
     if (look.icon.has_value()) {
         const int32_t side = std::min(pill_icon_side(), std::max(rect.height - 2, int32_t{0}));
         const int32_t icon_x = rect.x + rect.width - 1 - side;
         const Rect icon{icon_x, rect.y + (rect.height - side) / 2, side, side};
-        words.width = std::max(icon_x - kPillIconGap - rect.x, int32_t{0});
+        words.width = std::max(icon_x - kPillIconGap - words.x, int32_t{0});
         draw_state_icon(clipped(canvas, rect), icon, *look.icon, colours.text);
     }
     // box_text, not line: line draws nothing on the smooth form when the
@@ -1775,6 +1762,201 @@ void add_link(
     list.items.push_back(std::move(item));
     add_control(
         list, rect, id, std::move(name), ControlKind::link, false, false, look.caption, look.enabled
+    );
+}
+
+void draw_badge(const Canvas& canvas, const Rect& rect, const BadgeLook& look) {
+    if (!drawable(canvas) || rect.width <= 0 || rect.height <= 0)
+        return;
+    if (renderer::picture_drawable(look.picture)) {
+        draw_picture(canvas, rect, look.picture);
+        outline(canvas, rect, colour::control_border);
+        return;
+    }
+    if (look.tag.has_value()) {
+        const int32_t side = std::min(rect.width, rect.height);
+        const int32_t icon_side = side * 70 / 100;
+        const Rect icon{
+            rect.x + (rect.width - icon_side) / 2,
+            rect.y + (rect.height - icon_side) / 2,
+            icon_side,
+            icon_side,
+        };
+        fill(canvas, rect, look.face);
+        draw_tag_icon(canvas, icon, *look.tag, colour::on_accent);
+        return;
+    }
+    if (!look.letters.empty()) {
+        fill(canvas, rect, look.face);
+        // A badge keeps as many letters as fit its square, from the start,
+        // and drops the rest. No ellipsis: the square has no room for one.
+        std::string_view letters = look.letters;
+        while (!letters.empty() && measure_text(canvas, FontRole::small, letters) > rect.width) {
+            std::size_t end = letters.size();
+            do {
+                --end;
+            } while (end > 0 && continuation_byte(letters[end]));
+            letters.remove_suffix(letters.size() - end);
+        }
+        if (!letters.empty())
+            line(
+                clipped(canvas, rect),
+                FontRole::small,
+                letters,
+                rect,
+                Align::centre,
+                colour::on_accent
+            );
+        return;
+    }
+    const int32_t hairline = kMetrics.hairline;
+    const int32_t period = kMetrics.badge_dash + kMetrics.badge_dash_gap;
+    for (int32_t along = 0; along < rect.width; along += period) {
+        const int32_t dash = std::min(kMetrics.badge_dash, rect.width - along);
+        fill(canvas, {rect.x + along, rect.y, dash, hairline}, colour::control_border);
+        fill(
+            canvas,
+            {rect.x + along, rect.y + rect.height - hairline, dash, hairline},
+            colour::control_border
+        );
+    }
+    for (int32_t along = 0; along < rect.height; along += period) {
+        const int32_t dash = std::min(kMetrics.badge_dash, rect.height - along);
+        fill(canvas, {rect.x, rect.y + along, hairline, dash}, colour::control_border);
+        fill(
+            canvas,
+            {rect.x + rect.width - hairline, rect.y + along, hairline, dash},
+            colour::control_border
+        );
+    }
+}
+
+void add_badge(DisplayList& list, const Rect& rect, const BadgeLook& look) {
+    Item item;
+    item.role = Role::package_badge;
+    item.rect = rect;
+    item.text = look.letters;
+    item.look = look;
+    list.items.push_back(std::move(item));
+}
+
+namespace {
+
+/// The most pixels across or down a drag handle is drawn at.
+constexpr int32_t kMostGripPixels = 1024;
+
+/// The samples across, and down, each pixel of a drag handle.
+constexpr int32_t kGripSamples = 4;
+
+/// Returns a drag handle's colour. Disabled wins, then held, then hovered.
+///
+/// @param look the handle
+/// @return its colour
+Colour grip_colour(const GripLook& look) noexcept {
+    if (look.disabled)
+        return colour::control_hover;
+    if (look.held)
+        return colour::accent;
+    if (look.hovered)
+        return colour::text;
+    return colour::quiet;
+}
+
+/// Returns where a half-point inside a rectangle falls, in eighths of a
+/// pixel from the rectangle's pixel box.
+///
+/// @param half_from_left the place, in half-points from the rectangle's left or top
+/// @param anchor the rectangle's left or top, in points, plus a smooth canvas's origin
+/// @param origin_px that edge in canvas pixels
+/// @param percent the scale, in percent
+/// @return the place, in eighths of a pixel from the box's top or left
+int64_t
+grip_eighths(int32_t half_from_left, int32_t anchor, int32_t origin_px, int32_t percent) noexcept {
+    const int64_t half_absolute = static_cast<int64_t>(2) * anchor + half_from_left;
+    return half_absolute * percent / 25 - static_cast<int64_t>(origin_px) * 8;
+}
+
+} // namespace
+
+void draw_grip(const Canvas& canvas, const Rect& rect, const GripLook& look) {
+    if (!drawable(canvas) || rect.width <= 0 || rect.height <= 0)
+        return;
+    const bool smooth = canvas.smooth.painter != nullptr;
+    const int32_t percent =
+        smooth ? canvas.smooth.scale_percent : std::max(canvas.placement.scale, int32_t{1}) * 100;
+    if (percent <= 0)
+        return;
+    const Point pixels = covered_pixels(canvas, rect);
+    if (pixels.x <= 0 || pixels.y <= 0 || pixels.x > kMostGripPixels || pixels.y > kMostGripPixels)
+        return;
+    const int32_t anchor_x = smooth ? canvas.smooth.origin.x + rect.x : 0;
+    const int32_t anchor_y = smooth ? canvas.smooth.origin.y + rect.y : 0;
+    const int32_t left_px = to_canvas({anchor_x, 0, 0, 0}, percent).x;
+    const int32_t top_px = to_canvas({0, anchor_y, 0, 0}, percent).y;
+    const int64_t radius = static_cast<int64_t>(2) * percent / 25;
+    const int64_t radius_squared = radius * radius;
+    constexpr int32_t kColumnHalf[] = {-3, 3};
+    constexpr int32_t kRowHalf[] = {-9, -3, 3, 9};
+    int64_t centres_x[2];
+    int64_t centres_y[4];
+    for (int32_t column = 0; column < 2; ++column)
+        centres_x[column] =
+            grip_eighths(rect.width + kColumnHalf[column], anchor_x, left_px, percent);
+    for (int32_t row = 0; row < 4; ++row)
+        centres_y[row] = grip_eighths(rect.height + kRowHalf[row], anchor_y, top_px, percent);
+    std::vector<uint8_t> coverage(
+        static_cast<std::size_t>(pixels.x) * static_cast<std::size_t>(pixels.y), 0
+    );
+    constexpr int64_t samples = static_cast<int64_t>(kGripSamples) * kGripSamples;
+    for (int32_t row = 0; row < pixels.y; ++row) {
+        for (int32_t column = 0; column < pixels.x; ++column) {
+            int64_t inside = 0;
+            for (int32_t down = 0; down < kGripSamples; ++down) {
+                for (int32_t across = 0; across < kGripSamples; ++across) {
+                    const int64_t sample_x = static_cast<int64_t>(8) * column + 2 * across + 1;
+                    const int64_t sample_y = static_cast<int64_t>(8) * row + 2 * down + 1;
+                    bool covered = false;
+                    for (const int64_t centre_x : centres_x) {
+                        for (const int64_t centre_y : centres_y) {
+                            const int64_t across_dot = sample_x - centre_x;
+                            const int64_t down_dot = sample_y - centre_y;
+                            if (across_dot * across_dot + down_dot * down_dot <= radius_squared) {
+                                covered = true;
+                                break;
+                            }
+                        }
+                        if (covered)
+                            break;
+                    }
+                    if (covered)
+                        ++inside;
+                }
+            }
+            coverage
+                [static_cast<std::size_t>(row) * static_cast<std::size_t>(pixels.x) +
+                 static_cast<std::size_t>(column)] =
+                    static_cast<uint8_t>((inside * 255 + samples / 2) / samples);
+        }
+    }
+    blend_coverage(canvas, rect, coverage, grip_colour(look));
+}
+
+void add_grip(
+    DisplayList& list, const Rect& rect, const GripLook& look, ControlId id, std::string name
+) {
+    Item item;
+    item.role = Role::grip;
+    item.rect = rect;
+    item.control = id;
+    item.state.hovered = look.hovered;
+    item.state.pressed = look.held;
+    item.state.disabled = look.disabled;
+    item.look = look;
+    list.items.push_back(std::move(item));
+    if (id == no_control)
+        return;
+    add_control(
+        list, rect, id, std::move(name), ControlKind::button, false, false, {}, !look.disabled
     );
 }
 

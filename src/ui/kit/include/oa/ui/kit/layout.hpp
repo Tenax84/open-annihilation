@@ -476,6 +476,8 @@ enum class Role : uint8_t {
     spotlight,      ///< a dimmed layer with a cut-out; the item's SpotlightLook
     picture_well,   ///< a bordered well and a caption; the item's PictureWellLook
     call_to_action, ///< an accent button that pulses; the item's CallToActionLook
+    package_badge,  ///< a package badge; the item's BadgeLook
+    grip,           ///< a drag handle; the item's GripLook
 };
 
 /// Every role, in the order Role declares them. A role appended to Role is
@@ -515,6 +517,7 @@ inline constexpr std::array all_roles{
     Role::setup_chrome,  Role::choice_card,
     Role::coach_mark,    Role::spotlight,
     Role::picture_well,  Role::call_to_action,
+    Role::package_badge, Role::grip,
 };
 
 /// Tells whether the kit's canvas draws a role (paint, in either form): it
@@ -570,6 +573,8 @@ inline constexpr std::array all_roles{
     case Role::spotlight:
     case Role::picture_well:
     case Role::call_to_action:
+    case Role::package_badge:
+    case Role::grip:
         return true;
     case Role::header_bar:
     case Role::badge:
@@ -605,9 +610,9 @@ inline constexpr std::array all_roles{
 }
 
 // The last role is named here: a role appended to Role is appended to
-// all_roles and named here in call_to_action's place.
+// all_roles and named here in grip's place.
 static_assert(
-    all_roles_in_order() && all_roles.size() == static_cast<std::size_t>(Role::call_to_action) + 1,
+    all_roles_in_order() && all_roles.size() == static_cast<std::size_t>(Role::grip) + 1,
     "all_roles names every role of Role once, in its order"
 );
 
