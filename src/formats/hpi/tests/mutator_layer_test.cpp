@@ -393,7 +393,7 @@ void nothing_above_changes() {
     }
     const auto weapons = store.find("weapons\\*");
     const auto units = store.find("units\\*");
-    const auto listed = store.list_effective_in_mount_order("", "");
+    const auto listed = store.list_effective_recursive("", "");
     const auto pack_bytes = store.read_pack_layer("maps/ridge.ota");
 
     auto spec = layer_with("ridge layer", {bytes_entry("units/RIDGEC.fbi", "ridge", kRidgeC)});
@@ -426,21 +426,30 @@ void nothing_above_changes() {
         "a directory the layer does not touch is unchanged"
     );
     const auto units_now = store.find("units\\*");
-    check(!units_now.empty() && units_now.front().mutator_layer, "the layer's file is first");
-    check(units_now.front().mount == oa::formats::hpi::MutatorLayerMount, "the layer mount index");
-    check(units_now.front().name == "RIDGEC.fbi" && !units_now.front().pack_layer, "RIDGEC.fbi");
-    check(
-        same_found({units_now.begin() + 1, units_now.end()}, units),
-        "the old units matches follow the layer"
-    );
-    const auto listed_now = store.list_effective_in_mount_order("", "");
+    check(!units_now.empty(), "the units folder lists files");
+    if (!units_now.empty()) {
+        check(units_now.front().mutator_layer, "the layer's file is first");
+        check(
+            units_now.front().mount == oa::formats::hpi::MutatorLayerMount, "the layer mount index"
+        );
+        check(
+            units_now.front().name == "RIDGEC.fbi" && !units_now.front().pack_layer, "RIDGEC.fbi"
+        );
+        check(
+            same_found({units_now.begin() + 1, units_now.end()}, units),
+            "the old units matches follow the layer"
+        );
+    }
+    const auto listed_now = store.list_effective_recursive("", "");
     check(
         !listed_now.empty() && listed_now.front() == "units/ridgec.fbi", "the layer's path is first"
     );
-    check(
-        std::vector<std::string>(listed_now.begin() + 1, listed_now.end()) == listed,
-        "the old listing follows the layer"
-    );
+    if (!listed_now.empty()) {
+        check(
+            std::vector<std::string>(listed_now.begin() + 1, listed_now.end()) == listed,
+            "the old listing follows the layer"
+        );
+    }
     const auto alone =
         store.find("units\\*", oa::FindScope{oa::formats::hpi::MutatorLayerMount, false});
     check(
