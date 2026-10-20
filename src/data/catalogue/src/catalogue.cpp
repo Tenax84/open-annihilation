@@ -11,6 +11,7 @@
 #include "oa/formats/oamod/package_keys.hpp"
 #include "oa/formats/url.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -25,6 +26,7 @@ namespace {
 namespace bundles = oa::data::content_bundles;
 namespace json = formats::json;
 namespace oamod = formats::oamod;
+namespace oamut = formats::oamut;
 namespace sha = base::sha256;
 namespace signing = base::signing;
 namespace url = formats::url;
@@ -103,6 +105,10 @@ bool parse_kind(std::string_view text, Kind& kind) noexcept {
     }
     if (text == "expansion") {
         kind = Kind::expansion;
+        return true;
+    }
+    if (text == "oamut") {
+        kind = Kind::oamut;
         return true;
     }
     return false;
@@ -213,6 +219,536 @@ bool read_text_list(
     return true;
 }
 
+/// Drops leading zeros, leaving one zero when the text is all zeros.
+std::string strip_zeros(std::string text) {
+    std::size_t start = 0;
+    while (start + 1 < text.size() && text[start] == '0')
+        ++start;
+    if (start == 0)
+        return text;
+    return text.substr(start);
+}
+
+/// The digits of a number scaled to `floor`, with no sign and no leading zero.
+std::string scaled_digits(const oamod::Number& number, int32_t floor) {
+    if (number.significand == 0)
+        return "0";
+    std::string digits = std::to_string(number.significand);
+    if (number.exponent > floor)
+        digits.append(static_cast<std::size_t>(number.exponent - floor), '0');
+    return digits;
+}
+
+/// Compares two unsigned decimal texts. Both have no leading zero.
+bool digits_less(std::string_view first_digits, std::string_view second_digits) {
+    if (first_digits.size() != second_digits.size())
+        return first_digits.size() < second_digits.size();
+    return first_digits < second_digits;
+}
+
+/// Adds two unsigned decimal texts.
+std::string add_digits(std::string_view first_digits, std::string_view second_digits) {
+    std::string sum(std::max(first_digits.size(), second_digits.size()) + 1, '0');
+    int carry = 0;
+    for (std::size_t slot = 0; slot < sum.size(); ++slot) {
+        int value = carry;
+        if (slot < first_digits.size())
+            value += first_digits[first_digits.size() - 1 - slot] - '0';
+        if (slot < second_digits.size())
+            value += second_digits[second_digits.size() - 1 - slot] - '0';
+        sum[sum.size() - 1 - slot] = static_cast<char>('0' + value % 10);
+        carry = value / 10;
+    }
+    return strip_zeros(std::move(sum));
+}
+
+/// Subtracts two unsigned decimal texts. `minuend` is at least `subtrahend`.
+std::string subtract_digits(std::string minuend, std::string_view subtrahend) {
+    int borrow = 0;
+    for (std::size_t slot = 0; slot < minuend.size(); ++slot) {
+        const std::size_t from_end = minuend.size() - 1 - slot;
+        int value = minuend[from_end] - '0' - borrow;
+        if (slot < subtrahend.size())
+            value -= subtrahend[subtrahend.size() - 1 - slot] - '0';
+        if (value < 0) {
+            value += 10;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        minuend[from_end] = static_cast<char>('0' + value);
+    }
+    return strip_zeros(std::move(minuend));
+}
+
+/// The positive difference of two numbers, scaled to `floor`. `high` is at least `low`.
+std::string
+positive_difference(const oamod::Number& high, const oamod::Number& low, int32_t floor) {
+    const bool high_negative = high.negative && high.significand != 0;
+    const bool low_negative = low.negative && low.significand != 0;
+    const std::string high_digits = scaled_digits(high, floor);
+    const std::string low_digits = scaled_digits(low, floor);
+    if (high_negative == low_negative) {
+        if (!high_negative)
+            return subtract_digits(high_digits, low_digits);
+        return subtract_digits(low_digits, high_digits);
+    }
+    return add_digits(high_digits, low_digits);
+}
+
+/// Tells whether `span` is a whole number of `step`s, both unsigned decimals.
+bool divides_exactly(std::string span, const std::string& step) {
+    if (step == "0")
+        return false;
+    if (span == "0")
+        return true;
+    std::string remainder = "0";
+    for (const char digit : span) {
+        if (remainder == "0")
+            remainder = std::string(1, digit);
+        else
+            remainder.push_back(digit);
+        remainder = strip_zeros(std::move(remainder));
+        while (!digits_less(remainder, step))
+            remainder = subtract_digits(std::move(remainder), step);
+    }
+    return remainder == "0";
+}
+
+/// Tells whether an option id is a Lua name of 1 to 32 bytes.
+bool option_id_text(std::string_view text) noexcept {
+    constexpr std::size_t most_option_id_bytes = 32;
+    if (text.empty() || text.size() > most_option_id_bytes)
+        return false;
+    if (text.front() < 'a' || text.front() > 'z')
+        return false;
+    for (std::size_t slot = 1; slot < text.size(); ++slot) {
+        const char character = text[slot];
+        const bool word = (character >= 'a' && character <= 'z') ||
+                          (character >= '0' && character <= '9') || character == '_';
+        if (!word)
+            return false;
+    }
+    return true;
+}
+
+/// Reads a JSON number into a profile number and keeps its text.
+bool read_json_number(const json::Json& value, oamod::Number& number, std::string& written) {
+    const std::string* text = value.number_text();
+    if (text == nullptr || oamod::parse_number(*text, number) != oamod::NumberStatus::ok)
+        return false;
+    written = *text;
+    return true;
+}
+
+/// Reads `member` as mutator requirements. Absent is an empty list.
+///
+/// Each id is a mutator key, not `self_id`, and none is repeated. `version`
+/// is optional and is a version range. When `prerequisites` is set, an id
+/// it names is refused. Other members of an object are ignored. The member
+/// is read only for a mutator; the caller skips it for every other kind.
+bool read_mutator_objects(
+    const json::Json& object,
+    std::string_view member,
+    std::size_t most,
+    std::string_view self_id,
+    const std::vector<MutatorRequirement>* prerequisites,
+    std::vector<MutatorRequirement>& out,
+    std::string& reason
+) {
+    const json::Json* value = object.find(member);
+    if (value == nullptr)
+        return true;
+    if (value->type() != json::JsonType::array) {
+        reason = std::string(member) + " is not a list";
+        return false;
+    }
+    if (value->elements().size() > most) {
+        reason = std::string(member) + " lists more than " + std::to_string(most);
+        return false;
+    }
+    std::vector<std::string> seen;
+    for (std::size_t slot = 0; slot < value->elements().size(); ++slot) {
+        const std::string where = std::string(member) + "[" + std::to_string(slot) + "]";
+        const json::Json& element = value->elements()[slot];
+        if (element.type() != json::JsonType::object) {
+            reason = where + " is not an object";
+            return false;
+        }
+        const json::Json* id_value = element.find("id");
+        const std::string* id_text = id_value == nullptr ? nullptr : id_value->string();
+        if (id_text == nullptr || !valid_package_key(Kind::oamut, *id_text)) {
+            reason = where + ".id is not a mutator key";
+            return false;
+        }
+        if (*id_text == self_id) {
+            reason = where + ".id is this mutator";
+            return false;
+        }
+        bool repeated = false;
+        for (const std::string& earlier : seen) {
+            if (earlier == *id_text)
+                repeated = true;
+        }
+        if (repeated) {
+            reason = where + ".id is repeated";
+            return false;
+        }
+        if (prerequisites != nullptr) {
+            bool named = false;
+            for (const MutatorRequirement& prerequisite : *prerequisites) {
+                if (prerequisite.id == *id_text)
+                    named = true;
+            }
+            if (named) {
+                reason = where + ".id is a prerequisite";
+                return false;
+            }
+        }
+        MutatorRequirement requirement;
+        requirement.id = *id_text;
+        if (const json::Json* version = element.find("version")) {
+            const std::string* text = version->string();
+            std::optional<oamut::VersionRange> range;
+            if (text != nullptr)
+                range = oamut::parse_version_range(*text);
+            if (!range) {
+                reason = where + ".version is not a version range";
+                return false;
+            }
+            requirement.range_text = *text;
+            requirement.range = std::move(*range);
+        }
+        seen.push_back(requirement.id);
+        out.push_back(std::move(requirement));
+    }
+    return true;
+}
+
+/// Reads `works_with`. Each entry is a condition, and `*` is the only entry when it appears.
+bool read_works_with(const json::Json& object, Package& package, std::string& reason) {
+    const json::Json* value = object.find("works_with");
+    if (value == nullptr)
+        return true;
+    if (value->type() != json::JsonType::array) {
+        reason = "works_with is not a list";
+        return false;
+    }
+    if (value->elements().size() > oamut::most_works_with) {
+        reason = "works_with lists more than " + std::to_string(oamut::most_works_with);
+        return false;
+    }
+    for (std::size_t slot = 0; slot < value->elements().size(); ++slot) {
+        const std::string where = "works_with[" + std::to_string(slot) + "]";
+        const std::string* text = value->elements()[slot].string();
+        std::optional<oamut::Condition> condition;
+        if (text != nullptr)
+            condition = oamut::parse_condition(*text);
+        if (!condition) {
+            reason = where + " is not a condition";
+            return false;
+        }
+        if (condition->id == "*" && value->elements().size() != 1) {
+            reason = where + " is not alone";
+            return false;
+        }
+        package.works_with.push_back(*text);
+    }
+    return true;
+}
+
+/// Reads `layers`. A known name is kept once. An unknown name is skipped.
+bool read_layers(const json::Json& object, Package& package, std::string& reason) {
+    constexpr std::size_t most_layers = 16;
+    const json::Json* value = object.find("layers");
+    if (value == nullptr)
+        return true;
+    if (value->type() != json::JsonType::array) {
+        reason = "layers is not a list";
+        return false;
+    }
+    if (value->elements().size() > most_layers) {
+        reason = "layers lists more than " + std::to_string(most_layers);
+        return false;
+    }
+    for (const json::Json& element : value->elements()) {
+        const std::string* text = element.string();
+        if (text == nullptr)
+            continue;
+        const std::optional<oamut::Layer> layer = oamut::parse_layer(*text);
+        if (!layer)
+            continue;
+        bool seen = false;
+        for (const oamut::Layer kept : package.layers) {
+            if (kept == *layer)
+                seen = true;
+        }
+        if (!seen)
+            package.layers.push_back(*layer);
+    }
+    return true;
+}
+
+/// Reads one choice value. `where` names it in a refusal.
+bool read_choice_value(
+    const json::Json& element, std::string_view where, ChoiceValueText& out, std::string& reason
+) {
+    constexpr std::size_t most_label_bytes = 64;
+    if (const std::string* written = element.number_text()) {
+        oamod::Number number;
+        if (oamod::parse_number(*written, number) != oamod::NumberStatus::ok) {
+            reason = std::string(where) + " is not a number";
+            return false;
+        }
+        out.number = true;
+        out.text = *written;
+        return true;
+    }
+    const std::string* text = element.string();
+    if (text == nullptr) {
+        reason = std::string(where) + " is not a number or a string of 1 to 64 bytes";
+        return false;
+    }
+    if (text->empty() || text->size() > most_label_bytes) {
+        reason = std::string(where) + " is not 1 to 64 bytes";
+        return false;
+    }
+    out.text = *text;
+    return true;
+}
+
+/// Reads a choice option's values, labels and default into `summary`.
+bool read_choice_option(
+    const json::Json& object, std::string_view where, OptionSummary& summary, std::string& reason
+) {
+    constexpr std::size_t most_label_bytes = 64;
+    const json::Json* values = object.find("values");
+    if (values == nullptr || values->type() != json::JsonType::array ||
+        values->elements().size() < 2 || values->elements().size() > oamut::most_choice_values) {
+        reason = std::string(where) + ".values is not 2 to " +
+                 std::to_string(oamut::most_choice_values) + " values";
+        return false;
+    }
+    bool saw = false;
+    bool numbers = false;
+    for (std::size_t slot = 0; slot < values->elements().size(); ++slot) {
+        const std::string item = std::string(where) + ".values[" + std::to_string(slot) + "]";
+        ChoiceValueText value;
+        if (!read_choice_value(values->elements()[slot], item, value, reason))
+            return false;
+        if (saw && value.number != numbers) {
+            reason = item + " is not the same kind of value";
+            return false;
+        }
+        saw = true;
+        numbers = value.number;
+        summary.values.push_back(std::move(value));
+    }
+    if (const json::Json* labels = object.find("labels")) {
+        if (labels->type() != json::JsonType::array ||
+            labels->elements().size() != summary.values.size()) {
+            reason = std::string(where) + ".labels is not one label for each value";
+            return false;
+        }
+        for (std::size_t slot = 0; slot < labels->elements().size(); ++slot) {
+            const std::string* text = labels->elements()[slot].string();
+            if (text == nullptr || text->empty() || text->size() > most_label_bytes) {
+                reason = std::string(where) + ".labels[" + std::to_string(slot) +
+                         "] is not 1 to 64 bytes";
+                return false;
+            }
+            summary.value_labels.push_back(*text);
+        }
+    }
+    const json::Json* fallback = object.find("default");
+    if (fallback == nullptr)
+        return true;
+    for (const ChoiceValueText& value : summary.values) {
+        if (value.number) {
+            oamod::Number listed;
+            oamod::Number chosen;
+            std::string chosen_text;
+            if (oamod::parse_number(value.text, listed) == oamod::NumberStatus::ok &&
+                read_json_number(*fallback, chosen, chosen_text) &&
+                oamod::compare_numbers(listed, chosen) == 0) {
+                summary.default_text = std::move(chosen_text);
+                return true;
+            }
+        } else if (const std::string* text = fallback->string()) {
+            if (*text == value.text) {
+                summary.default_text = *text;
+                return true;
+            }
+        }
+    }
+    reason = std::string(where) + ".default is not one of the values";
+    return false;
+}
+
+/// Reads a number option's minimum, maximum, step and default.
+bool read_number_option(
+    const json::Json& object, std::string_view where, OptionSummary& summary, std::string& reason
+) {
+    const json::Json* minimum = object.find("min");
+    const json::Json* maximum = object.find("max");
+    const json::Json* step = object.find("step");
+    oamod::Number minimum_number;
+    oamod::Number maximum_number;
+    oamod::Number step_number;
+    if (minimum == nullptr || !read_json_number(*minimum, minimum_number, summary.minimum)) {
+        reason = std::string(where) + ".min is not a number";
+        return false;
+    }
+    if (maximum == nullptr || !read_json_number(*maximum, maximum_number, summary.maximum)) {
+        reason = std::string(where) + ".max is not a number";
+        return false;
+    }
+    if (step == nullptr || !read_json_number(*step, step_number, summary.step)) {
+        reason = std::string(where) + ".step is not a number";
+        return false;
+    }
+    if (oamod::compare_numbers(minimum_number, maximum_number) >= 0) {
+        reason = std::string(where) + ".min is not below max";
+        return false;
+    }
+    const oamod::Number zero = oamod::number_from_integer(0);
+    if (oamod::compare_numbers(step_number, zero) <= 0) {
+        reason = std::string(where) + ".step is not above zero";
+        return false;
+    }
+    const json::Json* fallback = object.find("default");
+    if (fallback == nullptr)
+        return true;
+    oamod::Number chosen;
+    if (!read_json_number(*fallback, chosen, summary.default_text)) {
+        reason = std::string(where) + ".default is not a number";
+        return false;
+    }
+    if (oamod::compare_numbers(chosen, minimum_number) < 0 ||
+        oamod::compare_numbers(chosen, maximum_number) > 0) {
+        reason = std::string(where) + ".default is not on a step";
+        return false;
+    }
+    int32_t floor = minimum_number.exponent;
+    if (maximum_number.exponent < floor)
+        floor = maximum_number.exponent;
+    if (step_number.exponent < floor)
+        floor = step_number.exponent;
+    if (chosen.exponent < floor)
+        floor = chosen.exponent;
+    const std::string span = positive_difference(chosen, minimum_number, floor);
+    const std::string step_digits = scaled_digits(step_number, floor);
+    if (!divides_exactly(span, step_digits)) {
+        reason = std::string(where) + ".default is not on a step";
+        return false;
+    }
+    return true;
+}
+
+/// Reads one option of a known type. An unknown type is the caller's to skip.
+bool read_known_option(
+    const json::Json& object,
+    std::string_view where,
+    oamut::OptionType type,
+    OptionSummary& summary,
+    std::string& reason
+) {
+    constexpr std::size_t most_label_bytes = 64;
+    summary.type = type;
+    const json::Json* id_value = object.find("id");
+    const std::string* id_text = id_value == nullptr ? nullptr : id_value->string();
+    if (id_text == nullptr || !option_id_text(*id_text)) {
+        reason = std::string(where) + ".id is not an option id";
+        return false;
+    }
+    summary.id = *id_text;
+    const json::Json* label = object.find("label");
+    const std::string* label_text = label == nullptr ? nullptr : label->string();
+    if (label_text == nullptr || label_text->empty() || label_text->size() > most_label_bytes) {
+        reason = std::string(where) + ".label is not 1 to 64 bytes";
+        return false;
+    }
+    summary.label = *label_text;
+    if (type == oamut::OptionType::toggle) {
+        const json::Json* fallback = object.find("default");
+        if (fallback == nullptr)
+            return true;
+        const std::optional<bool> flag = fallback->boolean();
+        if (!flag) {
+            reason = std::string(where) + ".default is not true or false";
+            return false;
+        }
+        summary.default_text = *flag ? "true" : "false";
+        return true;
+    }
+    if (type == oamut::OptionType::choice)
+        return read_choice_option(object, where, summary, reason);
+    return read_number_option(object, where, summary, reason);
+}
+
+/// Reads `options`. An option of an unknown type is skipped.
+bool read_options(const json::Json& object, Package& package, std::string& reason) {
+    const json::Json* value = object.find("options");
+    if (value == nullptr)
+        return true;
+    if (value->type() != json::JsonType::array) {
+        reason = "options is not a list";
+        return false;
+    }
+    if (value->elements().size() > oamut::most_options) {
+        reason = "options lists more than " + std::to_string(oamut::most_options);
+        return false;
+    }
+    for (std::size_t slot = 0; slot < value->elements().size(); ++slot) {
+        const std::string where = "options[" + std::to_string(slot) + "]";
+        const json::Json& element = value->elements()[slot];
+        if (element.type() != json::JsonType::object) {
+            reason = where + " is not an object";
+            return false;
+        }
+        const json::Json* type_value = element.find("type");
+        const std::string* type_text = type_value == nullptr ? nullptr : type_value->string();
+        oamut::OptionType type = oamut::OptionType::toggle;
+        bool known = false;
+        if (type_text != nullptr && *type_text == "toggle") {
+            type = oamut::OptionType::toggle;
+            known = true;
+        } else if (type_text != nullptr && *type_text == "choice") {
+            type = oamut::OptionType::choice;
+            known = true;
+        } else if (type_text != nullptr && *type_text == "number") {
+            type = oamut::OptionType::number;
+            known = true;
+        }
+        if (!known)
+            continue;
+        OptionSummary summary;
+        if (!read_known_option(element, where, type, summary, reason))
+            return false;
+        package.options.push_back(std::move(summary));
+    }
+    return true;
+}
+
+/// Reads the mutator members other than `requires.mutators`, which `read_requires` reads.
+bool read_mutator_facts(const json::Json& object, Package& package, std::string& reason) {
+    if (!read_works_with(object, package, reason))
+        return false;
+    if (!read_mutator_objects(
+            object,
+            "conflicts_with",
+            oamut::most_conflicts,
+            package.id,
+            &package.requires_mutators,
+            package.conflicts_with,
+            reason
+        ))
+        return false;
+    if (!read_layers(object, package, reason))
+        return false;
+    return read_options(object, package, reason);
+}
+
 /// Reads `requires` when the package names it.
 bool read_requires(const json::Json& object, Package& package, std::string& reason) {
     const json::Json* value = object.find("requires");
@@ -245,6 +781,17 @@ bool read_requires(const json::Json& object, Package& package, std::string& reas
         }
         package.requires_base = *text;
     }
+    // Prerequisites are a mutator's. On every other kind the member is ignored.
+    if (package.kind == Kind::oamut && !read_mutator_objects(
+                                           *value,
+                                           "requires.mutators",
+                                           oamut::most_required,
+                                           package.id,
+                                           nullptr,
+                                           package.requires_mutators,
+                                           reason
+                                       ))
+        return false;
     return true;
 }
 
@@ -720,10 +1267,14 @@ bool read_package(const json::Json& value, Package& package, std::string& reason
         return false;
     }
     package.file = *file_text;
-    if (kind == Kind::oamod || kind == Kind::expansion) {
+    if (kind == Kind::oamod || kind == Kind::expansion || kind == Kind::oamut) {
         if (!require_text(value, "version", 1, 32, package.version, reason))
             return false;
     } else if (!optional_text(value, "version", 1, 32, package.version, reason)) {
+        return false;
+    }
+    if (kind == Kind::oamut && !oamut::parse_version(package.version)) {
+        reason = "version is not a mutator version";
         return false;
     }
     const json::Json* revision = value.find("revision");
@@ -799,6 +1350,8 @@ bool read_package(const json::Json& value, Package& package, std::string& reason
         }
     }
     if (kind == Kind::expansion && !read_expansion_lists(value, package, reason))
+        return false;
+    if (kind == Kind::oamut && !read_mutator_facts(value, package, reason))
         return false;
     return true;
 }

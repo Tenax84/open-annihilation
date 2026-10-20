@@ -58,5 +58,8 @@ the signature, the sequence, expiry and key rotation.
   A catalogue is expired when that clock is at or after `expires`.
 - A map's title is 1 to 64 bytes, and a name under `compatible` is 1 to 256
   bytes. A map's stem is whatever text is written before the one `@`.
-- A field that belongs to another kind is ignored.
+- A field that belongs to another kind is ignored. A mutator may name
+  prerequisites, conflicts, what it works with, layers and options. One
+  broken member leaves that entry out. An unknown layer name or option
+  type is skipped, and those members are ignored on every other kind.
 - A package's `size` may be 2^32.

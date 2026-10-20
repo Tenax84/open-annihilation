@@ -9,6 +9,7 @@
 #include "oa/base/sha256.hpp"
 #include "oa/data/registry/descriptor.hpp"
 #include "oa/formats/oamod/package_keys.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/formats/url.hpp"
 
 #include <cstdint>
@@ -42,12 +43,13 @@ enum class Kind : uint8_t {
     oamod,     ///< a mod
     oamap,     ///< a map pack
     expansion, ///< an expansion package
+    oamut,     ///< a mutator
 };
 
 /// The kind as the catalogue writes it.
 ///
 /// @param kind the kind
-/// @return `oalang`, `oamod`, `oamap` or `expansion`; never null
+/// @return `oalang`, `oamod`, `oamap`, `expansion` or `oamut`; never null
 [[nodiscard]] inline const char* kind_name(Kind kind) noexcept {
     switch (kind) {
     case Kind::oalang:
@@ -58,6 +60,8 @@ enum class Kind : uint8_t {
         return "oamap";
     case Kind::expansion:
         return "expansion";
+    case Kind::oamut:
+        return "oamut";
     }
     return "";
 }
@@ -68,7 +72,7 @@ enum class Kind : uint8_t {
 /// Every other kind's file ends with the kind's own name.
 ///
 /// @param kind the kind
-/// @return `oalang`, `oamod`, `oamap` or `oaexp`; never null
+/// @return `oalang`, `oamod`, `oamap`, `oaexp` or `oamut`; never null
 [[nodiscard]] inline const char* package_extension(Kind kind) noexcept {
     if (kind == Kind::expansion)
         return "oaexp";
@@ -88,15 +92,52 @@ struct MapEntry {
     std::vector<std::pair<std::string, bool>> compatible;
 };
 
+/// One mutator a catalogue entry names, with any version range as written.
+struct MutatorRequirement {
+    std::string id; ///< a mutator key, lower-case kebab-case of 1 to 64 bytes
+    /// The version range as written. Empty when the entry names no range.
+    std::string range_text;
+    /// The range, read with the mutator range parser. Absent when `range_text` is empty.
+    std::optional<formats::oamut::VersionRange> range;
+};
+
+/// One value of a choice option, as the catalogue writes it.
+struct ChoiceValueText {
+    bool number{false}; ///< true when the value is a JSON number
+    std::string text;   ///< the value as written
+};
+
+/// One option as the catalogue summarises it, for the Library to show.
+struct OptionSummary {
+    std::string id;    ///< an option id, a Lua name of 1 to 32 bytes
+    std::string label; ///< 1 to 64 bytes
+    /// `toggle`, `choice` or `number`.
+    formats::oamut::OptionType type{formats::oamut::OptionType::toggle};
+    /// The default as written: `true` or `false`, a choice value's text, or a
+    /// number's text. Empty when the entry names none.
+    std::string default_text;
+    /// A choice's values, as written. Empty for a toggle or a number.
+    std::vector<ChoiceValueText> values;
+    /// One label per choice value, when the entry names them. Empty otherwise.
+    std::vector<std::string> value_labels;
+    /// A number option's minimum, as written. Empty for a toggle or a choice.
+    std::string minimum;
+    /// A number option's maximum, as written. Empty for a toggle or a choice.
+    std::string maximum;
+    /// A number option's step, as written. Empty for a toggle or a choice.
+    std::string step;
+};
+
 /// One package the catalogue offers. A skipped entry is not stored here.
 struct Package {
     Kind kind = Kind::oamod;
-    std::string id;      ///< the package key; unique in the catalogue, ignoring case
-    std::string name;    ///< the name a player sees, 1 to 64 bytes
-    std::string version; ///< a mod's version, 1 to 32 bytes; empty when this kind has none
-    int32_t revision{};  ///< a mod's revision, 1 to 65535; 0 when this package names none
-    int64_t release{};   ///< the release number, 1 to 2^31-1
-    uint64_t size{};     ///< the package's size in bytes, 1 to 2^32
+    std::string id;   ///< the package key; unique in the catalogue, ignoring case
+    std::string name; ///< the name a player sees, 1 to 64 bytes
+    /// 1 to 32 bytes; empty when this kind names none. A mutator's is a mutator version.
+    std::string version;
+    int32_t revision{};            ///< a mod's revision, 1 to 65535; 0 when this package names none
+    int64_t release{};             ///< the release number, 1 to 2^31-1
+    uint64_t size{};               ///< the package's size in bytes, 1 to 2^32
     base::sha256::Digest sha256{}; ///< the package's SHA-256
     std::string file;              ///< the reference whose last segment is `<sha256>.<kind>`
     std::string publisher;         ///< 1 to 64 bytes; empty when the entry names none
@@ -134,6 +175,16 @@ struct Package {
     /// every other kind.
     std::vector<std::string> extends;
     std::vector<MapEntry> maps; ///< a map pack's maps; empty for every other kind
+    /// Prerequisites, in the order they apply. Empty for every other kind.
+    std::vector<MutatorRequirement> requires_mutators;
+    /// Mutators this one cannot run beside. Empty for every other kind.
+    std::vector<MutatorRequirement> conflicts_with;
+    /// Conditions this mutator works with, as written. Empty for every other kind.
+    std::vector<std::string> works_with;
+    /// Layers this mutator uses, known names kept once. Empty for every other kind.
+    std::vector<formats::oamut::Layer> layers;
+    /// One summary per option. Empty for every other kind.
+    std::vector<OptionSummary> options;
 };
 
 /// One catalogue that was read. `problems` holds why entries were skipped.
@@ -182,10 +233,10 @@ read_catalogue(std::span<const uint8_t> bytes, Catalogue& out, std::string* erro
 
 /// Reports whether a package key is the key for its kind.
 ///
-/// A mod, a map pack or an expansion uses lower-case kebab-case of 1 to 64
-/// bytes: words of `a`-`z` and `0`-`9` joined by single hyphens. A language
-/// pack uses a language tag of 2 to 35 bytes: letters, then hyphen-joined
-/// parts of letters and digits. No key contains an at sign.
+/// A mod, a map pack, an expansion or a mutator uses lower-case kebab-case
+/// of 1 to 64 bytes: words of `a`-`z` and `0`-`9` joined by single hyphens.
+/// A language pack uses a language tag of 2 to 35 bytes: letters, then
+/// hyphen-joined parts of letters and digits. No key contains an at sign.
 ///
 /// @param kind the package's kind
 /// @param text the key
