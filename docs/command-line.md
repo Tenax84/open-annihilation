@@ -325,6 +325,7 @@ Network play's own checks, the last rows, are in every build.
 | `--check-render-tiers` | Checks the accelerated drawing of the main menu and a skirmish against the processor's. |
 | `--check-match-orders` | Clicks the order page's buttons and checks what the units do. |
 | `--check-side-orders` | Clicks each side's order page buttons, whatever prefix their names carry, and checks what the units do. |
+| `--check-side-data-per-match` | Plays skirmishes and checks each match reads side data again when `gamedata/sidedata.tdf` has changed. |
 | `--check-factory-orders` | Gives a Kbot Lab a move and checks the unit it builds carries it out. |
 | `--check-unit-speech` | Selects and orders the commander and checks what it says. |
 | `--check-download-builds` | Builds a unit from a download page. |
@@ -436,7 +437,7 @@ one, for the engine's developers.
 | `--seed N` | Starts the random numbers from `N`, so two runs play alike. |
 | `--trace-digest FILE` | Writes a digest of the match at each tick. |
 | `--trace-units FILE` | Adds a line for each unit to it. It needs `--trace-digest`. |
-| `--trace-lookups FILE` | Writes every game file and listing the run looks up. |
+| `--trace-lookups FILE` | Writes every game file and listing the run looks up, and, for a path a mutator serves or hides, which mutator. |
 | `--trace-input` | Prints each press of the pointer's buttons, and where it lands, each move of the pointer over a match, and the game's window, its display and the pointer as a match begins and at each change of the window or a display, on standard error. [Below](#--trace-input). |
 | `--debug-order-lines` | Draws each construction beam as a plain line, to debug it. |
 | `--draw-threads N` | The threads that draw, from 1 through 32. |

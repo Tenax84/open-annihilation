@@ -41,4 +41,11 @@ if(BUILD_TESTING)
     oa-options)
   add_test(NAME hpi-pack-layer COMMAND oa-hpi-pack-layer-test)
   set_tests_properties(hpi-pack-layer PROPERTIES TIMEOUT 60)
+  # One mutator layer above the loose folders, mounted and replaced while
+  # other threads read, hiding the paths it masks.
+  add_executable(oa-hpi-mutator-layer-test tests/mutator_layer_test.cpp)
+  target_link_libraries(oa-hpi-mutator-layer-test PRIVATE oa-formats-hpi oa-base-threads
+    oa-test-support oa-options)
+  add_test(NAME hpi-mutator-layer COMMAND oa-hpi-mutator-layer-test)
+  set_tests_properties(hpi-mutator-layer PROPERTIES TIMEOUT 60)
 endif()

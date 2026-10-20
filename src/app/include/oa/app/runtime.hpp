@@ -24,6 +24,7 @@
 #include "oa/ui/display_layout.hpp"
 #include "oa/audio/sdl_audio.hpp"
 #include "oa/base/game_loop.hpp"
+#include "oa/base/sha256.hpp"
 #include "oa/data/defs/locale.hpp"
 #include "oa/data/defs/rule_keys.hpp"
 #include "oa/data/defs/sides.hpp"
@@ -7539,10 +7540,23 @@ class Runtime final : public menu::Host,
     // Side table, player records and respawn view of the offline match
     // (runtime_sides.cpp).
 
-    /// Loads the side table once, as engine start-up does; every match copies it into Game.sides.
+    /// Loads the run's side table, which every match uses unless its side data differs.
     ///
-    /// Throws std::runtime_error when SIDEDATA.TDF fails or defines no side.
+    /// Records the bytes of gamedata/sidedata.tdf this run read. Throws
+    /// std::runtime_error when that file fails or defines no side.
     void load_side_table();
+
+    /// Reads gamedata/sidedata.tdf again for the match about to start, in the language the run
+    /// started with.
+    ///
+    /// When those bytes equal the run's, the match uses the run's table. When they differ, the
+    /// match plays the sides, commanders and HUD art names parsed from them, and the run's table
+    /// is kept until the match ends. Side data that cannot be played throws std::runtime_error
+    /// and leaves the table in place.
+    void load_match_side_table();
+
+    /// Puts the run's side table back when a match has been playing another.
+    void restore_run_side_table() noexcept;
 
     /// Loads the two fonts the engine keeps for its whole run: COMIX, which the message log draws
     /// in, and smlfont, from the language folder of the game's language when it has them
@@ -11897,6 +11911,17 @@ class Runtime final : public menu::Host,
     /// must sing. Throws std::runtime_error on a failure.
     void check_unit_speech();
 
+    /// Plays skirmishes and checks each one reads gamedata/sidedata.tdf again.
+    ///
+    /// Needs --mod-dir on a folder that does not already hold that file. The first match keeps
+    /// the commanders the run started with. A file written into the mod folder, giving slot 0's
+    /// side the other side's commander, is what the next match plays, and the menus return to the
+    /// run's sides when it ends. A file with no sides, and a commander the game has no unit for,
+    /// each refuse the start and leave the run's sides in place. With the file removed, the last
+    /// match keeps the run's table. Prints "side data per match check: passed".
+    /// Throws std::runtime_error on a failure.
+    void check_side_data_per_match();
+
     /// Places a finished structure of the local player's on the first free site in the rings of
     /// cells around a unit.
     ///
@@ -15670,6 +15695,12 @@ class Runtime final : public menu::Host,
     // Build page button captions by gadget index (the queued counts).
     std::vector<std::string> build_captions_;
     oa::data::defs::SideTable side_table_{};
+    /// SHA-256 of the gamedata/sidedata.tdf bytes the run read. All zero when the file was missing.
+    oa::base::sha256::Digest side_data_digest_{};
+    /// True when the run found no gamedata/sidedata.tdf, so the zero digest is not an empty file.
+    bool side_data_missing_ = false;
+    /// The run's side table while a match plays one parsed from different bytes.
+    std::unique_ptr<oa::data::defs::SideTable> run_side_table_;
     // The language word SIDEDATA.TDF and the interface art and fonts its
     // sides name are read for, from their language folders first: the
     // game's as it starts, kept for the run, as 3.1c loads them as it

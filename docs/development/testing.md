@@ -303,6 +303,14 @@ game. The side commanders check runs
 as one test for each part (`--part`): `art`, `rule`, `loopback`, `give`, and
 `records-GROUP`, the navigation group over its mod folder.
 
+`native-side-data-per-match` (`--check-side-data-per-match`) needs `--mod-dir`
+on an empty folder. It plays a skirmish on the sides the game started with,
+then writes `gamedata/sidedata.tdf` into that folder so one side names the
+other side's commander and plays again. A file with no sides, and a
+commander the game has no unit for, each refuse the start and leave those
+sides in place. With the file removed, one more skirmish plays the sides
+the game started with. The skirmish setup keeps that side count throughout.
+
 ### The demo's installer
 
 `OA_DEMO_INSTALLER` names the installer of the Total Annihilation demo (1997):
