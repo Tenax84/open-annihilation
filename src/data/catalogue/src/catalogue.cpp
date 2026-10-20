@@ -354,22 +354,25 @@ bool read_mutator_objects(
     std::string_view self_id,
     const std::vector<MutatorRequirement>* prerequisites,
     std::vector<MutatorRequirement>& out,
-    std::string& reason
+    std::string& reason,
+    std::string_view label = {}
 ) {
+    // Refusals name the member as the catalogue writes it (`requires.mutators`).
+    const std::string_view shown = label.empty() ? member : label;
     const json::Json* value = object.find(member);
     if (value == nullptr)
         return true;
     if (value->type() != json::JsonType::array) {
-        reason = std::string(member) + " is not a list";
+        reason = std::string(shown) + " is not a list";
         return false;
     }
     if (value->elements().size() > most) {
-        reason = std::string(member) + " lists more than " + std::to_string(most);
+        reason = std::string(shown) + " lists more than " + std::to_string(most);
         return false;
     }
     std::vector<std::string> seen;
     for (std::size_t slot = 0; slot < value->elements().size(); ++slot) {
-        const std::string where = std::string(member) + "[" + std::to_string(slot) + "]";
+        const std::string where = std::string(shown) + "[" + std::to_string(slot) + "]";
         const json::Json& element = value->elements()[slot];
         if (element.type() != json::JsonType::object) {
             reason = where + " is not an object";
@@ -784,12 +787,13 @@ bool read_requires(const json::Json& object, Package& package, std::string& reas
     // Prerequisites are a mutator's. On every other kind the member is ignored.
     if (package.kind == Kind::oamut && !read_mutator_objects(
                                            *value,
-                                           "requires.mutators",
+                                           "mutators",
                                            oamut::most_required,
                                            package.id,
                                            nullptr,
                                            package.requires_mutators,
-                                           reason
+                                           reason,
+                                           "requires.mutators"
                                        ))
         return false;
     return true;
