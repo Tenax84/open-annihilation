@@ -3442,7 +3442,8 @@ The run names the profile and its sim hash. `--print-profile` applies the
 INI settings of the folder it prints, as a game does (`mod_settings_of`).
 `--accept-unimplemented-hacks` accepts, with a warning each, hacks this build
 does not implement yet, for development. `--trace-lookups FILE` writes every
-game file and listing the run looks up, one a line, which shows that a
+game file and listing the run looks up, one a line, and, for a path a
+mutator serves or hides, which mutator, which shows that a
 renamed directory is never read by its base name. `app-mod-profile` and
 `game-directory` cover these; `native-mod-layout-data` checks a mod's real
 data (docs/development/testing.md).
