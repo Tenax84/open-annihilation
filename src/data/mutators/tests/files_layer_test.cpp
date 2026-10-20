@@ -82,7 +82,7 @@ std::string fold(std::string_view text) {
 ///
 /// @param text the text
 /// @return the bytes
-std::vector<std::uint8_t> bytes_of(std::string_view text) {
+std::vector<uint8_t> bytes_of(std::string_view text) {
     return {text.begin(), text.end()};
 }
 
@@ -102,7 +102,7 @@ void write_text(const fs::path& path, std::string_view text) {
 ///
 /// @param path the host path
 /// @param bytes the bytes
-void write_bytes(const fs::path& path, const std::vector<std::uint8_t>& bytes) {
+void write_bytes(const fs::path& path, const std::vector<uint8_t>& bytes) {
     fs::create_directories(path.parent_path());
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
     stream.write(
@@ -402,6 +402,88 @@ void archive_group_and_name_order(const Scratch& scratch) {
         const auto read = earlier_layer.spec.archives[0].archive->read("units/RIDGEA.fbi");
         require(read.ok() && *read.value == bytes_of("from-a"), "earlier: bytes");
     }
+}
+
+/// An underscore sorts after letters in NTFS order, so `aab.ufo` wins.
+///
+/// @param scratch the scratch directory
+void underscore_archive_follows_ntfs_order(const Scratch& scratch) {
+    const fs::path package = scratch.dir("ntfs/ridge-models");
+    write_archive(
+        package / "files" / "a_b.ufo", {{"units/RIDGEA.fbi", bytes_of("from-underscore")}}
+    );
+    write_archive(package / "files" / "aab.ufo", {{"units/RIDGEA.fbi", bytes_of("from-aab")}});
+    const mutators::MutatorFiles listed[] = {
+        mutator("ridge-models", package, add_plan("files")),
+    };
+    const mutators::FilesLayer layer = mutators::build_files_layer(listed, kPlain);
+    require(layer.failures.empty(), "ntfs: no failure");
+    require(layer.spec.archives.size() == 1, "ntfs: one archive");
+    if (!layer.spec.archives.empty()) {
+        require(layer.spec.archives[0].location.filename() == "aab.ufo", "ntfs: aab.ufo wins");
+        const auto read = layer.spec.archives[0].archive->read("units/RIDGEA.fbi");
+        require(read.ok() && *read.value == bytes_of("from-aab"), "ntfs: bytes");
+    }
+}
+
+/// `FILES` finds the directory `files` whatever the host does with case.
+///
+/// @param scratch the scratch directory
+void add_folder_ignores_letter_case(const Scratch& scratch) {
+    const fs::path package = scratch.dir("case/ridge-models");
+    write_text(package / "files" / "units" / "RIDGEA.fbi", "from-files");
+    const mutators::MutatorFiles listed[] = {
+        mutator("ridge-models", package, add_plan("FILES")),
+    };
+    const mutators::FilesLayer layer = mutators::build_files_layer(listed, kPlain);
+    require(layer.failures.empty() && layer.notes.empty(), "case: FILES finds files");
+    const oa::MutatorLayerEntry* unit = find_entry(layer, "units/RIDGEA.fbi");
+    require(unit != nullptr && read_text(unit->host) == "from-files", "case: the unit");
+
+    const fs::path deeper = scratch.dir("case/deeper");
+    write_text(deeper / "more" / "files" / "units" / "RIDGEA.fbi", "from-deeper");
+    mutators::FilesPlan nested;
+    nested.add.push_back("MORE/FILES");
+    const mutators::MutatorFiles nested_listed[] = {
+        mutator("ridge-models", deeper, std::move(nested)),
+    };
+    const mutators::FilesLayer nested_layer = mutators::build_files_layer(nested_listed, kPlain);
+    require(nested_layer.failures.empty() && nested_layer.notes.empty(), "case: each segment");
+    const oa::MutatorLayerEntry* deeper_unit = find_entry(nested_layer, "units/RIDGEA.fbi");
+    require(
+        deeper_unit != nullptr && read_text(deeper_unit->host) == "from-deeper",
+        "case: MORE/FILES finds more/files"
+    );
+}
+
+/// Two directory entries that fold together refuse the mutator.
+///
+/// A case-insensitive volume cannot hold both names, and the case is skipped.
+///
+/// @param scratch the scratch directory
+void two_folded_names_refuse_the_folder(const Scratch& scratch) {
+    const fs::path package = scratch.dir("fail-fold/bad");
+    std::error_code create_error;
+    fs::create_directories(package / "files", create_error);
+    fs::create_directories(package / "FILES", create_error);
+    write_text(package / "files" / "units" / "RIDGEB.fbi", "bad-unit");
+    std::size_t matches = 0;
+    for (const fs::directory_entry& entry : fs::directory_iterator(package)) {
+        if (fold(entry.path().filename().string()) == "files")
+            ++matches;
+    }
+    if (matches < 2) {
+        std::fprintf(stderr, "files layer: skipped the folded-name case\n");
+        return;
+    }
+    mutators::FilesPlan plan = add_plan("files");
+    plan.mask.push_back("ai/*.txt");
+    expect_isolated_failure(
+        scratch,
+        "fail-fold",
+        mutator("bad-files", package, std::move(plan)),
+        "two entries fold to the same name"
+    );
 }
 
 /// The later mutator keeps a shared path, with one note naming both.
@@ -786,6 +868,8 @@ int main() {
     const Scratch scratch;
     loose_file_wins_over_own_archive(scratch);
     archive_group_and_name_order(scratch);
+    underscore_archive_follows_ntfs_order(scratch);
+    add_folder_ignores_letter_case(scratch);
     later_mutator_replaces(scratch);
     mask_hides_earlier_add(scratch);
     second_folder_replaces_quietly(scratch);
@@ -793,6 +877,7 @@ int main() {
     archive_below_the_top_is_a_file(scratch);
     other_file_at_the_top_is_not_an_archive(scratch);
     failures_leave_the_others(scratch);
+    two_folded_names_refuse_the_folder(scratch);
     link_inside_add_folder(scratch);
     build_picture_follows_the_unit(scratch);
     mounted_layer_serves_and_hides(scratch);

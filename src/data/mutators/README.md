@@ -103,17 +103,20 @@ naming both mutators. The mutator's own files are added after its masks, so
 a mask does not hide that mutator's own add.
 
 An add folder is a relative path inside the package: no `..`, no drive, no
-leading slash, and not a link. A folder that is not there adds nothing and
-records an `add_folder_missing` note, which is what a plan written as
-`files/<id>` relies on when that mod has no files of its own. A folder that
-exists is read as follows.
+leading slash, and not a link. Each segment is matched to the directory's
+entries without ASCII case, so `FILES` and `files` are the same folder on
+every machine. Two entries that fold to one name refuse the mutator. A
+folder that is not there adds nothing and records an `add_folder_missing`
+note, which is what a plan written as `files/<id>` relies on when that mod
+has no files of its own. A folder that exists is read as follows.
 
 - Only the top of the folder is searched for archives, and only `.ccx` and
   `.ufo` are opened. An archive further down is an ordinary loose file, as
   is any other kind of file.
 - `.ccx` archives are opened before `.ufo` archives. Within each group the
-  names are ordered by their bytes after ASCII case is folded, which is the
-  NTFS order, and the earlier name keeps a path both archives hold.
+  names follow NTFS order: compared byte by byte after ASCII upper-casing,
+  with the raw bytes breaking a tie. The earlier name keeps a path both
+  archives hold.
 - Loose files are walked after the archives. A loose file keeps a path over
   that folder's archives. Listings are sorted by the folded path, so the
   machine's own directory order never decides a file or the order of the

@@ -52,7 +52,7 @@ struct MutatorFiles {
 };
 
 /// Why a note was recorded while the layer was built.
-enum class FileNoteKind : std::uint8_t {
+enum class FileNoteKind : uint8_t {
     add_replaced,       ///< a later mutator replaced an earlier mutator's file
     add_masked,         ///< a mask hid a file an earlier mutator added
     add_folder_missing, ///< an add folder is not in the package
@@ -98,10 +98,12 @@ struct FilesLayer {
 /// Mutators are taken in list order. One that fails is left out, its masks,
 /// files, archives and notes with it, and the mutators after it are still
 /// built. For each mutator that is kept, every mask is applied first and
-/// then each add folder in the order listed. In one add folder, `.ccx`
-/// archives are read before `.ufo` archives, each group in name order after
-/// ASCII case is folded, an earlier archive keeps a shared path, and a loose
-/// file keeps a path over an archive. A later folder of the same mutator
+/// then each add folder in the order listed. An add folder is found one
+/// segment at a time, matching the written name without ASCII case, so the
+/// same plan names the same directory on every machine. In one add folder,
+/// `.ccx` archives are read before `.ufo` archives, each group in NTFS name
+/// order (byte by byte after ASCII upper-casing), an earlier archive keeps a
+/// shared path, and a loose file keeps a path over an archive. A later folder of the same mutator
 /// replaces an earlier path without a note. Paths of one folder are stored
 /// in folded-path order, after the paths its earlier folders stored. The
 /// same bytes are produced on every machine.

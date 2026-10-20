@@ -54,7 +54,7 @@ struct Candidate {
     /// Path of the file inside the archive.
     std::string archive_path;
     /// When the archive was opened. Earlier archives have smaller numbers.
-    std::uint64_t archive_sequence = 0;
+    uint64_t archive_sequence = 0;
 };
 
 /// One file kept in the working table.
@@ -74,9 +74,9 @@ struct Stored {
     /// Path of the file inside the archive.
     std::string archive_path;
     /// When the archive was opened.
-    std::uint64_t archive_sequence = 0;
+    uint64_t archive_sequence = 0;
     /// When the path was first added. Later folders do not change it.
-    std::uint64_t order = 0;
+    uint64_t order = 0;
 };
 
 /// The working table of one build. A failed mutator is thrown away with its copy.
@@ -90,9 +90,9 @@ struct State {
     /// Ids of the mutators kept so far, in list order.
     std::vector<std::string> ids;
     /// The next `Stored::order`.
-    std::uint64_t next_order = 0;
+    uint64_t next_order = 0;
     /// The next `Candidate::archive_sequence`.
-    std::uint64_t next_archive = 0;
+    uint64_t next_archive = 0;
 };
 
 /// One name directory_iterator returned, before the listing is sorted.
@@ -134,6 +134,32 @@ std::string folded_path(std::string_view text) {
             folded.push_back(static_cast<char>(character));
     }
     return folded;
+}
+
+/// Compares two names in NTFS directory order.
+///
+/// Bytes are compared after ASCII upper-casing, which is how
+/// AssetStore::discover orders archives. Names that upper-case to the same
+/// bytes are then compared raw, so the order is total and does not follow
+/// the host.
+///
+/// @param before one name
+/// @param after the other name
+/// @return true when `before` comes first
+bool ntfs_less(std::string_view before, std::string_view after) {
+    const auto upper = [](unsigned char byte) {
+        return byte >= 'a' && byte <= 'z' ? static_cast<unsigned char>(byte - 'a' + 'A') : byte;
+    };
+    const std::size_t count = std::min(before.size(), after.size());
+    for (std::size_t index = 0; index < count; ++index) {
+        const unsigned char before_byte = upper(static_cast<unsigned char>(before[index]));
+        const unsigned char after_byte = upper(static_cast<unsigned char>(after[index]));
+        if (before_byte != after_byte)
+            return before_byte < after_byte;
+    }
+    if (before.size() != after.size())
+        return before.size() < after.size();
+    return before < after;
 }
 
 /// Rewrites '\\' as '/' without changing case.
@@ -353,17 +379,27 @@ std::string folder_shape_problem(std::string_view folder) {
     return {};
 }
 
-/// Joins the package and a folder whose shape folder_shape_problem accepted.
+/// The directory an add folder names, after each segment is matched.
+struct AddTarget {
+    /// True when no directory has that name. Not a failure.
+    bool missing = false;
+    /// The host directory, in the spelling the file system returned.
+    fs::path host;
+};
+
+/// Splits an add folder into the segments that name directories.
 ///
-/// @param package_root the package folder
-/// @param folder the relative folder
-/// @return the host path, with empty names and "." skipped
-fs::path folder_host(const fs::path& package_root, std::string_view folder) {
-    fs::path relative;
+/// The shape has already been accepted, so there is no `..` and no empty
+/// segment. "." is skipped: it names the directory already reached.
+///
+/// @param folder the folder as written
+/// @return the segments, in order
+std::vector<std::string> folder_segments(std::string_view folder) {
+    std::vector<std::string> segments;
     std::string segment;
     const auto flush = [&]() {
         if (!segment.empty() && segment != ".")
-            relative /= segment;
+            segments.push_back(std::move(segment));
         segment.clear();
     };
     for (const char character : folder) {
@@ -373,7 +409,7 @@ fs::path folder_host(const fs::path& package_root, std::string_view folder) {
             segment.push_back(character);
     }
     flush();
-    return package_root / relative;
+    return segments;
 }
 
 /// Lists one directory and sorts it by the folded name.
@@ -426,7 +462,7 @@ bool list_directory(const fs::path& directory, std::vector<Listed>& listed, std:
 /// @param id the mutator that adds it
 /// @param order when the path was first added
 /// @return the stored file
-Stored store_candidate(const Candidate& candidate, const std::string& id, std::uint64_t order) {
+Stored store_candidate(const Candidate& candidate, const std::string& id, uint64_t order) {
     Stored stored;
     stored.path = candidate.path;
     stored.owner = id;
@@ -453,7 +489,7 @@ Stored store_candidate(const Candidate& candidate, const std::string& id, std::u
 /// @param notes receives replacement notes, or null when only projecting
 void overlay(
     std::map<std::string, Stored>& table,
-    std::uint64_t& next_order,
+    uint64_t& next_order,
     const std::vector<Candidate>& files,
     const std::string& id,
     std::vector<FileNote>* notes
@@ -461,7 +497,7 @@ void overlay(
     for (const Candidate& candidate : files) {
         const auto found = table.find(candidate.folded);
         if (found == table.end()) {
-            const std::uint64_t order = next_order;
+            const uint64_t order = next_order;
             ++next_order;
             table.emplace(candidate.folded, store_candidate(candidate, id, order));
             continue;
@@ -474,7 +510,7 @@ void overlay(
             note.other = found->second.owner;
             notes->push_back(std::move(note));
         }
-        const std::uint64_t order = found->second.order;
+        const uint64_t order = found->second.order;
         found->second = store_candidate(candidate, id, order);
     }
 }
@@ -544,12 +580,12 @@ bool paths_allowed(
 void read_archive(
     const std::shared_ptr<const oa::HpiArchive>& archive,
     const fs::path& location,
-    std::uint64_t sequence,
+    uint64_t sequence,
     std::map<std::string, Candidate>& files
 ) {
-    std::map<std::uint32_t, std::string> path_of_node;
+    std::map<uint32_t, std::string> path_of_node;
     for (const oa::ArchiveEntry& entry : archive->entries()) {
-        const std::optional<std::uint32_t> node = archive->lookup(entry.path);
+        const std::optional<uint32_t> node = archive->lookup(entry.path);
         if (!node)
             continue;
         if (archive->nodes()[*node].directory())
@@ -673,7 +709,7 @@ bool read_add_folder(
     const std::string& id,
     std::string_view folder,
     const fs::path& host,
-    std::uint64_t& next_archive,
+    uint64_t& next_archive,
     std::vector<Candidate>& files,
     std::string& reason
 ) {
@@ -702,6 +738,11 @@ bool read_add_folder(
         }
         others.push_back(item);
     }
+    const auto by_ntfs = [](const Listed& before, const Listed& after) {
+        return ntfs_less(before.name, after.name);
+    };
+    std::sort(ccx_archives.begin(), ccx_archives.end(), by_ntfs);
+    std::sort(ufo_archives.begin(), ufo_archives.end(), by_ntfs);
     if (ccx_archives.size() + ufo_archives.size() > add_folder_archive_limit) {
         return fail(
             reason,
@@ -727,7 +768,7 @@ bool read_add_folder(
                     refusal(id, "archive", item.name, std::string{message} + " (" + code + ")");
                 return false;
             }
-            const std::uint64_t sequence = next_archive;
+            const uint64_t sequence = next_archive;
             ++next_archive;
             const std::shared_ptr<const oa::HpiArchive> held =
                 std::make_shared<oa::HpiArchive>(std::move(*opened.value));
@@ -735,8 +776,8 @@ bool read_add_folder(
         }
         return true;
     };
-    // `.ccx` before `.ufo`. Each group is already in folded-name order, which
-    // is NTFS order for these names, and the earlier name keeps the path.
+    // `.ccx` before `.ufo`. Each group is in NTFS order (ASCII upper-case),
+    // and the earlier name keeps the path.
     if (!open_group(ccx_archives) || !open_group(ufo_archives))
         return false;
 
@@ -790,39 +831,104 @@ bool read_add_folder(
     return true;
 }
 
-/// Checks one add folder's shape and, when it exists, that it stays in the package.
+/// Finds the directory an add folder names, ignoring ASCII case.
+///
+/// Each segment is matched to one entry of its parent. The parent is listed
+/// and sorted, and the written name is compared folded. Two entries that
+/// fold to that name refuse the folder: a case-sensitive machine must not
+/// pick a different directory from a case-insensitive one. A segment that
+/// matches nothing makes the whole folder missing.
 ///
 /// @param mutator the mutator
 /// @param folder the folder as written
+/// @param[out] target the directory, or missing
 /// @param[out] reason the refusal
 /// @return false when the folder fails the mutator
-bool accept_add_folder(const MutatorFiles& mutator, std::string_view folder, std::string& reason) {
+bool resolve_add_folder(
+    const MutatorFiles& mutator, std::string_view folder, AddTarget& target, std::string& reason
+) {
+    target = {};
     if (const std::string shape = folder_shape_problem(folder); !shape.empty())
         return fail(reason, refusal(mutator.id, "add folder", folder, shape));
-    const fs::path host = folder_host(mutator.package_root, folder);
-    std::error_code status_error;
-    const fs::file_status status = fs::symlink_status(host, status_error);
-    if (status.type() == fs::file_type::not_found)
+
+    fs::path current = mutator.package_root;
+    for (const std::string& segment : folder_segments(folder)) {
+        std::error_code status_error;
+        const fs::file_status status = fs::symlink_status(current, status_error);
+        if (status.type() == fs::file_type::not_found) {
+            target.missing = true;
+            return true;
+        }
+        if (status_error)
+            return fail(reason, refusal(mutator.id, "add folder", folder, status_error.message()));
+        if (is_link(status) || reparse_point(current))
+            return fail(reason, refusal(mutator.id, "add folder", folder, "the folder is a link"));
+        if (status.type() != fs::file_type::directory) {
+            return fail(
+                reason, refusal(mutator.id, "add folder", folder, "the folder is not a directory")
+            );
+        }
+
+        std::vector<Listed> listed;
+        std::string listed_error;
+        if (!list_directory(current, listed, listed_error))
+            return fail(reason, refusal(mutator.id, "add folder", folder, listed_error));
+        const std::string want = folded_path(segment);
+        const Listed* match = nullptr;
+        std::size_t matches = 0;
+        for (const Listed& item : listed) {
+            if (folded_path(item.name) != want)
+                continue;
+            ++matches;
+            match = &item;
+        }
+        if (matches > 1) {
+            return fail(
+                reason,
+                refusal(mutator.id, "add folder", folder, "two entries fold to the same name")
+            );
+        }
+        if (matches == 0) {
+            target.missing = true;
+            return true;
+        }
+        if (match->link)
+            return fail(reason, refusal(mutator.id, "add folder", folder, "the folder is a link"));
+        if (!match->directory) {
+            return fail(
+                reason, refusal(mutator.id, "add folder", folder, "the folder is not a directory")
+            );
+        }
+        current = match->path;
+    }
+
+    std::error_code final_error;
+    const fs::file_status final_status = fs::symlink_status(current, final_error);
+    if (final_status.type() == fs::file_type::not_found) {
+        target.missing = true;
         return true;
-    if (status_error)
-        return fail(reason, refusal(mutator.id, "add folder", folder, status_error.message()));
-    if (is_link(status) || reparse_point(host))
+    }
+    if (final_error)
+        return fail(reason, refusal(mutator.id, "add folder", folder, final_error.message()));
+    if (is_link(final_status) || reparse_point(current))
         return fail(reason, refusal(mutator.id, "add folder", folder, "the folder is a link"));
-    if (status.type() != fs::file_type::directory) {
+    if (final_status.type() != fs::file_type::directory) {
         return fail(
             reason, refusal(mutator.id, "add folder", folder, "the folder is not a directory")
         );
     }
+
     std::error_code root_error;
     std::error_code host_error;
     const fs::path root = fs::weakly_canonical(mutator.package_root, root_error);
-    const fs::path resolved = fs::weakly_canonical(host, host_error);
+    const fs::path resolved = fs::weakly_canonical(current, host_error);
     if (root_error || host_error || !inside_directory(root, resolved)) {
         return fail(
             reason,
             refusal(mutator.id, "add folder", folder, "the folder is not inside the package")
         );
     }
+    target.host = current;
     return true;
 }
 
@@ -898,9 +1004,13 @@ bool apply_mutator(
         if (!verdict.allowed())
             return fail(reason, refusal(mutator.id, "mask", pattern, verdict.message));
     }
+    std::vector<AddTarget> targets;
+    targets.reserve(mutator.plan.add.size());
     for (const std::string& folder : mutator.plan.add) {
-        if (!accept_add_folder(mutator, folder, reason))
+        AddTarget target;
+        if (!resolve_add_folder(mutator, folder, target, reason))
             return false;
+        targets.push_back(std::move(target));
     }
 
     for (const std::string& pattern : mutator.plan.mask)
@@ -908,26 +1018,26 @@ bool apply_mutator(
 
     std::vector<std::vector<Candidate>> folders;
     folders.reserve(mutator.plan.add.size());
-    for (const std::string& folder : mutator.plan.add) {
-        const fs::path host = folder_host(mutator.package_root, folder);
-        std::error_code status_error;
-        const fs::file_status status = fs::symlink_status(host, status_error);
-        if (status.type() == fs::file_type::not_found) {
+    for (std::size_t index = 0; index < mutator.plan.add.size(); ++index) {
+        const AddTarget& target = targets[index];
+        if (target.missing) {
             FileNote note;
             note.kind = FileNoteKind::add_folder_missing;
-            note.path = folder;
+            note.path = mutator.plan.add[index];
             note.mutator = mutator.id;
             state.notes.push_back(std::move(note));
             continue;
         }
         std::vector<Candidate> files;
-        if (!read_add_folder(mutator.id, folder, host, state.next_archive, files, reason))
+        if (!read_add_folder(
+                mutator.id, mutator.plan.add[index], target.host, state.next_archive, files, reason
+            ))
             return false;
         folders.push_back(std::move(files));
     }
 
     std::map<std::string, Stored> projected = state.table;
-    std::uint64_t projected_order = state.next_order;
+    uint64_t projected_order = state.next_order;
     for (const std::vector<Candidate>& files : folders)
         overlay(projected, projected_order, files, mutator.id, nullptr);
     if (projected.size() > oa::formats::hpi::MutatorLayerEntryLimit) {
@@ -967,7 +1077,7 @@ void fill_layer(const State& state, FilesLayer& result) {
 
     struct HeldArchive {
         /// When the archive was opened.
-        std::uint64_t sequence = 0;
+        uint64_t sequence = 0;
         /// The archive record the spec keeps.
         oa::MutatorLayerArchive archive;
     };
