@@ -85,6 +85,68 @@
       "size": 800,
       "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "file": "/v1/p/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.oalang"
+    },
+    {
+      "kind": "oamut",
+      "id": "steady-hands",
+      "name": "Steady Hands",
+      "version": "1.2",
+      "release": 1,
+      "size": 1600,
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "file": "/v1/p/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.oamut",
+      "author": "OA team",
+      "summary": "A made-up mutator used by the specification.",
+      "tags": [
+        "aim"
+      ],
+      "badge": "/v1/i/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.png",
+      "requires": {
+        "mutators": [
+          {
+            "id": "calm-seas",
+            "version": ">= 1.0"
+          }
+        ]
+      },
+      "works_with": [
+        "ta-3.1c",
+        "ridge >= 1.0"
+      ],
+      "conflicts_with": [
+        {
+          "id": "shaky-grip"
+        }
+      ],
+      "layers": [
+        "units",
+        "weapons"
+      ],
+      "options": [
+        {
+          "id": "grip",
+          "label": "Grip",
+          "type": "choice",
+          "values": [
+            "soft",
+            "firm"
+          ],
+          "labels": [
+            "Soft",
+            "Firm"
+          ],
+          "default": "firm"
+        },
+        {
+          "id": "sway",
+          "label": "Sway",
+          "type": "number",
+          "min": 0,
+          "max": 2,
+          "step": 0.5,
+          "default": 1
+        }
+      ]
     }
   ]
 }

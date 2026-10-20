@@ -205,6 +205,7 @@ add_subdirectory(src/formats/json)
 add_subdirectory(src/formats/url)
 add_subdirectory(src/data/mod-profile)
 add_subdirectory(src/data/map-pack)
+add_subdirectory(src/data/mutator-library)
 add_subdirectory(src/data/map-fit)
 add_subdirectory(src/data/pe-icon)
 add_subdirectory(src/formats/zip)
@@ -279,6 +280,7 @@ add_subdirectory(src/formats/sqsh)
 add_subdirectory(src/formats/hpi)
 add_subdirectory(src/data/defs)
 add_subdirectory(src/data/field-schema)
+add_subdirectory(src/data/mutation-rules)
 add_subdirectory(src/data/mutators)
 add_subdirectory(src/present/world-renderer)
 add_subdirectory(src/present/gpu-world)
@@ -1080,6 +1082,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_mod_install.cpp src/app/runtime_content.cpp src/app/runtime_challenge.cpp
   src/app/runtime_registries.cpp
   src/app/runtime_package_kinds.cpp
+  src/app/runtime_mutator_library.cpp
   src/app/runtime_pack_maps.cpp
   src/app/pack_map_source.cpp
   src/app/runtime_get_map.cpp
@@ -1198,6 +1201,7 @@ set(oa_game_libraries oa-formats-hpi oa-formats-json oa-app-game-options oa-app-
   oa-present-gpu-world oa-app-full-models oa-app-platform-hooks oa-ui-paint oa-ui-kit
   oa-ui-touch-gestures oa-ui-touch-hud oa-app-game-files oa-ui-game-files oa-app-package-install
   oa-app-map-packs
+  oa-data-mutator-library
   oa-ui-pad-controls oa-ui-folder-chooser oa-platform-game-installs oa-platform-file-types
   oa-data-content-bundles
   oa-ui-frontend-multiplayer oa-ui-library oa-ui-map-browser oa-ui-first-run

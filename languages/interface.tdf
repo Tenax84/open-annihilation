@@ -738,6 +738,14 @@
 	it=Un'altra copia di Open Annihilation sta modificando la tua cartella dei mod. Riprova quando ha finito.;
 	}
 
+[Another copy of Open Annihilation is changing your Mutators folder. Try again once it has finished.]
+	{
+	de=Eine andere Kopie von Open Annihilation ändert deinen Mutatorenordner. Versuche es erneut, wenn sie fertig ist.;
+	fr=Une autre copie d'Open Annihilation modifie ton dossier de mutateurs. Réessaie une fois qu'elle a fini.;
+	es=Otra copia de Open Annihilation está cambiando tu carpeta de mutadores. Inténtalo de nuevo cuando termine.;
+	it=Un'altra copia di Open Annihilation sta modificando la tua cartella dei mutatori. Riprova quando ha finito.;
+	}
+
 [Any]
 	{
 	de=Egal;
@@ -3722,6 +3730,14 @@
 	it=INSTALLA PACCHETTO DI MAPPE;
 	}
 
+[INSTALL MUTATOR]
+	{
+	de=MUTATOR INSTALLIEREN;
+	fr=INSTALLER LE MUTATEUR;
+	es=INSTALAR MUTADOR;
+	it=INSTALLA MUTATORE;
+	}
+
 [INSTALLED]
 	{
 	de=INSTALLIERT;
@@ -3760,6 +3776,14 @@
 	fr=INSTALLATION DU MOD;
 	es=INSTALANDO MOD;
 	it=INSTALLAZIONE MOD;
+	}
+
+[INSTALLING MUTATOR]
+	{
+	de=MUTATOR WIRD INSTALLIERT;
+	fr=INSTALLATION DU MUTATEUR;
+	es=INSTALANDO MUTADOR;
+	it=INSTALLAZIONE MUTATORE;
 	}
 
 [Icons]
@@ -3954,6 +3978,14 @@
 	it=Installare il pacchetto di mappe {name} {version} ({n} mappe)?;
 	}
 
+[Install the mutator {name} {version}?]
+	{
+	de=Den Mutator {name} {version} installieren?;
+	fr=Installer le mutateur {name} {version} ?;
+	es=¿Instalar el mutador {name} {version}?;
+	it=Installare il mutatore {name} {version}?;
+	}
+
 [Install {title} {version} alongside it, in a folder of its own?]
 	{
 	de={title} {version} daneben installieren, in einem eigenen Ordner?;
@@ -4098,6 +4130,14 @@
 	it=Contiene più di {limit} cartelle, più di quante ne possa avere un mod.;
 	}
 
+[It holds more than {limit} folders, more than a mutator may take.]
+	{
+	de=Es enthält mehr als {limit} Ordner, mehr als ein Mutator haben darf.;
+	fr=Il contient plus de {limit} dossiers, plus qu'un mutateur ne peut en avoir.;
+	es=Contiene más de {limit} carpetas, más de las que puede tener un mutador.;
+	it=Contiene più di {limit} cartelle, più di quante ne possa avere un mutatore.;
+	}
+
 [It holds no Total Annihilation archives (.hpi, .ufo, .ccx or rev31.gp3 files) and no installer of the Total Annihilation demo (1997).]
 	{
 	de=Es enthält keine Archive von Total Annihilation (Dateien .hpi, .ufo, .ccx oder rev31.gp3) und kein Installationsprogramm der Demo von Total Annihilation (1997).;
@@ -4136,6 +4176,14 @@
 	fr=Il ne contient pas d'oamod.yaml à sa racine, ni dans un seul dossier à sa racine.;
 	es=No contiene oamod.yaml en su nivel superior, ni en una sola carpeta en su nivel superior.;
 	it=Non contiene oamod.yaml in cima, né in una sola cartella in cima.;
+	}
+
+[It holds no oamut.yaml at its top, or in a single folder at its top.]
+	{
+	de=Es enthält kein oamut.yaml ganz oben oder in einem einzelnen Ordner ganz oben.;
+	fr=Il ne contient pas d'oamut.yaml à sa racine, ni dans un seul dossier à sa racine.;
+	es=No contiene oamut.yaml en su nivel superior, ni en una sola carpeta en su nivel superior.;
+	it=Non contiene oamut.yaml in cima, né in una sola cartella in cima.;
 	}
 
 [It holds two names that differ only in case: {name}.]
@@ -4242,6 +4290,14 @@
 	it=Servono {size} liberi, e il disco della tua cartella Mods ha {free}.;
 	}
 
+[It needs {size} free, and the disk holding your Mutators folder has {free}.]
+	{
+	de=Es braucht {size} frei, und der Datenträger mit deinem Ordner Mutators hat {free}.;
+	fr=Il lui faut {size} de libre, et le disque de ton dossier Mutators a {free}.;
+	es=Necesita {size} libres, y el disco de tu carpeta Mutators tiene {free}.;
+	it=Servono {size} liberi, e il disco della tua cartella Mutators ha {free}.;
+	}
+
 [It scales evenly and smooths the zoomed-out view.]
 	{
 	de=Es skaliert gleichmäßig und glättet die herausgezoomte Ansicht.;
@@ -4290,6 +4346,14 @@
 	it=Si estrae in {size} da {packed}, molto più di quanto occupino i file di un mod.;
 	}
 
+[It unpacks to {size} from {packed}, far more than a mutator's files take.]
+	{
+	de=Es entpackt sich auf {size} aus {packed}, weit mehr, als die Dateien eines Mutators brauchen.;
+	fr=Il se décompresse en {size} depuis {packed}, bien plus que les fichiers d'un mutateur.;
+	es=Se descomprime a {size} desde {packed}, mucho más de lo que ocupan los archivos de un mutador.;
+	it=Si estrae in {size} da {packed}, molto più di quanto occupino i file di un mutatore.;
+	}
+
 [It unpacks to {size}, more than the {limit} a map pack may take.]
 	{
 	de=Es entpackt sich auf {size}, mehr als die {limit}, die ein Kartenpaket haben darf.;
@@ -4304,6 +4368,14 @@
 	fr=Il se décompresse en {size}, plus que les {limit} qu'un mod peut prendre.;
 	es=Se descomprime a {size}, más del {limit} que puede ocupar un mod.;
 	it=Si estrae in {size}, più del {limit} che un mod può occupare.;
+	}
+
+[It unpacks to {size}, more than the {limit} a mutator may take.]
+	{
+	de=Es entpackt sich auf {size}, mehr als die {limit}, die ein Mutator haben darf.;
+	fr=Il se décompresse en {size}, plus que les {limit} qu'un mutateur peut prendre.;
+	es=Se descomprime a {size}, más del {limit} que puede ocupar un mutador.;
+	it=Si estrae in {size}, più del {limit} che un mutatore può occupare.;
 	}
 
 [Item {n}]
@@ -4394,6 +4466,14 @@
 	it=Le sue partite partono comunque. Aggiungi i file mancanti alla sua cartella per mostrarli:;
 	}
 
+[Its icon {name} is not a square PNG of at most 256 pixels and 256 KiB.]
+	{
+	de=Sein Symbol {name} ist kein quadratisches PNG von höchstens 256 Pixeln und 256 KiB.;
+	fr=Son icône {name} n'est pas un PNG carré d'au plus 256 pixels et 256 KiB.;
+	es=Su icono {name} no es un PNG cuadrado de como máximo 256 píxeles y 256 KiB.;
+	it=La sua icona {name} non è un PNG quadrato di al massimo 256 pixel e 256 KiB.;
+	}
+
 [Its id, {id}, cannot name a folder on Windows.]
 	{
 	de=Seine Kennung, {id}, kann auf Windows keinen Ordner benennen.;
@@ -4472,6 +4552,38 @@
 	fr=Son oamod.yaml dépasse 256 KiB.;
 	es=Su oamod.yaml supera los 256 KiB.;
 	it=Il suo oamod.yaml supera i 256 KiB.;
+	}
+
+[Its oamut.yaml has errors:]
+	{
+	de=Sein oamut.yaml hat Fehler:;
+	fr=Son oamut.yaml a des erreurs :;
+	es=Su oamut.yaml tiene errores:;
+	it=Il suo oamut.yaml ha errori:;
+	}
+
+[Its oamut.yaml is larger than 256 KiB.]
+	{
+	de=Sein oamut.yaml ist größer als 256 KiB.;
+	fr=Son oamut.yaml dépasse 256 KiB.;
+	es=Su oamut.yaml supera los 256 KiB.;
+	it=Il suo oamut.yaml supera i 256 KiB.;
+	}
+
+[Its script {name} is larger than 1 MiB.]
+	{
+	de=Sein Skript {name} ist größer als 1 MiB.;
+	fr=Son script {name} dépasse 1 MiB.;
+	es=Su script {name} supera 1 MiB.;
+	it=Il suo script {name} supera 1 MiB.;
+	}
+
+[Its script {name} is missing.]
+	{
+	de=Sein Skript {name} fehlt.;
+	fr=Son script {name} est absent.;
+	es=Falta su script {name}.;
+	it=Manca il suo script {name}.;
 	}
 
 [Its warm-up text cannot be read.]
@@ -5066,6 +5178,30 @@
 	it=MUOVI: la selezione si muove verso il punto tenuto.;
 	}
 
+[MUTATOR INSTALLED]
+	{
+	de=MUTATOR INSTALLIERT;
+	fr=MUTATEUR INSTALLÉ;
+	es=MUTADOR INSTALADO;
+	it=MUTATORE INSTALLATO;
+	}
+
+[MUTATOR NOT INSTALLED]
+	{
+	de=MUTATOR NICHT INSTALLIERT;
+	fr=MUTATEUR NON INSTALLÉ;
+	es=MUTADOR NO INSTALADO;
+	it=MUTATORE NON INSTALLATO;
+	}
+
+[MUTATOR UPDATED]
+	{
+	de=MUTATOR AKTUALISIERT;
+	fr=MUTATEUR MIS À JOUR;
+	es=MUTADOR ACTUALIZADO;
+	it=MUTATORE AGGIORNATO;
+	}
+
 [Made at your first download]
 	{
 	de=Bei deinem ersten Download erzeugt;
@@ -5320,6 +5456,14 @@
 	fr=Musique;
 	es=Música;
 	it=Musica;
+	}
+
+[Mutators]
+	{
+	de=Mutatoren;
+	fr=Mutateurs;
+	es=Mutadores;
+	it=Mutatori;
 	}
 
 [N/A]
@@ -6690,6 +6834,14 @@
 	it=REINSTALLA PACCHETTO DI MAPPE;
 	}
 
+[REINSTALL MUTATOR]
+	{
+	de=MUTATOR NEU INSTALLIEREN;
+	fr=RÉINSTALLER LE MUTATEUR;
+	es=REINSTALAR MUTADOR;
+	it=REINSTALLA MUTATORE;
+	}
+
 [RELEASE]
 	{
 	de=LOSLASSEN;
@@ -6792,6 +6944,14 @@
 	fr=REMPLACER LE MOD;
 	es=REEMPLAZAR MOD;
 	it=SOSTITUISCI MOD;
+	}
+
+[REPLACE MUTATOR]
+	{
+	de=MUTATOR ERSETZEN;
+	fr=REMPLACER LE MUTATEUR;
+	es=REEMPLAZAR MUTADOR;
+	it=SOSTITUISCI MUTATORE;
 	}
 
 [REPLACE THE GAME FILES…]
@@ -8594,6 +8754,14 @@
 	it=La cartella {name} non contiene questo pacchetto di mappe. Resta com'è.;
 	}
 
+[The folder {name} does not hold this mutator. It is left as it is.]
+	{
+	de=Der Ordner {name} enthält diesen Mutator nicht. Er bleibt, wie er ist.;
+	fr=Le dossier {name} ne contient pas ce mutateur. Il est laissé tel quel.;
+	es=La carpeta {name} no contiene este mutador. Se deja como está.;
+	it=La cartella {name} non contiene questo mutatore. Resta com'è.;
+	}
+
 [The folder {tag} does not hold this language. Replace it with {endonym} ({english}) from {file}? It is kept, and can be brought back.]
 	{
 	de=Der Ordner {tag} enthält diese Sprache nicht. Durch {endonym} ({english}) aus {file} ersetzen? Er bleibt erhalten und lässt sich zurückholen.;
@@ -8808,6 +8976,14 @@
 	fr=Le pack n'a pas été installé : {reason};
 	es=El paquete no se instaló: {reason};
 	it=Il pacchetto non è stato installato: {reason};
+	}
+
+[The package holds {name}, outside the folders a mutator may hold.]
+	{
+	de=Das Paket enthält {name}, außerhalb der Ordner, die ein Mutator haben darf.;
+	fr=Le paquet contient {name}, en dehors des dossiers qu'un mutateur peut contenir.;
+	es=El paquete contiene {name}, fuera de las carpetas que puede tener un mutador.;
+	it=Il pacchetto contiene {name}, fuori dalle cartelle che un mutatore può avere.;
 	}
 
 [The pointer keeps moving after a quick flick.]
@@ -9552,6 +9728,14 @@
 	fr=METTRE À JOUR LE MOD;
 	es=ACTUALIZAR MOD;
 	it=AGGIORNA MOD;
+	}
+
+[UPDATE MUTATOR]
+	{
+	de=MUTATOR AKTUALISIEREN;
+	fr=METTRE À JOUR LE MUTATEUR;
+	es=ACTUALIZAR MUTADOR;
+	it=AGGIORNA MUTATORE;
 	}
 
 [USE IT]
@@ -10346,6 +10530,22 @@
 	it=La tua cartella Mods non ha un nome di cartella libero per esso.;
 	}
 
+[Your Mutators folder changed while this mutator was being installed; nothing was changed. Open the file again.]
+	{
+	de=Dein Ordner Mutators hat sich geändert, während dieser Mutator installiert wurde. Es wurde nichts geändert. Öffne die Datei erneut.;
+	fr=Ton dossier Mutators a changé pendant l'installation de ce mutateur. Rien n'a été changé. Ouvre le fichier à nouveau.;
+	es=Tu carpeta Mutators cambió mientras se instalaba este mutador. No se cambió nada. Abre el archivo de nuevo.;
+	it=La tua cartella Mutators è cambiata mentre questo mutatore veniva installato. Non è stato cambiato nulla. Apri di nuovo il file.;
+	}
+
+[Your Mutators folder has no free folder name for it.]
+	{
+	de=Dein Ordner Mutators hat keinen freien Ordnernamen dafür.;
+	fr=Ton dossier Mutators n'a aucun nom de dossier libre pour lui.;
+	es=Tu carpeta Mutators no tiene un nombre de carpeta libre para él.;
+	it=La tua cartella Mutators non ha un nome di cartella libero per esso.;
+	}
+
 [Your Total Annihilation has been changed]
 	{
 	de=Dein Total Annihilation wurde verändert;
@@ -10904,6 +11104,14 @@
 	fr=musique;
 	es=música;
 	it=musica;
+	}
+
+[mutators]
+	{
+	de=Mutatoren;
+	fr=mutateurs;
+	es=mutadores;
+	it=mutatori;
 	}
 
 [needs {name}]
@@ -11874,12 +12082,28 @@
 	it={name} è installata. Attivala nella Biblioteca.;
 	}
 
+[{name} is installed. Turn it on with MUTATORS… when you set up a game.]
+	{
+	de={name} ist installiert. Schalte ihn über MUTATORS… ein, wenn du ein Spiel einrichtest.;
+	fr={name} est installé. Active-le avec MUTATORS… quand tu prépares une partie.;
+	es={name} está instalado. Actívalo con MUTATORS… cuando prepares una partida.;
+	it={name} è installato. Attivalo con MUTATORS… quando prepari una partita.;
+	}
+
 [{name} is not copied, so this save cannot be loaded with it.]
 	{
 	de={name} ist nicht kopiert, darum lässt sich dieser Spielstand damit nicht laden.;
 	fr={name} n'est pas copié, donc cette sauvegarde ne peut pas se charger avec.;
 	es={name} no está copiado, así que esta partida no se puede cargar con eso.;
 	it={name} non è stato copiato, quindi questo salvataggio non si può caricare con quello.;
+	}
+
+[{name} is precompiled Lua. A mutator holds Lua source only.]
+	{
+	de={name} ist vorkompiliertes Lua. Ein Mutator enthält nur Lua-Quelltext.;
+	fr={name} est du Lua précompilé. Un mutateur ne contient que du source Lua.;
+	es={name} es Lua precompilado. Un mutador solo contiene código fuente Lua.;
+	it={name} è Lua precompilato. Un mutatore contiene solo sorgente Lua.;
 	}
 
 [{name} needs {need}.]

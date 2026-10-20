@@ -1,11 +1,12 @@
 # Packages
 
-A registry serves four kinds of package. Each is a zip archive. OA installs
+A registry serves five kinds of package. Each is a zip archive. OA installs
 a mod into `Mods/<id>`, a map pack into `Maps/<id>`, a language pack into
-`Languages/<tag>`, and an expansion into `Expansions/<game>/<id>`, using the
-id or tag inside the manifest, whatever the file is called. `<game>` is the
-first base game the expansion extends. `Expansions` is the folder a
-managed copy uses. That folder is the expansion, not a mod.
+`Languages/<tag>`, an expansion into `Expansions/<game>/<id>`, and a mutator
+into `Mutators/<id>`, using the id or tag inside the manifest, whatever the
+file is called. `<game>` is the first base game the expansion extends.
+`Expansions` is the folder a managed copy uses. That folder is the
+expansion, not a mod.
 
 | Kind | Manifest | Standard |
 |---|---|---|
@@ -13,6 +14,7 @@ managed copy uses. That folder is the expansion, not a mod.
 | `oamap` | `oamap.yaml`, at most 256 KiB | [OAMAP standard](../maps/oamap-standard.md) |
 | `oalang` | `language.yaml`, at most 256 KiB | [Languages](../languages.md) |
 | `.oaexp` | `oaexp.yaml`, at most 256 KiB | [OAEXP standard](../expansions/oaexp-standard.md) |
+| `oamut` | `oamut.yaml`, at most 256 KiB | [oamut.yaml](../../src/formats/oamut/README.md) |
 
 The catalogue entry for a package is [catalogue.md](catalogue.md). The file
 the catalogue names is the zip.

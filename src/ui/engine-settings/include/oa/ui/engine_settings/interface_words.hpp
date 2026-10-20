@@ -565,6 +565,7 @@ inline constexpr std::string_view interface_words[] = {
     "mods",
     "ms",
     "music",
+    "mutators",
     "none",
     "not checked yet",
     "not reviewed",

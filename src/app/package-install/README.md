@@ -2,14 +2,15 @@
 
 This module installs packages into a folder of the player's own folder. One
 table of kinds says what differs; it holds the mod kind, `oamod`, the
-map pack kind, `oamap`, the language pack kind, `oalang`, and the expansion
-kind, `expansion`. A mod package
+map pack kind, `oamap`, the language pack kind, `oalang`, the expansion
+kind, `expansion`, and the mutator kind, `oamut`. A mod package
 is a zip archive of a mod's folder, the one that holds its `oamod.yaml`; it
 installs into `Mods/<id>`, by the id its profile gives, whatever the file is
 called. A map pack installs into `Maps/<id>`. A language pack installs into
 `Languages/<tag>`, by the tag its `language.yaml` gives. An expansion
 installs into `Expansions/<game>/<id>` and is copied by `install_oaexp`,
-which writes the table's files and a `.oa-content` record. The module has no
+which writes the table's files and a `.oa-content` record. A mutator
+installs into `Mutators/<id>`. The module has no
 SDL: the game's runtime shows what it asks
 and answers (`src/app/runtime_mod_install.cpp`,
 "Mod packages" in [src/app](../README.md#mod-packages-oamod) and
@@ -77,14 +78,16 @@ running. The folder's name stays `opened-mods`.
 ## Kinds
 
 `kKinds` in `src/kinds.cpp` is the table. It holds `oamod`, then `oamap`,
-then `oalang`, then `expansion`. A mod uses the extension `.oamod`, the manifest `oamod.yaml`
+then `oalang`, then `expansion`, then `oamut`. A mod uses the extension `.oamod`, the manifest `oamod.yaml`
 (at most 256 KiB), the root folder `Mods` and the prefix `.oamod-` on the
 installer's own folders and on the lock. A map pack uses `.oamap`,
 `oamap.yaml` (the same limit), the root folder `Maps` and the prefix
 `.oamap-`. A language pack uses `.oalang`, `language.yaml` (the same limit),
 the root folder `Languages` and the prefix `.oalang-`. An expansion uses
 `.oaexp`, `oaexp.yaml` (the same limit), the root folder `expansions` and
-the prefix `.oaexp-`. Its `plan` refuses the generic unpack.
+the prefix `.oaexp-`. Its `plan` refuses the generic unpack. A mutator uses
+`.oamut`, `oamut.yaml` (the same limit), the root folder `Mutators` and the
+prefix `.oamut-`.
 `package_kinds`, `kind_for_file` and `find_kind` read the table; `mod_kind`
 is the mod entry. A file whose extension is none of them is refused as
 `unknown_kind`, and nothing is read.
@@ -206,6 +209,55 @@ while Settings or a notice show, and in a run nobody watches, and it does
 not install while a match loads or runs. The same version and revision is
 installed again; any other folder already there is replaced and kept as
 `.backup`. What became of it is reported, and not shown.
+
+### Mutators (.oamut)
+
+The hooks are `src/plan_oamut.cpp` and `src/prompts_oamut.cpp`
+(`oa/app/package_install/oamut.hpp`). The shared reading, unpacking,
+renames, lock, `.backup`, recovery and origin record are the ones above.
+Nothing in an install reads a script as Lua or runs one. Before a mutator
+is put in place the kind checks, in `read_manifest`, and refuses with the
+problem named, so a refusal writes nothing:
+
+- `oamut.yaml` reads with the mutator manifest reader. Every diagnostic is
+  kept; the prompt shows the first three and the log has them all.
+- The entry script (`entry`, default `mutator.lua`) is in the package.
+- Every file is `oamut.yaml`, the entry, the icon named by `icon`, a file
+  under `lua/` ending `.lua`, a file under `rules/` ending `.sm`, any file
+  under `files/`, or a top-level `*.md` or `*.txt` note. A file outside
+  that layout is refused.
+- No `.lua` file, the entry included, starts with the byte `0x1B`. Each is
+  read through `read_entry` with a bound of 1 MiB. A larger script is
+  refused. An empty file is source.
+- The icon, when named, is in the package, a PNG, square, at most 256
+  pixels on a side and at most 256 KiB. Every icon failure shares one
+  sentence.
+- `requires.engine`, when the manifest writes one, is met by this build.
+  The sentence names the range and this build's version.
+
+`check_staged` is null. The revision is always 0. A file the player opened
+asks "Install the mutator {name} {version}?" before a new folder is made.
+The same version asks to reinstall. Another version asks to update. Nothing
+is installed alongside. A catalogue package whose target's origin record
+names the same registry replaces that folder with no question and keeps one
+`.backup`, before the versions are compared. The same id from another
+registry asks to replace, and the question names both registries. A folder
+that does not hold this mutator's `oamut.yaml` is left as it is. A folder
+that holds nothing but empty folders reads as missing.
+
+The installed prompt says "{name} is installed. Turn it on with MUTATORS…
+when you set up a game." and offers OPEN FOLDER and OK. PLAY NOW is never
+offered: installing a mutator does not turn it on.
+
+A catalogue mutator also installs when the main menu is not showing, on
+any screen except while a match loads or runs, and it shows no prompt, as
+a catalogue map pack does. A plan that needs a question goes back to the
+inbox and is asked on the settled main menu. A file the player opened, of
+any kind, still waits for the settled main menu.
+
+The installed mutators are listed by `oa-data-mutator-library` from each
+folder's `oamut.yaml` and `.oa-origin.yaml` alone. The game reads that list
+on first use and again after every mutator package change.
 
 ## What a package holds
 
@@ -424,10 +476,18 @@ a replace that fails leaves the previous record as it was.
   `discard_pending_change`, leaving the installed version, its record and
   `.backup`, with no staged files, while a waiting roll back is left.
 - `app-package-install-kinds`: the kind table holds `oamod`, `oamap`,
-  `oalang` and `expansion`, a file is a package by those extensions, the seven folder names
+  `oalang`, `expansion` and `oamut`, a file is a package by those extensions, the seven folder names
   of each, and a made-up kind built in the test installs, replaces, rolls
   back, recovers and discards through the generic code, including a staged
   check that refuses.
+- `app-package-install-oamut`: a mutator installed into a scratch Mutators
+  folder, a reinstall question for the same package, an update that keeps
+  `.backup` and a roll back that swaps them, a catalogue replace from the
+  same registry with no question and a question that names another
+  registry, a folder that holds something else left as it was, an uninstall
+  the discarder deletes, a package inside one top folder, and each refusal,
+  including a script, an icon, an unmet engine and more folders than a
+  mutator may take. The installed prompt offers no PLAY NOW.
 - `app-package-install-oalang`: the pseudo pack installed into a scratch
   Languages folder, a Reinstall question for the same package, a Replace
   that keeps the old revision in `.backup`, a manifest inside one top

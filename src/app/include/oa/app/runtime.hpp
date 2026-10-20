@@ -158,6 +158,10 @@ namespace oa::data::map_fit {
 struct Fit;
 } // namespace oa::data::map_fit
 
+namespace oa::data::mutator_library {
+struct Listing;
+} // namespace oa::data::mutator_library
+
 namespace oa::platform::text_font {
 class FontStack;
 } // namespace oa::platform::text_font
@@ -4224,6 +4228,26 @@ class Runtime final : public menu::Host,
     /// @return the index
     [[nodiscard]] MapPacks& map_packs() const;
 
+    /// The installed mutators, read from the player's Mutators folder.
+    struct MutatorLibraryState;
+
+    /// Frees the mutator listing.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_mutator_library_state(MutatorLibraryState* state) noexcept;
+
+    /// Returns the installed mutators, read on first use from
+    /// `<user folder>/Mutators` and read again after every change of a
+    /// mutator package.
+    ///
+    /// @return the listing
+    [[nodiscard]] const oa::data::mutator_library::Listing& installed_mutators() const;
+
+    /// Reads the Mutators folder again when a listing is already held.
+    ///
+    /// A package change before the first read leaves the listing unmade.
+    void reload_installed_mutators() const;
+
     /// The name an installed pack gives a map, for a campaign load.
     friend const char* pack_index_title(void* context, const char* map_name);
 
@@ -4600,17 +4624,18 @@ class Runtime final : public menu::Host,
     /// reads the next package, asks what its plan asks, unpacks it, a budget
     /// at a time each frame with its progress shown, puts it in place and
     /// tells what came of it; a change to the mod played waits for the run to
-    /// end (request_soft_restart). A map pack from a catalogue is the
-    /// exception: it installs on any screen but a match, with no prompt, and
-    /// a plan that asks waits for the settled main menu. Also tells what a
-    /// change that waited did, takes the packages a second start handed over,
-    /// and deletes the folders a change dropped, a step a frame. A mod the
-    /// player chose in the Library also starts while the Library shows
-    /// (catalogue_mod_may_start), asks only what its registry must, and its
-    /// update to the mod played waits until the player leaves the mod. A run
-    /// nobody watches, unless its check asks, leaves the packages waiting but
-    /// a catalogue language pack, a chosen mod while the Library is on top,
-    /// and a catalogue map pack while the map browser is on top or GET MAP shows.
+    /// end (request_soft_restart). A map pack or a mutator from a catalogue
+    /// is the exception: it installs on any screen but a match, with no
+    /// prompt, and a plan that asks waits for the settled main menu. Also
+    /// tells what a change that waited did, takes the packages a second start
+    /// handed over, and deletes the folders a change dropped, a step a frame.
+    /// A mod the player chose in the Library also starts while the Library
+    /// shows (catalogue_mod_may_start), asks only what its registry must, and
+    /// its update to the mod played waits until the player leaves the mod. A
+    /// run nobody watches, unless its check asks, leaves the packages waiting
+    /// but a catalogue language pack, a chosen mod while the Library is on
+    /// top, and a catalogue map pack or mutator while the map browser is on
+    /// top or GET MAP shows.
     void tell_mod_installs();
 
     /// Tells whether a mod the player chose in the Library may start
@@ -16719,6 +16744,9 @@ class Runtime final : public menu::Host,
     mutable std::unique_ptr<MapPackState, void (*)(MapPackState*) noexcept> map_pack_state_{
         nullptr, destroy_map_pack_state
     };
+    // The installed mutators; null until first read.
+    mutable std::unique_ptr<MutatorLibraryState, void (*)(MutatorLibraryState*) noexcept>
+        mutator_library_state_{nullptr, destroy_mutator_library_state};
     // The mounted pack map, the game's names, the fits and the refusals;
     // null until a pack map is first named.
     std::unique_ptr<PackMapState, void (*)(PackMapState*) noexcept> pack_map_state_{
