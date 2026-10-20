@@ -137,6 +137,9 @@ library::Kind kind_of(data::catalogue::Kind kind) noexcept {
         // The caller lists an expansion on downloadable_expansions and does
         // not build a Library row for it.
         return library::Kind::mod;
+    case data::catalogue::Kind::oamut:
+        // Not reached. The row loop takes a mutator aside before it builds a row.
+        return library::Kind::mod;
     }
     return library::Kind::mod;
 }
@@ -1295,6 +1298,10 @@ library::Inputs Runtime::library_inputs() {
             if (entry.package == nullptr)
                 continue;
             const data::catalogue::Package& package = *entry.package;
+            if (package.kind == data::catalogue::Kind::oamut) {
+                // The Library does not list a mutator among mods, maps and languages.
+                continue;
+            }
             if (package.kind == data::catalogue::Kind::expansion) {
                 library::DownloadableExpansion offered;
                 offered.id = package.id;

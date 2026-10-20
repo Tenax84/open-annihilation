@@ -11106,6 +11106,14 @@
 	it=musica;
 	}
 
+[mutators]
+	{
+	de=Mutatoren;
+	fr=mutateurs;
+	es=mutadores;
+	it=mutatori;
+	}
+
 [needs {name}]
 	{
 	de=braucht {name};
