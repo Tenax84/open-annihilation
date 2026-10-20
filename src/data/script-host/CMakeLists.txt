@@ -5,6 +5,18 @@
 # unchanged, as C, in one translation unit, with the engine's floating-point
 # options and with warnings off.
 
+# The ^ operator calls this library, so it has to follow the Lua archive on a
+# link line. H05 adds its number text here as well. libm supplies sqrt and
+# frexp; a Linux link drops an earlier libm once those references appear.
+add_library(oa-data-script-host-numbers STATIC src/deterministic_math.cpp)
+add_library(oa::data::script_host_numbers ALIAS oa-data-script-host-numbers)
+target_include_directories(oa-data-script-host-numbers PUBLIC include)
+target_compile_features(oa-data-script-host-numbers PUBLIC cxx_std_20)
+target_link_libraries(oa-data-script-host-numbers PRIVATE oa-base-game-math oa-options)
+if(NOT MSVC)
+  target_link_libraries(oa-data-script-host-numbers PRIVATE m)
+endif()
+
 add_library(oa-data-script-host-lua STATIC src/lua_build.c)
 add_library(oa::data::script_host_lua ALIAS oa-data-script-host-lua)
 target_include_directories(oa-data-script-host-lua SYSTEM PUBLIC
@@ -24,11 +36,13 @@ endif()
 # differently from the formatting the engine's C++ files already use.
 target_compile_definitions(oa-data-script-host-lua PRIVATE
   $<$<BOOL:${MINGW}>:__USE_MINGW_ANSI_STDIO=1>)
-# pow, floor and the rest of the C maths calls. Visual Studio's C library
-# provides them; every other target takes them from libm.
+# floor, frexp and the other C maths calls the interpreter still makes.
+# Visual Studio's C library provides them; every other target takes them
+# from libm. The ^ operator is not one of them.
 if(NOT MSVC)
   target_link_libraries(oa-data-script-host-lua PUBLIC m)
 endif()
+target_link_libraries(oa-data-script-host-lua PUBLIC oa-data-script-host-numbers)
 
 add_library(oa-data-script-host
   src/sandbox.cpp
