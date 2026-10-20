@@ -11911,6 +11911,17 @@ class Runtime final : public menu::Host,
     /// must sing. Throws std::runtime_error on a failure.
     void check_unit_speech();
 
+    /// Plays skirmishes and checks each one reads gamedata/sidedata.tdf again.
+    ///
+    /// Needs --mod-dir on a folder that does not already hold that file. The first match keeps
+    /// the commanders the run started with. A file written into the mod folder, giving slot 0's
+    /// side the other side's commander, is what the next match plays, and the menus return to the
+    /// run's sides when it ends. A file with no sides, and a commander the game has no unit for,
+    /// each refuse the start and leave the run's sides in place. With the file removed, the last
+    /// match keeps the run's table. Prints "side data per match check: passed".
+    /// Throws std::runtime_error on a failure.
+    void check_side_data_per_match();
+
     /// Places a finished structure of the local player's on the first free site in the rings of
     /// cells around a unit.
     ///

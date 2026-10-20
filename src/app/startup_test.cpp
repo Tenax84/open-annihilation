@@ -409,6 +409,7 @@ const std::vector<FlagCase>& flag_cases() {
         {"--check-side-orders", &Options::check_side_orders, {}},
         {"--check-factory-orders", &Options::check_factory_orders, {}},
         {"--check-unit-speech", &Options::check_unit_speech, {}},
+        {"--check-side-data-per-match", &Options::check_side_data_per_match, {}},
         {"--check-download-builds", &Options::check_download_builds, {}},
         {"--check-stockpile-builds", &Options::check_stockpile_builds, {}},
         {"--check-unit-page-memory", &Options::check_unit_page_memory, {}},

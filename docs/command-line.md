@@ -325,6 +325,7 @@ Network play's own checks, the last rows, are in every build.
 | `--check-render-tiers` | Checks the accelerated drawing of the main menu and a skirmish against the processor's. |
 | `--check-match-orders` | Clicks the order page's buttons and checks what the units do. |
 | `--check-side-orders` | Clicks each side's order page buttons, whatever prefix their names carry, and checks what the units do. |
+| `--check-side-data-per-match` | Plays skirmishes and checks each match reads side data again when `gamedata/sidedata.tdf` has changed. |
 | `--check-factory-orders` | Gives a Kbot Lab a move and checks the unit it builds carries it out. |
 | `--check-unit-speech` | Selects and orders the commander and checks what it says. |
 | `--check-download-builds` | Builds a unit from a download page. |

@@ -2170,6 +2170,13 @@ hosts them on the OA layer.
   no category cooling down (`NativeOfflineServices::bind_announcements`),
   as each mission start does in 3.1c, so what one match said never
   silences the next.
+- `runtime_side_data_check.cpp`: `--check-side-data-per-match`
+  (`native-side-data-per-match`): each match reads `gamedata/sidedata.tdf`
+  again. When the file is unchanged the match keeps the sides the game
+  started with; when one side names the other's commander the match plays
+  that commander, and the menus return to the started sides afterwards. A
+  file with no sides, or a commander the game has no unit for, refuses the
+  start and leaves those sides in place.
 - `runtime_match_menus.cpp` also registers the load-game overlay
   (`register_load_game_screens`).
 - The Open Annihilation settings ([oa/ui/engine_settings.hpp](../ui/engine-settings/README.md)):
