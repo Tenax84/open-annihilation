@@ -3,12 +3,12 @@
 
 // --check-library: the Library over a feed of made-up packages, with no
 // network. With no update waiting the main menu's OA button draws its count
-// of the fixture's added packages (two mods and one map pack) and opens the
-// Library on Active, which reads the mod played, the language in use and
-// the installed maps, and whose CLOSE goes back; with two it wears its
-// dot, says "Library · 3 packages · 2 updates" to automation and opens the
-// Library on Active again, whose
-// Updates tab opens on its Updates filter with UPDATE ALL over the list.
+// of the fixture's added packages (two mods, one map pack and two mutators)
+// and opens the Library on Active, which reads the mod played, the language
+// in use and the installed maps, and whose CLOSE goes back; with three it
+// wears its dot, says "Library · 5 packages · 3 updates" to automation and
+// opens the Library on Active again, whose Mutators tab reads "Mutators (5)"
+// and whose Updates tab opens on its Updates filter with UPDATE ALL over the list.
 // GET and CANCEL reach the feed, OPEN FOLDER and HOMEPAGE the recorded
 // openers, ROLL BACK asks the Roll Back Mod question over the Library and
 // PLAY NOW asks for a soft restart. The settings shortcut opens Settings over the Library, Settings ›
@@ -256,11 +256,43 @@ library::Listing mod_listing(
     return listing;
 }
 
+/// Returns a made-up mutator's listing, with no badge.
+///
+/// @param key its key
+/// @param name its name
+/// @param version its version
+/// @param facts its tags, works-with list and prerequisites
+/// @return the listing
+library::Listing mutator_listing(
+    std::string_view key,
+    std::string_view name,
+    std::string_view version,
+    library::MutatorFacts facts
+) {
+    library::Listing listing;
+    listing.registry = std::string(kBuiltIn);
+    listing.kind = library::Kind::mutator;
+    listing.key = std::string(key);
+    listing.name = std::string(name);
+    listing.version = std::string(version);
+    listing.revision = 1;
+    listing.release = 1;
+    listing.author = "the " + std::string(name) + " team";
+    listing.summary = "A made-up mutator of the Library check.";
+    listing.size = 1024U * 1024U;
+    listing.mutator = std::move(facts);
+    return listing;
+}
+
 /// Returns the fixture's inputs: two registries, Ridge and Lattice installed
 /// from the built-in one, Cinder to get from it and Dunes from the added one,
-/// queued; with or without an update of each installed mod. For the Active
-/// tab, Basalt is played from a folder outside the Mods folder, a German
-/// pack shows the game's words and one map pack is installed.
+/// queued; with or without an update of each installed mod. Five made-up
+/// mutators from the built-in registry: Fast Builders and Gatehouse installed,
+/// and Fast Builders' update when updates wait; Gatehouse Keep, Ridge Walls
+/// and Grounded to get. For the Active tab, Basalt is played from a folder
+/// outside the Mods folder, a German pack shows the game's words and one map
+/// pack is installed. The played mod's id stays empty, so Ridge Walls does
+/// not work with the base game and is still listed.
 ///
 /// @param mods the player's Mods folder
 /// @param updates the two updates wait
@@ -300,6 +332,53 @@ library::Inputs fixture_inputs_of(const fs::path& mods, bool updates) {
     lattice_installed.release = 3;
     inputs.installed.push_back(std::move(lattice_installed));
 
+    library::MutatorFacts fast_facts;
+    fast_facts.tags = {"economy", "statistics"};
+    fast_facts.works_with.push_back({"*", {}, {}});
+    inputs.listings.push_back(mutator_listing("fast-builders", "Fast Builders", "1.0", fast_facts));
+    library::Installed fast_installed;
+    fast_installed.kind = library::Kind::mutator;
+    fast_installed.key = "fast-builders";
+    fast_installed.folder = "fast-builders";
+    fast_installed.name = "Fast Builders";
+    fast_installed.version = "1.0";
+    fast_installed.revision = 1;
+    fast_installed.registry = std::string(kBuiltIn);
+    fast_installed.release = 1;
+    fast_installed.mutator = fast_facts;
+    inputs.installed.push_back(std::move(fast_installed));
+
+    library::MutatorFacts gatehouse_facts;
+    gatehouse_facts.tags = {"gameplay", "new-units"};
+    inputs.listings.push_back(mutator_listing("gatehouse", "Gatehouse", "4.1", gatehouse_facts));
+    library::Installed gatehouse_installed;
+    gatehouse_installed.kind = library::Kind::mutator;
+    gatehouse_installed.key = "gatehouse";
+    gatehouse_installed.folder = "gatehouse";
+    gatehouse_installed.name = "Gatehouse";
+    gatehouse_installed.version = "4.1";
+    gatehouse_installed.revision = 1;
+    gatehouse_installed.registry = std::string(kBuiltIn);
+    gatehouse_installed.release = 1;
+    gatehouse_installed.mutator = gatehouse_facts;
+    inputs.installed.push_back(std::move(gatehouse_installed));
+
+    library::MutatorFacts keep_facts;
+    keep_facts.tags = {"economy"};
+    keep_facts.needs.push_back({"gatehouse", ">= 4.0", "Gatehouse"});
+    inputs.listings.push_back(
+        mutator_listing("gatehouse-keep", "Gatehouse Keep", "2.0", std::move(keep_facts))
+    );
+    library::MutatorFacts wall_facts;
+    wall_facts.works_with.push_back({"ridge", {}, "Ridge"});
+    wall_facts.tags = {"commanders"};
+    inputs.listings.push_back(mutator_listing("ridge-walls", "Ridge Walls", "1.0", wall_facts));
+    library::MutatorFacts grounded_facts;
+    grounded_facts.tags = {"disable"};
+    inputs.listings.push_back(
+        mutator_listing("grounded", "Grounded", "1.0", std::move(grounded_facts))
+    );
+
     if (updates) {
         for (const std::string_view key :
              {std::string_view("ridge"), std::string_view("lattice")}) {
@@ -313,6 +392,15 @@ library::Inputs fixture_inputs_of(const fs::path& mods, bool updates) {
             note.size = 1024U * 1024U;
             inputs.updates.push_back(std::move(note));
         }
+        library::UpdateNote fast_update;
+        fast_update.registry = std::string(kBuiltIn);
+        fast_update.kind = library::Kind::mutator;
+        fast_update.key = "fast-builders";
+        fast_update.to_release = 2;
+        fast_update.to_version = "1.1";
+        fast_update.to_revision = 2;
+        fast_update.size = 1024U * 1024U;
+        inputs.updates.push_back(std::move(fast_update));
     }
 
     library::QueueItem dunes;
@@ -864,8 +952,8 @@ void Runtime::check_library() {
         );
 
         // 1. With no update waiting, the button wears the package count and no dot.
-        // Two installed mods and one map pack: three packages. A map pack
-        // alone counts as one.
+        // Two installed mods, one map pack and two mutators: five packages.
+        // A map pack alone counts as one.
         require(library_update_count() == 0, "an update waits in the fixture without one" + on);
         {
             const auto [shown, plain] = button_frames();
@@ -879,8 +967,8 @@ void Runtime::check_library() {
             );
             const std::optional<AutomationControl> quiet = named("oa.button");
             require(
-                quiet.has_value() && quiet->text == "Library · 3 packages",
-                "automation does not list oa.button as \"Library · 3 packages\"" + on
+                quiet.has_value() && quiet->text == "Library · 5 packages",
+                "automation does not list oa.button as \"Library · 5 packages\"" + on
             );
         }
         if (width == kCanvasWidth) {
@@ -1076,11 +1164,11 @@ void Runtime::check_library() {
             "CLOSE did not go back to the main menu" + on
         );
 
-        // 4. With two updates the button wears its dot, says so, and opens
+        // 4. With three updates the button wears its dot, says so, and opens
         // the Library on Active; its Updates tab opens on Updates, with
         // UPDATE ALL over the list and the filters of the other tabs.
         feed_changes(true);
-        require(library_update_count() == 2, "the two updates are not counted" + on);
+        require(library_update_count() == 3, "the three updates are not counted" + on);
         {
             const auto [shown, plain] = button_frames();
             const auto square = EngineSettingsMenuHost::button_rect(*this);
@@ -1095,7 +1183,7 @@ void Runtime::check_library() {
             );
             require(
                 differing > 0 && outside == 0,
-                "with two updates the OA button does not differ only in its dot" + on
+                "with three updates the OA button does not differ only in its dot" + on
             );
         }
         snapshot("menu-dot-" + size);
@@ -1110,8 +1198,8 @@ void Runtime::check_library() {
         }
         const std::optional<AutomationControl> button = named("oa.button");
         require(
-            button.has_value() && button->text == "Library · 3 packages · 2 updates",
-            "automation does not list oa.button as \"Library · 3 packages · 2 updates\"" + on
+            button.has_value() && button->text == "Library · 5 packages · 3 updates",
+            "automation does not list oa.button as \"Library · 5 packages · 3 updates\"" + on
         );
         press_button();
         require(
@@ -1122,12 +1210,49 @@ void Runtime::check_library() {
             named("oa.library.tab.updates").has_value(),
             "automation does not list oa.library.tab.updates" + on
         );
+        const auto show_tab = [&](std::string_view name) {
+            for (int step = 0; step < 8 && !named(name); ++step) {
+                if (!named("oa.library.tab.scroll-right"))
+                    break;
+                click_named("oa.library.tab.scroll-right");
+                run_frame(running);
+                require(running, "a frame ended the run");
+            }
+        };
+        show_tab("oa.library.tab.mutators");
+        click_named("oa.library.tab.mutators");
+        run_frame(running);
+        require(running, "a frame ended the run");
+        {
+            const std::optional<AutomationControl> mutators = named("oa.library.tab.mutators");
+            require(
+                host.model.tab == library::Tab::mutators && mutators.has_value() &&
+                    mutators->text == "Mutators (5)",
+                "the Mutators tab does not read Mutators (5)" + on
+            );
+            for (int step = 0; step < 8 && !named("oa.library.row.fixture-core.ridge-walls");
+                 ++step) {
+                tap(SDLK_PAGEDOWN);
+                run_frame(running);
+                require(running, "a frame ended the run");
+            }
+            const std::optional<AutomationControl> walls =
+                named("oa.library.row.fixture-core.ridge-walls");
+            const std::optional<AutomationControl> walls_get =
+                named("oa.library.row.fixture-core.ridge-walls.get");
+            require(
+                walls.has_value() && walls->enabled && walls_get.has_value() && walls_get->enabled,
+                "Ridge Walls is not listed with GET on" + on
+            );
+            std::cout << "library check: the Mutators tab reads Mutators (5)" << on << '\n';
+        }
+        show_tab("oa.library.tab.updates");
         click_named("oa.library.tab.updates");
         require(
             host.model.tab == library::Tab::updates &&
                 library::shown_filter(host.model) == library::Filter::updates &&
-                host.model.visible.size() == 2,
-            "the Updates tab did not open on its two updates" + on
+                host.model.visible.size() == 3,
+            "the Updates tab did not open on its three updates" + on
         );
         run_frame(running);
         require(

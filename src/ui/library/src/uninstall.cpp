@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace oa::ui::library {
 
@@ -22,6 +23,36 @@ namespace {
 /// @return true until it has failed or is installed
 bool unfinished(QueueItem::Phase phase) {
     return phase != QueueItem::Phase::failed && phase != QueueItem::Phase::installed;
+}
+
+/// The name a works-with entry shows: the base game's own words, the name
+/// when one is known, otherwise the id as written.
+///
+/// @param item the works-with entry
+/// @param text how texts are looked up
+/// @return the name
+std::string works_with_name(const WorksWith& item, const TextHooks& text) {
+    if (item.id == supported_base)
+        return std::string(shown(text, words::base_supported));
+    if (!item.name.empty())
+        return item.name;
+    return item.id;
+}
+
+/// Joins names as a sentence lists them, through names_comma and names_and.
+///
+/// @param text how texts are looked up
+/// @param names the names
+/// @return the list; empty when there are none
+std::string join_names(const TextHooks& text, const std::vector<std::string>& names) {
+    if (names.empty())
+        return {};
+    if (names.size() == 1)
+        return names.front();
+    std::string joined = names.front();
+    for (std::size_t index = 1; index + 1 < names.size(); ++index)
+        joined = filled(text, words::names_comma, {{"left", joined}, {"right", names[index]}});
+    return filled(text, words::names_and, {{"left", joined}, {"right", names.back()}});
 }
 
 /// Makes a notice of one paragraph and OK, which every key that answers
@@ -157,6 +188,18 @@ std::string details_note(const Library& library) {
         if (!note.empty())
             note += ' ';
         note += turning;
+    }
+    if (entry->not_compatible) {
+        std::vector<std::string> names;
+        if (const MutatorFacts* facts = mutator_facts(*entry)) {
+            for (const WorksWith& item : facts->works_with)
+                names.push_back(works_with_name(item, library.text));
+        }
+        if (!note.empty())
+            note += ' ';
+        note += filled(
+            library.text, words::note_not_compatible, {{"names", join_names(library.text, names)}}
+        );
     }
     return note;
 }

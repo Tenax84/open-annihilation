@@ -1906,6 +1906,14 @@
 	it=Salto del comandante;
 	}
 
+[Commanders]
+	{
+	de=Kommandanten;
+	fr=Commandants;
+	es=Comandantes;
+	it=Comandanti;
+	}
+
 [Console]
 	{
 	de=Konsole;
@@ -2328,6 +2336,14 @@
 	fr=Noms de difficulté;
 	es=Nombres de dificultad;
 	it=Nomi di difficoltà;
+	}
+
+[Disable]
+	{
+	de=Verbote;
+	fr=Interdictions;
+	es=Prohibiciones;
+	it=Divieti;
 	}
 
 [Display Modes]
@@ -3376,6 +3392,14 @@
 	fr=Fond du texte du jeu;
 	es=Fondo del texto del juego;
 	it=Sfondo del testo di gioco;
+	}
+
+[Gameplay]
+	{
+	de=Spielweise;
+	fr=Jouabilité;
+	es=Jugabilidad;
+	it=Giocabilità;
 	}
 
 [Games]
@@ -5666,6 +5690,14 @@
 	it=Nuovo;
 	}
 
+[New Units]
+	{
+	de=Neue Einheiten;
+	fr=Nouvelles unités;
+	es=Unidades nuevas;
+	it=Nuove unità;
+	}
+
 [New saved games go in:]
 	{
 	de=Neue Speicherstände kommen nach:;
@@ -5840,6 +5872,14 @@
 	fr=Pas disponible ici;
 	es=No disponible aquí;
 	it=Non disponibile qui;
+	}
+
+[Not compatible with this mod: it works with {names}]
+	{
+	de=Passt nicht zu diesem Mod: er funktioniert mit {names};
+	fr=Pas compatible avec ce mod : il marche avec {names};
+	es=No es compatible con este mod: funciona con {names};
+	it=Non è compatibile con questo mod: funziona con {names};
 	}
 
 [Not during a game]
@@ -7698,6 +7738,14 @@
 	it=Cerca mod, autori, etichette;
 	}
 
+[Search mutators, authors, tags]
+	{
+	de=Mutatoren, Autoren, Stichworte suchen;
+	fr=Chercher des mutateurs, des auteurs, des mots-clés;
+	es=Buscar mutadores, autores, etiquetas;
+	it=Cerca mutatori, autori, etichette;
+	}
+
 [Search updates]
 	{
 	de=Updates suchen;
@@ -8104,6 +8152,14 @@
 	fr=Commencer avec un humain;
 	es=Empezar con un humano;
 	it=Inizia con un umano;
+	}
+
+[Statistics]
+	{
+	de=Werte;
+	fr=Statistiques;
+	es=Estadísticas;
+	it=Statistiche;
 	}
 
 [Statistics Exclude Shared Income]
