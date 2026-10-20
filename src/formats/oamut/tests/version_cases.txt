@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+# SPDX-License-Identifier: GPL-3.0-only
+
+# Versions, ranges and conditions. One case a line:
+#   version ok|bad TEXT
+#   range ok TEXT :: MEET :: MISS
+#   range bad TEXT
+#   condition ok TEXT :: MET :: MISS
+#   condition bad TEXT
+# MEET and MISS are comma-separated mutator versions. MET and MISS are
+# comma-separated id@version pairs; an empty version is id@. A line with no
+# TEXT is the empty string. Blank lines and lines starting with # are skipped.
+version ok 2
+version ok 2.0
+version ok 2.0.0
+version ok 2.0.1
+version ok 2.10
+version ok 0
+version ok 0.0
+version ok 65535
+version ok 65535.65535.65535
+version ok 10.0.1
+version bad 01
+version bad 02.0
+version bad 2.01
+version bad 65536
+version bad 2.0.0.1
+version bad 2.
+version bad .2
+version bad
+version bad 2.0 
+version bad v2
+version bad 123456789012345678901234567890123
+range ok >= 2 :: 2,2.0,2.0.0,2.10,2.0.1 :: 1,1.9
+range ok > 2 :: 2.0.1,2.10,3 :: 2,2.0,2.0.0
+range ok >= 2.0 :: 2,2.0,2.0.0 :: 1.9
+range ok < 2.10 :: 2,2.0,2.9,2.9.9 :: 2.10,2.10.0
+range ok <= 2.10 :: 2.10,2.10.0,2 :: 2.10.1,3
+range ok = 2.10 :: 2.10,2.10.0 :: 2.1,2.10.1
+range ok =2 :: 2,2.0,2.0.0 :: 2.0.1
+range ok >= 2, < 3 :: 2,2.9,2.10 :: 1,3,3.0
+range ok >=2,<3 :: 2.0.1 :: 1.9,3
+range ok > 1.2 , <= 4 :: 1.2.1,4,4.0.0 :: 1.2,1.2.0,4.0.1
+range ok >= 0.0.1 :: 0.0.1,0.0.2 :: 0,0.0.0
+range ok >= 65535.65535.65535 :: 65535.65535.65535 :: 65535.65535.65534
+range bad >= 2, >= 2, >= 2, >= 2, >= 2
+range bad >= 01
+range bad >= 65536
+range bad >= 2.0.0.1
+range bad >= 2,
+range bad
+range bad >=
+range bad >
+range bad <
+range bad =
+range bad == 2
+range bad >= 2.01
+range bad >= 2.
+range bad >= 2 
+range bad  >= 2
+range bad xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+condition ok long-shadows >= 4.0 :: long-shadows@4,long-shadows@4.0,long-shadows@4.0.1,long-shadows@10 :: long-shadows@3.9,long-shadows@5b,ridge@4.0,long-shadows@
+condition ok long-shadows :: long-shadows@5b,long-shadows@,long-shadows@2.0 :: ridge@5b,other@
+condition ok ridge >= 2, < 3 :: ridge@2,ridge@2.10 :: ridge@5b,ridge@1,ridge@3
+condition ok * :: *@,*@1 :: ridge@,ridge@1
+condition ok ta-3.1c :: ta-3.1c@,ta-3.1c@5b :: ridge@,ridge@1
+condition bad
+condition bad Long
+condition bad a--b
+condition bad -ab
+condition bad ab-
+condition bad long-shadows >=
+condition bad long-shadows >= 1,
+condition bad long-shadows >= 01
+condition bad * >= 1
+condition bad ta-3.1c >= 1
+condition bad >= 1
+condition bad long-shadows>= 1

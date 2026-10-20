@@ -64,6 +64,12 @@ if(BUILD_TESTING)
   add_test(NAME ui-kit-controls COMMAND oa-ui-kit-controls-test)
   set_tests_properties(ui-kit-controls PROPERTIES TIMEOUT 30)
 
+  add_executable(oa-ui-kit-tag-icons-test tests/tag_icons_test.cpp)
+  target_link_libraries(oa-ui-kit-tag-icons-test PRIVATE oa-ui-kit oa-test-support oa-options
+    oa-ui-paint oa-base-sha256)
+  add_test(NAME ui-kit-tag-icons COMMAND oa-ui-kit-tag-icons-test)
+  set_tests_properties(ui-kit-tag-icons PROPERTIES TIMEOUT 30)
+
   add_executable(oa-ui-kit-notices-test tests/notices_test.cpp)
   target_link_libraries(oa-ui-kit-notices-test PRIVATE oa-ui-kit oa-test-support oa-options)
   add_test(NAME ui-kit-notices COMMAND oa-ui-kit-notices-test)

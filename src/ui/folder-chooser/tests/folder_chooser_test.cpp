@@ -505,6 +505,10 @@ std::string_view role_name(kit::Role role) {
         return "picture_well";
     case kit::Role::call_to_action:
         return "call_to_action";
+    case kit::Role::package_badge:
+        return "package_badge";
+    case kit::Role::grip:
+        return "grip";
     }
     return "?";
 }

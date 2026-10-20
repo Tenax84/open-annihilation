@@ -12,11 +12,13 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace oa {
@@ -435,6 +437,61 @@ struct AssetStore::PackLayer {
 struct AssetStore::PackLayerSlot {
     base::threads::Mutex lock;
     std::shared_ptr<const PackLayer> layer;
+};
+
+// Published once and never changed. A lookup holds a shared_ptr to one copy.
+struct AssetStore::MutatorLayer {
+    struct Entry {
+        std::string path;
+        std::string key;
+        std::string name;
+        std::string owner;
+        MutatorSourceKind kind = MutatorSourceKind::hidden;
+        std::filesystem::path host;
+        std::size_t archive = 0;
+        std::string archive_path;
+        uint32_t node = 0;
+        uint32_t size = 0;
+        std::shared_ptr<const std::vector<uint8_t>> contents;
+    };
+
+    // One child of a folder the served paths imply. A directory child is the
+    // first spelling of that prefix; a file child points at entries. Hidden
+    // paths are indexed and do not appear here.
+    struct Child {
+        std::string name;
+        bool directory = false;
+        uint32_t size = 0;
+        std::size_t entry = 0;
+    };
+
+    struct Folder {
+        std::vector<Child> children;
+    };
+
+    struct Mask {
+        std::string pattern;
+        std::string owner;
+    };
+
+    struct Archive {
+        std::shared_ptr<const HpiArchive> archive;
+        std::filesystem::path location;
+        std::string owner;
+    };
+
+    std::string label;
+    uint64_t serial = 0;
+    std::vector<Entry> entries;
+    std::unordered_map<std::string, std::size_t> index;
+    std::unordered_map<std::string, Folder> folders;
+    std::vector<Mask> masks;
+    std::vector<Archive> archives;
+};
+
+struct AssetStore::MutatorLayerSlot {
+    base::threads::Mutex lock;
+    std::shared_ptr<const MutatorLayer> layer;
 };
 
 namespace {
@@ -913,6 +970,581 @@ void PackLayerOps::append_pack_matches(
     }
 }
 
+namespace {
+
+/// Returns why a mutator's id is refused, or null when it can be stored.
+///
+/// @param owner the mutator's id
+/// @return a static reason, or null
+const char* owner_problem(std::string_view owner) noexcept {
+    if (owner.empty())
+        return "needs an owner";
+    if (owner.find('\n') != std::string_view::npos || owner.find('\r') != std::string_view::npos)
+        return "owner holds a line break";
+    return nullptr;
+}
+
+/// Returns whether a loose lookup would throw for this path.
+///
+/// The mutator layer does not answer those paths, so the loose lookup still
+/// reports them. A backup-folder path does not throw; a mask may hide it.
+///
+/// @param resource the path the caller wrote
+/// @return true when loose_path would throw
+bool lookup_path_throws(std::string_view resource) {
+    if (resource.empty() || resource.front() == '/' || resource.front() == '\\' ||
+        resource.find(':') != std::string_view::npos ||
+        resource.find('\0') != std::string_view::npos || resource.size() > kMaxPathLength)
+        return true;
+    const auto key = normalized_path(resource);
+    for (std::size_t begin = 0; begin < key.size();) {
+        const auto end = key.find('/', begin);
+        const auto part = key.substr(begin, end == std::string::npos ? end : end - begin);
+        if (part == "." || part == "..")
+            return true;
+        if (end == std::string::npos)
+            break;
+        begin = end + 1;
+    }
+    return false;
+}
+
+/// Joins a find's directory to a child name.
+///
+/// @param directory directory part of the pattern, with its trailing separator
+/// @param name the child name
+/// @return the resource path
+std::string child_path(std::string_view directory, std::string_view name) {
+    if (directory.empty())
+        return std::string(name);
+    std::string path;
+    path.reserve(directory.size() + name.size());
+    path.assign(directory);
+    path.append(name);
+    return path;
+}
+
+/// Tells the observer that the mutator layer served or hid a path.
+///
+/// @param observer the store's observer
+/// @param path the path, as the lookup should report it
+/// @param owner the mutator
+/// @param hidden true when the layer hid the path
+void note_mutator(
+    const LookupObserver& observer, std::string_view path, std::string_view owner, bool hidden
+) {
+    if (observer.mutator_layer_used != nullptr)
+        observer.mutator_layer_used(observer.context, path, owner, hidden);
+}
+
+/// Sets a refusal that names one mutator-layer path.
+///
+/// @param error receives the message
+/// @param path the path at fault
+/// @param owner the mutator
+/// @param reason why it was refused
+void mutator_entry_error(
+    std::string& error, std::string_view path, std::string_view owner, std::string_view reason
+) {
+    error = "mutator layer file '" + std::string(path) + "' of '" + std::string(owner) +
+            "': " + std::string(reason);
+}
+
+/// Sets a refusal that names one mask.
+///
+/// @param error receives the message
+/// @param pattern the pattern at fault
+/// @param owner the mutator
+/// @param reason why it was refused
+void mutator_mask_error(
+    std::string& error, std::string_view pattern, std::string_view owner, std::string_view reason
+) {
+    error = "mutator layer mask '" + std::string(pattern) + "' of '" + std::string(owner) +
+            "': " + std::string(reason);
+}
+
+/// Sets a refusal that names one archive's mutator.
+///
+/// @param error receives the message
+/// @param owner the mutator
+/// @param reason why it was refused
+void mutator_archive_error(std::string& error, std::string_view owner, std::string_view reason) {
+    error = "mutator layer archive of '" + std::string(owner) + "': " + std::string(reason);
+}
+
+} // namespace
+
+// Builds and reads a mutator layer. A friend of AssetStore so it can name
+// the private layer type from code that is not a member.
+struct MutatorLayerOps {
+    struct Decision {
+        const AssetStore::MutatorLayer::Entry* entry = nullptr;
+        const AssetStore::MutatorLayer::Mask* mask = nullptr;
+
+        /// Returns whether the layer serves or hides the path.
+        ///
+        /// @return true for a table entry or a matching mask
+        [[nodiscard]] bool answers() const { return entry != nullptr || mask != nullptr; }
+
+        /// Returns whether the path is missing.
+        ///
+        /// @return true for a hidden entry or a matching mask
+        [[nodiscard]] bool hidden() const {
+            return mask != nullptr ||
+                   (entry != nullptr && entry->kind == MutatorSourceKind::hidden);
+        }
+
+        /// Returns the mutator that served or hid the path.
+        ///
+        /// @return the owner, or empty when the layer does not answer
+        [[nodiscard]] std::string_view owner() const {
+            if (entry != nullptr)
+                return entry->owner;
+            if (mask != nullptr)
+                return mask->owner;
+            return {};
+        }
+    };
+
+    struct Hit {
+        std::shared_ptr<const AssetStore::MutatorLayer> layer;
+        Decision decision;
+    };
+
+    static Decision decide(const AssetStore::MutatorLayer& layer, std::string_view path);
+    static Hit consult(const AssetStore& store, std::string_view resource);
+    static bool omit_file(
+        const AssetStore::MutatorLayer* layer,
+        std::string_view path,
+        const LookupObserver& observer,
+        std::unordered_set<std::string>& noted
+    );
+    static AssetData
+    read_entry(const AssetStore::MutatorLayer& layer, const AssetStore::MutatorLayer::Entry& entry);
+    static Provider provider_of(
+        const AssetStore::MutatorLayer& layer, const AssetStore::MutatorLayer::Entry& entry
+    );
+    static ResourceFile* open_entry(
+        const std::shared_ptr<const AssetStore::MutatorLayer>& layer,
+        const AssetStore::MutatorLayer::Entry& entry
+    );
+    static bool add_served(
+        AssetStore::MutatorLayer& layer,
+        const MutatorLayerEntry& entry,
+        uint32_t size,
+        uint32_t node,
+        std::string& error
+    );
+    static std::shared_ptr<AssetStore::MutatorLayer>
+    make(const MutatorLayerSpec& spec, std::string& error);
+    static void append_matches(
+        std::vector<FoundEntry>& found,
+        const AssetStore::MutatorLayer& layer,
+        std::string_view directory,
+        std::string_view spec
+    );
+};
+
+/// Returns the layer's answer for one path: a table entry, else the first mask.
+///
+/// A table entry wins over every mask. The path is folded, so case and slash
+/// do not matter.
+///
+/// @param layer the layer
+/// @param path the resource path
+/// @return the entry or the mask, or neither
+MutatorLayerOps::Decision
+MutatorLayerOps::decide(const AssetStore::MutatorLayer& layer, std::string_view path) {
+    Decision decision;
+    const auto key = normalized_path(path);
+    if (const auto found = layer.index.find(key); found != layer.index.end()) {
+        decision.entry = &layer.entries[found->second];
+        return decision;
+    }
+    for (const auto& mask : layer.masks) {
+        if (mutator_mask_matches(mask.pattern, path)) {
+            decision.mask = &mask;
+            return decision;
+        }
+    }
+    return decision;
+}
+
+/// Copies the mounted layer once and decides one path against that copy.
+///
+/// A path a loose lookup would throw for is left undecided. No layer is
+/// copied when none is mounted.
+///
+/// @param store the store
+/// @param resource the path the caller wrote
+/// @return the copy and the decision
+MutatorLayerOps::Hit MutatorLayerOps::consult(const AssetStore& store, std::string_view resource) {
+    Hit hit;
+    if (lookup_path_throws(resource))
+        return hit;
+    hit.layer = store.mutator_layer_snapshot();
+    if (!hit.layer)
+        return hit;
+    hit.decision = decide(*hit.layer, resource);
+    return hit;
+}
+
+/// Returns whether a file is left out because the layer serves or hides it.
+///
+/// Directories are not passed here. A hidden path is reported once.
+///
+/// @param layer the layer copied for this lookup, or null
+/// @param path the file's resource path
+/// @param observer the store's observer
+/// @param[in,out] noted hidden paths already reported
+/// @return true when the file is left out
+bool MutatorLayerOps::omit_file(
+    const AssetStore::MutatorLayer* layer,
+    std::string_view path,
+    const LookupObserver& observer,
+    std::unordered_set<std::string>& noted
+) {
+    if (layer == nullptr)
+        return false;
+    const auto decision = decide(*layer, path);
+    if (!decision.answers())
+        return false;
+    if (decision.hidden()) {
+        const auto key = normalized_path(path);
+        if (noted.insert(key).second)
+            note_mutator(observer, key, decision.owner(), true);
+    }
+    return true;
+}
+
+/// Reads one served path. The caller does not hold the layer's lock.
+///
+/// @param layer the layer
+/// @param entry the layer's file; not hidden
+/// @return the bytes, the providing path and whether they count as archived
+/// @throws std::runtime_error naming the path, the label and the reason
+AssetData MutatorLayerOps::read_entry(
+    const AssetStore::MutatorLayer& layer, const AssetStore::MutatorLayer::Entry& entry
+) {
+    if (entry.kind == MutatorSourceKind::contents)
+        return {*entry.contents, {}, true};
+    if (entry.kind == MutatorSourceKind::loose) {
+        try {
+            return {read_loose(entry.host), entry.host, false};
+        } catch (const std::runtime_error& error) {
+            fail(
+                "mutator layer '" + layer.label + "' cannot read '" + entry.path +
+                "': " + error.what()
+            );
+        }
+    }
+    const auto& held = layer.archives[entry.archive];
+    auto bytes = held.archive->read_node(entry.node);
+    if (!bytes.ok())
+        fail(
+            "mutator layer '" + layer.label + "' cannot read '" + entry.path +
+            "': " + bytes.error.message
+        );
+    return {std::move(*bytes.value), held.location, true};
+}
+
+/// Returns the provider of one served path.
+///
+/// @param layer the layer
+/// @param entry the layer's file; not hidden
+/// @return kind mutator_layer, the host or archive location, and the identity
+Provider MutatorLayerOps::provider_of(
+    const AssetStore::MutatorLayer& layer, const AssetStore::MutatorLayer::Entry& entry
+) {
+    std::filesystem::path path;
+    if (entry.kind == MutatorSourceKind::loose)
+        path = entry.host;
+    else if (entry.kind == MutatorSourceKind::archive)
+        path = layer.archives[entry.archive].location;
+    return {
+        ProviderKind::mutator_layer,
+        std::move(path),
+        "mutator:" + entry.owner + "#" + std::to_string(layer.serial)
+    };
+}
+
+/// Adds one served file and the folder prefixes it implies.
+///
+/// A hidden entry already stored at a prefix is not a file, so it does not
+/// collide with a served path below it. A served file does.
+///
+/// @param layer the layer being built
+/// @param entry the spec entry
+/// @param size the file's size
+/// @param node the archive node, when the entry is an archive file
+/// @param[out] error the reason when the path collides with a served file or folder
+/// @return false when the path cannot be added
+bool MutatorLayerOps::add_served(
+    AssetStore::MutatorLayer& layer,
+    const MutatorLayerEntry& entry,
+    uint32_t size,
+    uint32_t node,
+    std::string& error
+) {
+    const auto parts = pack_parts(entry.path);
+    std::string prefix;
+    for (std::size_t part_index = 0; part_index + 1 < parts.size(); ++part_index) {
+        const auto folded = normalized_path(parts[part_index]);
+        const std::string next = prefix.empty() ? folded : prefix + "/" + folded;
+        if (const auto prior = layer.index.find(next); prior != layer.index.end()) {
+            if (layer.entries[prior->second].kind != MutatorSourceKind::hidden) {
+                mutator_entry_error(
+                    error, entry.path, entry.owner, "'" + parts[part_index] + "' is a file"
+                );
+                return false;
+            }
+        }
+        auto& folder = layer.folders[prefix];
+        bool present = false;
+        for (const auto& child : folder.children) {
+            if (child.directory && normalized_path(child.name) == folded) {
+                present = true;
+                break;
+            }
+        }
+        if (!present)
+            folder.children.push_back({parts[part_index], true, 0, 0});
+        prefix = next;
+    }
+    const auto key = normalized_path(entry.path);
+    if (layer.folders.contains(key)) {
+        mutator_entry_error(error, entry.path, entry.owner, "the path is a folder");
+        return false;
+    }
+    AssetStore::MutatorLayer::Entry stored;
+    stored.path = entry.path;
+    stored.key = key;
+    stored.name = parts.empty() ? entry.path : parts.back();
+    stored.owner = entry.owner;
+    stored.kind = entry.kind;
+    stored.host = entry.host;
+    stored.archive = entry.archive;
+    stored.archive_path = entry.archive_path;
+    stored.node = node;
+    stored.size = size;
+    stored.contents = entry.contents;
+    const auto stored_index = layer.entries.size();
+    layer.entries.push_back(std::move(stored));
+    layer.index.emplace(key, stored_index);
+    layer.folders[prefix].children.push_back(
+        {layer.entries.back().name, false, size, stored_index}
+    );
+    return true;
+}
+
+/// Builds a mutator layer without publishing it.
+///
+/// The counts, the label, the owners, the paths and the masks are checked
+/// before any file is opened. A refusal returns null and publishes nothing.
+///
+/// @param spec the archives, paths, masks and label
+/// @param[out] error the reason when no layer is returned
+/// @return the layer, or null
+std::shared_ptr<AssetStore::MutatorLayer>
+MutatorLayerOps::make(const MutatorLayerSpec& spec, std::string& error) {
+    if (spec.entries.size() > formats::hpi::MutatorLayerEntryLimit) {
+        const auto& entry = spec.entries[formats::hpi::MutatorLayerEntryLimit];
+        mutator_entry_error(
+            error,
+            entry.path,
+            entry.owner,
+            "a mutator layer lists at most " +
+                std::to_string(formats::hpi::MutatorLayerEntryLimit) + " paths"
+        );
+        return nullptr;
+    }
+    if (spec.masks.size() > formats::hpi::MutatorLayerPatternLimit) {
+        const auto& mask = spec.masks[formats::hpi::MutatorLayerPatternLimit];
+        mutator_mask_error(
+            error,
+            mask.pattern,
+            mask.owner,
+            "a mutator layer lists at most " +
+                std::to_string(formats::hpi::MutatorLayerPatternLimit) + " masks"
+        );
+        return nullptr;
+    }
+    if (spec.archives.size() > formats::hpi::MutatorLayerArchiveLimit) {
+        const auto& archive = spec.archives[formats::hpi::MutatorLayerArchiveLimit];
+        mutator_archive_error(
+            error,
+            archive.owner,
+            "a mutator layer holds at most " +
+                std::to_string(formats::hpi::MutatorLayerArchiveLimit) + " archives"
+        );
+        return nullptr;
+    }
+    if (spec.label.empty()) {
+        error = "a mutator layer needs a label";
+        return nullptr;
+    }
+    if (spec.label.find('\n') != std::string::npos || spec.label.find('\r') != std::string::npos) {
+        error = "a mutator layer label holds a line break";
+        return nullptr;
+    }
+    for (const auto& archive : spec.archives) {
+        if (const char* problem = owner_problem(archive.owner)) {
+            mutator_archive_error(error, archive.owner, problem);
+            return nullptr;
+        }
+        if (!archive.archive) {
+            mutator_archive_error(error, archive.owner, "has no archive");
+            return nullptr;
+        }
+    }
+    std::unordered_map<std::string, std::string> seen;
+    for (const auto& entry : spec.entries) {
+        if (const char* problem = owner_problem(entry.owner)) {
+            mutator_entry_error(error, entry.path, entry.owner, problem);
+            return nullptr;
+        }
+        if (const auto problem = pack_path_problem(entry.path); !problem.empty()) {
+            mutator_entry_error(error, entry.path, entry.owner, problem);
+            return nullptr;
+        }
+        const auto key = normalized_path(entry.path);
+        const auto [slot, inserted] = seen.emplace(key, entry.path);
+        if (!inserted) {
+            mutator_entry_error(error, entry.path, entry.owner, "the same path as " + slot->second);
+            return nullptr;
+        }
+        if (entry.kind == MutatorSourceKind::archive && entry.archive >= spec.archives.size()) {
+            mutator_entry_error(error, entry.path, entry.owner, "archive index is out of range");
+            return nullptr;
+        }
+        if (entry.kind == MutatorSourceKind::contents && !entry.contents) {
+            mutator_entry_error(error, entry.path, entry.owner, "has no contents");
+            return nullptr;
+        }
+    }
+    for (const auto& mask : spec.masks) {
+        if (const char* problem = owner_problem(mask.owner)) {
+            mutator_mask_error(error, mask.pattern, mask.owner, problem);
+            return nullptr;
+        }
+        if (const auto problem = mutator_mask_problem(mask.pattern); !problem.empty()) {
+            mutator_mask_error(error, mask.pattern, mask.owner, problem);
+            return nullptr;
+        }
+    }
+
+    auto layer = std::make_shared<AssetStore::MutatorLayer>();
+    layer->label = spec.label;
+    layer->archives.reserve(spec.archives.size());
+    for (const auto& archive : spec.archives)
+        layer->archives.push_back({archive.archive, archive.location, archive.owner});
+    layer->masks.reserve(spec.masks.size());
+    for (const auto& mask : spec.masks)
+        layer->masks.push_back({mask.pattern, mask.owner});
+
+    uint64_t content_bytes = 0;
+    for (const auto& entry : spec.entries) {
+        if (entry.kind == MutatorSourceKind::hidden) {
+            AssetStore::MutatorLayer::Entry stored;
+            stored.path = entry.path;
+            stored.key = normalized_path(entry.path);
+            const auto parts = pack_parts(entry.path);
+            stored.name = parts.empty() ? entry.path : parts.back();
+            stored.owner = entry.owner;
+            stored.kind = MutatorSourceKind::hidden;
+            const auto stored_index = layer->entries.size();
+            layer->entries.push_back(std::move(stored));
+            layer->index.emplace(layer->entries.back().key, stored_index);
+            continue;
+        }
+        uint32_t size = 0;
+        uint32_t node = 0;
+        if (entry.kind == MutatorSourceKind::loose) {
+            std::error_code status;
+            if (!std::filesystem::is_regular_file(entry.host, status) || status) {
+                mutator_entry_error(error, entry.path, entry.owner, "not a regular file");
+                return nullptr;
+            }
+            std::error_code size_error;
+            const auto bytes = std::filesystem::file_size(entry.host, size_error);
+            if (size_error) {
+                mutator_entry_error(error, entry.path, entry.owner, "not a regular file");
+                return nullptr;
+            }
+            if (!formats::hpi::entry_size_allowed(bytes)) {
+                mutator_entry_error(error, entry.path, entry.owner, "exceeds the entry size limit");
+                return nullptr;
+            }
+            size = static_cast<uint32_t>(bytes);
+        } else if (entry.kind == MutatorSourceKind::archive) {
+            const auto& held = layer->archives[entry.archive];
+            const auto found = held.archive->lookup(entry.archive_path);
+            if (!found || held.archive->nodes()[*found].directory()) {
+                mutator_entry_error(error, entry.path, entry.owner, "not a file in the archive");
+                return nullptr;
+            }
+            node = *found;
+            size = held.archive->nodes()[*found].size;
+        } else {
+            const auto bytes = static_cast<uint64_t>(entry.contents->size());
+            if (!formats::hpi::entry_size_allowed(bytes)) {
+                mutator_entry_error(error, entry.path, entry.owner, "exceeds the entry size limit");
+                return nullptr;
+            }
+            if (bytes > formats::hpi::MutatorLayerContentByteLimit ||
+                content_bytes > formats::hpi::MutatorLayerContentByteLimit - bytes) {
+                mutator_entry_error(
+                    error,
+                    entry.path,
+                    entry.owner,
+                    "the given bytes together exceed the content limit"
+                );
+                return nullptr;
+            }
+            content_bytes += bytes;
+            size = static_cast<uint32_t>(bytes);
+        }
+        if (!add_served(*layer, entry, size, node, error))
+            return nullptr;
+    }
+    return layer;
+}
+
+/// Appends a mutator folder's children that match a find.
+///
+/// @param[in,out] found matches appended in the layer's order
+/// @param layer the layer
+/// @param directory directory part of the pattern, with its trailing separator
+/// @param spec wildcard for the names
+void MutatorLayerOps::append_matches(
+    std::vector<FoundEntry>& found,
+    const AssetStore::MutatorLayer& layer,
+    std::string_view directory,
+    std::string_view spec
+) {
+    std::string folder;
+    if (!directory.empty()) {
+        if (directory.back() == '/' || directory.back() == '\\')
+            directory.remove_suffix(1);
+        folder = normalized_path(directory);
+    }
+    const auto listed = layer.folders.find(folder);
+    if (listed == layer.folders.end())
+        return;
+    for (const auto& child : listed->second.children) {
+        if (!match_wildcard(child.name, spec))
+            continue;
+        found.push_back(
+            {child.name,
+             child.directory,
+             child.directory ? 0 : child.size,
+             formats::hpi::MutatorLayerMount,
+             false,
+             true}
+        );
+    }
+}
+
 struct ResourceFile {
     std::ifstream loose;
     uint32_t loose_size = 0;
@@ -926,11 +1558,63 @@ struct ResourceFile {
     std::vector<uint8_t> block;
     // The pack layer this handle was opened from, kept until close.
     std::shared_ptr<const AssetStore::PackLayer> pack_layer;
+    // The mutator layer this handle was opened from, kept until close.
+    std::shared_ptr<const AssetStore::MutatorLayer> mutator_layer;
     // A zip pack entry, read whole when the handle was opened, or a file the
     // layer was given; in_memory reads it.
     std::vector<uint8_t> memory;
     bool in_memory = false;
+    // Given bytes of a mutator layer count as archived. A pack folder's
+    // given bytes do not, so this is set only for the mutator layer.
+    bool memory_archived = false;
 };
+
+/// Opens one served path. The caller does not hold the layer's lock.
+///
+/// The handle keeps the layer until close, so an archive entry is read from
+/// the archive the layer was given.
+///
+/// @param layer the layer the handle keeps
+/// @param entry the layer's file; not hidden
+/// @return the handle
+/// @throws std::runtime_error when a loose host file cannot be opened
+ResourceFile* MutatorLayerOps::open_entry(
+    const std::shared_ptr<const AssetStore::MutatorLayer>& layer,
+    const AssetStore::MutatorLayer::Entry& entry
+) {
+    auto* file = new ResourceFile;
+    file->mutator_layer = layer;
+    if (entry.kind == MutatorSourceKind::contents) {
+        try {
+            file->memory = *entry.contents;
+        } catch (...) {
+            delete file;
+            throw;
+        }
+        file->in_memory = true;
+        file->memory_archived = true;
+        file->size = entry.size;
+        return file;
+    }
+    if (entry.kind == MutatorSourceKind::archive) {
+        const auto& held = layer->archives[entry.archive];
+        file->archive = held.archive.get();
+        file->archive_path = &held.location;
+        file->node = entry.node;
+        file->size = entry.size;
+        return file;
+    }
+    file->loose.open(entry.host, std::ios::binary);
+    if (!file->loose) {
+        const auto label = layer->label;
+        const auto path = entry.path;
+        delete file;
+        fail("mutator layer '" + label + "' cannot read '" + path + "': cannot open the file");
+    }
+    file->loose_size = entry.size;
+    file->size = entry.size;
+    return file;
+}
 
 // Folder listings of the loose tree, keyed by the folded resource path of the
 // folder. Each folder is listed once, the first time a lookup passes through it.
@@ -1013,7 +1697,8 @@ void AssetStore::LooseIndex::reset() {
 AssetStore::AssetStore(std::filesystem::path loose_root, std::size_t loose_index_limit)
     : loose_roots_{std::filesystem::absolute(std::move(loose_root))},
       loose_index_(std::make_unique<LooseIndex>(loose_index_limit)),
-      pack_layer_(std::make_unique<PackLayerSlot>()) {
+      pack_layer_(std::make_unique<PackLayerSlot>()),
+      mutator_layer_(std::make_unique<MutatorLayerSlot>()) {
 }
 
 AssetStore::AssetStore(
@@ -1021,7 +1706,8 @@ AssetStore::AssetStore(
 )
     : loose_roots_(std::move(loose_roots)),
       loose_index_(std::make_unique<LooseIndex>(loose_index_limit)),
-      pack_layer_(std::make_unique<PackLayerSlot>()) {
+      pack_layer_(std::make_unique<PackLayerSlot>()),
+      mutator_layer_(std::make_unique<MutatorLayerSlot>()) {
     if (loose_roots_.empty())
         fail("an asset store needs a folder");
     for (auto& root : loose_roots_)
@@ -1373,6 +2059,13 @@ AssetStore::archived_node(std::string_view resource, const std::filesystem::path
 
 AssetData
 AssetStore::read_skipping(std::string_view resource, const std::filesystem::path* skipped) const {
+    if (const auto hit = MutatorLayerOps::consult(*this, resource); hit.decision.answers()) {
+        note_lookup(resource);
+        note_mutator(observer_, resource, hit.decision.owner(), hit.decision.hidden());
+        if (hit.decision.hidden())
+            fail("asset not found: " + normalized_path(resource));
+        return MutatorLayerOps::read_entry(*hit.layer, *hit.decision.entry);
+    }
     if (const auto loose = loose_path(resource))
         return {read_loose(*loose), *loose, false};
     if (const auto found = archived_node(resource, skipped)) {
@@ -1401,11 +2094,23 @@ AssetStore::read_without(std::string_view resource, const std::filesystem::path&
 
 std::optional<std::filesystem::path>
 AssetStore::providing_archive(std::string_view resource) const {
+    if (const auto hit = MutatorLayerOps::consult(*this, resource); hit.decision.answers()) {
+        note_lookup(resource);
+        note_mutator(observer_, resource, hit.decision.owner(), hit.decision.hidden());
+        return std::nullopt;
+    }
     if (loose_path(resource))
         return std::nullopt;
     if (const auto found = archived_node(resource, nullptr))
         return mounts_[found->mount].path;
     return std::nullopt;
+}
+
+std::shared_ptr<const AssetStore::MutatorLayer> AssetStore::mutator_layer_snapshot() const {
+    if (mutator_layer_ == nullptr)
+        return nullptr;
+    const base::threads::LockGuard guard(mutator_layer_->lock);
+    return mutator_layer_->layer;
 }
 
 std::shared_ptr<const AssetStore::PackLayer> AssetStore::pack_layer_snapshot() const {
@@ -1474,7 +2179,87 @@ std::vector<std::string> AssetStore::pack_layer_paths() const {
     return paths;
 }
 
+bool AssetStore::mount_mutator_layer(MutatorLayerSpec spec, std::string* error) {
+    if (mutator_layer_ == nullptr)
+        mutator_layer_ = std::make_unique<MutatorLayerSlot>();
+    if (const auto mounted = mutator_layer_snapshot()) {
+        if (error != nullptr)
+            *error = "a mutator layer is mounted already: " + mounted->label;
+        return false;
+    }
+    std::string reason;
+    auto built = MutatorLayerOps::make(spec, reason);
+    if (!built) {
+        if (error != nullptr)
+            *error = std::move(reason);
+        return false;
+    }
+    built->serial = next_pack_serial();
+    const base::threads::LockGuard guard(mutator_layer_->lock);
+    if (mutator_layer_->layer) {
+        if (error != nullptr)
+            *error = "a mutator layer is mounted already: " + mutator_layer_->layer->label;
+        return false;
+    }
+    mutator_layer_->layer = std::move(built);
+    return true;
+}
+
+bool AssetStore::replace_mutator_layer(MutatorLayerSpec spec, std::string* error) {
+    if (mutator_layer_ == nullptr)
+        mutator_layer_ = std::make_unique<MutatorLayerSlot>();
+    std::string reason;
+    auto built = MutatorLayerOps::make(spec, reason);
+    if (!built) {
+        if (error != nullptr)
+            *error = std::move(reason);
+        return false;
+    }
+    built->serial = next_pack_serial();
+    const base::threads::LockGuard guard(mutator_layer_->lock);
+    mutator_layer_->layer = std::move(built);
+    return true;
+}
+
+bool AssetStore::unmount_mutator_layer() noexcept {
+    if (mutator_layer_ == nullptr)
+        return false;
+    const base::threads::LockGuard guard(mutator_layer_->lock);
+    const bool mounted = mutator_layer_->layer != nullptr;
+    mutator_layer_->layer.reset();
+    return mounted;
+}
+
+bool AssetStore::mutator_layer_mounted() const {
+    return mutator_layer_snapshot() != nullptr;
+}
+
+std::optional<std::string> AssetStore::mutator_layer_label() const {
+    const auto layer = mutator_layer_snapshot();
+    if (!layer)
+        return std::nullopt;
+    return layer->label;
+}
+
+std::vector<std::string> AssetStore::mutator_layer_paths() const {
+    const auto layer = mutator_layer_snapshot();
+    std::vector<std::string> paths;
+    if (!layer)
+        return paths;
+    for (const auto& entry : layer->entries)
+        if (entry.kind != MutatorSourceKind::hidden)
+            paths.push_back(entry.path);
+    return paths;
+}
+
 Provider AssetStore::provider(std::string_view resource) const {
+    if (const auto hit = MutatorLayerOps::consult(*this, resource); hit.decision.answers()) {
+        note_lookup(resource);
+        note_mutator(observer_, resource, hit.decision.owner(), hit.decision.hidden());
+        if (hit.decision.hidden())
+            return {};
+        return MutatorLayerOps::provider_of(*hit.layer, *hit.decision.entry);
+    }
     if (const auto loose = loose_path(resource))
         return {ProviderKind::loose, *loose, "loose:" + utf8_text(*loose)};
     if (const auto found = archived_node(resource, nullptr)) {
@@ -1495,7 +2280,8 @@ Provider AssetStore::provider(std::string_view resource) const {
 
 bool AssetStore::provided_above_pack_layer(std::string_view resource) const {
     const auto kind = provider(resource).kind;
-    return kind == ProviderKind::loose || kind == ProviderKind::archive;
+    return kind == ProviderKind::loose || kind == ProviderKind::archive ||
+           kind == ProviderKind::mutator_layer;
 }
 
 std::optional<std::vector<uint8_t>> AssetStore::read_pack_layer(std::string_view resource) const {
@@ -1580,12 +2366,20 @@ bool AssetStore::read_chunk(
 std::vector<FoundEntry> AssetStore::find(std::string_view pattern, FindScope scope) const {
     note_lookup(pattern);
     std::vector<FoundEntry> found;
+    std::unordered_set<std::string> hidden_noted;
+    const auto mutator = mutator_layer_snapshot();
     const std::size_t split = last_separator(pattern);
     const std::string_view directory = pattern.substr(0, split);
     std::string_view spec = pattern.substr(split);
     if (spec == kAllFilesPattern)
         spec = "*";
-    if (scope.first_mount < 0) {
+    const bool layer_start = scope.first_mount == formats::hpi::MutatorLayerMount;
+    const bool loose_start = scope.first_mount < 0 && !layer_start;
+    if (mutator && scope.include_mutator_layer && (loose_start || layer_start))
+        MutatorLayerOps::append_matches(found, *mutator, directory, spec);
+    if (layer_start && !scope.continue_into_mounts)
+        return found;
+    if (loose_start || layer_start) {
         std::vector<std::filesystem::path> folders;
         const bool roots = directory.empty();
         if (roots) {
@@ -1600,16 +2394,21 @@ std::vector<FoundEntry> AssetStore::find(std::string_view pattern, FindScope sco
             }
         }
         if (!folders.empty())
-            for (const auto& item : merged_listing(folders, roots))
-                if (match_host_pattern(item.name, spec))
-                    found.push_back(
-                        {item.name, item.directory, item.directory ? 0 : item.size, -1}
-                    );
+            for (const auto& item : merged_listing(folders, roots)) {
+                if (!match_host_pattern(item.name, spec))
+                    continue;
+                if (!item.directory &&
+                    MutatorLayerOps::omit_file(
+                        mutator.get(), child_path(directory, item.name), observer_, hidden_noted
+                    ))
+                    continue;
+                found.push_back({item.name, item.directory, item.directory ? 0 : item.size, -1});
+            }
         if (!scope.continue_into_mounts)
             return found;
         scope.first_mount = 0;
     }
-    find_in_mounts(found, directory, spec, scope);
+    find_in_mounts(found, directory, spec, scope, mutator.get(), hidden_noted);
     return found;
 }
 
@@ -1617,7 +2416,9 @@ void AssetStore::find_in_mounts(
     std::vector<FoundEntry>& found,
     std::string_view directory,
     std::string_view spec,
-    FindScope scope
+    FindScope scope,
+    const MutatorLayer* mutator,
+    std::unordered_set<std::string>& hidden_noted
 ) const {
     for (auto mount = static_cast<std::size_t>(scope.first_mount); mount < mounts_.size();
          ++mount) {
@@ -1628,8 +2429,14 @@ void AssetStore::find_in_mounts(
             for (uint32_t i = 0; i < parent.child_count; ++i) {
                 const auto index = parent.first_child + i;
                 const ArchiveNode& child = archive.nodes()[index];
-                const bool hidden = index < marks.size() && (marks[index] & kShadowedByLoose) != 0;
-                if (!match_wildcard(child.name, spec) || hidden)
+                const bool shadowed =
+                    index < marks.size() && (marks[index] & kShadowedByLoose) != 0;
+                if (!match_wildcard(child.name, spec) || shadowed)
+                    continue;
+                if (!child.directory() &&
+                    MutatorLayerOps::omit_file(
+                        mutator, child_path(directory, child.name), observer_, hidden_noted
+                    ))
                     continue;
                 found.push_back(
                     {child.name,
@@ -1652,9 +2459,18 @@ void AssetStore::find_in_mounts(
     const auto layer = pack_layer_snapshot();
     if (!layer)
         return;
+    std::vector<FoundEntry> pack_found;
     PackLayerOps::append_pack_matches(
-        found, *layer, directory, spec, static_cast<int>(mounts_.size())
+        pack_found, *layer, directory, spec, static_cast<int>(mounts_.size())
     );
+    for (auto& entry : pack_found) {
+        if (!entry.directory &&
+            MutatorLayerOps::omit_file(
+                mutator, child_path(directory, entry.name), observer_, hidden_noted
+            ))
+            continue;
+        found.push_back(std::move(entry));
+    }
 }
 
 std::vector<std::string> AssetStore::scan_recursive(
@@ -1671,7 +2487,10 @@ std::vector<std::string> AssetStore::scan_recursive(
                     result.push_back(child);
                 continue;
             }
-            self(self, child, FindScope{entry.mount, false});
+            const FindScope next = entry.mutator_layer
+                                       ? FindScope{formats::hpi::MutatorLayerMount, false}
+                                       : FindScope{entry.mount, false, true, false};
+            self(self, child, next);
         }
     };
     // An empty directory names the drive root in the game; nothing here.
@@ -1690,6 +2509,13 @@ int AssetStore::count_entries(std::string_view pattern, bool directories_only) c
 }
 
 ResourceFile* AssetStore::open(std::string_view resource) const {
+    if (const auto hit = MutatorLayerOps::consult(*this, resource); hit.decision.answers()) {
+        note_lookup(resource);
+        note_mutator(observer_, resource, hit.decision.owner(), hit.decision.hidden());
+        if (hit.decision.hidden())
+            return nullptr;
+        return MutatorLayerOps::open_entry(hit.layer, *hit.decision.entry);
+    }
     if (const auto loose = loose_path(resource)) {
         auto* file = new ResourceFile;
         file->loose.open(*loose, std::ios::binary);
@@ -1751,7 +2577,7 @@ void AssetStore::close(ResourceFile* file) noexcept {
 }
 
 bool AssetStore::archived(const ResourceFile* file) noexcept {
-    return file->archive != nullptr ||
+    return file->archive != nullptr || file->memory_archived ||
            (file->pack_layer != nullptr && file->pack_layer->kind == PackLayerKind::zip);
 }
 
@@ -1960,6 +2786,26 @@ std::vector<std::string> AssetStore::list_resources(
     };
     std::set<std::string> keys;
     std::vector<std::string> result;
+    const auto mutator = mutator_layer_snapshot();
+    if (mutator != nullptr)
+        for (const auto& entry : mutator->entries) {
+            if (entry.kind == MutatorSourceKind::hidden)
+                continue;
+            if (matches(entry.key) && keys.insert(entry.key).second)
+                result.push_back(entry.key);
+        }
+    const auto claim = [&](const std::string& key) {
+        if (!keys.insert(key).second)
+            return true;
+        if (mutator == nullptr)
+            return false;
+        const auto decision = MutatorLayerOps::decide(*mutator, key);
+        if (!decision.answers())
+            return false;
+        if (decision.hidden())
+            note_mutator(observer_, key, decision.owner(), true);
+        return true;
+    };
     for (const auto& root : loose_roots_) {
         const auto found = folder_in(root);
         if (!found || !std::filesystem::is_directory(*found) ||
@@ -1981,7 +2827,7 @@ std::vector<std::string> AssetStore::list_resources(
             if (matches(key)) {
                 if (!folder_keys.insert(key).second)
                     fail("ambiguous loose asset case: " + key);
-                if (keys.insert(key).second)
+                if (!claim(key))
                     result.push_back(key);
             }
         };
@@ -2006,15 +2852,192 @@ std::vector<std::string> AssetStore::list_resources(
     for (const auto& mounted : mounts_)
         for (const auto& entry : mounted.archive.entries()) {
             const auto key = normalized_path(entry.path);
-            if (matches(key) && keys.insert(key).second)
+            if (matches(key) && !claim(key))
                 result.push_back(key);
         }
     if (include_pack_layer)
         if (const auto layer = pack_layer_snapshot())
             for (const auto& entry : layer->entries)
-                if (matches(entry.key) && keys.insert(entry.key).second)
+                if (matches(entry.key) && !claim(entry.key))
                     result.push_back(entry.key);
     return result;
+}
+
+namespace {
+
+/// Returns why a mask pattern is refused, or null when it is valid.
+///
+/// Allocates nothing, so a noexcept caller can use it.
+///
+/// @param pattern the pattern
+/// @return a static reason, or null
+const char* mask_problem(std::string_view pattern) noexcept {
+    if (pattern.empty())
+        return "empty pattern";
+    if (pattern.size() > formats::hpi::MutatorMaskByteLimit)
+        return "pattern is too long";
+    if (pattern.front() == '/' || pattern.front() == '\\')
+        return "absolute pattern";
+    if (pattern.find(':') != std::string_view::npos)
+        return "pattern contains ':'";
+    if (pattern.find('\0') != std::string_view::npos)
+        return "pattern contains NUL";
+    std::size_t wildcards = 0;
+    bool first = true;
+    for (std::size_t begin = 0; begin <= pattern.size();) {
+        std::size_t end = begin;
+        while (end < pattern.size() && pattern[end] != '/' && pattern[end] != '\\')
+            ++end;
+        const auto segment = pattern.substr(begin, end - begin);
+        if (segment.empty() || segment == "." || segment == "..")
+            return "pattern contains an empty or traversal segment";
+        if (first) {
+            if (segment.size() == backup_folder_name.size()) {
+                bool backup = true;
+                for (std::size_t index = 0; index < segment.size(); ++index) {
+                    if (ascii_lower(segment[index]) != backup_folder_name[index]) {
+                        backup = false;
+                        break;
+                    }
+                }
+                if (backup)
+                    return "pattern starts with the backup folder";
+            }
+            first = false;
+        }
+        if (segment.find("**") != std::string_view::npos && segment != "**")
+            return "'**' is not a whole segment";
+        for (const char character : segment)
+            if (character == '*' || character == '?')
+                ++wildcards;
+        if (end >= pattern.size())
+            break;
+        begin = end + 1;
+    }
+    if (wildcards > formats::hpi::MutatorMaskWildcardLimit)
+        return "too many wildcards";
+    return nullptr;
+}
+
+/// One '/' separated piece of a folded path, as offsets into that path.
+struct FoldedSegment {
+    std::size_t begin = 0;
+    std::size_t length = 0;
+};
+
+/// Splits a folded path into segments. The path has no empty segment.
+///
+/// @param text the path, '/' separated and ASCII lower case
+/// @param[out] segments the pieces
+void split_folded(std::string_view text, std::vector<FoldedSegment>& segments) {
+    for (std::size_t begin = 0; begin < text.size();) {
+        const auto end = text.find('/', begin);
+        const auto length = end == std::string_view::npos ? text.size() - begin : end - begin;
+        segments.push_back({begin, length});
+        if (end == std::string_view::npos)
+            break;
+        begin = end + 1;
+    }
+}
+
+/// Returns whether one pattern segment matches one path segment.
+///
+/// Both are ASCII lower case and hold no '/'. '*' matches any run and '?'
+/// one character. The match is a scan over the two lengths, not a search
+/// that branches on every wildcard.
+///
+/// @param pattern the pattern segment
+/// @param text the path segment
+/// @return true when the whole segment matches
+bool segment_matches(std::string_view pattern, std::string_view text) {
+    // prev[j] is true when the pattern consumed so far matches text[0, j).
+    std::vector<char> previous(text.size() + 1, 0);
+    std::vector<char> next(text.size() + 1, 0);
+    previous[0] = 1;
+    for (const char wanted : pattern) {
+        std::fill(next.begin(), next.end(), 0);
+        if (wanted == '*') {
+            char reached = 0;
+            for (std::size_t index = 0; index < next.size(); ++index) {
+                reached = static_cast<char>(reached | previous[index]);
+                next[index] = reached;
+            }
+        } else {
+            for (std::size_t index = 1; index < next.size(); ++index) {
+                const char have = text[index - 1];
+                if (previous[index - 1] != 0 && (wanted == '?' || wanted == have))
+                    next[index] = 1;
+            }
+        }
+        previous.swap(next);
+    }
+    return previous.back() != 0;
+}
+
+/// Returns whether folded pattern segments match folded path segments.
+///
+/// A "**" segment matches any run of path segments, including none. The
+/// scan walks each pattern segment once and remembers which path segments
+/// are reachable, so a run of "**" does not branch on every split.
+///
+/// @param pattern the folded pattern
+/// @param pattern_segments its segments
+/// @param path the folded path
+/// @param path_segments its segments
+/// @return true when the whole path matches
+bool segments_match(
+    std::string_view pattern,
+    const std::vector<FoldedSegment>& pattern_segments,
+    std::string_view path,
+    const std::vector<FoldedSegment>& path_segments
+) {
+    std::vector<char> reachable(path_segments.size() + 1, 0);
+    reachable[0] = 1;
+    for (const auto& piece : pattern_segments) {
+        const auto token = pattern.substr(piece.begin, piece.length);
+        std::vector<char> next(reachable.size(), 0);
+        if (token == "**") {
+            char reached = 0;
+            for (std::size_t index = 0; index < reachable.size(); ++index) {
+                reached = static_cast<char>(reached | reachable[index]);
+                next[index] = reached;
+            }
+        } else {
+            for (std::size_t index = 0; index < path_segments.size(); ++index) {
+                if (reachable[index] == 0)
+                    continue;
+                const auto& path_piece = path_segments[index];
+                if (segment_matches(token, path.substr(path_piece.begin, path_piece.length)))
+                    next[index + 1] = 1;
+            }
+        }
+        reachable.swap(next);
+    }
+    return reachable.back() != 0;
+}
+
+} // namespace
+
+std::string mutator_mask_problem(std::string_view pattern) {
+    if (const char* problem = mask_problem(pattern))
+        return problem;
+    return {};
+}
+
+bool mutator_mask_matches(std::string_view pattern, std::string_view path) noexcept {
+    if (mask_problem(pattern) != nullptr)
+        return false;
+    try {
+        const auto folded_pattern = normalized_path(pattern);
+        const auto folded_path = normalized_path(path);
+        std::vector<FoldedSegment> pattern_segments;
+        std::vector<FoldedSegment> path_segments;
+        split_folded(folded_pattern, pattern_segments);
+        split_folded(folded_path, path_segments);
+        return segments_match(folded_pattern, pattern_segments, folded_path, path_segments);
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
 }
 
 } // namespace oa
