@@ -291,7 +291,8 @@ std::vector<std::string> order_problems(const kit::DisplayList& list) {
 /// @return true when it is
 bool designed_name(const std::string& name) {
     static const std::regex pattern(
-        "library\\.(tab\\.(active|mods|maps|languages|updates|registries|scroll-left|scroll-right)|"
+        "library\\.(tab\\.(active|mods|maps|mutators|languages|updates|registries|scroll-left|"
+        "scroll-right)|"
         "search|filter|"
         "filter\\.(all|new|installed|updates|tag-[a-z0-9-]+)|tag\\.[a-z0-9-]+|tags|tags\\.[a-z0-9-]"
         "+|detail\\.tag\\.[a-z0-9-]+|"

@@ -1244,6 +1244,7 @@ void Runtime::check_library() {
                 walls.has_value() && walls->enabled && walls_get.has_value() && walls_get->enabled,
                 "Ridge Walls is not listed with GET on" + on
             );
+            std::cout << "library check: the Mutators tab reads Mutators (5)" << on << '\n';
         }
         show_tab("oa.library.tab.updates");
         click_named("oa.library.tab.updates");

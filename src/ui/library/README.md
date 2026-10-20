@@ -117,9 +117,12 @@ translator finds them together. Every word passes through `Library::text`
   Mutators the eight ids come first, in the order statistics, economy,
   commanders, new-units, disable, gameplay, ai, maps, and any other id
   after them in alphabetical order. On the other tabs the ids stay in
-  alphabetical order. The screen's label is the word of an id matched
-  exactly (`tag_label`): `economy` shows Economy on every tab, and
-  `Economy` stays as written. The list applies a stored tag only when that count includes it;
+  alphabetical order. A mutator's chips and detail pills, and the Mutators
+  tab's filter pills, pane and menu, show the word of an id matched
+  exactly (`tag_label`). A mod's or a map pack's tag stays as written on
+  every tab, so `economy` stays `economy` and `maps` stays `maps`, and a
+  different case such as `Economy` stays as written. The search still
+  matches a mutator's label. The list applies a stored tag only when that count includes it;
   `filter_count` counts the packages a filter keeps on the tab
   shown before the tag and the search, so no count moves with them, and
   leaves the base game entry out of every count, and

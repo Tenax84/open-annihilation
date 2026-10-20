@@ -575,11 +575,13 @@ using Place = std::pair<std::string_view, std::string_view>;
 /// @return the text to show; the English when the hooks give no lookup
 [[nodiscard]] std::string_view shown(const TextHooks& text, std::string_view english);
 
-/// Returns the label a catalogue tag id shows.
+/// Returns the label a mutator's catalogue tag id shows.
 ///
 /// The eight ids give their words, looked up. Any other id, including a
 /// different case of one of those, is returned as written. The id `maps`
-/// uses the Maps tab's word.
+/// uses the Maps tab's word. The screen uses this for a mutator's chips
+/// and detail pills, and for the Mutators tab's filter pills, pane and
+/// menu. A mod's or a map pack's tag is shown as the id was written.
 ///
 /// @param tag the catalogue id
 /// @param text how texts are looked up; empty shows the English label
