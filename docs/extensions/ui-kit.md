@@ -393,11 +393,19 @@ kit::DisplayList lay_out_screen(void*, const kit::Frame& frame) {
 - Each `kit::add_*` function appends a component: its item, and the
   control a press reaches, with its number and its name. The components
   are in [controls.hpp][controls] (list rows, chips, fields, tabs, cards,
-  hover cards, links), [components.hpp][components] (buttons, switches,
-  level strips, sliders, drop-downs, the lock, the focus ring),
-  [components_more.hpp][components_more] (the progress bar),
-  [chrome.hpp][chrome] (the nav list) and [rows.hpp][rows] (declared rows,
-  `add_rows`).
+  hover cards, links, the package badge and the drag handle),
+  [components.hpp][components] (buttons, switches,
+  level strips, sliders, drop-downs, the lock, the focus ring, and
+  `draw_tag_icon` for the eight catalogue tag icons),
+  [components_more.hpp][components_more] (the progress bar, and a question's
+  item lines),
+  [chrome.hpp][chrome] (the nav list, whose entries can lead with a tag icon)
+  and [rows.hpp][rows] (declared rows, `add_rows`). A tag icon is strokes
+  sampled at the canvas's pixels, not a picture. A package badge
+  (`BadgeLook`, `add_badge`) draws a picture, else the first tag's icon on
+  the hint ground, else letters, else a dashed square. A drag handle
+  (`GripLook`, `add_grip`) is two columns of four dots. A question's
+  `items` are lines under its paragraphs, each a badge, a name and an aside.
 - A button whose mark is `ButtonMark::refresh` draws a circular arrow
   instead of its caption. `turn` is the eighth of the turn (one full turn
   is `refresh_revolution_ms`, 1.6 seconds) and `turning` keeps the arrow in
@@ -480,6 +488,11 @@ being played, over any of the menus; so two never show at once, and none
 opens over Settings or a match. A notice tells the player something and
 closes with OK (or Enter or Escape). A prompt asks, with one to three
 buttons (`app::most_prompt_buttons`).
+
+A question can also list packages under its paragraphs. Each `QuestionItem`
+is a badge (`BadgeLook`), a name and an aside drawn after the name in the
+hint colour. The kit draws them; the caller supplies the words. With no
+items the question is unchanged.
 
 Both are requests in [screen_registry/kit.hpp][regkit], queued through the
 services table, which copies the request and every string it names at

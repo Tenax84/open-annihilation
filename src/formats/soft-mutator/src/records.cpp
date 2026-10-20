@@ -143,6 +143,14 @@ std::string_view code_name(DiagnosticCode code) noexcept {
         return "repeated_section";
     case DiagnosticCode::byte_order_mark:
         return "byte_order_mark";
+    case DiagnosticCode::unquoted_text:
+        return "unquoted_text";
+    case DiagnosticCode::empty_value:
+        return "empty_value";
+    case DiagnosticCode::empty_text_need:
+        return "empty_text_need";
+    case DiagnosticCode::stray_closing_brace:
+        return "stray_closing_brace";
     case DiagnosticCode::unknown_section:
         return "unknown_section";
     case DiagnosticCode::unclosed_block:
