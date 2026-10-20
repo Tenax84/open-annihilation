@@ -55,6 +55,22 @@ void draw_mark(const Canvas& canvas, Mark mark, Point at, Colour ink);
 /// @param ink the colour of a one-colour icon; ignored for the badge and the bone
 void draw_state_icon(const Canvas& canvas, const Rect& rect, StateIcon icon, Colour ink);
 
+/// Draws a tag icon, filling a square of the rectangle's shorter side,
+/// centred in it.
+///
+/// The eight catalogue icons are strokes on a design of 24 units, each
+/// stroke 2.5 units wide with round ends, the same width as a state icon.
+/// They are worked out at the canvas's own pixels and drawn through
+/// blend_coverage, so a 2x drawing is not a doubled 1x drawing. A rectangle
+/// more than 1024 pixels on a side draws nothing, and so does an undrawable
+/// canvas. Pixels the icon does not cover are left as they are.
+///
+/// @param canvas where it is drawn
+/// @param rect the rectangle, in points
+/// @param icon which icon
+/// @param ink the colour of the strokes
+void draw_tag_icon(const Canvas& canvas, const Rect& rect, TagIcon icon, Colour ink);
+
 /// The app icon drawn as the small maker's mark on a Library row or a
 /// registry card. The spans point at pixels kept elsewhere for as long as
 /// the mark is set. An empty full picture leaves the drawn plate.

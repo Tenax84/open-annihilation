@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -546,6 +547,20 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
     if (bootstrap.place_commanders && selected_start_markers_.empty() && !campaign_mission_)
         throw std::runtime_error("selected map has no start-position schema");
     session_schema_ = session_schema();
+
+    // A start that fails after this puts the run's sides back, including a
+    // campaign start, which does not tear the match down.
+    struct SideTableRestore {
+        Runtime& runtime;
+        int depth = std::uncaught_exceptions();
+
+        ~SideTableRestore() {
+            if (std::uncaught_exceptions() > depth)
+                runtime.restore_run_side_table();
+        }
+    } side_table_restore{*this};
+
+    load_match_side_table();
     // The weapons, every WEAPONS\*.TDF section into its ID's slot. A lava
     // world loads the lava explosions into the water explosion slot.
     weapon_registry_ = oa::sim::combat_state::WeaponRegistry{};
@@ -1175,6 +1190,8 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         altitude_sight_blocked_ = true;
         status_ = std::string("Offline match setup blocked: ") + error.what();
         std::cerr << "unsupported operation: " << status_ << '\n';
+        // The match does not start, so the menus keep the sides the run read.
+        restore_run_side_table();
         return;
     }
     {
