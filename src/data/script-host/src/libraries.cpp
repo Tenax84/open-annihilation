@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The libraries a script may use, and the replacements that keep them inside
-// the sandbox. The maths library is left closed; a later change adds it.
+// the sandbox. `math` is the engine's library.
 
 #include "internal.hpp"
 
@@ -275,6 +275,8 @@ void open_libraries(lua_State* state) {
     luaL_requiref(state, "table", luaopen_table, 1);
     lua_pop(state, 1);
     luaL_requiref(state, "utf8", luaopen_utf8, 1);
+    lua_pop(state, 1);
+    luaL_requiref(state, "math", open_math, 1);
     lua_pop(state, 1);
 
     const char* const removed[] = {"load", "loadfile", "dofile", "collectgarbage"};

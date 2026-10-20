@@ -62,6 +62,8 @@ struct Sandbox::Control {
 
     SourceHooks sources{};
     std::string package_id;
+    /// Copied from `OpenOptions::random_seed` before the libraries open.
+    uint64_t random_seed{};
     std::string phase;
     std::string chunk_name_storage;
 
@@ -171,6 +173,12 @@ inline HostDetail::Control* control_from(lua_State* state) {
 ///
 /// @param state the state being opened
 void open_libraries(lua_State* state);
+
+/// Opens the math library. May raise.
+///
+/// @param state the state being opened
+/// @return one math table
+extern "C" int open_math(lua_State* state);
 
 /// Adds the package `require` and an empty module cache.
 ///
