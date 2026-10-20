@@ -1,0 +1,81 @@
+# Lua
+
+Lua 5.4.9, which the script host runs for mutators.
+
+- Source: <https://www.lua.org/ftp/lua-5.4.9.tar.gz>, version 5.4.9, SHA-256
+  `2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6`.
+  The files copied from that release's `src/` are listed below, each with
+  the SHA-256 `shasum -a 256` prints.
+- `LICENSE` is the notice at the end of `lua.h`.
+- Licence: MIT.
+- The engine does not compile `lcorolib.c`, `ldblib.c`, `liolib.c`,
+  `lmathlib.c`, `loadlib.c`, `loslib.c` or `linit.c` (the coroutine, debug,
+  input and output, maths, dynamic loading, operating-system and package
+  libraries, and the opener that would load every library). It compiles
+  `lauxlib.c`, `lbaselib.c`, `lstrlib.c`, `ltablib.c` and `lutf8lib.c`, and
+  the core.
+
+```
+cd369dc6900a7696ca55ccbd4f50eadfa799b975f34b7afe450e1b859517a56e  third_party/lua/lapi.c
+257c287ed4964ec8bb07fe0a1fd1b52b712e4bccd6c889db62f84abb905d6996  third_party/lua/lauxlib.c
+5dc9a64468c1ac31e59066c7d3597eeb8ea4ac8fc19a257a74c431624300b487  third_party/lua/lbaselib.c
+2cf13c7f8205e9f07c2ccf1fedc3f0f0a05d238c194b176c72cc22b2cc96210e  third_party/lua/lcode.c
+5408ccec737678d045d421f84a56e1ce03192a42c55440ffef07bec356aaec89  third_party/lua/lcorolib.c
+3e21ae6a8faab3ed470ae0de19360da6b4e21a0a0f8572f502f7e13d590186f8  third_party/lua/lctype.c
+349afd63c8be2cb8a522e4a04e9f444b65ed1fc7f4dabba5b4b61fd8c11d0c42  third_party/lua/ldblib.c
+06d065d1f26c29546cc74b61a50267cb70567ae538691f190bf15ca5cd29d308  third_party/lua/ldebug.c
+af1522801876fe267bf2f892caa24209c395459331ac9a1fdf7ad3ed82402a6c  third_party/lua/ldo.c
+3c05402c5e282e06c2218f2469b1f38e1b84c783b9387aec7740c60b287d82c9  third_party/lua/ldump.c
+38809428b76fafa79db9f65b7248cc0c02c9b696e7410fc4ab1699940768f1b2  third_party/lua/lfunc.c
+caa4df2eccfae0899686d1aed3f2bad91184de3bd12176fdfead91147f704e0b  third_party/lua/lgc.c
+3578568e27b9c1e2f4a7f9a53fdb4bc8ac095db75cc86e966bb1deec2792158e  third_party/lua/linit.c
+bd3176d1c5d30d61fdfc2aa17d7af0819f2da51694942a24b6c185ef797f0060  third_party/lua/liolib.c
+5cfbaabf3dc0d75835aaafc37fcd87a92f3dba451e002732747b602fda122958  third_party/lua/llex.c
+da5c7d74cffce22f0a9eb468e6e7e80b543ea6bec5c21aefb8cf285a3556722a  third_party/lua/lmathlib.c
+6154c2865bec97e61a92d8284be7e8ba21818f6edc95f5d72adb5dcf3e9532ca  third_party/lua/lmem.c
+f21cafa3258669d6f8c4f09195c654a4a588ab402f5e976c731918658b747a5b  third_party/lua/loadlib.c
+7a9748e38c52e45bc468cae74ccea08b98f8c53a523c1b0f9a117e5cf162c921  third_party/lua/lobject.c
+bdc9d39fd8bf1a350c0249f726c5f61bef64b122b93a0fbc172b0328dc01f594  third_party/lua/lopcodes.c
+474f2a3ee7ca8083e4552177da426ea159be82b4b34f3bd2151239810b57bb0e  third_party/lua/loslib.c
+e24f9e869afd690749404b3075fd82efaf3af882a13a131b612c6ff28e052a8c  third_party/lua/lparser.c
+e5f3b17104f6764bad609d18ce8f3008a87731491a41cb78b79aed78777c21d8  third_party/lua/lstate.c
+b6162f3a65735a902911ffafcafe1db0994c3b0df441581dcbb04dca6bc0b71d  third_party/lua/lstring.c
+d386f8bbb75d5ef7b04c8ca9e747ff256525a9546bb6ff01c788b912b6995aa6  third_party/lua/lstrlib.c
+27a711276b1e22aaea3b9182e2d17693f598cfe9bc7fd203c05d400df6673853  third_party/lua/ltable.c
+3d430a6f9cde66d0b791444c6164e7559ccf62b7cdc3a6325882408c6806e26c  third_party/lua/ltablib.c
+7cbe645ed7e1161d31eb32ea467d8220b592c0acfa6107f0194487f0ddbf954b  third_party/lua/ltm.c
+7f7b078026e162161d402feba73a69cbe66a98558ec0745a445a595f42eac688  third_party/lua/lundump.c
+441251bdf176e066e60a36735594f0cb92c067143fed32e373949bdb65a52866  third_party/lua/lutf8lib.c
+7df5095ee2f6c88162d3536afb1fa04527b98fa3265cb579fc9aa6dcf05606de  third_party/lua/lvm.c
+fba61ceeeb257a3fe5f63310f21e14fc26c4be647583dcf8e74cbc7fb7e43e8a  third_party/lua/lzio.c
+9522209670086adfbb11379416078a7f4dafe154043e320cd435fa1811aaabfb  third_party/lua/lapi.h
+2d9e18e577a6062646268e7f7228264c28bd9b972c186e1af81b8357179c0ab4  third_party/lua/lauxlib.h
+c5ad73fb12fd3e9f6b6a5f37fea5b60e4c09f8a262e9ac3ca85e8e047f745cea  third_party/lua/lcode.h
+c800311872ecba642f6d013b290eda83ba6cd8df8061e25cdca1dd4adcbed8b5  third_party/lua/lctype.h
+b0fd38f6461251ec481cf5633d622569cef939067e37cac23331d9f96b601702  third_party/lua/ldebug.h
+a577744f7c773bd91263540a1effefe75d3dfbfc8a9874349844f9a1ddae8d52  third_party/lua/ldo.h
+81dc02d55ae8000461ab90bb9689d2600ba51f2ea9ac9fb019386995c07e3e4a  third_party/lua/lfunc.h
+c83d3b8e31345c0aacd37442954a7f2434312ee48f98a8b9ae4fc8aad26d0c99  third_party/lua/lgc.h
+6c3e9858b9dad03ccd61445ab0bff0eb6ddfa5e731e044f93350fe6c6b2ad8d5  third_party/lua/ljumptab.h
+5ce0302528260ed6a40ec3ebf5e27d3bc108242d9dca57e8cdbe80fe34e13410  third_party/lua/llex.h
+d588bdac3c8e1adc88df3dc92c950a1bfa29663d15f9221f58e2aa553b05a422  third_party/lua/llimits.h
+8318a170a1d4bf21c3cb4deb1f8661f1dc7cf4eb688e4ec9a1e7ea16bfc3b5cf  third_party/lua/lmem.h
+8539beae7dd9a08efc09b04d64c09663e9afc0f2ad342abc612bb000c0c9be70  third_party/lua/lobject.h
+b3f511933be3039a4b92ba79601b2e5daf75b34f268bfc757adf3e24ea4f1ec9  third_party/lua/lopcodes.h
+fbdbebc96b136efc6165cba1ac2b311b0c52413aaef59ae9ec750748f13c9e9a  third_party/lua/lopnames.h
+68c34ef2d6e5a227f7cff18436a42c6739b1470ce12f059f168d9bb69fc8d49c  third_party/lua/lparser.h
+626785d4eda75e9435f0ac21a780ae3b11f8b27dc36934e637a5c2305f906531  third_party/lua/lprefix.h
+8816454aa1df7c6cb1bc6366ca163b575e259e36497b75db354c572a81836cee  third_party/lua/lstate.h
+a8cb0d737276f6a41071a0776ee1d8aa13cf02fa7c79ea096d202b14ea792e31  third_party/lua/lstring.h
+1c8736b87aa408ef2afebfe693f46ae5424d658d798fb2a8a88b6868cf5569b5  third_party/lua/ltable.h
+5b2f6e59951edeef6e71bebe5ac4351f4b3602ee0461729308b80dcee8cea910  third_party/lua/ltm.h
+06138352a12f0710bc214eb3a2e134889979cadc9a7a761a4e43dafa926419af  third_party/lua/lua.h
+af243c94bee6d2601383e8b65ed66a0d1b4ab3b7418ff903fcd0679912160e3a  third_party/lua/luaconf.h
+4ea0f67d3e467f5d6a327616e22a3c2da8e03d47a3c3660916275f2842f521ea  third_party/lua/lualib.h
+1137c0c9d8654ce223374d21c52a599fd1cc1ccb869801f87a27238a7bf55e8e  third_party/lua/lundump.h
+aba601b887236d5e135392e0c49370df3b5a9ac5c66ab2d44156b3244f2dcef3  third_party/lua/lvm.h
+9673f62eac2d0fe3010f9d23148be7b8113319fdf4c4490015cd9feae2ecaad4  third_party/lua/lzio.h
+fd83f7e823cfbb03ac2da937ec83f01b4a6ddaac220a4fa1ffd6c6c3842c5890  third_party/lua/lua.hpp
+```
+
+The files are unchanged.

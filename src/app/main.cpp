@@ -595,7 +595,8 @@ void play_intro(const Options& options, HostDisplay* host) {
 }
 
 /// Writes each game file and listing a run looks up to a file, one a line,
-/// from whichever thread looks it up (--trace-lookups).
+/// and, for a path a mutator serves or hides, which mutator, from whichever
+/// thread looks it up (--trace-lookups).
 class LookupLog {
   public:
 
@@ -611,11 +612,24 @@ class LookupLog {
     ///
     /// @return the observer
     oa::LookupObserver observer() {
-        return {this, [](void* context, std::string_view name) {
-                    auto& self = *static_cast<LookupLog*>(context);
-                    const oa::base::threads::LockGuard guard(self.lock_);
-                    self.out_ << name << '\n';
-                }};
+        oa::LookupObserver watch{this, nullptr, nullptr};
+        watch.looked_up = [](void* context, std::string_view name) {
+            auto& self = *static_cast<LookupLog*>(context);
+            const oa::base::threads::LockGuard guard(self.lock_);
+            self.out_ << name << '\n';
+        };
+        watch.mutator_layer_used =
+            [](void* context, std::string_view path, std::string_view owner, bool hidden) {
+                auto& self = *static_cast<LookupLog*>(context);
+                const oa::base::threads::LockGuard guard(self.lock_);
+                self.out_ << path << '\t';
+                if (hidden)
+                    self.out_ << "hidden by mutator ";
+                else
+                    self.out_ << "mutator ";
+                self.out_ << owner << '\n';
+            };
+        return watch;
     }
 
   private:
