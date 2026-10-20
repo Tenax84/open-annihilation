@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The kinds of package the game installs, and the names and folder reads
-// each kind shares: oamod, oamap, oalang and expansion.
+// each kind shares: oamod, oamap, oalang, expansion and oamut.
 
 #include "files.hpp"
 
@@ -11,7 +11,9 @@
 #include "oa/app/package_install/oalang.hpp"
 #include "oa/app/package_install/oamap.hpp"
 #include "oa/app/package_install/oamod.hpp"
+#include "oa/app/package_install/oamut.hpp"
 #include "oa/app/package_install/oaexp.hpp"
+#include "oa/data/mutator_library/library.hpp"
 #include "oa/app/package_install/origin.hpp"
 #include "oa/app/package_install/prompts.hpp"
 #include "oa/app/user_folder.hpp"
@@ -24,6 +26,8 @@
 #include <utility>
 
 namespace oa::app::package_install {
+
+static_assert(oamut::mutators_folder_name == oa::data::mutator_library::mutators_folder_name);
 
 namespace fs = std::filesystem;
 
@@ -83,6 +87,15 @@ constexpr KindPrompts kExpansionPrompts{
     .refused = &oaexp::refused_prompt,
 };
 
+constexpr KindPrompts kMutatorPrompts{
+    .installing = &oamut::installing_prompt,
+    .question = &oamut::question_prompt,
+    .installed = &oamut::installed_prompt,
+    .updated = &oamut::updated_prompt,
+    .refusal_text = &oamut::refusal_text,
+    .refused = &oamut::refused_prompt,
+};
+
 constexpr PackageKind kKinds[] = {
     {
         .name = "oamod",
@@ -139,6 +152,20 @@ constexpr PackageKind kKinds[] = {
         .plan = &oaexp::plan_install,
         .check_staged = nullptr,
         .prompts = &kExpansionPrompts,
+    },
+    {
+        .name = "oamut",
+        .extension = oamut::oamut_extension,
+        .manifest = "oamut.yaml",
+        .manifest_most_bytes = oa::formats::oamod::max_input_bytes,
+        .root_folder = oamut::mutators_folder_name,
+        .prefix = ".oamut-",
+        .read_manifest = &oamut::read_manifest,
+        .read_installed = &oamut::read_installed,
+        .read_backup = &oamut::read_backup,
+        .plan = &oamut::plan_install,
+        .check_staged = nullptr,
+        .prompts = &kMutatorPrompts,
     },
 };
 
