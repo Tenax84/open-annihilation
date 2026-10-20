@@ -24,6 +24,12 @@ inline constexpr std::size_t most_tam_bytes = std::size_t{64} * 1024;
 /// The most bytes of one archive or other companion, uncompressed.
 inline constexpr std::size_t most_archive_bytes = std::size_t{64} * 1024 * 1024;
 
+/// The most uncompressed bytes `files_from_zip` reads from one zip.
+///
+/// Only `.tam`, `.sm` and `.ccx` entries count. A zip whose counted entries
+/// are larger than this is refused and nothing is read.
+inline constexpr std::size_t most_zip_read_bytes = std::size_t{512} * 1024 * 1024;
+
 /// One legacy file, as it was named and as its bytes were.
 struct LegacyFile {
     std::string name;           ///< the file name, or a zip path
@@ -132,8 +138,11 @@ import_legacy(std::span<const LegacyFile> files, const ImportOptions& options);
 /// Reads a zip into legacy files.
 ///
 /// Names are the names the streamed reader decoded. Folders are skipped. A
-/// link or a special file refuses the archive. An entry larger than
-/// most_archive_bytes, or a .tam larger than most_tam_bytes, refuses it.
+/// link or a special file refuses the archive. Only a `.tam`, a `.sm` and a
+/// `.ccx` are read. Any other entry is listed, with no bytes, so the import
+/// can say it belongs to no mutator. A `.tam` larger than most_tam_bytes, a
+/// read entry larger than most_archive_bytes, or read entries together larger
+/// than most_zip_read_bytes, refuses the archive.
 ///
 /// @param zip the archive's bytes
 /// @param[out] files the entries; left unchanged when the archive is refused

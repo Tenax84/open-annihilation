@@ -101,7 +101,7 @@ namespace importing = oa::data::mutator_import;
 namespace oamut = oa::formats::oamut;
 
 /// The most bytes of one zip this command reads.
-constexpr std::uintmax_t most_zip_bytes = std::uintmax_t{256} * 1024 * 1024;
+constexpr uintmax_t most_zip_bytes = uintmax_t{256} * 1024 * 1024;
 
 /// Why a capped read stopped.
 enum class ReadFault : uint8_t { ok, missing, too_big, failed };
@@ -177,7 +177,7 @@ bool path_is_link(const fs::path& path) {
 /// @param cap the most bytes
 /// @param[out] bytes the contents, cleared when the read fails
 /// @return why it stopped
-ReadFault read_capped(const fs::path& path, std::uintmax_t cap, std::vector<uint8_t>& bytes) {
+ReadFault read_capped(const fs::path& path, uintmax_t cap, std::vector<uint8_t>& bytes) {
     bytes.clear();
     std::error_code error;
     const fs::file_status status = fs::symlink_status(path, error);
@@ -313,15 +313,277 @@ std::vector<std::string> companion_names(const importing::Tam& tam, std::string_
     return names;
 }
 
+/// Appends one Unicode scalar as UTF-8.
+///
+/// @param[in,out] out the text
+/// @param character the scalar
+void append_utf8(std::string& out, char32_t character) {
+    if (character < 0x80) {
+        out.push_back(static_cast<char>(character));
+        return;
+    }
+    if (character < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (character >> 6)));
+        out.push_back(static_cast<char>(0x80 | (character & 0x3F)));
+        return;
+    }
+    if (character < 0x10000) {
+        out.push_back(static_cast<char>(0xE0 | (character >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((character >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (character & 0x3F)));
+        return;
+    }
+    out.push_back(static_cast<char>(0xF0 | ((character >> 18) & 0x07)));
+    out.push_back(static_cast<char>(0x80 | ((character >> 12) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | ((character >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (character & 0x3F)));
+}
+
+/// Reads one UTF-8 scalar. An ill-formed byte is taken on its own.
+///
+/// @param text the text
+/// @param[in,out] index the first byte; moved past the scalar
+/// @param[out] character the scalar
+/// @return false at the end
+bool take_code(std::string_view text, std::size_t& index, char32_t& character) {
+    if (index >= text.size())
+        return false;
+    const auto lead = static_cast<unsigned char>(text[index]);
+    if (lead < 0x80) {
+        character = lead;
+        ++index;
+        return true;
+    }
+    std::size_t length = 0;
+    char32_t value = 0;
+    if (lead >= 0xC2 && lead < 0xE0) {
+        length = 2;
+        value = lead & 0x1F;
+    } else if (lead >= 0xE0 && lead < 0xF0) {
+        length = 3;
+        value = lead & 0x0F;
+    } else if (lead >= 0xF0 && lead < 0xF5) {
+        length = 4;
+        value = lead & 0x07;
+    } else {
+        character = lead;
+        ++index;
+        return true;
+    }
+    if (index + length > text.size()) {
+        character = lead;
+        ++index;
+        return true;
+    }
+    for (std::size_t extra = 1; extra < length; ++extra) {
+        const auto byte = static_cast<unsigned char>(text[index + extra]);
+        if ((byte & 0xC0) != 0x80) {
+            character = lead;
+            ++index;
+            return true;
+        }
+        value = (value << 6) | (byte & 0x3F);
+    }
+    index += length;
+    character = value;
+    return true;
+}
+
+/// Appends a Latin-1 letter in decomposed form, or the scalar itself.
+///
+/// @param[in,out] out the text
+/// @param character the scalar
+void append_decomposed(std::string& out, char32_t character) {
+    char base = 0;
+    unsigned char mark = 0;
+    switch (character) {
+    case 0x00C0:
+    case 0x00E0:
+        base = character == 0x00C0 ? 'A' : 'a';
+        mark = 0x80;
+        break;
+    case 0x00C1:
+    case 0x00E1:
+        base = character == 0x00C1 ? 'A' : 'a';
+        mark = 0x81;
+        break;
+    case 0x00C2:
+    case 0x00E2:
+        base = character == 0x00C2 ? 'A' : 'a';
+        mark = 0x82;
+        break;
+    case 0x00C3:
+    case 0x00E3:
+        base = character == 0x00C3 ? 'A' : 'a';
+        mark = 0x83;
+        break;
+    case 0x00C4:
+    case 0x00E4:
+        base = character == 0x00C4 ? 'A' : 'a';
+        mark = 0x88;
+        break;
+    case 0x00C5:
+    case 0x00E5:
+        base = character == 0x00C5 ? 'A' : 'a';
+        mark = 0x8A;
+        break;
+    case 0x00C7:
+    case 0x00E7:
+        base = character == 0x00C7 ? 'C' : 'c';
+        mark = 0xA7;
+        break;
+    case 0x00C8:
+    case 0x00E8:
+        base = character == 0x00C8 ? 'E' : 'e';
+        mark = 0x80;
+        break;
+    case 0x00C9:
+    case 0x00E9:
+        base = character == 0x00C9 ? 'E' : 'e';
+        mark = 0x81;
+        break;
+    case 0x00CA:
+    case 0x00EA:
+        base = character == 0x00CA ? 'E' : 'e';
+        mark = 0x82;
+        break;
+    case 0x00CB:
+    case 0x00EB:
+        base = character == 0x00CB ? 'E' : 'e';
+        mark = 0x88;
+        break;
+    case 0x00CC:
+    case 0x00EC:
+        base = character == 0x00CC ? 'I' : 'i';
+        mark = 0x80;
+        break;
+    case 0x00CD:
+    case 0x00ED:
+        base = character == 0x00CD ? 'I' : 'i';
+        mark = 0x81;
+        break;
+    case 0x00CE:
+    case 0x00EE:
+        base = character == 0x00CE ? 'I' : 'i';
+        mark = 0x82;
+        break;
+    case 0x00CF:
+    case 0x00EF:
+        base = character == 0x00CF ? 'I' : 'i';
+        mark = 0x88;
+        break;
+    case 0x00D1:
+    case 0x00F1:
+        base = character == 0x00D1 ? 'N' : 'n';
+        mark = 0x83;
+        break;
+    case 0x00D2:
+    case 0x00F2:
+        base = character == 0x00D2 ? 'O' : 'o';
+        mark = 0x80;
+        break;
+    case 0x00D3:
+    case 0x00F3:
+        base = character == 0x00D3 ? 'O' : 'o';
+        mark = 0x81;
+        break;
+    case 0x00D4:
+    case 0x00F4:
+        base = character == 0x00D4 ? 'O' : 'o';
+        mark = 0x82;
+        break;
+    case 0x00D5:
+    case 0x00F5:
+        base = character == 0x00D5 ? 'O' : 'o';
+        mark = 0x83;
+        break;
+    case 0x00D6:
+    case 0x00F6:
+        base = character == 0x00D6 ? 'O' : 'o';
+        mark = 0x88;
+        break;
+    case 0x00D9:
+    case 0x00F9:
+        base = character == 0x00D9 ? 'U' : 'u';
+        mark = 0x80;
+        break;
+    case 0x00DA:
+    case 0x00FA:
+        base = character == 0x00DA ? 'U' : 'u';
+        mark = 0x81;
+        break;
+    case 0x00DB:
+    case 0x00FB:
+        base = character == 0x00DB ? 'U' : 'u';
+        mark = 0x82;
+        break;
+    case 0x00DC:
+    case 0x00FC:
+        base = character == 0x00DC ? 'U' : 'u';
+        mark = 0x88;
+        break;
+    case 0x00DD:
+    case 0x00FD:
+        base = character == 0x00DD ? 'Y' : 'y';
+        mark = 0x81;
+        break;
+    case 0x00FF:
+        base = 'y';
+        mark = 0x88;
+        break;
+    default:
+        append_utf8(out, character);
+        return;
+    }
+    out.push_back(base);
+    out.push_back(static_cast<char>(0xCC));
+    out.push_back(static_cast<char>(mark));
+}
+
+/// Decomposes Latin-1 letters so a composed name matches a decomposed one.
+///
+/// @param text the file name
+/// @return the decomposed text
+std::string decomposed_name(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    std::size_t index = 0;
+    while (index < text.size()) {
+        char32_t character = 0;
+        if (!take_code(text, index, character))
+            break;
+        append_decomposed(out, character);
+    }
+    return out;
+}
+
+/// Tells whether two file names match, ignoring ASCII case and composition.
+///
+/// @param one the first name
+/// @param other the other name
+/// @return true when they are the same name
+bool same_filename(std::string_view one, std::string_view other) {
+    return same_ascii(decomposed_name(one), decomposed_name(other));
+}
+
 /// Finds a file in a directory by name, ignoring ASCII case.
 ///
-/// The scan does not follow a link. A directory of the same name is skipped.
+/// The file is opened as `directory / name` first. That lookup accepts either
+/// Unicode composition, which a directory listing does not. The scan then
+/// compares decomposed names and does not follow a link. A directory of the
+/// same name is skipped.
 ///
 /// @param directory the directory
 /// @param name the file name
 /// @return the path, or nothing when no file has that name
 std::optional<fs::path> find_named(const fs::path& directory, std::string_view name) {
+    const fs::path direct = directory / path_of(name);
     std::error_code error;
+    const fs::file_status direct_status = fs::symlink_status(direct, error);
+    if (!error && fs::exists(direct_status) && !fs::is_directory(direct_status))
+        return direct;
+
+    error.clear();
     const fs::directory_iterator end;
     for (fs::directory_iterator cursor(directory, error); !error && cursor != end;
          cursor.increment(error)) {
@@ -329,7 +591,7 @@ std::optional<fs::path> find_named(const fs::path& directory, std::string_view n
         const fs::file_status status = cursor->symlink_status(status_error);
         if (status_error || fs::is_directory(status))
             continue;
-        if (!same_ascii(file_name_of(cursor->path()), name))
+        if (!same_filename(file_name_of(cursor->path()), name))
             continue;
         return cursor->path();
     }
@@ -474,10 +736,9 @@ bool load_tam(Loaded& item) {
             item.problem = shown + ": refusing to follow a link " + name;
             return false;
         }
-        const std::string stored = file_name_of(*found);
         bool seen = false;
         for (const std::string& earlier : added) {
-            if (same_ascii(earlier, stored))
+            if (same_filename(earlier, name))
                 seen = true;
         }
         if (seen)
@@ -496,10 +757,10 @@ bool load_tam(Loaded& item) {
             return false;
         }
         importing::LegacyFile file;
-        file.name = stored;
+        file.name = name;
         file.bytes = std::move(companion);
         item.files.push_back(std::move(file));
-        added.push_back(stored);
+        added.push_back(name);
     }
     item.loaded = true;
     return true;
@@ -766,6 +1027,9 @@ int run_mutator_import(std::span<const std::string> arguments, Output& output) {
         return exit_failed;
     }
     for (const Loaded& item : inputs) {
+        // A zip is read on its own. Only a .tam has companions in its folder.
+        if (item.is_zip)
+            continue;
         if (out_is_inside(out_dir, item.path)) {
             output.out << "refusing to write into the input's folder\n";
             return exit_failed;

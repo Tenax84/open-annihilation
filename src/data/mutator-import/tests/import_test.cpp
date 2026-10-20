@@ -226,7 +226,7 @@ void test_rules_only() {
     OA_CHECK(imported.manifest.id == "steady-hands");
     OA_CHECK(imported.manifest.name == "Steady Hands");
     OA_CHECK(imported.manifest.author.name == "Ridge Works");
-    OA_CHECK(imported.manifest.description == "Hands stay steady\nCreated By:Ridge Works");
+    OA_CHECK(imported.manifest.description == "Hands stay steady.\nCreated By:Ridge Works");
     OA_CHECK(imported.manifest.works_with.size() == 1);
     OA_CHECK(imported.manifest.works_with[0].id == "*");
     OA_CHECK(imported.manifest.layers.size() == 1);
@@ -451,7 +451,7 @@ void test_protected_entries() {
         std::fprintf(stderr, "protected: %s\n", result.problems.front().c_str());
     OA_CHECK(result.mutators.size() == 1);
     expect_round_trip(result.mutators[0]);
-    const std::vector<uint8_t>* packed = file_named(result.mutators[0], "files/steady-hands.ccx");
+    const std::vector<uint8_t>* packed = file_named(result.mutators[0], "files/steady.ccx");
     OA_CHECK(packed != nullptr);
     auto opened = packed == nullptr ? oa::HpiArchive::open(std::vector<uint8_t>{})
                                     : oa::HpiArchive::open(std::vector<uint8_t>(*packed));
@@ -536,6 +536,81 @@ void test_zip() {
     OA_CHECK(pair.mutators.size() == 2);
     expect_round_trip(pair.mutators[0]);
     expect_round_trip(pair.mutators[1]);
+
+    std::vector<oa::test::raw_zip::RawFile> with_note;
+    with_note.push_back(
+        oa::test::raw_zip::stored_text("{}Alpha.tam", tam_text("Alpha", "by Ridge", "*", 0))
+    );
+    with_note.push_back(oa::test::raw_zip::stored_text("{}Alpha.sm", kRule));
+    with_note.push_back(oa::test::raw_zip::stored_text("readme.txt", "secret-notes"));
+    const oa::test::raw_zip::RawArchive noted = oa::test::raw_zip::build_raw_archive(with_note);
+    std::vector<importing::LegacyFile> noted_files;
+    noted_files.push_back(text_file("keep.tam", "x"));
+    OA_CHECK(importing::files_from_zip(noted.bytes, noted_files, problem));
+    OA_CHECK(noted_files.size() == 3);
+    if (noted_files.size() == 3) {
+        OA_CHECK(noted_files[2].name == "readme.txt");
+        OA_CHECK(noted_files[2].bytes.empty());
+        OA_CHECK(!noted_files[0].bytes.empty());
+        OA_CHECK(!noted_files[1].bytes.empty());
+    }
+    const importing::ImportResult noted_import =
+        importing::import_legacy(noted_files, test_options());
+    OA_CHECK(warning_has(noted_import.warnings, "readme.txt"));
+
+    // Longer than a short string, so the name is not kept in the string object.
+    const std::string long_name = "{}LongerSteadyHandsFile";
+    std::vector<oa::test::raw_zip::RawFile> long_files;
+    long_files.push_back(
+        oa::test::raw_zip::stored_text(
+            long_name + ".tam", tam_text("Longer Steady", "by Ridge", "*", 0)
+        )
+    );
+    long_files.push_back(oa::test::raw_zip::stored_text(long_name + ".sm", kRule));
+    const oa::test::raw_zip::RawArchive long_archive =
+        oa::test::raw_zip::build_raw_archive(long_files);
+    std::vector<importing::LegacyFile> long_read;
+    OA_CHECK(importing::files_from_zip(long_archive.bytes, long_read, problem));
+    OA_CHECK(long_read.size() == 2);
+    if (long_read.size() == 2) {
+        OA_CHECK(long_read[0].name == long_name + ".tam");
+        OA_CHECK(!long_read[0].bytes.empty());
+        OA_CHECK(long_read[1].name == long_name + ".sm");
+        OA_CHECK(!long_read[1].bytes.empty());
+    }
+    const importing::ImportResult long_import = importing::import_legacy(long_read, test_options());
+    if (!long_import.problems.empty())
+        std::fprintf(stderr, "long name: %s\n", long_import.problems.front().c_str());
+    OA_CHECK(long_import.mutators.size() == 1);
+    if (!long_import.mutators.empty())
+        OA_CHECK(long_import.mutators[0].manifest.id == "longer-steady");
+
+    std::vector<oa::test::raw_zip::RawFile> heavy;
+    heavy.push_back(
+        oa::test::raw_zip::stored_text("{}Wide.tam", tam_text("Wide", "by Ridge", "*", 0))
+    );
+    heavy.push_back(oa::test::raw_zip::stored_text("{}Wide.sm", kRule));
+    // The zip reader allows an uncompressed size of at most 1032 times the
+    // stored size. Each pad claims 64 MiB and is not inflated: together with
+    // the .tam and the .sm they pass 512 MiB, so the import refuses them first.
+    constexpr uint64_t uncompressed = uint64_t{64} * 1024 * 1024;
+    const std::size_t compressed = static_cast<std::size_t>(uncompressed / 1032) + 1;
+    for (int number = 0; number < 8; ++number) {
+        oa::test::raw_zip::RawFile bomb;
+        bomb.name = "pad" + std::to_string(number) + ".ccx";
+        bomb.method = 8;
+        bomb.bytes = uncompressed;
+        bomb.data.assign(compressed, 0);
+        heavy.push_back(std::move(bomb));
+    }
+    const oa::test::raw_zip::RawArchive too_big = oa::test::raw_zip::build_raw_archive(heavy);
+    std::vector<importing::LegacyFile> kept;
+    kept.push_back(text_file("keep.tam", "x"));
+    const bool refused = importing::files_from_zip(too_big.bytes, kept, problem);
+    OA_CHECK(!refused);
+    OA_CHECK(problem.find("512 MiB") != std::string::npos);
+    OA_CHECK(kept.size() == 1);
+    OA_CHECK(kept[0].name == "keep.tam");
 }
 
 } // namespace

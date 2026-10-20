@@ -452,6 +452,17 @@ bool is_tam_name(std::string_view name) {
     return ends_with_ascii(locate(name).name, ".tam");
 }
 
+/// Tells whether a zip entry is a file the import reads.
+///
+/// @param name the entry name
+/// @return true for a `.tam`, a `.sm` or a `.ccx`
+bool payload_name(std::string_view name) {
+    // locate returns by value. The name has to outlive the suffix checks.
+    const Location location = locate(name);
+    return ends_with_ascii(location.name, ".tam") || ends_with_ascii(location.name, ".sm") ||
+           ends_with_ascii(location.name, ".ccx");
+}
+
 /// The stem of a legacy file name, without a `{}` or `}{` prefix or a suffix.
 ///
 /// @param name the file name
@@ -1014,7 +1025,7 @@ bool import_one(
         if (!found)
             return problem = shown + ": missing rule file " + rule_name, false;
         claimed[*found] = 1;
-        const std::string& stored = locate(files[*found].name).name;
+        const std::string stored = locate(files[*found].name).name;
         if (!file_name_ok(stored))
             return problem = shown + ": a file name cannot be stored", false;
         legacy_names.push_back(stored);
@@ -1040,7 +1051,7 @@ bool import_one(
         if (!found)
             return problem = shown + ": missing archive " + archive_name, false;
         claimed[*found] = 1;
-        const std::string& stored = locate(files[*found].name).name;
+        const std::string stored = locate(files[*found].name).name;
         if (!file_name_ok(stored))
             return problem = shown + ": a file name cannot be stored", false;
         bool repeated = false;
@@ -1520,28 +1531,55 @@ bool files_from_zip(
     zip::SourceHooks source;
     source.context = &memory;
     source.read_at = read_memory;
-    zip::StreamLimits limits;
-    limits.max_entry_bytes = most_archive_bytes;
+    // The directory reader refuses an entry above max_entry_bytes before this
+    // function can leave that entry unread. The default cap lists a large
+    // file that is not a .tam, a .sm or a .ccx.
+    const zip::StreamLimits limits;
     zip::StreamDirectory directory;
     zip::ZipError error;
     if (!zip::read_stream_directory(source, zip_bytes.size(), limits, directory, error)) {
         problem = zip_problem(error);
         return false;
     }
-    std::vector<LegacyFile> read;
-    for (const zip::StreamEntry& entry : directory.entries) {
+    std::vector<char> load(directory.entries.size(), 0);
+    uint64_t total = 0;
+    const uint64_t cap = most_zip_read_bytes;
+    for (std::size_t plan = 0; plan < directory.entries.size(); ++plan) {
+        const zip::StreamEntry& entry = directory.entries[plan];
         if (entry.directory || (!entry.name.empty() && entry.name.back() == '/'))
             continue;
         if (entry.symbolic_link || entry.special_file) {
             problem = "refusing a link or special file: " + entry.name;
             return false;
         }
+        if (!payload_name(entry.name))
+            continue;
         if (is_tam_name(entry.name) && entry.bytes > most_tam_bytes) {
             problem = entry.name + ": the .tam is larger than 64 KiB";
             return false;
         }
+        if (entry.bytes > most_archive_bytes) {
+            problem = entry.name + ": the file is larger than 64 MiB";
+            return false;
+        }
+        if (entry.bytes > cap || total > cap - entry.bytes) {
+            problem = "the zip's files are larger than 512 MiB";
+            return false;
+        }
+        total += entry.bytes;
+        load[plan] = 1;
+    }
+    std::vector<LegacyFile> read;
+    for (std::size_t held = 0; held < directory.entries.size(); ++held) {
+        const zip::StreamEntry& entry = directory.entries[held];
+        if (entry.directory || (!entry.name.empty() && entry.name.back() == '/'))
+            continue;
         LegacyFile file;
         file.name = entry.name;
+        if (load[held] == 0) {
+            read.push_back(std::move(file));
+            continue;
+        }
         if (!zip::read_stream_entry(
                 source, zip_bytes.size(), entry, most_archive_bytes, file.bytes, error
             )) {

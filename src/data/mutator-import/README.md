@@ -22,7 +22,9 @@ Target `oa-data-mutator-import`, alias `oa::data::mutator_import`, namespace
 - `import_legacy` pairs every `.tam` with its companions and builds the
   packages.
 - `files_from_zip` reads a zip into those names and bytes. Names are the
-  names the streamed zip reader decoded.
+  names the streamed zip reader decoded. Only a `.tam`, a `.sm` and a `.ccx`
+  are read. Any other entry is listed with no bytes. The read entries
+  together may be at most 512 MiB uncompressed.
 
 ## State
 
@@ -134,4 +136,6 @@ sets them. Codes other than `*`, `OTA` and `TACC` need the caller's
 mapping. Nothing is curated: a whole mod in the form of a hard mutator is
 imported like any other. The import does not install the package, and it
 does not run it. A protected path is omitted rather than kept. An archive
-with nothing left is not written.
+with nothing left is not written. A zip whose `.tam`, `.sm` and `.ccx`
+entries are together larger than 512 MiB uncompressed is refused. Other
+entries in the zip are named and not read.

@@ -140,7 +140,7 @@ void test_folder() {
 
     const fs::path folder = out / "steady-hands";
     const std::string yaml = read_text(folder / "oamut.yaml");
-    OA_CHECK(contains(yaml, "id: steady-hands"));
+    OA_CHECK(contains(yaml, "id: \"steady-hands\""));
     OA_CHECK(contains(yaml, ">= 0.8.5"));
     OA_CHECK(contains(yaml, "Ridge Works"));
     OA_CHECK(contains(yaml, "gameplay"));
@@ -191,12 +191,9 @@ void test_force_and_id() {
     const Captured blocked = run({"mutator", "import", tam.string(), "--out", out.string()});
     OA_CHECK(blocked.status == oa::tool::exit_failed);
     OA_CHECK(contains(blocked.out, "the folder already exists"));
-    OA_CHECK(
-        std::string(
-            read_bytes(out / "steady-hands" / "rules" / "steady-hands.sm").begin(),
-            read_bytes(out / "steady-hands" / "rules" / "steady-hands.sm").end()
-        ) == kRule
-    );
+    const std::vector<uint8_t> kept =
+        read_bytes(out / "steady-hands" / "rules" / "steady-hands.sm");
+    OA_CHECK(std::string(kept.begin(), kept.end()) == kRule);
 
     const Captured forced =
         run({"mutator", "import", tam.string(), "--out", out.string(), "--force"});
@@ -331,6 +328,50 @@ void test_not_into_input() {
     OA_CHECK(read_text(source / "{}SteadyHands.sm") == kRule);
 }
 
+/// A composed .tam finds a decomposed companion, where the platform can hold both.
+void test_composed_name() {
+    Scratch scratch;
+    const fs::path source = scratch.path / "in";
+    const std::string composed = std::string("{}") + "\xC3\x9C" + "berwind";
+    const std::string decomposed = std::string("{}u") + "\xCC\x88" + "berwind";
+    const fs::path tam_path = source / (composed + ".tam");
+    const fs::path sm_path = source / (decomposed + ".sm");
+    // The title is Windows-1252. Byte 0xDC is Ü, which the id folds to u.
+    write_text(
+        tam_path,
+        tam_text(
+            "\xDC"
+            "berwind",
+            "by Ridge",
+            "*",
+            '0'
+        )
+    );
+    write_text(sm_path, kRule);
+    std::error_code error;
+    if (!fs::is_regular_file(tam_path, error) || !fs::is_regular_file(sm_path, error)) {
+        std::fprintf(stderr, "mutator import: skipped the composed name\n");
+        return;
+    }
+    const auto tam_size = fs::file_size(tam_path, error);
+    const auto sm_size = fs::file_size(sm_path, error);
+    if (error || tam_size == sm_size) {
+        std::fprintf(stderr, "mutator import: skipped the composed name\n");
+        return;
+    }
+    const auto folder = source.generic_u8string();
+    std::string given(folder.begin(), folder.end());
+    if (given.empty() || given.back() != '/')
+        given.push_back('/');
+    given += composed;
+    given += ".tam";
+    const fs::path out = scratch.path / "out";
+    const Captured imported = run({"mutator", "import", given, "--out", out.string()});
+    OA_CHECK(imported.status == oa::tool::exit_done);
+    OA_CHECK(contains(imported.out, "imported uberwind from "));
+    OA_CHECK(fs::is_regular_file(out / "uberwind" / "rules" / "uberwind.sm"));
+}
+
 /// A companion that is a link is not read, where the system can make a link.
 void test_link() {
     Scratch scratch;
@@ -369,6 +410,7 @@ int main() {
     test_one_refused();
     test_mapping();
     test_not_into_input();
+    test_composed_name();
     test_link();
     return oa::test::check_exit_status();
 }

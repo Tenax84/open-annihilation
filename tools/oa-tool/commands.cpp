@@ -164,8 +164,9 @@ const Command mutator_commands[] = {
         "the id, the input, the rule files and the archives, and its warnings follow indented. "
         "A refused mutator prints its problem and the others are still written. Exit 0 when "
         "every mutator was imported, 1 when one was refused or could not be written, and 2 when "
-        "the arguments are not the command's. A link is not followed, and DIR is not a folder "
-        "that holds an input.",
+        "the arguments are not the command's. A link is not followed. DIR is not the folder "
+        "that holds a .tam, whose companions are read from that folder. A zip has no companions "
+        "beside it, so DIR may be the folder that holds the zip.",
         1,
         any_count,
         run_mutator_import,
