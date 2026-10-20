@@ -67,7 +67,7 @@ enum class DefaultRule : uint8_t {
 /// is that text for a text, name or token list. Derived defaults use
 /// `default_rule` and `default_from` instead.
 struct FieldSpec {
-    std::string_view key; ///< canonical spelling, lower case; empty for any `[DAMAGE]` unit name
+    std::string_view key{}; ///< canonical spelling, lower case; empty for any `[DAMAGE]` unit name
     RecordKind record{};
     FieldType type{};
     Storage storage{};
@@ -76,11 +76,11 @@ struct FieldSpec {
     double warn_below = -std::numeric_limits<double>::infinity();   ///< warn below this
     double warn_above = std::numeric_limits<double>::infinity();    ///< warn above this
     double default_number{};                                        ///< constant numeric default
-    std::string_view default_text;                                  ///< constant text default
+    std::string_view default_text{};                                ///< constant text default
     DefaultRule default_rule{};
-    std::string_view default_from; ///< the other key a derived default reads
-    std::string_view why;          ///< the sentence used when a value is refused or warned about
-    std::string_view read_at;      ///< loader file and line that reads the key
+    std::string_view default_from{}; ///< the other key a derived default reads
+    std::string_view why{};          ///< the sentence used when a value is refused or warned about
+    std::string_view read_at{};      ///< loader file and line that reads the key
 };
 
 /// Returns the keys of one record, in table order.
