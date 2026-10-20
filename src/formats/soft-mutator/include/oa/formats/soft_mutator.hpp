@@ -124,6 +124,10 @@ enum class DiagnosticCode : uint8_t {
     group_without_needs,     ///< a group has no needs section, so it matches every record
     repeated_section,        ///< a second needs or changes section was merged
     byte_order_mark,         ///< a leading byte-order mark was skipped
+    unquoted_text,           ///< bare words kept as text; the quotes were left off
+    empty_value,             ///< nothing after '='; empty text, which is not a removal
+    empty_text_need,         ///< "" or !"" in needs; equality with empty text, not presence
+    stray_closing_brace,     ///< a '}' outside any block, ignored so later blocks are read
 
     unknown_section,      ///< not needs or changes, or a section inside a section
     unclosed_block,       ///< a header or brace was never closed
