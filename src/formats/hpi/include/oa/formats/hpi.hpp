@@ -13,6 +13,7 @@
 #include <optional>
 #include <set>
 #include <span>
+#include <unordered_set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -136,7 +137,6 @@ inline constexpr uint64_t EntryByteLimit = 512ULL << 20;
 inline constexpr int PlainArchiveMountLimit = 10;
 /// Most files one pack layer lists. A longer list is refused.
 inline constexpr std::size_t PackLayerFileLimit = 4096;
-
 /// Most paths one mutator layer holds, served and hidden together.
 inline constexpr std::size_t MutatorLayerEntryLimit = 65536;
 /// Most mask patterns one mutator layer holds: 32 mutators of 64 masks.
@@ -709,10 +709,21 @@ inline constexpr std::string_view backup_folder_name = ".backup";
 // keep 3.1c's position rules, and it caches one decoded block.
 struct ResourceFile;
 
-// The game checks loose files before scanning mounted archives in mount
-// order. Callers supply that order explicitly (or use discover()): platform
-// directory enumeration order is not a portable replacement for the Windows
-// order the game lists files in.
+// A lookup answers from the mutator layer, then loose folders, then archives
+// in mount order, then the pack layer. Callers supply the archive order
+// explicitly (or use discover()): platform directory enumeration order is
+// not a portable replacement for the Windows order the game lists files in.
+//
+// Above the loose files the store holds at most one mutator layer: a table
+// from resource path to a loose file, a file in an archive the layer holds,
+// or bytes given in memory, or to hidden, plus mask patterns. A path the
+// table lists is that entry. Any other path a mask matches is missing. A
+// hidden entry or a matching mask hides the file from lookups and from
+// listings. Masks and hidden entries hide files, not folders: a folder still
+// lists while a lower source holds it. A table entry wins over every mask.
+// The layer is not a mount: mount_paths() and mounted() never show it, and
+// mounting, replacing or unmounting it touches neither the loose index nor
+// an archive's marks nor the pack layer.
 //
 // The loose files may come from several folders layered as if each were
 // copied over the next: a path, compared without case, resolves from the
@@ -723,18 +734,18 @@ struct ResourceFile;
 //
 // Below every archive the store holds at most one pack layer: a folder or a
 // zip, restricted to a list of files, each shown at a path the caller gives.
-// Lookups reach it only after the loose files and every archive, so mounting
-// it changes nothing a lookup above it returns. A second mount is refused
-// and leaves the store as it was. Mounting touches neither the loose index
-// nor the archives or their marks. Unmounting drops the layer and returns
-// every lookup to exactly what it returned before the mount. The layer is
-// not a mount: mount_paths() and mounted() never show it.
+// Lookups reach it only after the mutator layer, the loose files and every
+// archive, so mounting it changes nothing a lookup above it returns. A
+// second mount is refused and leaves the store as it was. Mounting touches
+// neither the loose index nor the archives or their marks. Unmounting drops
+// the layer and returns every lookup to exactly what it returned before the
+// mount. The layer is not a mount: mount_paths() and mounted() never show it.
 //
-// Reads on other threads stay safe while one thread mounts or unmounts. A
-// lookup copies the layer under a lock and reads that copy, and never holds
-// the lock across a read. A handle opened while the layer is mounted keeps
-// that copy until the handle is closed, so unmounting does not free what the
-// handle still reads.
+// Reads on other threads stay safe while one thread mounts, replaces or
+// unmounts a layer. A lookup copies that layer under its lock and reads the
+// copy, and never holds the lock across a read. One lookup takes one copy.
+// A handle opened on a layer keeps that copy until the handle is closed, so
+// unmounting does not free what the handle still reads.
 class AssetStore {
   public:
 
@@ -764,10 +775,10 @@ class AssetStore {
         std::vector<std::filesystem::path> loose_roots,
         std::size_t loose_index_limit = formats::hpi::LooseIndexEntryLimit
     );
-    /// Unmounts every archive and drops the pack layer.
+    /// Unmounts every archive and drops the mutator layer and the pack layer.
     ///
-    /// A handle opened while the layer was mounted keeps that layer until
-    /// the handle is closed.
+    /// A handle opened while a layer was mounted keeps that layer until the
+    /// handle is closed.
     ~AssetStore();
     /// Takes over another store's root and mounts.
     ///
@@ -835,6 +846,9 @@ class AssetStore {
     [[nodiscard]] std::span<const std::filesystem::path> loose_roots() const noexcept;
     /// Finds the folder a loose file of a path comes from, and its host path.
     ///
+    /// This is the loose folders' answer. The mutator layer and the pack
+    /// layer are not consulted.
+    ///
     /// @param resource '\\'- or '/'-separated path, matched ignoring ASCII case
     /// @return the host path of the loose file, or nullopt when no folder holds it
     [[nodiscard]] std::optional<std::filesystem::path> loose_file(std::string_view resource) const;
@@ -887,26 +901,79 @@ class AssetStore {
     ///
     /// @return the paths, or an empty list when no layer is mounted
     [[nodiscard]] std::vector<std::string> pack_layer_paths() const;
-    /// Returns what provides a resource: a loose file, else the earliest
-    /// archive, else the pack layer.
+    /// Mounts one mutator layer above the loose folders.
     ///
-    /// Throws std::runtime_error for a path a loose lookup would refuse.
+    /// Refuses, leaving the store unchanged, when a layer is already mounted,
+    /// the entries, masks or archives pass their limits, the label is empty
+    /// or holds a line break, an owner is empty or holds a line break, a path
+    /// would be refused by a pack path, two paths are alike ignoring ASCII
+    /// case and slash, a mask is not a valid pattern, a loose host is not a
+    /// regular file or is past the entry size limit, an archive entry's index
+    /// is out of range or its archive is null or does not hold the path as a
+    /// file, a contents entry's bytes are null or past the entry size limit,
+    /// or the given bytes together pass the content limit. The error names
+    /// the entry's path and owner. Mounting touches neither the loose index,
+    /// nor an archive's marks, nor the pack layer, nor mount_paths().
+    ///
+    /// @param spec the archives, paths, masks and label
+    /// @param[out] error receives the reason when the layer is not mounted, if not null
+    /// @return true when the layer is mounted
+    bool mount_mutator_layer(MutatorLayerSpec spec, std::string* error = nullptr);
+    /// Replaces the mutator layer, or mounts one when none is mounted.
+    ///
+    /// The new layer is published in one step, so no lookup sees the store
+    /// without a layer between the old one and the new one. A refusal leaves
+    /// the mounted layer in place and reports the same errors as
+    /// mount_mutator_layer.
+    ///
+    /// @param spec the archives, paths, masks and label
+    /// @param[out] error receives the reason when the layer is not published, if not null
+    /// @return true when the new layer is published
+    bool replace_mutator_layer(MutatorLayerSpec spec, std::string* error = nullptr);
+    /// Drops the mutator layer.
+    ///
+    /// A handle opened while it was mounted keeps the layer until the handle
+    /// is closed. Lookups made afterwards match the store from before the mount.
+    ///
+    /// @return true when a layer was mounted
+    bool unmount_mutator_layer() noexcept;
+    /// Returns whether a mutator layer is mounted.
+    ///
+    /// @return true when a layer is mounted
+    [[nodiscard]] bool mutator_layer_mounted() const;
+    /// Returns the mounted mutator layer's label.
+    ///
+    /// @return the label, or nullopt when no layer is mounted
+    [[nodiscard]] std::optional<std::string> mutator_layer_label() const;
+    /// Returns the served paths of the mounted mutator layer, in the order given.
+    ///
+    /// Hidden entries are not listed.
+    ///
+    /// @return the paths, or an empty list when no layer is mounted
+    [[nodiscard]] std::vector<std::string> mutator_layer_paths() const;
+    /// Returns what provides a resource: the mutator layer, else a loose
+    /// file, else the earliest archive, else the pack layer.
+    ///
+    /// A path the mutator layer hides has an empty provider. Throws
+    /// std::runtime_error for a path a loose lookup would refuse.
     ///
     /// @param resource '\\'- or '/'-separated path, matched ignoring ASCII case
     /// @return the provider, or an empty provider when nothing provides it
     [[nodiscard]] Provider provider(std::string_view resource) const;
-    /// Returns whether a loose file or an archive provides a resource.
+    /// Returns whether the mutator layer, a loose file or an archive provides a resource.
     ///
-    /// The pack layer does not count, so this is false when only the layer
-    /// holds the path.
+    /// The pack layer does not count, so this is false when only the pack
+    /// layer holds the path. A path the mutator layer hides is false.
     ///
     /// @param resource '\\'- or '/'-separated path, matched ignoring ASCII case
-    /// @return true when a loose file or an archive provides it
+    /// @return true when the mutator layer, a loose file or an archive provides it
     [[nodiscard]] bool provided_above_pack_layer(std::string_view resource) const;
     /// Reads the pack layer's own copy of a resource, whatever is above it.
     ///
-    /// A failing read throws std::runtime_error naming the path, the layer's
-    /// label and the reason.
+    /// This is the pack layer's own copy. The mutator layer is not consulted,
+    /// so a path the mutator layer serves or hides still reads here when the
+    /// pack lists it. A failing read throws std::runtime_error naming the
+    /// path, the layer's label and the reason.
     ///
     /// @param resource '\\'- or '/'-separated path, matched ignoring ASCII case
     /// @return the bytes, or nullopt when no layer is mounted or it does not
@@ -929,33 +996,44 @@ class AssetStore {
     /// @return the archive
     [[nodiscard]] const HpiArchive& mounted(std::size_t index) const;
 
-    /// Reads a whole resource: a loose file, else the first archive holding it
-    /// as a file, else the pack layer.
+    /// Reads a whole resource: the mutator layer, else a loose file, else the
+    /// first archive holding it as a file, else the pack layer.
     ///
-    /// Throws std::runtime_error for an invalid or traversing path, an
-    /// ambiguous loose case collision, or a resource nothing provides.
+    /// A path the mutator layer hides is missing. A file served from one of
+    /// the layer's archives, or from bytes given in memory, is reported as
+    /// archived; a mutator's loose file is not. Throws std::runtime_error
+    /// for an invalid or traversing path, an ambiguous loose case collision,
+    /// or a resource nothing provides.
     ///
     /// @param resource '\\'- or '/'-separated path, matched ignoring ASCII case
     /// @return the bytes, the providing path and whether it came from an archive
     [[nodiscard]] AssetData read(std::string_view resource) const;
     /// Reads a resource as though one archive were not mounted.
     ///
+    /// The mutator layer is not an archive, so it still answers: a path it
+    /// serves is read from it, and a path it hides is missing.
+    ///
     /// @param resource '\\'- or '/'-separated path
-    /// @param archive mount path skipped; loose files and every other mount are searched in order
+    /// @param archive mount path skipped; the mutator layer, loose files and
+    ///        every other mount are searched in order
     /// @return the bytes and their source
     [[nodiscard]] AssetData
     read_without(std::string_view resource, const std::filesystem::path& archive) const;
     /// Returns the archive read() would take a resource from.
     ///
-    /// Answers for archives only: nullopt when a loose file provides the
-    /// resource, when only the pack layer provides it, or when nothing does.
+    /// Answers for mounted archives only: nullopt when the mutator layer
+    /// serves or hides the path, when a loose file provides it, when only
+    /// the pack layer provides it, or when nothing does.
     ///
     /// @param resource '\\'- or '/'-separated path
-    /// @return the mount path, or nullopt when a loose file provides it, only
-    ///         the pack layer provides it, or nothing does
+    /// @return the mount path, or nullopt when the mutator layer serves or
+    ///         hides it, a loose file provides it, only the pack layer
+    ///         provides it, or nothing does
     [[nodiscard]] std::optional<std::filesystem::path>
     providing_archive(std::string_view resource) const;
     /// Loads a whole resource by reading it through a handle, so it holds what a handle read gives.
+    ///
+    /// The handle is the one open() returns, so the mutator layer answers first.
     ///
     /// @param resource '\\'- or '/'-separated path
     /// @return the bytes, or nullopt when the resource is absent, empty,
@@ -965,8 +1043,9 @@ class AssetStore {
     load_file_contents(std::string_view resource) const;
     /// Loads a whole resource in ten equal reads plus the remainder, reporting progress.
     ///
-    /// Throws std::runtime_error when the resource is absent or larger than
-    /// EntryByteLimit, before anything is allocated.
+    /// The handle is the one open() returns, so the mutator layer answers
+    /// first. Throws std::runtime_error when the resource is absent or larger
+    /// than EntryByteLimit, before anything is allocated.
     ///
     /// @param resource '\\'- or '/'-separated path
     /// @param progress called after each of the ten reads with 9, 18, ... 90; may be null
@@ -977,10 +1056,15 @@ class AssetStore {
     ) const;
     /// Returns a resource's size without reading its content.
     ///
+    /// The size is taken through open(), so the mutator layer answers first
+    /// and a path it hides has size zero.
+    ///
     /// @param resource '\\'- or '/'-separated path
     /// @return the size in bytes, or zero when absent
     [[nodiscard]] uint32_t file_size(std::string_view resource) const;
     /// Reads part of a resource.
+    ///
+    /// The bytes are taken through open(), so the mutator layer answers first.
     ///
     /// @param resource '\\'- or '/'-separated path
     /// @param position first byte to read
@@ -991,12 +1075,16 @@ class AssetStore {
 
     /// Enumerates a directory in the order the game lists it.
     ///
-    /// Loose matches come first in NTFS name order, led by "." and "..", then
+    /// The mutator layer's own files and folders come first when the scope
+    /// includes it, with mutator_layer set and mount formats::hpi::MutatorLayerMount.
+    /// Loose matches follow in NTFS name order, led by "." and "..", then
     /// each mount's records in stored order, then the pack layer's own files
-    /// and folders when the scope includes it. Archive records and pack-layer
-    /// files shadowed by a loose file are skipped; duplicates across archives
-    /// are all reported. A pack-layer file an archive also holds is reported
-    /// as well.
+    /// and folders when the scope includes it. A file whose full path the
+    /// mutator layer serves or hides is left out of every lower source,
+    /// whatever the scope. Archive records and pack-layer files shadowed by
+    /// a loose file are skipped; duplicates across archives are all reported.
+    /// A pack-layer file an archive also holds is reported as well. Folders
+    /// are not hidden: a folder still lists while a lower source holds it.
     ///
     /// @param pattern "dir\\*.ext"-style pattern; "*.*" matches everything
     /// @param scope where the enumeration starts and whether it continues into mounts
@@ -1005,7 +1093,11 @@ class AssetStore {
     find(std::string_view pattern, FindScope scope = {}) const;
     /// Collects files under a directory that match a pattern, recursively.
     ///
-    /// Each subdirectory is rescanned only in the source that reported it.
+    /// A folder the mutator layer reported is rescanned in that layer. A
+    /// folder a lower source reported is rescanned with the mutator layer's
+    /// own listing left out, so a file is listed once. A file the layer hides
+    /// is absent. Each other subdirectory is rescanned only in the source
+    /// that reported it.
     ///
     /// @param directory directory scanned; empty yields nothing
     /// @param pattern wildcard matched against file names
@@ -1016,6 +1108,9 @@ class AssetStore {
     ) const;
     /// Counts the entries of a find other than "." and "..".
     ///
+    /// A file the mutator layer serves or hides is counted only as the layer
+    /// lists it, so a hidden file is not counted.
+    ///
     /// @param pattern "dir\\*.ext"-style pattern
     /// @param directories_only true to count only directories
     /// @return the count
@@ -1023,8 +1118,10 @@ class AssetStore {
 
     /// Lists the effective resource names in a directory, sorted.
     ///
-    /// Same loose/mount precedence as read(); names are ASCII case-folded.
-    /// This is not the order the game lists a directory in.
+    /// The names are list_effective_in_mount_order()'s, sorted. That list
+    /// includes the mutator layer's served paths and leaves out every path
+    /// the layer serves or hides. Names are ASCII case-folded. This is not
+    /// the order the game lists a directory in.
     ///
     /// @param directory '/'-separated directory, relative
     /// @param extension required suffix, or empty for any
@@ -1035,10 +1132,12 @@ class AssetStore {
     ) const;
     /// Lists the effective resource names in a directory in mount order.
     ///
-    /// Loose files come in host directory order, then mounts in insertion
-    /// order with archive entries in stored order, then the pack layer's
-    /// files; the first occurrence of a path wins. Host loose-file order
-    /// cannot reproduce the order Windows lists loose files in.
+    /// The mutator layer's served paths come first, in the order given. Loose
+    /// files follow in host directory order, then mounts in insertion order
+    /// with archive entries in stored order, then the pack layer's files; the
+    /// first occurrence of a path wins. A path the layer serves or hides is
+    /// left out of the lower sources. Host loose-file order cannot reproduce
+    /// the order Windows lists loose files in.
     ///
     /// @param directory '/'-separated directory, relative
     /// @param extension required suffix, or empty for any
@@ -1050,7 +1149,9 @@ class AssetStore {
     /// Lists the effective resource names under a directory, recursively, in mount order.
     ///
     /// Feature loading relies on this order: the first document containing a
-    /// requested section wins. The pack layer's files come last.
+    /// requested section wins. The mutator layer's served paths come first
+    /// and the pack layer's files come last. A path the layer serves or hides
+    /// is left out of the lower sources.
     ///
     /// @param directory '/'-separated directory, relative
     /// @param extension required suffix, or empty for any
@@ -1060,8 +1161,12 @@ class AssetStore {
         std::string_view directory, std::string_view extension, bool include_pack_layer = true
     ) const;
 
-    /// Opens a loose file, else the first archive holding that path as a
-    /// file, else the pack layer, for reading.
+    /// Opens the mutator layer's copy of a resource, else a loose file, else
+    /// the first archive holding that path as a file, else the pack layer.
+    ///
+    /// A path the mutator layer hides returns nullptr. A handle on one of the
+    /// layer's archive entries keeps the layer until close(). Given bytes are
+    /// read from memory. A loose host file is read as a pack folder's file is.
     ///
     /// @param resource '\\'- or '/'-separated path
     /// @return a handle to release with close(), or nullptr when the resource is absent
@@ -1070,10 +1175,14 @@ class AssetStore {
     ///
     /// @param file handle from open(), or null
     static void close(ResourceFile* file) noexcept;
-    /// Returns whether a handle reads from an archive or a zip pack layer.
+    /// Returns whether a handle reads bytes that came from an archive.
+    ///
+    /// True for a mounted archive, a file in one of the mutator layer's
+    /// archives, bytes the mutator layer was given, or a file read from a zip
+    /// pack layer. False for a loose file and for a mutator's loose file.
     ///
     /// @param file open handle
-    /// @return true for an archive entry or a file read from a zip pack layer
+    /// @return true when the bytes came from an archive or were given to the mutator layer
     [[nodiscard]] static bool archived(const ResourceFile* file) noexcept;
     /// Moves a handle's read position.
     ///
@@ -1103,13 +1212,17 @@ class AssetStore {
 
   private:
 
-    // ResourceFile names the private pack-layer type it keeps open.
+    // ResourceFile names the private layer types it keeps open.
     friend struct ResourceFile;
     // PackLayerOps builds and reads the private pack-layer type.
     friend struct PackLayerOps;
+    // MutatorLayerOps builds and reads the private mutator-layer type.
+    friend struct MutatorLayerOps;
 
     /// Lists resource names under a directory with read()'s precedence.
     ///
+    /// The mutator layer's served paths come first, in the order given. A
+    /// path the layer serves or hides is left out of the lower sources.
     /// Throws std::runtime_error for an invalid or traversing path or a loose
     /// case collision.
     ///
@@ -1117,7 +1230,7 @@ class AssetStore {
     /// @param extension required suffix, or empty for any
     /// @param recursive true to include subdirectories
     /// @param include_pack_layer true to include the pack layer's files
-    /// @return the names, loose files first, each once
+    /// @return the names, the mutator layer first, each once
     [[nodiscard]] std::vector<std::string> list_resources(
         std::string_view directory,
         std::string_view extension,
@@ -1126,6 +1239,16 @@ class AssetStore {
     ) const;
     struct PackLayer;
     struct PackLayerSlot;
+    struct MutatorLayer;
+    struct MutatorLayerSlot;
+    /// Copies the mounted mutator layer.
+    ///
+    /// The copy is taken under the layer's lock, which is not held across a
+    /// read. Empty when no layer is mounted, including a store that was moved
+    /// from.
+    ///
+    /// @return the mounted layer, or empty
+    [[nodiscard]] std::shared_ptr<const MutatorLayer> mutator_layer_snapshot() const;
     /// Copies the mounted pack layer.
     ///
     /// The copy is taken under the layer's lock, which is not held across a
@@ -1203,15 +1326,24 @@ class AssetStore {
     /// Continues an enumeration through the archive records of each mount,
     /// then the pack layer when the scope reaches it.
     ///
+    /// A file whose full path `mutator` serves or hides is left out. The
+    /// pointer is the one copy the lookup took; null when no layer is mounted.
+    /// A hidden path is reported through the observer once, recorded in
+    /// `hidden_noted`.
+    ///
     /// @param[in,out] found matches appended in mount and stored order
     /// @param directory directory part of the pattern, with its trailing separator
     /// @param spec wildcard for the names
     /// @param scope first mount searched and whether later mounts follow
+    /// @param mutator the mutator layer copied for this lookup, or null
+    /// @param[in,out] hidden_noted hidden paths already reported for this lookup
     void find_in_mounts(
         std::vector<FoundEntry>& found,
         std::string_view directory,
         std::string_view spec,
-        FindScope scope
+        FindScope scope,
+        const MutatorLayer* mutator,
+        std::unordered_set<std::string>& hidden_noted
     ) const;
 
     struct Mount {
@@ -1232,6 +1364,9 @@ class AssetStore {
     // The pack layer and the lock that guards its pointer. Null in a
     // moved-from store. The layer itself never changes once published.
     std::unique_ptr<PackLayerSlot> pack_layer_;
+    // The mutator layer and the lock that guards its pointer. Null in a
+    // moved-from store. The layer itself never changes once published.
+    std::unique_ptr<MutatorLayerSlot> mutator_layer_;
     // The root mark_loose_shadows walks, and the folders it has walked, each
     // by its path with every link followed.
     std::filesystem::path walk_root_;
