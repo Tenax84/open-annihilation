@@ -3,8 +3,8 @@
 
 // What each kind of package asks of the running game. A kind is named in
 // one branch of each function: a mod package (oamod), a map pack (oamap),
-// a language pack (oalang) and an expansion. An expansion is copied by
-// install_oaexp; these hooks are not its install.
+// a language pack (oalang), an expansion and a mutator (oamut). An
+// expansion is copied by install_oaexp; these hooks are not its install.
 
 #include "map_packs.hpp"
 #include "package_paths.hpp"
@@ -106,6 +106,10 @@ bool Runtime::package_target_in_use(
         return false;
     if (kind.name == "expansion")
         return false;
+    // A mutator's files are mounted only while a match runs, when nothing
+    // installs. Nothing holds its folder open.
+    if (kind.name == "oamut")
+        return false;
     return false;
 }
 
@@ -117,6 +121,9 @@ bool Runtime::package_offers_play(const package_install::PackageKind& kind) cons
     if (kind.name == "oalang")
         return false;
     if (kind.name == "expansion")
+        return false;
+    // Installing a mutator does not turn it on, and PLAY NOW is not offered.
+    if (kind.name == "oamut")
         return false;
     return false;
 }
@@ -136,6 +143,10 @@ void Runtime::package_changed(const package_install::PackageKind& kind, const fs
     // the Library lists.
     if (kind.name == "expansion")
         return;
+    // The listing is read again. A change before the first read leaves it
+    // unmade: nothing has asked for it yet.
+    if (kind.name == "oamut")
+        reload_installed_mutators();
 }
 
 package_install::PackageOptions
@@ -163,6 +174,9 @@ Runtime::package_options(const package_install::PackageKind& kind) const {
         return options;
     // An expansion's manifest reader uses the built-in table and no context.
     if (kind.name == "expansion")
+        return options;
+    // A mutator's hooks read the package themselves and need no context.
+    if (kind.name == "oamut")
         return options;
     return options;
 }

@@ -1105,16 +1105,17 @@ void Runtime::tell_mod_installs() {
         const LayerScreen* top = oa_layer_ ? oa_layer_->top() : nullptr;
         return top != nullptr && top->name() == library_screen_name;
     };
-    // A map pack from a catalogue: an oamap package whose origin is one. It
-    // asks nothing, and installs with no prompt off the settled main menu.
+    // A map pack or a mutator from a catalogue: an oamap or oamut package
+    // whose origin is one. It asks nothing, and installs with no prompt off
+    // the settled main menu.
     const auto catalogue_map_pack = [](const install::OpenedPackage& waiting) {
         const install::PackageKind* kind = install::kind_for_file(waiting.file);
-        return kind != nullptr && kind->name == "oamap" &&
+        return kind != nullptr && (kind->name == "oamap" || kind->name == "oamut") &&
                waiting.origin.kind == install::OriginKind::catalogue;
     };
-    // Takes a catalogue map pack first in the inbox and installs it with no
-    // prompt. One whose plan asked waits, as it does off the main menu, for
-    // the settled main menu of a run someone watches.
+    // Takes a catalogue map pack or mutator first in the inbox and installs
+    // it with no prompt. One whose plan asked waits, as it does off the main
+    // menu, for the settled main menu of a run someone watches.
     const auto take_catalogue_map = [&]() -> bool {
         if (state.stage != ModInstallState::Stage::idle || state.prompt != nullptr ||
             !state.catalogue_question.empty())
@@ -1129,11 +1130,12 @@ void Runtime::tell_mod_installs() {
         begin_package(*opened_file);
         return true;
     };
-    // In a run nobody watches, a catalogue map pack installs only while the
-    // player is getting one: the map browser is the top screen, or GET MAP
-    // shows over the battle room. Otherwise it waits in the inbox, as a
-    // chosen mod does with the Library closed, so a run nobody drives leaves
-    // a pack an earlier run's download queue hands over for a later run.
+    // In a run nobody watches, a catalogue map pack or mutator installs only
+    // while the player is getting a map pack: the map browser is the top
+    // screen, or GET MAP shows over the battle room. Otherwise it waits in
+    // the inbox, as a chosen mod does with the Library closed, so a run
+    // nobody drives leaves a package an earlier run's download queue hands
+    // over for a later run.
     const auto getting_map_pack = [this] {
         const LayerScreen* top = oa_layer_ ? oa_layer_->top() : nullptr;
         return (top != nullptr && top->name() == oa::ui::map_browser::screen_name) ||
@@ -1142,8 +1144,8 @@ void Runtime::tell_mod_installs() {
     if (!settled) {
         state.settled_frames = 0;
         // Nothing starts while a match loads or runs. A catalogue map pack
-        // language pack or expansion otherwise installs here, with no
-        // prompt; every other package waits.
+        // or mutator, a language pack or an expansion otherwise installs
+        // here, with no prompt; every other package waits.
         if (match_ != nullptr || screen_ == Screen::loading || screen_ == Screen::match)
             return;
         if (state.stage != ModInstallState::Stage::idle || state.prompt != nullptr)
@@ -1178,8 +1180,8 @@ void Runtime::tell_mod_installs() {
         return;
     // A run nobody watches leaves the packages waiting for one someone does,
     // except a catalogue language pack and a catalogue expansion, which ask
-    // nothing; a catalogue map pack while the player is getting one, which
-    // installs with no prompt;
+    // nothing; a catalogue map pack or mutator while the player is getting
+    // a map pack, which installs with no prompt;
     // and a mod chosen in the Library while the Library is the top screen,
     // which asks and installs as it does for a player watching, the folders
     // its changes drop going a step a frame there too.
@@ -1245,8 +1247,8 @@ void Runtime::tell_mod_installs() {
         take_handed_mod_files();
     }
     // A catalogue language pack, a catalogue expansion, and a catalogue map
-    // pack that asks nothing, install here with nothing shown, as they do
-    // off this menu. A map pack whose plan asks is put back for the take
+    // pack or mutator that asks nothing, install here with nothing shown,
+    // as they do off this menu. One whose plan asks is put back for the take
     // below, which shows the question.
     if (take_catalogue_language())
         return;
@@ -1254,7 +1256,7 @@ void Runtime::tell_mod_installs() {
         return;
     if (take_catalogue_map())
         return;
-    // A catalogue map pack that needed a question waited for this menu.
+    // A catalogue map pack or mutator that needed a question waited for this menu.
     state.catalogue_question.clear();
     state.quiet = false;
     if (take_chosen_mod())
