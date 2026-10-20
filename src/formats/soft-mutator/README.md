@@ -71,6 +71,14 @@ Lenient forms, each kept and warned about:
   (`repeated_section`).
 - A leading byte-order mark is skipped (`byte_order_mark`).
 
+A group's body is only `[Needs]` and `[Changes]`. A statement anywhere else
+in that body is dropped (`stray_text`) at its own line, before the first
+section as well as after it. When a header becomes a group because its body
+holds a section, statements already read from that body are dropped the same
+way. A `[` inside `[Needs]` or `[Changes]` is `unknown_section`: a section
+cannot hold a section. That section's braces are skipped, and reading
+carries on. A section is never read inside a section.
+
 `folder` and `extension` apply to every block after them, and each may be
 set more than once. `\` in either becomes `/`, and both are stored in lower
 case. The extension is a filename suffix with no leading dot, so
@@ -108,7 +116,7 @@ block when its braces or header are broken, and reading continues.
 | `group_without_needs` | a group has no needs, so it matches every record |
 | `repeated_section` | a second needs or changes section was merged |
 | `byte_order_mark` | a leading byte-order mark was skipped |
-| `unknown_section` | a section other than needs or changes |
+| `unknown_section` | a section other than needs or changes, or a section inside a section |
 | `unclosed_block` | a header or a brace was never closed |
 | `unexpected_brace` | a brace where a block did not call for one |
 | `directive_in_block` | `folder` or `extension` inside a block |
@@ -120,7 +128,7 @@ block when its braces or header are broken, and reading continues.
 | `clamp_low_above_high` | a scale's low clamp is above its high clamp |
 | `unterminated_string` | a quote was never closed |
 | `block_comment` | `/*`, which is not part of the language |
-| `stray_text` | text that is not a directive, a block or a statement |
+| `stray_text` | text that is not a directive, a block or a statement, or a statement outside a group's sections |
 | `too_large` | the text is longer than 1 MiB |
 | `too_many_blocks` | more than 4096 blocks |
 | `too_many_statements` | more than 4096 statements in one block |

@@ -619,6 +619,10 @@ class Parser {
                 continue;
             }
             if (c == '[') {
+                if (slot != Slot::loose) {
+                    reject_nested_section();
+                    continue;
+                }
                 if (!parse_section())
                     return false;
                 continue;
@@ -660,6 +664,7 @@ class Parser {
         if (same_word(name, "needs") || same_word(name, "changes")) {
             const bool needs = same_word(name, "needs");
             if (block_->selector != Selector::group) {
+                drop_loose_changes();
                 block_->selector = Selector::group;
                 block_->name.clear();
                 if (!state_->promoted) {
@@ -712,11 +717,46 @@ class Parser {
         return true;
     }
 
+    void reject_nested_section() {
+        const uint32_t section_line = line_;
+        diagnose(
+            Severity::error,
+            DiagnosticCode::unknown_section,
+            section_line,
+            "a section cannot hold a section"
+        );
+        advance();
+        while (!at_end()) {
+            const int c = peek();
+            if (c == ']') {
+                advance();
+                break;
+            }
+            if (c == '\n' || c == '\r')
+                break;
+            advance();
+        }
+        skip_ws();
+        if (!at_end() && peek() == '{')
+            skip_braced();
+    }
+
+    void drop_loose_changes() {
+        if (block_ == nullptr)
+            return;
+        for (const Change& change : block_->changes) {
+            diagnose(
+                Severity::error,
+                DiagnosticCode::stray_text,
+                change.line,
+                "stray text " + quote(change.field)
+            );
+        }
+        block_->changes.clear();
+    }
+
     void parse_statement(Slot slot) {
         const uint32_t statement_line = line_;
-        const bool loose_beside_sections = slot == Slot::loose &&
-                                           block_->selector == Selector::group &&
-                                           (state_->saw_needs || state_->saw_changes);
         std::string field;
         while (!at_end()) {
             const int c = peek();
@@ -746,12 +786,12 @@ class Parser {
             return;
         }
         ++state_->statements;
-        if (loose_beside_sections) {
+        if (slot == Slot::loose && block_->selector == Selector::group) {
             diagnose(
                 Severity::error,
                 DiagnosticCode::stray_text,
                 statement_line,
-                "stray text " + quote(field)
+                field.empty() ? "stray text" : "stray text " + quote(field)
             );
             return;
         }

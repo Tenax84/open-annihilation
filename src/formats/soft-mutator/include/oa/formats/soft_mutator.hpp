@@ -125,7 +125,7 @@ enum class DiagnosticCode : uint8_t {
     repeated_section,        ///< a second needs or changes section was merged
     byte_order_mark,         ///< a leading byte-order mark was skipped
 
-    unknown_section,      ///< a section other than needs or changes
+    unknown_section,      ///< not needs or changes, or a section inside a section
     unclosed_block,       ///< a header or brace was never closed
     unexpected_brace,     ///< a brace where a block did not call for one
     directive_in_block,   ///< a folder or extension directive inside a block
@@ -137,7 +137,7 @@ enum class DiagnosticCode : uint8_t {
     clamp_low_above_high, ///< a scale's low clamp is above its high clamp
     unterminated_string,  ///< a quote was never closed
     block_comment,        ///< a '/*' comment, which is not part of the language
-    stray_text,           ///< text that is not a directive, block or statement
+    stray_text,           ///< not a directive, block or statement, or outside a group section
     too_large,            ///< the text is longer than max_input_bytes
     too_many_blocks,      ///< the file holds more than max_blocks blocks
     too_many_statements,  ///< a block holds more than max_statements statements

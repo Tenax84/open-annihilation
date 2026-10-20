@@ -534,6 +534,73 @@ void malformed() {
 
     OA_CHECK(sm::code_name(sm::DiagnosticCode::missing_semicolon) == "missing_semicolon");
     OA_CHECK(sm::code_name(sm::DiagnosticCode::too_many_diagnostics) == "too_many_diagnostics");
+
+    std::string deep = "[*Group*]{";
+    deep.reserve(deep.size() + 100000u * 8u);
+    for (int index = 0; index < 100000; ++index)
+        deep += "[Needs]{";
+    const sm::ParseResult deep_result = parse(deep);
+    OA_CHECK(deep_result.has_errors());
+    OA_CHECK(has_code_at(deep_result, sm::DiagnosticCode::unknown_section, 1));
+
+    const sm::ParseResult nested =
+        parse("[*Group*]{[Needs]{A=1,1;[Changes]{B=2;}}}[RIDGECOM]{Kept=9;}");
+    OA_CHECK(has_code(nested, sm::DiagnosticCode::unknown_section));
+    OA_CHECK(kept_nine(nested));
+    bool section_message = false;
+    for (const sm::Diagnostic& item : nested.diagnostics) {
+        if (item.code == sm::DiagnosticCode::unknown_section &&
+            item.message.find("cannot hold a section") != std::string::npos)
+            section_message = true;
+    }
+    OA_CHECK(section_message);
+    OA_CHECK(nested.rules.blocks.size() == 2);
+    if (nested.rules.blocks.size() == 2) {
+        OA_CHECK(nested.rules.blocks[0].selector == sm::Selector::group);
+        OA_CHECK(nested.rules.blocks[0].needs.size() == 1);
+        OA_CHECK(nested.rules.blocks[0].needs[0].field == "A");
+        OA_CHECK(change_named(nested.rules.blocks[0], "B") == nullptr);
+        OA_CHECK(nested.rules.blocks[1].name == "RIDGECOM");
+    }
+}
+
+void loose_in_group() {
+    const sm::ParseResult before = parse("[*Group*]{\nA=5;\n[Needs]{C=1,1;}\n[Changes]{B=2;}\n}\n");
+    OA_CHECK(has_code_at(before, sm::DiagnosticCode::stray_text, 2));
+    OA_CHECK(before.rules.blocks.size() == 1);
+    if (before.rules.blocks.size() == 1) {
+        OA_CHECK(before.rules.blocks[0].selector == sm::Selector::group);
+        OA_CHECK(before.rules.blocks[0].needs.size() == 1);
+        OA_CHECK(before.rules.blocks[0].needs[0].field == "C");
+        OA_CHECK(before.rules.blocks[0].changes.size() == 1);
+        OA_CHECK(before.rules.blocks[0].changes[0].field == "B");
+        OA_CHECK(change_named(before.rules.blocks[0], "A") == nullptr);
+    }
+
+    const sm::ParseResult after = parse("[*Group*]{\n[Needs]{C=1,1;}\n[Changes]{B=2;}\nA=5;\n}\n");
+    OA_CHECK(has_code_at(after, sm::DiagnosticCode::stray_text, 4));
+    OA_CHECK(after.rules.blocks.size() == 1);
+    if (after.rules.blocks.size() == 1) {
+        OA_CHECK(after.rules.blocks[0].needs.size() == 1);
+        OA_CHECK(after.rules.blocks[0].changes.size() == 1);
+        OA_CHECK(after.rules.blocks[0].changes[0].field == "B");
+        OA_CHECK(change_named(after.rules.blocks[0], "A") == nullptr);
+    }
+
+    const sm::ParseResult promoted =
+        parse("[RIDGECOM]{\nA=1;\n[Needs]{C=1,1;}\n[Changes]{B=2;}\n}\n");
+    OA_CHECK(has_code_at(promoted, sm::DiagnosticCode::group_without_asterisks, 1));
+    OA_CHECK(has_code_at(promoted, sm::DiagnosticCode::stray_text, 2));
+    OA_CHECK(promoted.rules.blocks.size() == 1);
+    if (promoted.rules.blocks.size() == 1) {
+        OA_CHECK(promoted.rules.blocks[0].selector == sm::Selector::group);
+        OA_CHECK(promoted.rules.blocks[0].name.empty());
+        OA_CHECK(promoted.rules.blocks[0].needs.size() == 1);
+        OA_CHECK(promoted.rules.blocks[0].needs[0].field == "C");
+        OA_CHECK(promoted.rules.blocks[0].changes.size() == 1);
+        OA_CHECK(promoted.rules.blocks[0].changes[0].field == "B");
+        OA_CHECK(change_named(promoted.rules.blocks[0], "A") == nullptr);
+    }
 }
 
 void same_rules() {
@@ -618,13 +685,13 @@ void same_rules() {
     }
     unsigned long long blocks = 0;
     unsigned long long warnings = 0;
-    unsigned long long errors = 0;
+    unsigned long long error_count = 0;
     for (const fs::path& path : paths) {
         const std::string name = path.filename().string();
         std::ifstream probe(path, std::ios::binary);
         if (!probe) {
             std::printf("%s: 0 blocks, 0 warnings, 1 errors\n", name.c_str());
-            ++errors;
+            ++error_count;
             continue;
         }
         const std::vector<uint8_t> bytes = read_file(path);
@@ -658,13 +725,17 @@ void same_rules() {
         }
         blocks += file_blocks;
         warnings += file_warnings;
-        errors += file_errors;
+        error_count += file_errors;
     }
     const auto files = static_cast<unsigned long long>(paths.size());
     std::printf(
-        "%llu files, %llu blocks, %llu warnings, %llu errors\n", files, blocks, warnings, errors
+        "%llu files, %llu blocks, %llu warnings, %llu errors\n",
+        files,
+        blocks,
+        warnings,
+        error_count
     );
-    return errors == 0 ? 0 : 1;
+    return error_count == 0 ? 0 : 1;
 }
 
 } // namespace
@@ -684,6 +755,7 @@ int main(int argc, char** argv) {
     layout();
     errors();
     malformed();
+    loose_in_group();
     same_rules();
     return oa::test::check_exit_status();
 }
