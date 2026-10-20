@@ -38,7 +38,7 @@ sounds, explosion art, movement class, sound category). `token_list` is
 category words. `yard_map` is yard-map cells.
 
 `Storage` is how wide the result is. `none` is a flag bit or text. `int8`,
-`uint8`, `int16`, `int32` and `uint32` are the integer widths. `float32`
+`uint8`, `int16`, `uint16`, `int32` and `uint32` are the integer widths. `float32`
 keeps a decimal in a float. `fixed32` keeps a 16.16 value, or a weapon
 speed scaled into 32 bits. `ticks16` and `ticks32` are seconds times 30
 (`weapon_ticks_per_second`, `weapons.hpp:52`).
@@ -215,16 +215,20 @@ Wraps, by the width the loader keeps. `parse_int` wraps modulo 2^32
 
 - Signed 8 bits, outside −128 to 127: unit `makesmetal`
   (`unit_def_loader.cpp:246`), `waterline` (`unit_def_loader.cpp:238`);
-  weapon `color` (`weapons.cpp:360`), `color2` (`weapons.cpp:361`),
-  `firestarter` (`weapons.cpp:358`), `rendertype` (`weapons.cpp:359`).
+  weapon `firestarter` (`weapons.cpp:358`), `rendertype` (`weapons.cpp:359`).
   `transportsize` and `transportcapacity` refuse below 0 and warn above 127.
 - Unsigned 8 bits, outside 0 to 255: `maxslope` (`move_classes.cpp:39`) and
   `maxwaterslope` (`move_classes.cpp:45`), and `badslope`
   (`move_classes.cpp:42`) and `badwaterslope` (`move_classes.cpp:49`), on a
-  unit and on a movement class.
+  unit and on a movement class. Weapon `color` (`weapons.cpp:360`, read
+  back at `combat_state.cpp:108`) and `color2` (`weapons.cpp:361`, read back
+  at `combat_state.cpp:109`).
+- Unsigned 16 bits, outside 0 to 65535: unit `buildangle`
+  (`unit_def_loader.cpp:291`, read back at `unit-spawn/src/runtime.cpp:90`); weapon
+  `tolerance` (`weapons.cpp:365`, read back at `combat_state.cpp:100`) and
+  `pitchtolerance` (`weapons.cpp:366`, read back at `combat_state.cpp:101`).
 - Signed 16 bits, outside −32768 to 32767: unit `attackrunlength`
-  (`unit_def_loader.cpp:397`), `buildangle` (`unit_def_loader.cpp:291`),
-  `builddistance` (`unit_def_loader.cpp:292`), `cruisealt`
+  (`unit_def_loader.cpp:397`), `builddistance` (`unit_def_loader.cpp:292`), `cruisealt`
   (`unit_def_loader.cpp:294`), `healtime` (`unit_def_loader.cpp:254`),
   `kamikazedistance` (`unit_def_loader.cpp:400`), `maneuverleashlength`
   (`unit_def_loader.cpp:395`), `mincloakdistance`
@@ -236,8 +240,7 @@ Wraps, by the width the loader keeps. `parse_int` wraps modulo 2^32
   `workertime` (`unit_def_loader.cpp:253`), and the movement depths
   `maxwaterdepth` (`move_classes.cpp:33`) and `minwaterdepth`
   (`move_classes.cpp:36`). Weapon `accuracy` (`weapons.cpp:364`),
-  `areaofeffect` (`weapons.cpp:335`), `pitchtolerance` (`weapons.cpp:366`),
-  `sprayangle` (`weapons.cpp:345`), `tolerance` (`weapons.cpp:365`).
+  `areaofeffect` (`weapons.cpp:335`) and `sprayangle` (`weapons.cpp:345`).
   `burst` refuses below 0 and warns above 32767. Footprints refuse outside
   1 to 1024 before this wrap applies.
 - Signed 32 bits, outside ±2147483647: unit `buildcostenergy`

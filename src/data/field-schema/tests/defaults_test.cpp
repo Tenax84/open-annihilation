@@ -14,6 +14,7 @@
 #include "oa/data/defs/weapons.hpp"
 #include "oa/test/check.hpp"
 
+#include <bit>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -199,7 +200,8 @@ void compare_unit(
     else if (key == "brakerate")
         expect_fixed(unit.brake_rate, def);
     else if (key == "buildangle")
-        expect_int(unit.build_angle, def);
+        // The loader stores int16_t; the game reads the bits back unsigned (runtime.cpp:90).
+        expect_int(std::bit_cast<uint16_t>(unit.build_angle), def);
     else if (key == "buildcostenergy")
         expect_whole_float(unit.build_cost_energy, def);
     else if (key == "buildcostmetal")
@@ -542,9 +544,11 @@ void compare_weapon(
     else if (key == "burstrate")
         expect_zero_count(weapon.burst_rate, def);
     else if (key == "color")
-        expect_int(weapon.color, def);
+        // The loader stores int8_t; the game reads it back unsigned (combat_state.cpp:108).
+        expect_int(static_cast<uint8_t>(weapon.color), def);
     else if (key == "color2")
-        expect_int(weapon.color2, def);
+        // The loader stores int8_t; the game reads it back unsigned (combat_state.cpp:109).
+        expect_int(static_cast<uint8_t>(weapon.color2), def);
     else if (key == "coverage")
         expect_int(weapon.coverage, def);
     else if (key == "duration")
@@ -589,7 +593,7 @@ void compare_weapon(
     } else if (key == "name")
         expect_text(weapon.name, def);
     else if (key == "pitchtolerance")
-        expect_int(weapon.pitch_tolerance, def);
+        expect_int(static_cast<uint16_t>(weapon.pitch_tolerance), def);
     else if (key == "randomdecay")
         expect_zero_count(weapon.random_decay, def);
     else if (key == "range")
@@ -621,7 +625,8 @@ void compare_weapon(
     else if (key == "startvelocity")
         expect_zero_count(weapon.start_velocity, def);
     else if (key == "tolerance")
-        expect_int(weapon.tolerance, def);
+        // The loader stores int16_t; the game reads it back unsigned (combat_state.cpp:100).
+        expect_int(static_cast<uint16_t>(weapon.tolerance), def);
     else if (key == "turnrate")
         expect_zero_count(weapon.turn_rate, def);
     else if (key == "waterexplosionart") {
