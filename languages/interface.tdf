@@ -5634,6 +5634,14 @@
 	it=Richiede {names}, che sono spenti;
 	}
 
+[Needs {name}]
+	{
+	de=Benötigt {name};
+	fr=Nécessite {name};
+	es=Requiere {name};
+	it=Richiede {name};
+	}
+
 [Needs {name} · on]
 	{
 	de=Braucht {name} · an;
@@ -5872,6 +5880,14 @@
 	fr=Pas disponible ici;
 	es=No disponible aquí;
 	it=Non disponibile qui;
+	}
+
+[Not compatible with this mod]
+	{
+	de=Passt nicht zu diesem Mod;
+	fr=Pas compatible avec ce mod;
+	es=No es compatible con este mod;
+	it=Non è compatibile con questo mod;
 	}
 
 [Not compatible with this mod: it works with {names}]
@@ -12976,6 +12992,22 @@
 	fr=·;
 	es=·;
 	it=·;
+	}
+
+[· needs {name}]
+	{
+	de=· benötigt {name};
+	fr=· nécessite {name};
+	es=· requiere {name};
+	it=· richiede {name};
+	}
+
+[· not compatible with this mod]
+	{
+	de=· passt nicht zu diesem Mod;
+	fr=· pas compatible avec ce mod;
+	es=· no es compatible con este mod;
+	it=· non è compatibile con questo mod;
 	}
 
 [‹ DOWNLOADS]

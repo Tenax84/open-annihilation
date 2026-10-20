@@ -4406,9 +4406,378 @@ void mutators_tab_holds_its_invariants() {
     OA_EXPECT_NONE(fixture::texts_not_fitting(narrow_list, fonts()), "narrow mutators");
 }
 
+/// Where a named mutator row sits in the visible list, or -1.
+///
+/// @param library the Library
+/// @param key the mutator's key
+/// @return the place
+int32_t mutator_place(const lib::Library& library, std::string_view key) {
+    for (int32_t place = 0; place < static_cast<int32_t>(library.visible.size()); ++place) {
+        const lib::Entry& entry = library.entries[library.visible[static_cast<std::size_t>(place)]];
+        if (entry.id.key == key)
+            return place;
+    }
+    return -1;
+}
+
+/// Lays the list out with one mutator row at the top, and returns its look.
+///
+/// @param library the Library
+/// @param frame the frame
+/// @param key the mutator's key
+/// @param[out] list the display list
+/// @return the row's look; null when the row is not there
+const kit::ListRowLook* reveal_mutator(
+    const lib::Library& library,
+    const kit::Frame& frame,
+    std::string_view key,
+    kit::DisplayList& list
+) {
+    lib::ScreenState state;
+    state.reveal_row = mutator_place(library, key);
+    list = laid_out(library, state, frame);
+    return row_look_named(list, "library.row.fixture-core." + std::string(key));
+}
+
+/// The side of a row's badge, as the kit draws it.
+///
+/// @param row the row
+/// @return the side, in points
+int32_t shown_badge_side(const kit::Rect& row) {
+    const int32_t inset = kit::compact_metrics.list_row_inset;
+    return std::max(
+        std::min(row.height - 2 * inset, kit::compact_metrics.list_row_badge), int32_t{0}
+    );
+}
+
+/// The details' tag badge, when the selected mutator shows one.
+///
+/// @param list the display list
+/// @return the badge; null when the details show a picture or letters instead
+const kit::BadgeLook* detail_tag_badge(const kit::DisplayList& list) {
+    for (const kit::Item& item : list.items) {
+        if (item.role != kit::Role::package_badge || item.rect.width != 40 ||
+            item.rect.height != 40)
+            continue;
+        return std::get_if<kit::BadgeLook>(&item.look);
+    }
+    return nullptr;
+}
+
+/// Tells whether a fade covers a row.
+///
+/// @param list the display list
+/// @param row the row
+/// @return true when a locked fade meets the row
+bool row_is_dimmed(const kit::DisplayList& list, const kit::Rect& row) {
+    for (const kit::Item& item : list.items) {
+        if (item.role != kit::Role::locked_fade)
+            continue;
+        const kit::Rect shared = kit::intersect(item.rect, row);
+        if (shared.width > 0 && shared.height > 0)
+            return true;
+    }
+    return false;
+}
+
+/// A Library of made-up mutators that exercise badges, chips and tag icons.
+///
+/// Signal is selected. Played with no mod.
+///
+/// @return the Library
+lib::Library badge_library() {
+    lib::Inputs inputs;
+    lib::Registry built_in;
+    built_in.id = "fixture-core";
+    built_in.name = "Fixture Core";
+    built_in.built_in = true;
+    inputs.registries.push_back(built_in);
+    inputs.engine = {0, 8, 0};
+    inputs.version_text = "v0.8.0";
+    const auto add = [&](std::string key, std::string name, std::vector<std::string> tags) {
+        lib::Listing made;
+        made.registry = "fixture-core";
+        made.kind = lib::Kind::mutator;
+        made.key = std::move(key);
+        made.name = std::move(name);
+        made.version = "1.0";
+        made.author = "Fixture Author";
+        made.summary = "A made-up mutator.";
+        made.size = 1024;
+        lib::MutatorFacts facts;
+        facts.tags = std::move(tags);
+        made.mutator = std::move(facts);
+        inputs.listings.push_back(std::move(made));
+    };
+    add("beacon", "Beacon", {"gameplay"});
+    inputs.listings.back().badge = fixture::gradient_badge();
+    add("signal", "Signal", {"economy", "statistics"});
+    add("plain-mark", "Plain Mark", {});
+    add("odd-mark", "Odd Mark", {"custom"});
+    add("gatehouse-keep", "Gatehouse Keep", {"economy"});
+    inputs.listings.back().mutator->needs.push_back({"gatehouse", {}, "Gatehouse"});
+    add("ridge-walls", "Ridge Walls", {"commanders"});
+    inputs.listings.back().mutator->works_with.push_back({"ridge", {}, "Ridge"});
+    add("both-marks", "Both Marks", {"economy"});
+    inputs.listings.back().mutator->needs.push_back({"north-tower", {}, "North Tower"});
+    inputs.listings.back().mutator->works_with.push_back({"ridge", {}, "Ridge"});
+    add("wide-claim",
+        "Wide Claim",
+        {"balance", "balance-extra", "balance-further", "balance-again", "balance-more"});
+    inputs.listings.back().mutator->needs.push_back({"far-beacon", {}, "Far Beacon"});
+    inputs.listings.back().mutator->works_with.push_back({"ridge", {}, "Ridge"});
+    add("kept-icon", "Kept Icon", {});
+    add("kept-mark", "Kept Mark", {});
+    inputs.listings.back().mutator.reset();
+    add("listed-first", "Listed First", {"economy"});
+    const auto install = [&](std::string_view key, std::vector<std::string> tags, bool picture) {
+        const lib::Listing* from = nullptr;
+        for (const lib::Listing& listing : inputs.listings)
+            if (listing.key == key)
+                from = &listing;
+        lib::Installed copy = fixture::installed(*from, "1.0", 1);
+        if (picture)
+            copy.badge = fixture::gradient_badge();
+        lib::MutatorFacts facts;
+        facts.tags = std::move(tags);
+        copy.mutator = std::move(facts);
+        inputs.installed.push_back(std::move(copy));
+    };
+    install("kept-icon", {}, true);
+    install("kept-mark", {"commanders"}, false);
+    install("listed-first", {"commanders"}, false);
+    lib::Library library;
+    lib::refresh(library, std::move(inputs));
+    lib::set_tab(library, lib::Tab::mutators);
+    lib::select(library, {"fixture-core", lib::Kind::mutator, "signal"});
+    lib::open_details(library);
+    return library;
+}
+
+/// Mutator rows show a picture, else the first tag's icon, else letters.
+/// Large carries tag chips and the lock-coloured state chips. Compact names
+/// a missing mutator or one that does not fit after the title. Tag pills and
+/// the filter pane carry the eight icons. An incompatible row stays bright
+/// and its GET stays on.
+void mutator_rows_show_badges_chips_and_icons() {
+    const lib::Library library = badge_library();
+    const lib::Library mods = with_ridge();
+    for (const fixture::NamedFrame& named : fixture::frames()) {
+        const kit::DisplayList list = laid_out(library, {}, named.frame);
+        OA_EXPECT_NONE(fixture::texts_not_fitting(list, fonts()), named.name + " mutator badges");
+        const bool compact = named.frame.size_class == kit::SizeClass::compact;
+        const bool regular = named.frame.size_class == kit::SizeClass::regular;
+        const bool large = named.frame.size_class == kit::SizeClass::large;
+        const int32_t badge_side = compact ? 20 : 28;
+
+        kit::DisplayList shown;
+        const kit::ListRowLook* beacon = reveal_mutator(library, named.frame, "beacon", shown);
+        const kit::Control* beacon_row = fixture::named(shown, "library.row.fixture-core.beacon");
+        OA_CHECK(beacon != nullptr && beacon_row != nullptr);
+        if (beacon != nullptr && beacon_row != nullptr) {
+            OA_CHECK(renderer::picture_drawable(beacon->badge));
+            OA_CHECK(!beacon->badge_tag.has_value());
+            OA_CHECK(shown_badge_side(beacon_row->rect) == badge_side);
+            OA_CHECK(beacon->badge.width == 16 && beacon->badge.height == 16);
+        }
+
+        const kit::ListRowLook* signal = reveal_mutator(library, named.frame, "signal", shown);
+        const kit::Control* signal_row = fixture::named(shown, "library.row.fixture-core.signal");
+        OA_CHECK(signal != nullptr && signal_row != nullptr);
+        if (signal != nullptr && signal_row != nullptr) {
+            OA_CHECK(signal->badge_tag == kit::TagIcon::economy);
+            OA_CHECK(!renderer::picture_drawable(signal->badge));
+            OA_CHECK(shown_badge_side(signal_row->rect) == badge_side);
+        }
+
+        const kit::ListRowLook* plain = reveal_mutator(library, named.frame, "plain-mark", shown);
+        OA_CHECK(plain != nullptr);
+        if (plain != nullptr) {
+            OA_CHECK(!plain->badge_tag.has_value());
+            OA_CHECK(plain->badge_text == lib::badge_letters("Plain Mark"));
+        }
+        const kit::ListRowLook* odd = reveal_mutator(library, named.frame, "odd-mark", shown);
+        OA_CHECK(odd != nullptr);
+        if (odd != nullptr) {
+            OA_CHECK(!odd->badge_tag.has_value());
+            OA_CHECK(odd->badge_text == lib::badge_letters("Odd Mark"));
+        }
+
+        const kit::ListRowLook* kept_icon =
+            reveal_mutator(library, named.frame, "kept-icon", shown);
+        OA_CHECK(kept_icon != nullptr && renderer::picture_drawable(kept_icon->badge));
+        OA_CHECK(kept_icon == nullptr || !kept_icon->badge_tag.has_value());
+        const kit::ListRowLook* kept_mark =
+            reveal_mutator(library, named.frame, "kept-mark", shown);
+        OA_CHECK(kept_mark != nullptr && kept_mark->badge_tag == kit::TagIcon::commanders);
+        const kit::ListRowLook* listed =
+            reveal_mutator(library, named.frame, "listed-first", shown);
+        OA_CHECK(listed != nullptr && listed->badge_tag == kit::TagIcon::economy);
+
+        lib::ScreenState details;
+        details.details_page = compact;
+        const kit::DisplayList detail_list = laid_out(library, details, named.frame);
+        OA_EXPECT_NONE(
+            fixture::texts_not_fitting(detail_list, fonts()), named.name + " mutator details"
+        );
+        const kit::BadgeLook* badge = detail_tag_badge(detail_list);
+        OA_CHECK(badge != nullptr && badge->tag == kit::TagIcon::economy);
+        OA_CHECK(badge == nullptr || badge->face == kit::colour::hint);
+        const kit::PillLook* detail_economy = pill_named(detail_list, "library.detail.tag.economy");
+        OA_CHECK(detail_economy != nullptr && detail_economy->tag == kit::TagIcon::economy);
+        const kit::PillLook* detail_statistics =
+            pill_named(detail_list, "library.detail.tag.statistics");
+        OA_CHECK(
+            detail_statistics != nullptr && detail_statistics->tag == kit::TagIcon::statistics
+        );
+
+        if (large) {
+            const kit::ListRowLook* keep =
+                reveal_mutator(library, named.frame, "gatehouse-keep", shown);
+            OA_CHECK(keep != nullptr && keep->tags.size() >= 2);
+            if (keep != nullptr && keep->tags.size() >= 2) {
+                OA_CHECK(keep->tags[0].text == "Economy");
+                OA_CHECK(keep->tags[0].state == kit::ChipState::filter);
+                OA_CHECK(keep->tags[1].text == "Needs Gatehouse");
+                OA_CHECK(keep->tags[1].state == kit::ChipState::update);
+            }
+            const kit::ListRowLook* walls =
+                reveal_mutator(library, named.frame, "ridge-walls", shown);
+            const kit::Control* walls_row =
+                fixture::named(shown, "library.row.fixture-core.ridge-walls");
+            const kit::Control* walls_get =
+                fixture::named(shown, "library.row.fixture-core.ridge-walls.get");
+            OA_CHECK(walls != nullptr && walls->tags.size() >= 2);
+            if (walls != nullptr && walls->tags.size() >= 2) {
+                OA_CHECK(walls->tags[0].text == "Commanders");
+                OA_CHECK(walls->tags[1].text == "Not compatible with this mod");
+                OA_CHECK(walls->tags[1].state == kit::ChipState::update);
+                OA_CHECK(walls->tags[1].state != kit::ChipState::problem);
+            }
+            OA_CHECK(walls_get != nullptr && walls_get->enabled);
+            OA_CHECK(walls != nullptr && walls->chip.has_value() && !walls->chip->disabled);
+            OA_CHECK(walls_row != nullptr && !row_is_dimmed(shown, walls_row->rect));
+            const kit::ListRowLook* both =
+                reveal_mutator(library, named.frame, "both-marks", shown);
+            OA_CHECK(both != nullptr && both->tags.size() >= 3);
+            if (both != nullptr && both->tags.size() >= 3) {
+                OA_CHECK(both->tags[0].text == "Economy");
+                OA_CHECK(both->tags[1].text == "Needs North Tower");
+                OA_CHECK(both->tags[1].state == kit::ChipState::update);
+                OA_CHECK(both->tags[2].text == "Not compatible with this mod");
+                OA_CHECK(both->tags[2].state == kit::ChipState::update);
+            }
+            const kit::ListRowLook* wide =
+                reveal_mutator(library, named.frame, "wide-claim", shown);
+            OA_CHECK(wide != nullptr && wide->tags.size() >= 2);
+            if (wide != nullptr && wide->tags.size() >= 2) {
+                OA_CHECK(wide->tags[0].text == "Needs Far Beacon");
+                OA_CHECK(wide->tags[0].state == kit::ChipState::update);
+                OA_CHECK(wide->tags[1].text == "Not compatible with this mod");
+                OA_CHECK(wide->tags[1].state == kit::ChipState::update);
+                for (const kit::ChipLook& chip : wide->tags) {
+                    if (chip.state == kit::ChipState::filter)
+                        OA_CHECK(chip.text != wide->tags[0].text);
+                }
+            }
+            const kit::NavLook* nav = nullptr;
+            for (const kit::Item& item : list.items) {
+                if (item.role != kit::Role::nav)
+                    continue;
+                if (const auto* look = std::get_if<kit::NavLook>(&item.look);
+                    look != nullptr && !look->entries.empty())
+                    nav = look;
+            }
+            OA_CHECK(nav != nullptr);
+            if (nav != nullptr) {
+                bool economy = false;
+                bool balance = false;
+                for (const kit::NavEntry& entry : nav->entries) {
+                    if (entry.caption.starts_with("Economy")) {
+                        economy = true;
+                        OA_CHECK(entry.tag == kit::TagIcon::economy);
+                    }
+                    if (entry.caption.starts_with("balance")) {
+                        balance = true;
+                        OA_CHECK(!entry.tag.has_value());
+                    }
+                    if (entry.caption.starts_with("custom"))
+                        OA_CHECK(!entry.tag.has_value());
+                }
+                OA_CHECK(economy);
+                OA_CHECK(balance);
+            }
+        }
+        if (compact) {
+            const kit::ListRowLook* keep =
+                reveal_mutator(library, named.frame, "gatehouse-keep", shown);
+            OA_CHECK(keep != nullptr);
+            if (keep != nullptr) {
+                OA_CHECK(keep->by == "· needs Gatehouse");
+                OA_CHECK(keep->by_colour == kit::colour::lock);
+                OA_CHECK(!keep->lines.empty());
+            }
+            const kit::ListRowLook* walls =
+                reveal_mutator(library, named.frame, "ridge-walls", shown);
+            const kit::Control* walls_row =
+                fixture::named(shown, "library.row.fixture-core.ridge-walls");
+            const kit::Control* walls_get =
+                fixture::named(shown, "library.row.fixture-core.ridge-walls.get");
+            OA_CHECK(walls != nullptr);
+            if (walls != nullptr) {
+                OA_CHECK(walls->by == "· not compatible with this mod");
+                OA_CHECK(walls->by_colour == kit::colour::lock);
+                OA_CHECK(!walls->lines.empty());
+                OA_CHECK(walls->chip.has_value() && !walls->chip->disabled);
+            }
+            OA_CHECK(walls_get != nullptr && walls_get->enabled);
+            OA_CHECK(walls_row != nullptr && !row_is_dimmed(shown, walls_row->rect));
+            const kit::ListRowLook* both =
+                reveal_mutator(library, named.frame, "both-marks", shown);
+            OA_CHECK(both != nullptr && both->by == "· needs North Tower");
+            OA_CHECK(both == nullptr || both->by_colour == kit::colour::lock);
+        }
+        if (regular) {
+            const kit::PillLook* economy = pill_named(list, "library.tag.economy");
+            OA_CHECK(economy != nullptr && economy->tag == kit::TagIcon::economy);
+            const kit::PillLook* commanders = pill_named(list, "library.tag.commanders");
+            OA_CHECK(commanders != nullptr && commanders->tag == kit::TagIcon::commanders);
+            const kit::PillLook* custom = pill_named(list, "library.tag.custom");
+            if (custom != nullptr)
+                OA_CHECK(!custom->tag.has_value());
+            const kit::PillLook* balance = pill_named(list, "library.tag.balance");
+            if (balance != nullptr)
+                OA_CHECK(!balance->tag.has_value());
+        }
+    }
+
+    lib::Library odd = library;
+    lib::select(odd, {"fixture-core", lib::Kind::mutator, "odd-mark"});
+    const kit::DisplayList odd_list = laid_out(odd, {}, fixture::frames()[1].frame);
+    const kit::PillLook* custom = pill_named(odd_list, "library.detail.tag.custom");
+    OA_CHECK(custom != nullptr && !custom->tag.has_value());
+
+    const kit::Frame regular = fixture::frames()[1].frame;
+    lib::ScreenState mods_state;
+    mods_state.reveal_row = mutator_place(mods, "quarry");
+    const kit::DisplayList mods_list = laid_out(mods, mods_state, regular);
+    for (const kit::Item& item : mods_list.items) {
+        if (item.role != kit::Role::pill)
+            continue;
+        const kit::Control* control = kit::control_of(mods_list, item.control);
+        if (control == nullptr || !control->name.starts_with("library.tag."))
+            continue;
+        const auto* look = std::get_if<kit::PillLook>(&item.look);
+        OA_CHECK(look != nullptr && !look->tag.has_value());
+    }
+    const kit::ListRowLook* quarry = row_look_named(mods_list, "library.row.fixture-core.quarry");
+    OA_CHECK(quarry != nullptr && !quarry->badge_tag.has_value());
+}
+
 int main() {
     every_frame_holds_its_invariants();
     mutators_tab_holds_its_invariants();
+    mutator_rows_show_badges_chips_and_icons();
     wordy_tabs_take_the_row_over_the_search();
     larger_classes_show_more();
     built_in_languages_show_on_the_list();
