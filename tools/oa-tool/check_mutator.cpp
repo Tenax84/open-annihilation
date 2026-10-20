@@ -144,7 +144,7 @@ bool bytes_before(std::string_view left, std::string_view right) {
 /// @param line the line, from 1, or 0 when the line is unknown
 /// @param message what is wrong
 /// @return the line
-std::string problem_at(std::string_view path, std::int64_t line, std::string_view message) {
+std::string problem_at(std::string_view path, int64_t line, std::string_view message) {
     std::string text{path};
     text.push_back(':');
     text += std::to_string(line);
@@ -173,7 +173,10 @@ bool rule_file(std::string_view path) {
            name.size() > std::string("rules/").size();
 }
 
-/// Appends every file path of an opened package.
+/// Appends every file the installer would unpack.
+///
+/// Paths are the ones `package.files` names, below a stripped top folder.
+/// A directory, and anything the installer leaves out, is skipped.
 ///
 /// @param context the package
 /// @param[out] paths the file paths
@@ -181,9 +184,14 @@ void list_package(void* context, std::vector<std::string>& paths) {
     const auto* package = static_cast<const install::Package*>(context);
     if (package == nullptr)
         return;
-    for (const zip::StreamEntry& entry : package->directory.entries) {
-        if (!entry.directory)
-            paths.push_back(entry.name);
+    for (const install::PackagedFile& file : package->files) {
+        if (file.entry >= package->directory.entries.size())
+            continue;
+        if (package->directory.entries[file.entry].directory)
+            continue;
+        if (file.name.empty() || file.name.back() == '/')
+            continue;
+        paths.push_back(file.name);
     }
 }
 
@@ -208,8 +216,11 @@ bool read_package(
     if (package == nullptr)
         return false;
     const zip::StreamEntry* found = nullptr;
-    for (const zip::StreamEntry& entry : package->directory.entries) {
-        if (!entry.directory && entry.name == path) {
+    for (const install::PackagedFile& file : package->files) {
+        if (file.name != path || file.entry >= package->directory.entries.size())
+            continue;
+        const zip::StreamEntry& entry = package->directory.entries[file.entry];
+        if (!entry.directory) {
             found = &entry;
             break;
         }
@@ -276,18 +287,20 @@ void compile_one(
     const PackageEntries& entries,
     std::string_view path,
     std::vector<std::string>& problems,
-    std::uint32_t& scripts
+    uint32_t& scripts
 ) {
     std::vector<uint8_t> bytes;
     bool too_large = false;
     if (!read_limited(entries, path, most_script_bytes, bytes, too_large)) {
         if (too_large)
             problems.push_back(problem_at(path, 1, std::string{path} + " is larger than 1 MiB"));
+        else
+            problems.push_back(problem_at(path, 0, "it cannot be read"));
         return;
     }
     script::ScriptError error;
     if (!script::compile_check(bytes, path, error)) {
-        const std::int64_t line = error.line;
+        const int64_t line = error.line;
         problems.push_back(problem_at(path, line, error.message));
         return;
     }
@@ -307,6 +320,8 @@ void parse_one(
     if (!read_limited(entries, path, most_rule_bytes, bytes, too_large)) {
         if (too_large)
             problems.push_back(problem_at(path, 1, "the rule file is larger than 4 MiB"));
+        else
+            problems.push_back(problem_at(path, 0, "it cannot be read"));
         return;
     }
     const sm::ParseResult parsed = sm::parse_rules(bytes);
@@ -314,7 +329,7 @@ void parse_one(
         if (diagnostic.severity != sm::Severity::error)
             continue;
         problems.push_back(
-            problem_at(path, static_cast<std::int64_t>(diagnostic.line), diagnostic.message)
+            problem_at(path, static_cast<int64_t>(diagnostic.line), diagnostic.message)
         );
     }
 }
@@ -435,9 +450,12 @@ void write_icon(
         return;
     std::string stored;
     const zip::StreamEntry* found = nullptr;
-    for (const zip::StreamEntry& entry : package.directory.entries) {
-        if (!entry.directory && same_ascii(entry.name, manifest.icon)) {
-            stored = entry.name;
+    for (const install::PackagedFile& file : package.files) {
+        if (file.entry >= package.directory.entries.size())
+            continue;
+        const zip::StreamEntry& entry = package.directory.entries[file.entry];
+        if (!entry.directory && same_ascii(file.name, manifest.icon)) {
+            stored = file.name;
             found = &entry;
             break;
         }
@@ -461,11 +479,11 @@ void write_icon(
     writer.key("sha256");
     writer.string(std::string_view{hex.data(), hex.size()});
     writer.key("size");
-    writer.integer(static_cast<std::int64_t>(bytes.size()));
+    writer.integer(static_cast<int64_t>(bytes.size()));
     writer.key("width");
-    writer.integer(static_cast<std::int64_t>(info.header.width));
+    writer.integer(static_cast<int64_t>(info.header.width));
     writer.key("height");
-    writer.integer(static_cast<std::int64_t>(info.header.height));
+    writer.integer(static_cast<int64_t>(info.header.height));
     writer.end_object();
 }
 
@@ -529,10 +547,13 @@ void describe_oamut(
     const install::Package& package, json::JsonWriter& writer, const MutatorChecked& checked
 ) {
     std::string manifest_path;
-    for (const zip::StreamEntry& entry : package.directory.entries) {
-        if (!entry.directory && entry.name.find('/') == std::string::npos &&
-            same_ascii(entry.name, mut::manifest_file)) {
-            manifest_path = entry.name;
+    for (const install::PackagedFile& file : package.files) {
+        if (file.entry >= package.directory.entries.size())
+            continue;
+        if (package.directory.entries[file.entry].directory)
+            continue;
+        if (same_ascii(file.name, mut::manifest_file)) {
+            manifest_path = file.name;
             break;
         }
     }
@@ -601,7 +622,7 @@ void describe_oamut(
     write_icon(package, manifest, writer);
     write_text(writer, "entry", manifest.entry);
     writer.key("scripts");
-    writer.integer(static_cast<std::int64_t>(checked.scripts));
+    writer.integer(static_cast<int64_t>(checked.scripts));
     if (!checked.rules.empty()) {
         writer.key("rules");
         write_strings(writer, checked.rules);

@@ -276,18 +276,20 @@ bool read_directory(const fs::path& path, zip::StreamDirectory& directory) {
 }
 
 /// Packs the folder's files into a stored zip so check can read a refusal
-/// pack itself will not leave behind.
+/// pack itself will not leave behind. `prefix` is a top folder and its
+/// slash, the shape Finder writes, or empty for a flat package.
 ///
 /// @param folder the folder
 /// @param file the zip
-void zip_folder(const fs::path& folder, const fs::path& file) {
+/// @param prefix a top folder to put every file under, or empty
+void zip_folder(const fs::path& folder, const fs::path& file, std::string_view prefix = {}) {
     std::vector<std::string> names;
     std::vector<std::vector<uint8_t>> blobs;
     for (fs::recursive_directory_iterator cursor(folder), end; cursor != end; ++cursor) {
         if (cursor->is_directory())
             continue;
         const std::string relative = cursor->path().lexically_relative(folder).generic_string();
-        names.push_back(relative);
+        names.push_back(std::string{prefix} + relative);
         blobs.push_back(read_bytes(cursor->path()));
     }
     std::vector<zip::NewEntry> entries;
@@ -631,6 +633,43 @@ void test_refusals(const fs::path& scratch) {
     test_refusal(scratch, Fault::icon, "256");
 }
 
+/// A package whose files sit under one top folder is checked like a flat one.
+void test_top_folder(const fs::path& scratch) {
+    const std::vector<uint8_t> icon = png_image(64);
+    const fs::path folder = scratch / "wrap-good";
+    make_mutator(folder, Fault::none, icon);
+    const fs::path flat = scratch / "wrap-flat.oamut";
+    const Captured packed = run({"pack", "--out", flat.string(), folder.string()});
+    OA_CHECK(packed.status == oa::tool::exit_done);
+    const fs::path wrapped = scratch / "wrap-nested.oamut";
+    zip_folder(folder, wrapped, "steady/");
+    const Captured flat_check = run({"check", flat.string(), "--json"});
+    const Captured wrap_check = run({"check", wrapped.string(), "--json"});
+    OA_CHECK(flat_check.status == oa::tool::exit_done);
+    OA_CHECK(wrap_check.status == oa::tool::exit_done);
+    if (wrap_check.status != oa::tool::exit_done)
+        std::fprintf(stderr, "wrapped: %s\n%s\n", wrap_check.out.c_str(), wrap_check.err.c_str());
+    const json::Json flat_report = parse_report(flat_check.out);
+    const json::Json wrap_report = parse_report(wrap_check.out);
+    expect_facts(flat_report, icon, flat.filename().string());
+    expect_facts(wrap_report, icon, wrapped.filename().string());
+    const std::span<const std::string> flat_names = flat_report.names();
+    const std::span<const std::string> wrap_names = wrap_report.names();
+    OA_CHECK(flat_names.size() == wrap_names.size());
+    if (flat_names.size() == wrap_names.size()) {
+        for (std::size_t index = 0; index < flat_names.size(); ++index)
+            OA_CHECK(flat_names[index] == wrap_names[index]);
+    }
+
+    const fs::path broken_folder = scratch / "wrap-broken";
+    make_mutator(broken_folder, Fault::lua, icon);
+    const fs::path broken = scratch / "wrap-broken.oamut";
+    zip_folder(broken_folder, broken, "steady/");
+    const Captured refused = run({"check", broken.string()});
+    OA_CHECK(refused.status == oa::tool::exit_failed);
+    OA_CHECK(contains(refused.out + refused.err, "lua/util.lua:3:"));
+}
+
 void test_mutator_usage(const fs::path& scratch) {
     const fs::path mod = scratch / "mod";
     write_text(mod / "oamod.yaml", "oamod: 1\n");
@@ -660,6 +699,7 @@ int main() {
     };
     run_case("test_pack_and_check", [&] { test_pack_and_check(scratch.path); });
     run_case("test_refusals", [&] { test_refusals(scratch.path); });
+    run_case("test_top_folder", [&] { test_top_folder(scratch.path); });
     run_case("test_mutator_usage", [&] { test_mutator_usage(scratch.path); });
     return oa::test::check_exit_status();
 }

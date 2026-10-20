@@ -19,7 +19,7 @@ namespace oa::tool {
 
 /// How many scripts compiled, and the rule files that were read.
 struct MutatorChecked {
-    std::uint32_t scripts{};        ///< `.lua` files that compiled
+    uint32_t scripts{};             ///< `.lua` files that compiled
     std::vector<std::string> rules; ///< `.sm` paths, in unsigned byte order
 };
 
