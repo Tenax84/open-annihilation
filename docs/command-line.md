@@ -436,7 +436,7 @@ one, for the engine's developers.
 | `--seed N` | Starts the random numbers from `N`, so two runs play alike. |
 | `--trace-digest FILE` | Writes a digest of the match at each tick. |
 | `--trace-units FILE` | Adds a line for each unit to it. It needs `--trace-digest`. |
-| `--trace-lookups FILE` | Writes every game file and listing the run looks up. |
+| `--trace-lookups FILE` | Writes every game file and listing the run looks up, and, for a path a mutator serves or hides, which mutator. |
 | `--trace-input` | Prints each press of the pointer's buttons, and where it lands, each move of the pointer over a match, and the game's window, its display and the pointer as a match begins and at each change of the window or a display, on standard error. [Below](#--trace-input). |
 | `--debug-order-lines` | Draws each construction beam as a plain line, to debug it. |
 | `--draw-threads N` | The threads that draw, from 1 through 32. |
