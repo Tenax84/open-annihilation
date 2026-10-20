@@ -228,9 +228,11 @@ void test_help() {
     OA_CHECK(table[8].name == "catalogue");
     OA_CHECK(table[9].name == "registry");
     OA_CHECK(table[10].name == "interface-words");
-    OA_CHECK(table[7].subcommands.size() == 2);
+    // mutator import is the third subcommand. tools-oa-tool checks this list.
+    OA_CHECK(table[7].subcommands.size() == 3);
     OA_CHECK(table[7].subcommands[0].name == "pack");
     OA_CHECK(table[7].subcommands[1].name == "check");
+    OA_CHECK(table[7].subcommands[2].name == "import");
     OA_CHECK(table[9].subcommands.size() == 2);
     OA_CHECK(table[8].subcommands.size() == 4);
     OA_CHECK(table[8].subcommands[0].name == "keygen");

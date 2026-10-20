@@ -176,6 +176,26 @@ class Failure : public std::runtime_error {
 ///         the arguments are not the command's
 [[nodiscard]] int run_mutator_check(std::span<const std::string> arguments, Output& output);
 
+/// Imports TA: Mutation mutators into mutator folders.
+///
+/// Each positional argument is a `.tam` or a `.zip`. A `.tam`'s companions
+/// are read from its own folder. A zip's names are the names the archive
+/// recorded. `--out` is the directory that receives one folder per mutator.
+/// `--id` and `--version` set that mutator's id and version, and they are a
+/// usage error when more than one mutator is named. `--tag` is repeated.
+/// `--works-with CODE=ENTRY` maps one compatibility code. `--pack` also
+/// writes a `.oamut`. `--force` replaces an existing folder and package.
+/// A link is not followed.
+///
+/// @param arguments the inputs and the options
+/// @param[in,out] output receives one line per mutator, its warnings and a
+///        refusal, and a usage line when the arguments are not the command's
+/// @return exit_done when every mutator was imported, exit_failed when one
+///         was refused or could not be written, or exit_usage when the
+///         arguments are not the command's
+/// @throws Failure when a folder cannot be written
+[[nodiscard]] int run_mutator_import(std::span<const std::string> arguments, Output& output);
+
 // The catalogue commands, defined in catalogue.cpp.
 
 /// Makes a sealed publisher key.
