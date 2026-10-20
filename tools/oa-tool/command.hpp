@@ -108,7 +108,7 @@ class Failure : public std::runtime_error {
 
 // The package command, defined in pack.cpp.
 
-/// Packs a folder as a .oamod, a .oalang or a .oamap.
+/// Packs a folder as a .oamod, a .oalang, a .oamap, a .oaexp or a .oamut.
 ///
 /// One positional argument is the folder. `--out FILE` names the package,
 /// and `--force` replaces a file that already exists. `--game-dir DIR` is
@@ -145,6 +145,36 @@ class Failure : public std::runtime_error {
 ///         would be refused or a map does not fit the base game, or exit_usage
 ///         when the arguments are not the command's
 [[nodiscard]] int run_check(std::span<const std::string> arguments, Output& output);
+
+// The mutator commands, defined in mutator.cpp.
+
+/// Packs a mutator folder as a .oamut.
+///
+/// One positional argument is the folder. It must hold `oamut.yaml` at its
+/// top; another folder is a usage error. The other arguments are `run_pack`'s,
+/// and the package is packed by that command. `--game-dir` is a usage error.
+///
+/// @param arguments the folder and any options
+/// @param[in,out] output receives the packed line, and a usage line when the
+///        folder is not a mutator
+/// @return exit_done, or exit_usage when the folder holds no oamut.yaml or
+///         the arguments are not the command's
+/// @throws Failure when the folder cannot be packed
+[[nodiscard]] int run_mutator_pack(std::span<const std::string> arguments, Output& output);
+
+/// Checks a .oamut and reports the facts a catalogue lists.
+///
+/// One positional argument is the package. A file of another kind is a usage
+/// error. The other arguments are `run_check`'s, and the report is that
+/// command's.
+///
+/// @param arguments the package and any options
+/// @param[in,out] output receives the report, and a usage line when the file
+///        is not a .oamut
+/// @return exit_done when the mutator would be installed, exit_failed when it
+///         would be refused, or exit_usage when the file is not a .oamut or
+///         the arguments are not the command's
+[[nodiscard]] int run_mutator_check(std::span<const std::string> arguments, Output& output);
 
 // The catalogue commands, defined in catalogue.cpp.
 

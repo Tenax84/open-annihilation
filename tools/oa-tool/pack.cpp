@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 // SPDX-License-Identifier: GPL-3.0-only
 
-// pack: a folder with one manifest becomes a .oamod, a .oalang, a .oamap or
-// a .oaexp.
+// pack: a folder with one manifest becomes a .oamod, a .oalang, a .oamap,
+// a .oaexp or a .oamut.
 // A mod or a language is written here. A map is handed to pack_map. The
 // manifest is written first, then every other file in byte order of its
 // path, stored or deflated by a fixed rule, with the writer's fixed times.
@@ -11,6 +11,7 @@
 // complete; a refusal deletes that result.
 
 #include "arguments.hpp"
+#include "check_mutator.hpp"
 #include "command.hpp"
 #include "expansion.hpp"
 #include "pack_map.hpp"
@@ -22,6 +23,7 @@
 #include "oa/data/languages/language_pack.hpp"
 #include "oa/data/mod_profile.hpp"
 #include "oa/formats/oamod.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/formats/zip/stream.hpp"
 #include "oa/formats/zip/writer.hpp"
 #include "oa/platform/files.hpp"
@@ -668,6 +670,200 @@ bool ends_with_extension(std::string_view name, std::string_view extension) {
 /// @param problem what is wrong
 void report_usage(Output& output, std::string_view problem);
 
+/// The files of a folder, read by path for the mutator checks.
+struct FolderEntries {
+    const std::vector<Item>* items{}; ///< the folder's files and folders
+};
+
+/// Appends every file in a folder being packed.
+///
+/// @param context a FolderEntries
+/// @param[out] paths the file paths
+void list_folder(void* context, std::vector<std::string>& paths) {
+    const auto* source = static_cast<const FolderEntries*>(context);
+    if (source == nullptr || source->items == nullptr)
+        return;
+    for (const Item& item : *source->items) {
+        if (!item.folder)
+            paths.push_back(item.name);
+    }
+}
+
+/// Copies one file out of a folder being packed.
+///
+/// @param context a FolderEntries
+/// @param path the file's path
+/// @param limit the most bytes it may hold
+/// @param[out] bytes the file; empty when it was not read
+/// @param[out] too_large true when the file is larger than limit
+/// @return true when the file was read
+bool read_folder(
+    void* context,
+    std::string_view path,
+    std::size_t limit,
+    std::vector<uint8_t>& bytes,
+    bool& too_large
+) {
+    bytes.clear();
+    too_large = false;
+    const auto* source = static_cast<const FolderEntries*>(context);
+    if (source == nullptr || source->items == nullptr)
+        return false;
+    const Item* found = nullptr;
+    for (const Item& item : *source->items) {
+        if (!item.folder && item.name == path) {
+            found = &item;
+            break;
+        }
+    }
+    if (found == nullptr)
+        return false;
+    if (found->bytes > limit) {
+        too_large = true;
+        return false;
+    }
+    FilePos file;
+    const uint64_t measured = open_read(found->path, file);
+    if (measured != found->bytes)
+        return false;
+    bytes.resize(static_cast<std::size_t>(measured));
+    if (measured > 0 && std::fread(bytes.data(), 1, bytes.size(), file.stream) != bytes.size()) {
+        bytes.clear();
+        return false;
+    }
+    return true;
+}
+
+/// Reads the package back with the installer and refuses one it refuses.
+///
+/// The installer's sentence is printed, then each diagnostic.
+///
+/// @param path the package
+/// @param output where the refusal is printed
+void verify_mutator(const fs::path& path, Output& output) {
+    const install::PackageResult result = install::open_package(path);
+    if (result.package)
+        return;
+    const install::PackageKind* kind = install::kind_for_file(path);
+    std::string sentence =
+        kind != nullptr ? install::refusal_text(*kind, result.problem) : std::string{};
+    if (sentence.empty())
+        sentence = result.problem.detail.empty() ? std::string{"It cannot be read."}
+                                                 : result.problem.detail;
+    output.err << sentence << '\n';
+    for (const std::string& line : result.problem.lines)
+        output.err << line << '\n';
+    throw Failure("the package was refused");
+}
+
+/// Packs a folder whose top holds oamut.yaml.
+///
+/// Scripts and rule files are checked before anything is written. The
+/// installer then reads the package back, and a refusal deletes it.
+///
+/// @param items the folder's files
+/// @param manifest_name the manifest's name, as the folder spells it
+/// @param out_path the --out path; empty for the default name
+/// @param force an existing output may be replaced
+/// @param output where the result and the diagnostics are printed
+/// @return exit_done
+int pack_mutator(
+    std::vector<Item> items,
+    const std::string& manifest_name,
+    const std::string& out_path,
+    bool force,
+    Output& output
+) {
+    std::sort(items.begin(), items.end(), [&](const Item& left, const Item& right) {
+        const bool left_manifest = !left.folder && left.name == manifest_name;
+        const bool right_manifest = !right.folder && right.name == manifest_name;
+        if (left_manifest != right_manifest)
+            return left_manifest;
+        return bytes_before(entry_name(left), entry_name(right));
+    });
+    detail::check_names(items);
+
+    const Item* manifest_item = nullptr;
+    std::size_t file_count = 0;
+    for (const Item& item : items) {
+        if (!item.folder)
+            ++file_count;
+        if (!item.folder && item.name == manifest_name)
+            manifest_item = &item;
+    }
+    if (manifest_item == nullptr)
+        throw Failure("the folder holds no oamut.yaml");
+    if (manifest_item->bytes > oa::formats::oamod::max_input_bytes)
+        throw Failure(manifest_name + " is larger than 256 KiB");
+    const std::vector<uint8_t> manifest_bytes =
+        read_capped(manifest_item->path, manifest_item->bytes, manifest_name);
+
+    std::vector<std::string> problems;
+    oa::formats::oamut::Manifest manifest;
+    std::vector<oa::formats::oamut::Problem> manifest_problems;
+    const bool manifest_ok =
+        oa::formats::oamut::read_manifest(manifest_bytes, manifest, manifest_problems);
+    if (!manifest_ok) {
+        for (const oa::formats::oamut::Problem& one : manifest_problems)
+            problems.push_back(oa::formats::oamut::describe(one));
+    }
+    FolderEntries folder{&items};
+    MutatorChecked checked;
+    check_mutator_scripts_and_rules(
+        PackageEntries{&folder, &list_folder, &read_folder}, problems, checked
+    );
+    if (!problems.empty()) {
+        for (const std::string& problem : problems)
+            output.err << problem << '\n';
+        throw Failure(manifest_ok ? "the mutator has errors" : "oamut.yaml has errors");
+    }
+
+    fs::path destination;
+    if (!out_path.empty()) {
+        destination = fs::path(std::u8string(out_path.begin(), out_path.end()));
+    } else {
+        const std::string name =
+            manifest.id + "-" + oa::formats::oamut::version_text(manifest.version) + ".oamut";
+        if (name.find('/') != std::string::npos || name.find('\\') != std::string::npos ||
+            !install::portable_name_problem(name).empty())
+            throw Failure("the package's name is not a file name");
+        destination = name;
+    }
+    const std::string destination_name = folded(utf8_of(destination.filename()));
+    if (!ends_with_extension(destination_name, ".oamut"))
+        throw Failure("a mutator folder is packed as a .oamut file");
+
+    std::error_code error;
+    if (!destination.parent_path().empty() &&
+        !fs::is_directory(fs::symlink_status(destination.parent_path(), error)))
+        throw Failure("cannot write " + utf8_of(destination));
+    const fs::file_status existing = fs::symlink_status(destination, error);
+    if (!error && fs::exists(existing)) {
+        if (fs::is_directory(existing))
+            throw Failure("the output is a folder: " + utf8_of(destination));
+        if (!force)
+            throw Failure("the output already exists: " + utf8_of(destination));
+    }
+
+    fs::path part = destination;
+    part += ".part";
+    RemoveUnless part_file(part);
+    const uint64_t written = write_part(part, items);
+    replace_output(part, destination);
+    part_file.release();
+    RemoveUnless output_file(destination);
+    verify_mutator(destination, output);
+    const sha256::Digest digest = digest_file(destination, written);
+    output_file.release();
+
+    const auto hex = sha256::to_hex(digest);
+    output.out << "packed " << utf8_of(destination) << ": " << file_count << " files, " << written
+               << " bytes, sha256 ";
+    output.out.write(hex.data(), static_cast<std::streamsize>(hex.size()));
+    output.out << '\n';
+    return exit_done;
+}
+
 /// Packs one folder.
 ///
 /// @param folder the folder
@@ -688,6 +884,7 @@ int pack_folder(
     std::string language_name;
     std::string map_name;
     std::string expansion_name;
+    std::string mutator_name;
     for (const Item& item : items) {
         if (item.folder || item.name.find('/') != std::string::npos)
             continue;
@@ -699,14 +896,29 @@ int pack_folder(
             map_name = item.name;
         else if (same_ascii(item.name, "oaexp.yaml"))
             expansion_name = item.name;
+        else if (same_ascii(item.name, "oamut.yaml"))
+            mutator_name = item.name;
     }
     const int manifests = (mod_name.empty() ? 0 : 1) + (language_name.empty() ? 0 : 1) +
-                          (map_name.empty() ? 0 : 1) + (expansion_name.empty() ? 0 : 1);
+                          (map_name.empty() ? 0 : 1) + (expansion_name.empty() ? 0 : 1) +
+                          (mutator_name.empty() ? 0 : 1);
     if (manifests == 0)
         throw Failure(
-            "the folder holds no oamod.yaml or language.yaml or oamap.yaml or oaexp.yaml"
+            "the folder holds no oamod.yaml or language.yaml or oamap.yaml or oaexp.yaml or "
+            "oamut.yaml"
         );
     if (manifests > 1) {
+        if (!mutator_name.empty() && manifests == 2) {
+            if (!mod_name.empty())
+                throw Failure("the folder holds both oamod.yaml and oamut.yaml");
+            if (!language_name.empty())
+                throw Failure("the folder holds both language.yaml and oamut.yaml");
+            if (!map_name.empty())
+                throw Failure("the folder holds both oamap.yaml and oamut.yaml");
+            throw Failure("the folder holds both oaexp.yaml and oamut.yaml");
+        }
+        if (!mutator_name.empty())
+            throw Failure("the folder holds more than one manifest");
         if (!expansion_name.empty())
             throw Failure("the folder holds more than one manifest");
         if (!mod_name.empty() && !language_name.empty() && map_name.empty())
@@ -738,6 +950,8 @@ int pack_folder(
         report_usage(output, "--game-dir is only for a map pack");
         return exit_usage;
     }
+    if (!mutator_name.empty())
+        return pack_mutator(std::move(items), mutator_name, out_path, force, output);
     const Kind kind = mod_name.empty() ? Kind::language : Kind::mod;
     const std::string& manifest_name = kind == Kind::mod ? mod_name : language_name;
     std::sort(items.begin(), items.end(), [&](const Item& left, const Item& right) {

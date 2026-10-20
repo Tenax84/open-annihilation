@@ -8,6 +8,8 @@
 
 #include "oa/data/languages.hpp"
 #include "oa/data/mod_profile/registry.hpp"
+#include "oa/formats/oamut/manifest.hpp"
+#include "oa/ui/kit/tag_icon.hpp"
 #include "oa/ui/library/text.hpp"
 #include "oa/ui/library/uninstall.hpp"
 #include "visible.hpp"
@@ -244,7 +246,47 @@ std::string blocked_reason(const Library& library, const Entry& entry) {
     return {};
 }
 
+/// Returns the first prerequisite no installed mutator satisfies.
+///
+/// A prerequisite is met by an installed mutator of the same id whose
+/// version the range holds. An empty range is any version. The name is
+/// returned when one is known, otherwise the id. An empty string means
+/// every prerequisite is met.
+///
+/// @param inputs the Library's inputs
+/// @param facts the mutator's facts
+/// @return the first unmet prerequisite, or empty
+std::string first_unmet_need(const Inputs& inputs, const MutatorFacts& facts) {
+    for (const Prerequisite& need : facts.needs) {
+        bool met = false;
+        for (const Installed& item : inputs.installed) {
+            if (item.kind != Kind::mutator || item.key != need.id)
+                continue;
+            formats::oamut::Condition condition;
+            condition.id = need.id;
+            condition.range_text = need.range;
+            if (!need.range.empty()) {
+                const std::optional<formats::oamut::VersionRange> range =
+                    formats::oamut::parse_version_range(need.range);
+                if (!range)
+                    continue;
+                condition.range = *range;
+            }
+            if (formats::oamut::condition_met(condition, need.id, item.version)) {
+                met = true;
+                break;
+            }
+        }
+        if (!met)
+            return need.name.empty() ? need.id : need.name;
+    }
+    return {};
+}
+
 /// Sets an entry's state, registry fields and whether it can act.
+///
+/// A mutator's compatibility and its first unmet prerequisite are recorded
+/// on the entry. Neither blocks GET or UPDATE, and neither dims the row.
 ///
 /// @param library the Library whose inputs the entry points into
 /// @param[in,out] entry the entry, with its pointers set
@@ -263,6 +305,12 @@ void settle_entry(const Library& library, Entry& entry) {
         entry.built_in = registry != nullptr && registry->built_in;
         entry.not_reviewed = !entry.built_in;
         entry.registry_name = registry != nullptr ? registry->name : entry.id.registry;
+    }
+    if (entry.id.kind == Kind::mutator) {
+        if (const MutatorFacts* facts = mutator_facts(entry)) {
+            entry.not_compatible = !works_with_played(library.inputs, *facts);
+            entry.needs_missing = first_unmet_need(library.inputs, *facts);
+        }
     }
     entry.blocked = blocked_reason(library, entry);
     entry.can_act = entry.blocked.empty();
@@ -898,6 +946,33 @@ std::string_view entry_name(const Entry& entry) {
     return entry.id.key;
 }
 
+bool works_with_played(const Inputs& inputs, const MutatorFacts& facts) {
+    if (facts.works_with.empty())
+        return true;
+    for (const WorksWith& item : facts.works_with) {
+        if (item.id == "*")
+            return true;
+        if (item.id == supported_base) {
+            if (inputs.played.id.empty())
+                return true;
+            continue;
+        }
+        formats::oamut::Condition condition;
+        condition.id = item.id;
+        condition.range_text = item.range;
+        if (!item.range.empty()) {
+            const std::optional<formats::oamut::VersionRange> range =
+                formats::oamut::parse_version_range(item.range);
+            if (!range)
+                continue;
+            condition.range = *range;
+        }
+        if (formats::oamut::condition_met(condition, inputs.played.id, inputs.played.version))
+            return true;
+    }
+    return false;
+}
+
 std::string_view entry_summary(const Entry& entry) {
     if (is_built_in_language(entry.id))
         return entry.shown_summary;
@@ -910,17 +985,51 @@ std::string_view entry_summary(const Entry& entry) {
     return {};
 }
 
+namespace {
+
+/// Returns the tags an entry shows.
+///
+/// A mutator's come from its facts, the listing's before the installed
+/// copy's, and never from the listing's own tag list as well. Any other
+/// kind uses the listing's tags.
+///
+/// @param entry the entry
+/// @return the tags, or null when it has none to show
+const std::vector<std::string>* tags_of(const Entry& entry) {
+    if (entry.id.kind == Kind::mutator)
+        return mutator_tag_list(entry);
+    if (entry.listing != nullptr)
+        return &entry.listing->tags;
+    return nullptr;
+}
+
+} // namespace
+
 std::vector<std::pair<std::string, std::size_t>> tags_in_tab(const Library& library) {
     const std::vector<bool> kept = kept_by_filter(library, shown_filter(library));
     std::map<std::string, std::size_t> counts;
     for (std::size_t index = 0; index < library.entries.size(); ++index) {
-        const Entry& entry = library.entries[index];
-        if (entry.listing == nullptr || !kept[index])
+        if (!kept[index])
             continue;
-        for (const std::string& tag : entry.listing->tags)
+        const std::vector<std::string>* tags = tags_of(library.entries[index]);
+        if (tags == nullptr)
+            continue;
+        for (const std::string& tag : *tags)
             ++counts[tag];
     }
-    return {counts.begin(), counts.end()};
+    if (library.tab != Tab::mutators)
+        return {counts.begin(), counts.end()};
+    std::vector<std::pair<std::string, std::size_t>> ordered;
+    for (const std::string_view id : kit::tag_ids) {
+        const auto found = counts.find(std::string(id));
+        if (found == counts.end())
+            continue;
+        ordered.push_back(*found);
+        counts.erase(found);
+    }
+    for (const auto& counted : counts)
+        ordered.push_back(counted);
+    return ordered;
 }
 
 std::size_t filter_count(const Library& library, Filter filter) {

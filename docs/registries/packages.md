@@ -86,21 +86,26 @@ made by hand; that is not an error.
 
 ## `oa-tool pack` and `oa-tool check`
 
-`oa-tool pack FOLDER` writes a `.oamod`, a `.oalang`, a `.oamap` or a
-`.oaexp`. The folder's top holds one manifest, `oamod.yaml`, `language.yaml`,
-`oamap.yaml` or `oaexp.yaml`. The manifest is written first, then every
-other file in byte order of its path, with fixed times. A file whose
-extension, without regard to case, is `png`, `jpg`, `jpeg`, `gif`, `ogg`,
-`mp3`, `zip`, `gz`, `bz2`, `xz`, `7z`, `oamod`, `oalang` or `oamap`, and an
-empty file, is stored. Every other file is deflated. An expansion is
-different: every file is stored. The same files give the same bytes on any
-machine with the same zlib.
+`oa-tool pack FOLDER` writes a `.oamod`, a `.oalang`, a `.oamap`, a
+`.oaexp` or a `.oamut`. The folder's top holds one manifest, `oamod.yaml`,
+`language.yaml`, `oamap.yaml`, `oaexp.yaml` or `oamut.yaml`. The manifest is
+written first, then every other file in byte order of its path, with fixed
+times. A file whose extension, without regard to case, is `png`, `jpg`,
+`jpeg`, `gif`, `ogg`, `mp3`, `zip`, `gz`, `bz2`, `xz`, `7z`, `oamod`,
+`oalang` or `oamap`, and an empty file, is stored. Every other file is
+deflated. An expansion is different: every file is stored. The same files
+give the same bytes on any machine with the same zlib.
 
 `--out FILE` names the package. Without it, the name comes from the manifest
-and is written in the current folder. `--force` replaces an existing file.
-A folder the installer would refuse is not packed. A map pack needs
-`--game-dir DIR` for the game's palette, which previews use. `--game-dir`
-on a mod, a language pack or an expansion is a usage error.
+and is written in the current folder. A mutator's default name is
+`<id>-<version>.oamut`. `--force` replaces an existing file. A folder the
+installer would refuse is not packed, and a mutator whose manifest, Lua
+source or rule file is broken is not packed: every problem is listed, a
+manifest problem as `oamut.yaml:<line>:<column>`, and a script or rule
+problem as `<path>:<line>: <message>`. Lua is compiled and rule files are
+parsed, and neither is run. A map pack needs `--game-dir DIR` for the
+game's palette, which previews use. `--game-dir` on a mod, a language pack,
+an expansion or a mutator is a usage error.
 
 `oa-tool check FILE` runs the same checks an install runs before it writes,
 and reports whether that install would accept the file. `--json` prints one
@@ -113,12 +118,29 @@ JSON object. The keys, in order, are `check`, `ok`, `problems`, `warnings`,
 - a language pack: `language` in place of those;
 - a map pack: `summary`, `author`, `homepage`, `tags`, `requires`,
   `packaging`, then `maps`;
-- an expansion: `extends`, `needs` and `author`.
+- an expansion: `extends`, `needs` and `author`;
+- a mutator: `summary`, `description`, `homepage`, `tags`, `author`,
+  `requires`, `works_with`, `conflicts_with`, `layers`, `options`, `icon`,
+  `entry`, `scripts`, `rules` and `legacy`.
+
+`requires.engine` is the requirement as written. `requires.mutators` and
+`conflicts_with` are objects with `id` and, when a range was written,
+`version` holding that range. `works_with` and `layers` are the manifest's
+strings. `options` lists `id`, `label`, `type` and `default`, and a choice's
+`values` and `labels` or a number's `min`, `max` and `step`. `icon` gives
+the icon's `path`, `sha256`, `size`, `width` and `height`. `scripts` is how
+many Lua files compiled. `rules` lists the `.sm` paths in byte order.
+`legacy` lists each original's `name`, `prefix`, `compatibility` and
+`files`. A mutator's Lua is compiled and its rule files are parsed, and
+neither is run. `oa-tool mutator pack` and `oa-tool mutator check` are the
+same two commands limited to a mutator: a folder without `oamut.yaml`, or a
+file of another kind, is a usage error.
 
 An expansion does not take `--game-dir`.
 
 A key the package does not have is left out. `revision` is null when a
-language pack has no packaging revision. A map pack needs `--game-dir`, the
+language pack has no packaging revision, and for every mutator. A map pack
+needs `--game-dir`, the
 game folder. Each `--mod FOLDER[=KEY]` is one more target after the base
 game `ta-3.1c`. `maps` lists each map. `compatible` holds `ta-3.1c` and then
 each mod, and `failures` holds the targets that do not fit.

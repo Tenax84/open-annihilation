@@ -99,12 +99,17 @@ struct LibraryWork {
     std::filesystem::path user_folder{};                 ///< the player's folder it lists
     /// The packages the last search found installed, in list_installed's order.
     std::vector<content::InstalledPackage> installed{};
-    std::vector<content::Match> matches{};    ///< the catalogue release each is matched to
-    std::vector<content::Update> updates{};   ///< the updates the catalogues offer for them
-    std::vector<ModBadge> installed_badges{}; ///< each installed mod's own picture; empty for none
-    uint64_t searches{};                      ///< counts the searches done
-    bool pictures_due{};                      ///< pictures wait to be read or fetched
-    bool match_running{};                     ///< a match runs: nothing is fetched
+    std::vector<content::Match> matches{};  ///< the catalogue release each is matched to
+    std::vector<content::Update> updates{}; ///< the updates the catalogues offer for them
+    std::vector<ModBadge>
+        installed_badges{}; ///< each installed package's own picture; empty for none
+    /// Each installed package's mutator facts, in `installed`'s order. Unset
+    /// for every other kind. The names are empty until the main thread
+    /// resolves them from the other inputs.
+    std::vector<std::optional<oa::ui::library::MutatorFacts>> installed_mutators{};
+    uint64_t searches{};  ///< counts the searches done
+    bool pictures_due{};  ///< pictures wait to be read or fetched
+    bool match_running{}; ///< a match runs: nothing is fetched
     /// The pictures asked for, read and fetched; its own lock guards it.
     std::unique_ptr<content::PictureCache> pictures{};
 };

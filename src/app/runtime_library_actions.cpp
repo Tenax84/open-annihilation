@@ -91,6 +91,8 @@ const install::PackageKind* package_kind_of(library::Kind kind) {
         return install::find_kind("oamap");
     case library::Kind::language:
         return install::find_kind("oalang");
+    case library::Kind::mutator:
+        return install::find_kind("oamut");
     }
     return nullptr;
 }

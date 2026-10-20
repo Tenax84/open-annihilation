@@ -4,8 +4,8 @@
 # oa-tool's commands. The executable stays in the root CMakeLists.txt, where
 # the Windows DLL copy and the packaged notices attach to it.
 add_library(oa-tool-commands STATIC commands.cpp arguments.cpp files.cpp archive_commands.cpp
-  pack.cpp pack_map.cpp check.cpp check_map.cpp catalogue.cpp passphrase.cpp registry.cpp
-  expansion.cpp interface_words.cpp)
+  pack.cpp pack_map.cpp check.cpp check_map.cpp check_mutator.cpp mutator.cpp catalogue.cpp
+  passphrase.cpp registry.cpp expansion.cpp interface_words.cpp)
 add_library(oa::tool::commands ALIAS oa-tool-commands)
 target_include_directories(oa-tool-commands PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # The interface-word lists are headers in the modules that look the texts up.
@@ -28,7 +28,8 @@ target_include_directories(oa-tool-commands SYSTEM PRIVATE
 target_compile_features(oa-tool-commands PUBLIC cxx_std_20)
 target_link_libraries(oa-tool-commands
   PRIVATE oa-options oa-app-package-install oa-app-game-directory oa-data-content-bundles oa-data-languages
-    oa-data-map-pack oa-data-map-fit oa-formats-oamod oa-formats-json oa-formats-ota oa-formats-tnt
+    oa-data-map-pack oa-data-map-fit oa-data-script-host oa-formats-oamod oa-formats-oamut
+    oa-formats-soft-mutator oa-formats-json oa-formats-ota oa-formats-tnt
     oa-formats-zip oa-base-sha256 oa-base-text oa-platform-shims oa-base-signing oa-data-catalogue
     oa-data-registry oa-platform-random oa-app-content oa-netgame-http oa-formats-url
   PUBLIC oa-formats-hpi oa-formats-png oa-ui-decoded)
@@ -108,6 +109,15 @@ if(BUILD_TESTING)
   add_test(NAME tools-oa-tool-interface-catalogue COMMAND oa-tool-interface-catalogue-test
     ${CMAKE_SOURCE_DIR}/languages/interface.tdf)
   set_tests_properties(tools-oa-tool-interface-catalogue PROPERTIES TIMEOUT 60)
+
+  # mutator: a made-up mutator packs to a .oamut, check reports its facts,
+  # and a broken manifest, script, rule file, layout or icon is refused.
+  add_executable(oa-tool-mutator-test tests/mutator_test.cpp)
+  target_link_libraries(oa-tool-mutator-test PRIVATE oa-tool-commands oa-app-package-install
+    oa-formats-zip oa-formats-json oa-formats-png oa-formats-oamut oa-base-sha256
+    oa-platform-shims ZLIB::ZLIB oa-test-support oa-options)
+  add_test(NAME tools-oa-tool-mutator COMMAND oa-tool-mutator-test)
+  set_tests_properties(tools-oa-tool-mutator PROPERTIES TIMEOUT 60)
 
   # An expansion packed and checked against the test table, and refused by
   # the commands, which use the built-in table.

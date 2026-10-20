@@ -90,11 +90,11 @@ constexpr std::string_view name_prefix = "library.";
 
 /// The tabs, in the order they are shown.
 constexpr std::array<Tab, tab_total> tab_order{
-    Tab::active, Tab::mods, Tab::maps, Tab::languages, Tab::updates, Tab::registries
+    Tab::active, Tab::mods, Tab::maps, Tab::mutators, Tab::languages, Tab::updates, Tab::registries
 };
 /// The words the tabs are named by, in that order.
 constexpr std::array<std::string_view, tab_total> tab_words{
-    "active", "mods", "maps", "languages", "updates", "registries"
+    "active", "mods", "maps", "mutators", "languages", "updates", "registries"
 };
 /// The filters, in the order they are shown.
 constexpr std::array<Filter, filter_total> filter_order{
@@ -104,6 +104,36 @@ constexpr std::array<Filter, filter_total> filter_order{
 constexpr std::array<std::string_view, filter_total> filter_words{
     "all", "new", "installed", "updates"
 };
+
+/// Returns the tags a row or the details show.
+///
+/// A mutator's come from its facts. Any other kind uses its listing's tags.
+///
+/// @param entry the entry
+/// @return the tags, or null when it has none
+const std::vector<std::string>* shown_tags(const Entry& entry) {
+    if (entry.id.kind == Kind::mutator)
+        return mutator_tag_list(entry);
+    if (entry.listing != nullptr)
+        return &entry.listing->tags;
+    return nullptr;
+}
+
+/// Returns the words a tag shows in one place.
+///
+/// A mutator's chips and detail pills, and the Mutators tab's filter pills,
+/// pane and menu, use the eight ids' labels. Every other tag is the id as
+/// written, so a mod's or a map pack's own tag does not change.
+///
+/// @param library the Library
+/// @param tag the catalogue id
+/// @param labelled true for a mutator's tags, or for the Mutators tab's filters
+/// @return the words; a view of `tag` when this place does not label it
+std::string_view tag_caption(const Library& library, std::string_view tag, bool labelled) {
+    if (!labelled)
+        return tag;
+    return tag_label(tag, library.text);
+}
 
 /// Returns the word an action's button is named by.
 ///
@@ -728,6 +758,30 @@ oa::ui::frontend_renderer::RgbaPicture badge_picture(const Entry& entry) {
     return picture_of(badge);
 }
 
+/// Returns the icon a mutator's badge shows when it has no picture.
+///
+/// The first tag is the listing's catalogue tags when that list is not
+/// empty, and otherwise the installed manifest's. An id outside the eight
+/// shows no icon, and the letters stay. A later tag is not tried.
+///
+/// @param entry the entry
+/// @return the icon, or none
+std::optional<kit::TagIcon> mutator_badge_icon(const Entry& entry) {
+    if (entry.id.kind != Kind::mutator)
+        return std::nullopt;
+    const std::vector<std::string>* tags = nullptr;
+    if (entry.listing != nullptr && entry.listing->mutator && !entry.listing->mutator->tags.empty())
+        tags = &entry.listing->mutator->tags;
+    else if (
+        entry.installed != nullptr && entry.installed->mutator &&
+        !entry.installed->mutator->tags.empty()
+    )
+        tags = &entry.installed->mutator->tags;
+    if (tags == nullptr)
+        return std::nullopt;
+    return kit::tag_icon_of(tags->front());
+}
+
 /// Returns a row's name: library.row., then its registry's word and its
 /// key's, or its key's alone for a package of the player's own.
 ///
@@ -766,19 +820,105 @@ int32_t row_height(const kit::Metrics& metrics, RowForm form) {
     return metrics.list_row_height;
 }
 
+/// Returns the columns a row's chip line may use, as the kit's row draws it.
+///
+/// The kit lays every row out with Compact's inset, badge and gap, including
+/// a taller Regular or Large row. The state's icon, or the maker's mark when
+/// the row has no icon, and the version and size, take their columns from
+/// the right. What remains is the chip line.
+///
+/// @param building the layout
+/// @param look the row, with its icon, mark and aside already set
+/// @param row_width the row's width, in points
+/// @param row_height the row's height, in points
+/// @return the columns, in points
+int32_t chip_line_room(
+    const Building& building, const kit::ListRowLook& look, int32_t row_width, int32_t row_height
+) {
+    const kit::Metrics& metrics = kit::compact_metrics;
+    const int32_t inset = metrics.list_row_inset;
+    const int32_t side =
+        std::max(std::min(row_height - 2 * inset, metrics.list_row_badge), int32_t{0});
+    const int32_t text_left = inset + side + inset;
+    int32_t right = row_width - inset;
+    const bool stacked = look.maker.has_value() && look.chip.has_value() &&
+                         look.chip->icon.has_value() && row_height >= 2 * metrics.state_icon_side;
+    if (look.chip.has_value()) {
+        const int32_t used = stacked || look.chip->icon.has_value()
+                                 ? metrics.state_icon_side
+                                 : kit::chip_width(*building.fonts, *look.chip);
+        right = row_width - inset - used - metrics.list_row_gap;
+    } else if (look.maker.has_value()) {
+        right = row_width - inset - metrics.state_icon_side - metrics.list_row_gap;
+    }
+    if (!look.aside.empty()) {
+        int32_t aside_width = 0;
+        for (const std::string& aside_line : look.aside)
+            aside_width =
+                std::max(aside_width, width_of(building, kit::FontRole::small, aside_line));
+        aside_width = std::min(aside_width, std::max(right - text_left, int32_t{0}));
+        right -= aside_width + metrics.list_row_gap;
+    }
+    return std::max(right - text_left, int32_t{0});
+}
+
+/// Tells whether a chip line ends at or before a column, as the kit draws it.
+///
+/// The kit stops at the first chip that would pass the column, so a line
+/// fits only when every chip does.
+///
+/// @param building the layout
+/// @param chips the chips, in the order they would be drawn
+/// @param room the columns the line may use
+/// @return true when every chip fits
+bool chips_fit(const Building& building, const std::vector<kit::ChipLook>& chips, int32_t room) {
+    const int32_t gap = kit::compact_metrics.chip_gap;
+    int32_t left = 0;
+    for (const kit::ChipLook& chip : chips) {
+        const int32_t width = kit::chip_width(*building.fonts, chip);
+        if (left + width > room)
+            return false;
+        left += width + gap;
+    }
+    return true;
+}
+
+/// Returns a mutator's state chip, drawn in the lock colour.
+///
+/// @param text the chip's words, looked up
+/// @return the chip
+kit::ChipLook state_chip(std::string text) {
+    kit::ChipLook chip;
+    chip.text = std::move(text);
+    chip.state = kit::ChipState::update;
+    return chip;
+}
+
 /// Returns what an entry's row shows.
 ///
 /// @param building the layout
 /// @param entry the entry
 /// @param form the row's form
+/// @param row_width the row's width, in points; a Large row's chips are kept to it
+/// @param row_height the row's height, in points
 /// @return the row's look
-kit::ListRowLook row_look(const Building& building, const Entry& entry, RowForm form) {
+kit::ListRowLook row_look(
+    const Building& building,
+    const Entry& entry,
+    RowForm form,
+    int32_t row_width,
+    int32_t row_height
+) {
     const Library& library = *building.library;
     kit::ListRowLook look;
     look.badge = badge_picture(entry);
     look.badge_text =
         is_base_game(entry.id) ? std::string(base_badge_name) : badge_letters(entry_name(entry));
     look.badge_colour = badge_face;
+    // A mutator with no picture wears its first known tag's icon. The letters
+    // stay for a tag outside the eight, and for a mutator with no tag.
+    if (entry.id.kind == Kind::mutator && !oa::ui::frontend_renderer::picture_drawable(look.badge))
+        look.badge_tag = mutator_badge_icon(entry);
     look.title = std::string(entry_name(entry));
     look.chip = entry_chip(library, entry);
     look.maker = shown_maker(entry_maker(entry));
@@ -787,6 +927,15 @@ kit::ListRowLook row_look(const Building& building, const Entry& entry, RowForm 
     const ContentLines lines = content_lines(library, entry);
     const bool named = !lines.row.empty();
     if (form == RowForm::compact) {
+        // The version stays on the row's second line. A missing mutator, or
+        // one that does not fit this mod, is named after the title.
+        if (entry.id.kind == Kind::mutator && !entry.needs_missing.empty()) {
+            look.by = filled(library.text, words::row_needs, {{"name", entry.needs_missing}});
+            look.by_colour = kit::colour::lock;
+        } else if (entry.id.kind == Kind::mutator && entry.not_compatible) {
+            look.by = std::string(shown(library.text, words::row_not_compatible));
+            look.by_colour = kit::colour::lock;
+        }
         if (named) {
             look.lines.push_back(lines.row);
             return look;
@@ -826,12 +975,40 @@ kit::ListRowLook row_look(const Building& building, const Entry& entry, RowForm 
         look.aside.push_back(version);
     if (!size.empty())
         look.aside.push_back(size);
-    if (form == RowForm::large && entry.listing != nullptr) {
-        for (const std::string& tag : entry.listing->tags) {
-            kit::ChipLook chip;
-            chip.text = tag;
-            chip.state = kit::ChipState::filter;
-            look.tags.push_back(std::move(chip));
+    if (form == RowForm::large) {
+        std::vector<kit::ChipLook> labels;
+        if (const std::vector<std::string>* tags = shown_tags(entry)) {
+            for (const std::string& tag : *tags) {
+                kit::ChipLook chip;
+                chip.text = std::string(tag_caption(library, tag, entry.id.kind == Kind::mutator));
+                chip.state = kit::ChipState::filter;
+                labels.push_back(std::move(chip));
+            }
+        }
+        if (entry.id.kind != Kind::mutator) {
+            look.tags = std::move(labels);
+        } else {
+            // Needs, then the note that it does not fit this mod. Both are
+            // information in the lock colour. When the row cannot hold the
+            // tags and these, the two stay and the tags are the ones dropped.
+            std::vector<kit::ChipLook> states;
+            if (!entry.needs_missing.empty())
+                states.push_back(state_chip(
+                    filled(library.text, words::chip_needs, {{"name", entry.needs_missing}})
+                ));
+            if (entry.not_compatible)
+                states.push_back(
+                    state_chip(std::string(shown(library.text, words::chip_not_compatible)))
+                );
+            std::vector<kit::ChipLook> tags_first = labels;
+            tags_first.insert(tags_first.end(), states.begin(), states.end());
+            const int32_t room = chip_line_room(building, look, row_width, row_height);
+            if (chips_fit(building, tags_first, room)) {
+                look.tags = std::move(tags_first);
+            } else {
+                look.tags = std::move(states);
+                look.tags.insert(look.tags.end(), labels.begin(), labels.end());
+            }
         }
     }
     return look;
@@ -1161,6 +1338,8 @@ std::string_view placeholder_of(const Library& library) {
         return shown(library.text, words::search_mods);
     case Tab::maps:
         return shown(library.text, words::search_maps);
+    case Tab::mutators:
+        return shown(library.text, words::search_mutators);
     case Tab::languages:
         return shown(library.text, words::search_languages);
     case Tab::updates:
@@ -1369,11 +1548,14 @@ void add_chip_row(Building& building, const kit::Rect& row) {
         );
     }
     const std::vector<std::pair<std::string, std::size_t>> tags = tags_in_tab(library);
+    const bool labelled = library.tab == Tab::mutators;
     std::vector<int32_t> widths;
     int32_t total = 0;
     for (const auto& [tag, count] : tags) {
         kit::PillLook look;
-        look.text = tag;
+        look.text = std::string(tag_caption(library, tag, labelled));
+        if (labelled)
+            look.tag = kit::tag_icon_of(tag);
         widths.push_back(kit::pill_width(*building.fonts, look));
         total += widths.back() + metrics.chip_gap;
     }
@@ -1398,7 +1580,9 @@ void add_chip_row(Building& building, const kit::Rect& row) {
             break;
         }
         kit::PillLook look;
-        look.text = tags[index].first;
+        look.text = std::string(tag_caption(library, tags[index].first, labelled));
+        if (labelled)
+            look.tag = kit::tag_icon_of(tags[index].first);
         look.state =
             library.tag == tags[index].first ? kit::PillState::active : kit::PillState::inactive;
         add_one(
@@ -1451,19 +1635,32 @@ void add_filter_pane(Building& building, const kit::Rect& pane) {
     int32_t top = pane.y + inset;
     std::vector<kit::ControlId> ids;
     std::vector<std::string> names;
-    const auto add_entry =
-        [&](std::string caption, bool selected, kit::ControlId id, std::string name) {
-            kit::NavEntry entry;
-            entry.rect = {entry_left, top, entry_width, entry_height};
-            entry.caption = cut(building, kit::FontRole::regular, caption, caption_room);
-            entry.selected = selected;
-            entry.hovered = hovered(building, id) || building.state->interaction.pressed == id;
-            entry.focused = focused(building, id);
-            nav.entries.push_back(std::move(entry));
-            ids.push_back(id);
-            names.push_back(unique_name(building, std::move(name)));
-            top += step;
-        };
+    const auto add_entry = [&](std::string caption,
+                               bool selected,
+                               kit::ControlId id,
+                               std::string name,
+                               std::optional<kit::TagIcon> tag = std::nullopt) {
+        kit::NavEntry entry;
+        entry.rect = {entry_left, top, entry_width, entry_height};
+        // The kit draws a tag's icon in the caption's box and shifts the
+        // words by the icon and a gap. The fit check still uses the whole
+        // box, so the words are cut to what remains beside the icon.
+        int32_t room = caption_room;
+        if (tag.has_value()) {
+            const int32_t icon_side = std::max(kit::compact_metrics.regular_line - 4, int32_t{0});
+            const int32_t icon_shift = icon_side + kit::compact_metrics.list_row_gap;
+            room = std::max(room - icon_shift, int32_t{0});
+        }
+        entry.caption = cut(building, kit::FontRole::regular, caption, room);
+        entry.tag = tag;
+        entry.selected = selected;
+        entry.hovered = hovered(building, id) || building.state->interaction.pressed == id;
+        entry.focused = focused(building, id);
+        nav.entries.push_back(std::move(entry));
+        ids.push_back(id);
+        names.push_back(unique_name(building, std::move(name)));
+        top += step;
+    };
     for (std::size_t index = 0; index < filter_order.size(); ++index)
         add_entry(
             filter_caption(library, filter_order[index]),
@@ -1490,11 +1687,13 @@ void add_filter_pane(Building& building, const kit::Rect& pane) {
                 filled(
                     library.text,
                     words::tag_with_count,
-                    {{"tag", tags[index].first}, {"count", std::to_string(tags[index].second)}}
+                    {{"tag", tag_caption(library, tags[index].first, library.tab == Tab::mutators)},
+                     {"count", std::to_string(tags[index].second)}}
                 ),
                 library.tag == tags[index].first,
                 controls::first_tag + static_cast<kit::ControlId>(index),
-                named("tag." + name_word(tags[index].first))
+                named("tag." + name_word(tags[index].first)),
+                library.tab == Tab::mutators ? kit::tag_icon_of(tags[index].first) : std::nullopt
             );
         }
     }
@@ -1955,7 +2154,7 @@ void add_list(Building& building, const kit::Rect& pane, RowForm form) {
             continue;
         const Entry& entry = library.entries[library.visible[place]];
         const kit::ControlId id = controls::first_row + static_cast<kit::ControlId>(place);
-        kit::ListRowLook look = row_look(building, entry, form);
+        kit::ListRowLook look = row_look(building, entry, form, rows_width, height);
         look.selected = library.selected.has_value() && *library.selected == entry.id;
         look.hovered = hovered(building, id);
         const kit::Rect rect{view.x, top, rows_width, height};
@@ -2031,20 +2230,25 @@ void add_list(Building& building, const kit::Rect& pane, RowForm form) {
     tab_stop(building, building.panes.back());
 }
 
-/// Appends a badge as the details show one: its picture, or a name's
-/// letters on the badge's colour, as a row's badge.
+/// Appends a badge as the details show one: its picture, a known tag's icon
+/// on the hint ground, or a name's letters on that ground.
+///
+/// A picture and the letters are the same items as before, so a mod, a map
+/// pack and a language keep those pixels. A tag's icon is the kit's badge.
 ///
 /// @param[in,out] building the layout
-/// @param picture the picture; empty for the letters
-/// @param name the name whose letters show without a picture
+/// @param picture the picture; empty for the icon or the letters
+/// @param name the name whose letters show without a picture or a known tag
 /// @param rect the badge's square
 /// @param clip what drawing may touch
+/// @param tag the icon, when a mutator with no picture has a known first tag
 void add_badge_of(
     Building& building,
     const oa::ui::frontend_renderer::RgbaPicture& picture,
     std::string_view name,
     const kit::Rect& rect,
-    const kit::Rect& clip
+    const kit::Rect& clip,
+    std::optional<kit::TagIcon> tag = std::nullopt
 ) {
     oa::ui::frontend_renderer::RgbaPicture drawn = picture;
     if (base_picture(*building.library, picture))
@@ -2053,6 +2257,15 @@ void add_badge_of(
         add_item(building.list, kit::Role::picture, rect, clip).look = kit::PictureLook{drawn};
         add_item(building.list, kit::Role::outline, rect, clip).colour =
             kit::colour::control_border;
+        return;
+    }
+    if (tag.has_value()) {
+        kit::BadgeLook badge;
+        badge.face = badge_face;
+        badge.tag = tag;
+        badge.letters = badge_letters(name);
+        kit::add_badge(building.list, rect, badge);
+        building.list.items.back().clip = clip;
         return;
     }
     add_item(building.list, kit::Role::fill, rect, clip).colour = badge_face;
@@ -2121,7 +2334,11 @@ void add_badge(
         }
     }
     const std::string_view letters = is_base_game(entry.id) ? base_badge_name : entry_name(entry);
-    add_badge_of(building, badge_picture(entry), letters, rect, clip);
+    const oa::ui::frontend_renderer::RgbaPicture picture = badge_picture(entry);
+    std::optional<kit::TagIcon> tag;
+    if (entry.id.kind == Kind::mutator && !oa::ui::frontend_renderer::picture_drawable(picture))
+        tag = mutator_badge_icon(entry);
+    add_badge_of(building, picture, letters, rect, clip, tag);
 }
 
 /// Returns a map's players and size as one line: "4 players · 16x16".
@@ -2530,17 +2747,21 @@ int32_t add_detail_tags(
     const kit::Rect& clip,
     int32_t scroll_group
 ) {
-    if (entry.listing == nullptr || entry.listing->tags.empty() || width <= 0)
+    const std::vector<std::string>* tags = shown_tags(entry);
+    if (tags == nullptr || tags->empty() || width <= 0)
         return top;
     const kit::Metrics& metrics = *building.metrics;
     const int32_t height = kit::pill_height();
     int32_t x = left;
     int32_t y = top;
-    const std::size_t count = std::min(entry.listing->tags.size(), controls::most_detail_tags);
+    const std::size_t count = std::min(tags->size(), controls::most_detail_tags);
     for (std::size_t index = 0; index < count; ++index) {
-        const std::string& tag = entry.listing->tags[index];
+        const std::string& tag = (*tags)[index];
         kit::PillLook look;
-        look.text = tag;
+        look.text =
+            std::string(tag_caption(*building.library, tag, entry.id.kind == Kind::mutator));
+        if (entry.id.kind == Kind::mutator)
+            look.tag = kit::tag_icon_of(tag);
         look.state = kit::PillState::inactive;
         const kit::ControlId id = controls::first_detail_tag + static_cast<kit::ControlId>(index);
         look.hovered = hovered(building, id);
@@ -5758,12 +5979,14 @@ menu_items(const Library& library, MenuKind menu, const std::vector<bool>& tag_s
             items.push_back(std::move(item));
         }
         const std::vector<std::pair<std::string, std::size_t>> tags = tags_in_tab(library);
+        const bool labelled = library.tab == Tab::mutators;
         for (std::size_t index = 0; index < tags.size(); ++index) {
             MenuItem item;
             item.caption = filled(
                 library.text,
                 words::filter_tag,
-                {{"tag", tags[index].first}, {"count", std::to_string(tags[index].second)}}
+                {{"tag", tag_caption(library, tags[index].first, labelled)},
+                 {"count", std::to_string(tags[index].second)}}
             );
             item.word = "tag-" + name_word(tags[index].first);
             item.tag = index;
@@ -5780,7 +6003,8 @@ menu_items(const Library& library, MenuKind menu, const std::vector<bool>& tag_s
             item.caption = filled(
                 library.text,
                 words::tag_with_count,
-                {{"tag", tags[index].first}, {"count", std::to_string(tags[index].second)}}
+                {{"tag", tag_caption(library, tags[index].first, library.tab == Tab::mutators)},
+                 {"count", std::to_string(tags[index].second)}}
             );
             item.word = name_word(tags[index].first);
             item.tag = index;

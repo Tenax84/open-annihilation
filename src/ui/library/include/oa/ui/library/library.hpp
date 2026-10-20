@@ -30,6 +30,7 @@ enum class Kind : uint8_t {
     mod,      ///< an .oamod
     map_pack, ///< an .oamap
     language, ///< an .oalang
+    mutator,  ///< an .oamut
 };
 
 /// One signing key a registry's catalogue is checked against.
@@ -116,6 +117,50 @@ struct MapLine {
     std::optional<MapPicture> preview{};
 };
 
+/// One mod a mutator works with, as its manifest or its catalogue entry writes it.
+struct WorksWith {
+    /// The mod's id, `*` for any mod, or `ta-3.1c` for the base game.
+    std::string id{};
+    /// The version range as written. Empty for any version.
+    std::string range{};
+    /// The name a player reads. Empty when the id is not known here.
+    std::string name{};
+};
+
+/// One mutator another mutator needs.
+struct Prerequisite {
+    /// The mutator's id.
+    std::string id{};
+    /// The version range as written. Empty for any version.
+    std::string range{};
+    /// The name a player reads. Empty when no listing or installed copy names it.
+    std::string name{};
+};
+
+/// One option a mutator offers, with the captions a player reads.
+struct OptionLine {
+    /// The option's label.
+    std::string label{};
+    /// Each value's caption, as the manifest gives it.
+    std::vector<std::string> values{};
+};
+
+/// What a mutator's manifest or catalogue entry says about it.
+struct MutatorFacts {
+    /// The tag ids, in the order written.
+    std::vector<std::string> tags{};
+    /// The mods it works with. Empty means any mod.
+    std::vector<WorksWith> works_with{};
+    /// The mutators it needs, in the order they apply.
+    std::vector<Prerequisite> needs{};
+    /// Mutator ids it cannot run beside.
+    std::vector<std::string> conflicts{};
+    /// The layers it uses, in the order written.
+    std::vector<std::string> layers{};
+    /// The settings a player picks, in the order written.
+    std::vector<OptionLine> options{};
+};
+
 /// One package a registry's catalogue lists.
 struct Listing {
     std::string registry{}; ///< the registry's id
@@ -150,6 +195,9 @@ struct Listing {
     /// Expansions that must be on, as requiredExpansions names them. Empty
     /// when the catalogue omits the key, and empty when it names none.
     std::vector<std::string> required_expansions{};
+    /// A mutator's facts, when the kind is a mutator. Names may be empty
+    /// until the host resolves them.
+    std::optional<MutatorFacts> mutator{};
 };
 
 /// The version a package keeps from before its last update.
@@ -186,6 +234,10 @@ struct Installed {
     std::vector<std::string> supported_games{};
     /// Expansions that must be on. Empty when the manifest names none.
     std::vector<std::string> required_expansions{};
+    /// A mutator's facts, from the installed manifest. Names may be empty
+    /// until the host resolves them. When set, these win over the listing's
+    /// for works-with, prerequisites, conflicts, layers and options.
+    std::optional<MutatorFacts> mutator{};
 };
 
 /// A newer release of an installed package, in the same registry.
@@ -260,6 +312,20 @@ struct QueueItem {
     std::string update_from{};
     /// For an item queued as an update, what it installs ("revision 4" or "4.9"); empty for a GET.
     std::string update_to{};
+};
+
+/// The mod being played, for a mutator's works-with check.
+///
+/// An empty id means no mod is played, so the base game `ta-3.1c` is what
+/// a mutator is checked against. This is not the Active tab's tile: that
+/// one is the installed package marked playing, or `PlayingMod`.
+struct PlayedMod {
+    /// The mod's manifest id. Empty for the base game.
+    std::string id{};
+    /// The version as written. Empty when it names none.
+    std::string version{};
+    /// The name a player reads. Empty when it is not known.
+    std::string name{};
 };
 
 /// The mod being played, as the Active tab shows it when no installed
@@ -382,6 +448,9 @@ struct Inputs {
     /// The mod being played; none when the game plays no mod. An installed
     /// mod marked playing is shown in its place.
     std::optional<PlayingMod> playing_mod{};
+    /// The mod being played, by its manifest id, for a mutator's works-with
+    /// check. An empty id is the base game.
+    PlayedMod played{};
     LanguageInUse language{};               ///< the language the game shows its words in
     std::vector<InstalledMaps> map_packs{}; ///< every installed map pack, with its maps
     /// Why the last change of a registry was refused, in the player's words.
@@ -404,13 +473,14 @@ enum class Tab : uint8_t {
     active, ///< the mod being played, the language in use and the installed maps; no list
     mods,
     maps,
+    mutators, ///< every mutator the player has or a registry lists
     languages,
     updates,    ///< every kind, opening on the entries with an update
     registries, ///< every registry, with its switch; no list of packages
 };
 
 /// How many tabs there are.
-inline constexpr std::size_t tab_total = 6;
+inline constexpr std::size_t tab_total = 7;
 
 /// Which entries a tab shows, apart from its kind, in the order the filters are shown.
 enum class Filter : uint8_t {
@@ -535,7 +605,48 @@ struct Entry {
     /// in English when that differs from its name in itself. Empty for a
     /// package, and for English, whose two names are the same.
     std::string shown_summary{};
+    /// Information only: this mutator does not work with the mod being
+    /// played. GET and UPDATE stay on, and the row is not dimmed.
+    bool not_compatible{};
+    /// The first prerequisite, by name, that no installed mutator of that id
+    /// satisfies. Empty when every prerequisite is met, and for every other kind.
+    std::string needs_missing{};
 };
+
+/// Returns the facts that decide works-with, prerequisites, conflicts, layers
+/// and options.
+///
+/// The installed manifest wins when it is set, even when its works-with list
+/// is empty, which means any mod. Otherwise the listing's facts are used.
+///
+/// @param entry the entry
+/// @return the facts, or null when the entry is not a mutator or names none
+[[nodiscard]] inline const MutatorFacts* mutator_facts(const Entry& entry) {
+    if (entry.id.kind != Kind::mutator)
+        return nullptr;
+    if (entry.installed != nullptr && entry.installed->mutator)
+        return &*entry.installed->mutator;
+    if (entry.listing != nullptr && entry.listing->mutator)
+        return &*entry.listing->mutator;
+    return nullptr;
+}
+
+/// Returns a mutator's tag ids.
+///
+/// The listing's facts win when they are set, otherwise the installed
+/// manifest's. A mod's tags are not these: they stay on its listing.
+///
+/// @param entry the entry
+/// @return the tags, or null when the entry is not a mutator or names none
+[[nodiscard]] inline const std::vector<std::string>* mutator_tag_list(const Entry& entry) {
+    if (entry.id.kind != Kind::mutator)
+        return nullptr;
+    if (entry.listing != nullptr && entry.listing->mutator)
+        return &entry.listing->mutator->tags;
+    if (entry.installed != nullptr && entry.installed->mutator)
+        return &entry.installed->mutator->tags;
+    return nullptr;
+}
 
 /// Which maker a trusted package or registry may show.
 enum class PackageMaker : uint8_t {
@@ -712,7 +823,13 @@ struct Library {
     /// the others on All. Active and Registries have no filters and ignore
     /// their own.
     std::array<Filter, tab_total> filters{
-        Filter::all, Filter::all, Filter::all, Filter::all, Filter::updates, Filter::all
+        Filter::all,
+        Filter::all,
+        Filter::all,
+        Filter::all,
+        Filter::all,
+        Filter::updates,
+        Filter::all
     };
     std::string tag{};                  ///< the tag shown; empty for every tag
     std::string query{};                ///< the search, at most max_query_bytes
@@ -745,6 +862,18 @@ inline constexpr std::size_t named_missing_hacks = 3;
 
 /// The base game every Open Annihilation plays.
 inline constexpr std::string_view supported_base = "ta-3.1c";
+
+/// Tells whether a mutator works with the mod being played.
+///
+/// An empty works-with list works with any mod, and so does `*`. `ta-3.1c`
+/// works while no mod is played. A mod id works when it is the played mod
+/// and its range, read by the mutator manifest's matcher, holds the played
+/// version. A range that does not parse does not match.
+///
+/// @param inputs the Library's inputs; `played` is the mod being played
+/// @param facts the mutator's facts; the installed list wins over the listing's
+/// @return true when it works with the mod being played
+[[nodiscard]] bool works_with_played(const Inputs& inputs, const MutatorFacts& facts);
 
 /// Rebuilds the entries from new inputs.
 ///
@@ -871,19 +1000,22 @@ void close_details(Library& library);
 
 /// Lists the tags of the entries a tab shows under its filter, with how many have each.
 ///
-/// The tag and the search are not applied.
+/// The tag and the search are not applied. A mutator's tags are its listing's
+/// facts, else its installed manifest's. On the Mutators tab the eight known
+/// ids come first, in the kit's order, and any other id follows, each only
+/// when at least one entry has it. Other tabs list every tag by id.
 ///
 /// @param library the Library
-/// @return each tag and its count, sorted by tag
+/// @return each tag and its count
 [[nodiscard]] std::vector<std::pair<std::string, std::size_t>> tags_in_tab(const Library& library);
 
 /// Counts the entries a filter keeps on the tab shown, before the tag and the search.
 ///
-/// Mods, Maps and Languages hold their kind and Updates every kind; All
-/// keeps them all, New the newest_count listings with the latest published
-/// day, Installed those installed, playing or with an update, and Updates
-/// those with an update. The Active tab holds none. The base game entry and
-/// the built-in languages are never counted, on any tab or filter.
+/// Mods, Maps, Mutators and Languages hold their kind and Updates every
+/// kind; All keeps them all, New the newest_count listings with the latest
+/// published day, Installed those installed, playing or with an update, and
+/// Updates those with an update. The Active tab holds none. The base game
+/// entry and the built-in languages are never counted, on any tab or filter.
 ///
 /// @param library the Library
 /// @param filter the filter
@@ -892,10 +1024,10 @@ void close_details(Library& library);
 
 /// Counts what a tab lists under All, before the tag and the search, whichever tab is open.
 ///
-/// Mods, Maps and Languages count their kind. Updates counts the updates
-/// that can be installed (update_count). Active counts none. Registries
-/// counts the registries listed, not the packages. The base game and the
-/// built-in languages are left out, as they are from the filters' counts.
+/// Mods, Maps, Mutators and Languages count their kind. Updates counts the
+/// updates that can be installed (update_count). Active counts none.
+/// Registries counts the registries listed, not the packages. The base game
+/// and the built-in languages are left out, as they are from the filters' counts.
 ///
 /// @param library the Library
 /// @param tab the tab
@@ -904,13 +1036,13 @@ void close_details(Library& library);
 
 /// Counts the packages the player has added.
 ///
-/// Installed mods, map packs and language packs, each once. The base game
-/// and the languages built into the game are left out. A map pack the Active
-/// tab lists and that is not already one of those installed packages counts
-/// too, once for the pack. A copied expansion counts. A copied base game
-/// does not, and neither does a mod only the catalogue lists, a mod played
-/// from a folder outside the player's Mods folder, or a language the game
-/// is showing from its own words.
+/// Installed mods, map packs, language packs and mutators, each once. The
+/// base game and the languages built into the game are left out. A map pack
+/// the Active tab lists and that is not already one of those installed
+/// packages counts too, once for the pack. A copied expansion counts. A
+/// copied base game does not, and neither does a mod only the catalogue
+/// lists, a mod played from a folder outside the player's Mods folder, or a
+/// language the game is showing from its own words.
 ///
 /// @param inputs the Library's inputs
 /// @return how many
@@ -1226,12 +1358,15 @@ struct Rank {
 ///
 /// Letters A to Z are folded to lower case, in the query and the fields;
 /// other bytes compare as they are. The query is split on spaces, and each
-/// word takes the class of the best field it is found in.
+/// word takes the class of the best field it is found in. A word's tag class
+/// matches the start of a tag id or the start of the label that id shows.
 ///
 /// @param entry the entry
 /// @param query the search; empty matches every entry
+/// @param text how a tag's label is looked up; empty shows the English label
 /// @return the rank, or nothing when a word is in no field
-[[nodiscard]] std::optional<Rank> rank(const Entry& entry, std::string_view query);
+[[nodiscard]] std::optional<Rank>
+rank(const Entry& entry, std::string_view query, const TextHooks& text = {});
 
 /// What a button asks for.
 enum class Action : uint8_t {
