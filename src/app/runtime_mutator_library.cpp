@@ -9,6 +9,10 @@
 
 #include "oa/data/mutator_library/library.hpp"
 
+#include <memory>
+#include <string>
+#include <utility>
+
 namespace oa::app {
 
 struct Runtime::MutatorLibraryState {

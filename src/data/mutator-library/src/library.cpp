@@ -69,13 +69,20 @@ enum class Bound : uint8_t {
 };
 
 /// Reads a file up to one byte past a bound, so a larger file is recognised
-/// without giving the extra byte to a reader.
+/// without giving the extra byte to a reader; a file whose size is already
+/// over the bound is refused without being opened.
 ///
 /// @param file the file
 /// @param most the most bytes that still count as read
 /// @param[out] bytes the file, when it fits
 /// @return how the read ended
 Bound read_bounded(const fs::path& file, std::size_t most, std::vector<uint8_t>& bytes) {
+    // A file already over the bound is never opened; the bounded read below
+    // still guards against one that grows after its size was read.
+    std::error_code size_error;
+    const uintmax_t size = fs::file_size(file, size_error);
+    if (!size_error && size > most)
+        return Bound::too_large;
     std::ifstream in(file, std::ios::binary);
     if (!in)
         return Bound::unreadable;

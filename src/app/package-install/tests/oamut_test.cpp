@@ -492,7 +492,10 @@ void test_uninstall(const Scratch& scratch) {
     if (fs::exists(mutators)) {
         for (const fs::directory_entry& entry : fs::directory_iterator(mutators)) {
             const std::string name = entry.path().filename().string();
-            OA_CHECK(name != std::string(kId) && !name.starts_with(".oamut-"));
+            // The installer's lock file stays, as .oamod-lock does.
+            OA_CHECK(
+                name != std::string(kId) && (name == ".oamut-lock" || !name.starts_with(".oamut-"))
+            );
         }
     }
 }
