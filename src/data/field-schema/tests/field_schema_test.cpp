@@ -135,8 +135,58 @@ void check_schema() {
     );
     expect_verdict(Verdict::refuse, check_text(RecordKind::unit, "name", "http://ridge"));
     expect_verdict(Verdict::refuse, check_text(RecordKind::unit, "name", "a/*b"));
-    expect_verdict(Verdict::ok, check_text(RecordKind::unit, "footprintx", "abc"));
+    expect_verdict(Verdict::refuse, check_text(RecordKind::unit, "footprintx", "abc"));
+    OA_CHECK(
+        check_text(RecordKind::unit, "footprintx", "abc").reason.find("is not a number") !=
+        std::string::npos
+    );
     expect_verdict(Verdict::ok, check_text(RecordKind::unit, "tedclass", "a;b"));
+
+    // footprintx is an integer, maxvelocity a fixed number, canfly a flag.
+    // A text field (name, description) is unchanged by these samples.
+    const auto not_number = [](RecordKind record, const char* key, const char* text) {
+        const Check result = check_text(record, key, text);
+        OA_CHECK(result.verdict == Verdict::refuse);
+        OA_CHECK(result.reason.find("is not a number") != std::string::npos);
+    };
+    const auto same = [](RecordKind record, const char* key, const char* text, double number) {
+        OA_CHECK(
+            check_text(record, key, text).verdict == check_number(record, key, number).verdict
+        );
+    };
+    for (const char* sample : {"abc", "", " ", "12abc", "-5", "1e3", "0x10"}) {
+        expect_verdict(Verdict::ok, check_text(RecordKind::unit, "name", sample));
+        expect_verdict(Verdict::ok, check_text(RecordKind::unit, "description", sample));
+    }
+    for (const char* key : {"footprintx", "maxvelocity", "canfly"}) {
+        not_number(RecordKind::unit, key, "abc");
+        not_number(RecordKind::unit, key, "");
+        not_number(RecordKind::unit, key, " ");
+    }
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "footprintx", "12abc"));
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "maxvelocity", "12abc"));
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "canfly", "12abc"));
+    OA_CHECK(
+        check_text(RecordKind::unit, "maxvelocity", "12abc").reason.find("abc") != std::string::npos
+    );
+    same(RecordKind::unit, "footprintx", "-5", -5);
+    same(RecordKind::unit, "maxvelocity", "-5", -5);
+    same(RecordKind::unit, "canfly", "-5", -5);
+    // An integer stops at 'e'; a fixed field reads the exponent.
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "footprintx", "1e3"));
+    OA_CHECK(
+        check_text(RecordKind::unit, "footprintx", "1e3").reason.find("e3") != std::string::npos
+    );
+    same(RecordKind::unit, "maxvelocity", "1e3", 1000);
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "canfly", "1e3"));
+    // "0x10" is the digit 0. footprintx 0 is refused; the others only warn
+    // about the letters the loader skips.
+    same(RecordKind::unit, "footprintx", "0x10", 0);
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "maxvelocity", "0x10"));
+    expect_verdict(Verdict::warn, check_text(RecordKind::unit, "canfly", "0x10"));
+    OA_CHECK(
+        check_text(RecordKind::unit, "maxvelocity", "0x10").reason.find("x10") != std::string::npos
+    );
 
     expect_verdict(Verdict::warn, check_number(RecordKind::unit, "maxdamage", 32768));
     expect_verdict(Verdict::warn, check_number(RecordKind::unit, "maxdamage", 0));

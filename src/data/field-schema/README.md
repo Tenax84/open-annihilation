@@ -102,8 +102,8 @@ below is the `why` stored on that key.
 - A non-finite number in any numeric field. `parse_double` can return an
   infinity from `1e999` (`tdf.cpp`), and truncating that infinity is not
   defined. An integer text `1e999` is the integer 1 (`parse_int` stops at
-  the first character that is not a digit, `tdf.cpp:450`), so it is not
-  refused.
+  the first character that is not a digit, `tdf.cpp:450`), so the number is
+  not refused. The letters after the 1 are a warning.
 - `footprintx` and `footprintz` below 1 or above 1024, on a unit
   (`move_classes.cpp:31` and `move_classes.cpp:32`, reached from
   `unit_def_loader.cpp:447`) and on a movement class (`move_classes.cpp:31`
@@ -123,15 +123,28 @@ below is the `why` stored on that key.
 - On a key the schema holds, text that contains `;`, a line break, a zero
   byte, `//` or `/*`. That text cannot be written back as one property.
   The same markers on an unknown key, such as `tedclass`, are ok.
-
-A numeric field whose text holds no number is ok. The loader reads 0.
-`read_value` still reports that 0.
+- A numeric field whose text holds no number (`abc`, an empty value, or
+  only spaces). The loader would read 0, and `read_value` still reports
+  that 0, but the check refuses it: `footprintx: "abc" is not a number`.
+  Integer and flag fields read digits only (`parse_int`). Fixed and decimal
+  fields read the same grammar as `parse_double`, including an exponent
+  (`1e3` is 1000). `0x10` is the digit 0; the loader does not read it as 16.
 
 ## Warnings
 
 A warning is kept. Strange values and the wraps below are not refusals.
 A non-whole number in an integer field is not a warning: the loader keeps
 the whole part (`workertime` 67.5 and `buildcostmetal` 412.5 stay ok).
+
+A number with other text after it is a warning that names the text the
+loader ignores (`12abc` is 12 and ignores `abc`). On an integer or a flag
+the fractional part is not that text: the loader keeps the whole part, so
+`workertime` `67.5` stays ok. Anything after the fraction is ignored
+(`67.5abc` ignores `abc`). `1e3` on an integer or a flag is 1 and ignores
+`e3`; on a fixed or decimal field it is 1000. The warning is not added when
+that number is itself refused (`0x10` on `footprintx` is 0, which is
+refused). Shipped 3.1c files may hold a leading number and then other text;
+refusing those would drop records the game already loads.
 
 Named thresholds:
 
@@ -300,8 +313,9 @@ None. The table is fixed for the process. Pointers from `find_field` and
   lower case.
 - An infinite bound is no bound. A constant default of 0 or empty text is
   omitted from the row.
-- `check_text` and `check_number` agree on a finite number the text parses
-  as. Integer and flag checks use the whole part.
+- `check_text` and `check_number` agree on a finite number the text is, in
+  full. Integer and flag checks use the whole part. Text after that number
+  is a warning, unless the number itself is refused.
 - `default_value` returns the left-out value even when the key is present
   on the block. A derived rule reads the other keys.
 
