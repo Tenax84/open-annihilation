@@ -11,19 +11,24 @@ sentence chosen from the rule, which is not this module's to write.
 ## Entry points
 
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
-`oa::data::mutators`. Header `oa/data/mutators/allow_list.hpp`.
+`oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp` and
+`oa/data/mutators/files_layer.hpp`.
 
 - `check_mutable_path` judges one file path.
 - `check_mutable_mask` judges one mask. The pattern's shape is
   `mutator_mask_problem` from `oa/formats/hpi.hpp`. A wildcard is allowed
   only in a folder the table allows as a whole.
 - `rule_name` returns the stable lower-case name of a `PathRule`.
+- `build_files_layer` turns an ordered list of files plans into one
+  `MutatorLayerSpec`. See [Files layer](#files-layer).
 
 ## State
 
-None. The two checks are pure. They do not read files, the asset store or
-the preferences. A null `PathContext::layout` means `data_layout()`. An
-empty `is_unit_name` knows no unit.
+None kept. The two checks are pure: they do not read files, the asset store
+or the preferences. A null `PathContext::layout` means `data_layout()`. An
+empty `is_unit_name` knows no unit. `build_files_layer` reads the package
+folders it is given while it builds the layer, and it keeps nothing after
+it returns.
 
 ## Invariants
 
@@ -81,6 +86,81 @@ This ticket moved two paths onto the allowed side:
   defaults (the file name `kMeteorDefaults` in
   `src/app/runtime_saveload.cpp`), and `bootstrap_match` calls
   `reset_meteors` for every match.
+
+## Files layer
+
+`build_files_layer` takes the mutators in the player's list order. Each one
+has an id, the installed package folder and a `FilesPlan`: `mask` patterns
+and `add` folders, both in the order written, and both optional. It returns
+the `MutatorLayerSpec` the asset store mounts, notes for the change journal
+and one failure for each mutator it left out. It does not mount the layer
+and it does not read the asset store.
+
+For each mutator that is kept, the masks are applied first and then the add
+folders, in the order listed. A mask is stored on the spec and every file an
+earlier mutator added that it matches is removed, with an `add_masked` note
+naming both mutators. The mutator's own files are added after its masks, so
+a mask does not hide that mutator's own add.
+
+An add folder is a relative path inside the package: no `..`, no drive, no
+leading slash, and not a link. A folder that is not there adds nothing and
+records an `add_folder_missing` note, which is what a plan written as
+`files/<id>` relies on when that mod has no files of its own. A folder that
+exists is read as follows.
+
+- Only the top of the folder is searched for archives, and only `.ccx` and
+  `.ufo` are opened. An archive further down is an ordinary loose file, as
+  is any other kind of file.
+- `.ccx` archives are opened before `.ufo` archives. Within each group the
+  names are ordered by their bytes after ASCII case is folded, which is the
+  NTFS order, and the earlier name keeps a path both archives hold.
+- Loose files are walked after the archives. A loose file keeps a path over
+  that folder's archives. Listings are sorted by the folded path, so the
+  machine's own directory order never decides a file or the order of the
+  spec.
+- A path this mutator already added from an earlier folder is replaced with
+  no note. A path an earlier mutator added is replaced with an
+  `add_replaced` note naming the later mutator as the one that won.
+- Every path that remains is judged with `check_mutable_path`, and every
+  mask with `check_mutable_mask`. A unit's build picture under `anims/` is
+  allowed when the mod already names that unit, or when this mutator or an
+  earlier one still adds that unit's file under the layout's units folder.
+
+The spec lists entries in mutator order and, within a mutator, in the order
+the paths were first added. Each folder's new paths are sorted by the folded
+path. Replacing a path does not move it. `spec.archives` holds every archive
+a kept entry still reads, in the order the archives were opened, and omits
+an archive whose files were all replaced. `spec.label` is `mutators`
+followed by the ids that were kept, separated by spaces.
+
+A mutator that fails leaves nothing behind. Its masks, entries, archives and
+the notes about it are dropped, and the mutators after it are built as
+though it were not in the list. The failure names the mutator and the mask,
+folder, archive or file, and includes the allow-list's own message when
+that is what refused it. One mutator failing does not fail the others.
+
+Limits, each of which fails the mutator that would cross it:
+
+| Limit | Value | What it counts |
+| --- | --- | --- |
+| `files_plan_mask_limit` | 64 | mask patterns in one plan |
+| `files_plan_add_limit` | 16 | add folders in one plan |
+| `add_folder_archive_limit` | 16 | `.ccx` and `.ufo` files at the top of one add folder |
+| `add_folder_file_limit` | 16384 | loose files walked under one add folder |
+| `add_folder_depth_limit` | 32 | nested folders under one add folder |
+| `MutatorLayerPatternLimit` | 2048 | masks in the whole layer |
+| `MutatorLayerEntryLimit` | 65536 | paths in the whole layer |
+| `MutatorLayerArchiveLimit` | 512 | archives a kept entry still reads |
+
+The table is deterministic. Every listing is sorted by the folded path
+before it is used, archive groups have a fixed order, and nothing in the
+result follows the order a directory happened to return. Two machines with
+the same packages and the same list build the same paths, owners, kinds,
+archive order, masks and label. That is the table the loadout digest hashes.
+
+`data-mutators-files-layer` builds made-up packages in a scratch folder and
+checks the order, the notes, the failures and a spec mounted on an asset
+store. A link case is skipped where the system cannot make a link.
 
 Still protected:
 
