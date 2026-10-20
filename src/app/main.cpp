@@ -612,13 +612,13 @@ class LookupLog {
     ///
     /// @return the observer
     oa::LookupObserver observer() {
-        return {
-            this,
-            [](void* context, std::string_view name) {
-                auto& self = *static_cast<LookupLog*>(context);
-                const oa::base::threads::LockGuard guard(self.lock_);
-                self.out_ << name << '\n';
-            },
+        oa::LookupObserver watch{this, nullptr, nullptr};
+        watch.looked_up = [](void* context, std::string_view name) {
+            auto& self = *static_cast<LookupLog*>(context);
+            const oa::base::threads::LockGuard guard(self.lock_);
+            self.out_ << name << '\n';
+        };
+        watch.mutator_layer_used =
             [](void* context, std::string_view path, std::string_view owner, bool hidden) {
                 auto& self = *static_cast<LookupLog*>(context);
                 const oa::base::threads::LockGuard guard(self.lock_);
@@ -628,8 +628,8 @@ class LookupLog {
                 else
                     self.out_ << "mutator ";
                 self.out_ << owner << '\n';
-            }
-        };
+            };
+        return watch;
     }
 
   private:
