@@ -805,6 +805,11 @@ int Runtime::run() {
             flush_preferences();
             return 0;
         }
+        if (options_.check_gadget_art_per_match) {
+            check_gadget_art_per_match();
+            flush_preferences();
+            return 0;
+        }
         if (options_.check_download_builds) {
             check_download_builds();
             flush_preferences();

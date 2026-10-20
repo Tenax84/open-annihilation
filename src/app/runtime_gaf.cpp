@@ -292,8 +292,10 @@ void Runtime::append_gaf_file(oa::formats::gaf::Archive& destination, std::strin
         auto parsed = oa::formats::gaf::parse(assets_.read(std::string(path)).bytes);
         if (!parsed.ok()) {
             missing_gaf_paths_.insert(key);
-            std::cerr << "match HUD GAF '" << path << "' parse failed: " << parsed.error->message
-                      << '\n';
+            if (reported_gaf_paths_.insert(key).second) {
+                std::cerr << "match HUD GAF '" << path
+                          << "' parse failed: " << parsed.error->message << '\n';
+            }
             return;
         }
         const std::size_t first_sequence = destination.sequences.size();
@@ -303,7 +305,10 @@ void Runtime::append_gaf_file(oa::formats::gaf::Archive& destination, std::strin
     } catch (const std::exception& error) {
         missing_gaf_paths_.insert(key);
         const std::string_view what = error.what();
-        if (what.find("asset not found") == std::string_view::npos)
+        // A file the store does not hold stays silent. Any other failure is
+        // logged once in the run, then tried again in the next match.
+        if (what.find("asset not found") == std::string_view::npos &&
+            reported_gaf_paths_.insert(key).second)
             std::cerr << "match HUD GAF '" << path << "' unavailable: " << error.what() << '\n';
     }
 }

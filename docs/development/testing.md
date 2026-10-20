@@ -311,6 +311,13 @@ commander the game has no unit for, each refuse the start and leave those
 sides in place. With the file removed, one more skirmish plays the sides
 the game started with. The skirmish setup keeps that side count throughout.
 
+`native-gadget-art-per-match` (`--check-gadget-art-per-match`) needs
+`--mod-dir` on an empty folder. It writes a download file there that links
+a unit onto a lab's download page, then plays three skirmishes. The button
+has no picture, then the picture after the check copies build-page art into
+`anims/<unit>_gadget.gaf` in that folder, then no picture once that file is
+removed. The check removes what it wrote.
+
 ### The demo's installer
 
 `OA_DEMO_INSTALLER` names the installer of the Total Annihilation demo (1997):
