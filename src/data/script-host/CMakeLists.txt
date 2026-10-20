@@ -79,4 +79,18 @@ if(BUILD_TESTING)
     oa-data-script-host oa-test-support oa-options)
   add_test(NAME data-script-host-budgets COMMAND oa-data-script-host-budgets-test)
   set_tests_properties(data-script-host-budgets PROPERTIES TIMEOUT 120)
+
+  # Engine maths, the seeded generator and the math library's argument rules.
+  add_executable(oa-data-script-host-maths-test tests/deterministic_math_test.cpp)
+  target_link_libraries(oa-data-script-host-maths-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-maths COMMAND oa-data-script-host-maths-test)
+  set_tests_properties(data-script-host-maths PROPERTIES TIMEOUT 60)
+
+  # Sorted pairs, the refusal of unordered keys, and the host's name helpers.
+  add_executable(oa-data-script-host-iteration-test tests/iteration_test.cpp)
+  target_link_libraries(oa-data-script-host-iteration-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-iteration COMMAND oa-data-script-host-iteration-test)
+  set_tests_properties(data-script-host-iteration PROPERTIES TIMEOUT 30)
 endif()

@@ -201,20 +201,21 @@ void call_reads_the_result() {
 }
 
 void read_absent(void* /*context*/, lua_State* state, int results) {
-    OA_CHECK(results == 11);
+    OA_CHECK(results == 10);
     for (int index = 0; index < results; ++index)
         OA_CHECK(lua_isnil(state, -results + index));
 }
 
 void read_present(void* /*context*/, lua_State* state, int results) {
-    OA_CHECK(results == 7);
-    OA_CHECK(results >= 1 && std::strcmp(lua_tostring(state, -7), "AB") == 0);
-    OA_CHECK(results >= 2 && std::strcmp(lua_tostring(state, -6), "ab") == 0);
-    OA_CHECK(results >= 3 && std::strcmp(lua_tostring(state, -5), "A") == 0);
-    OA_CHECK(results >= 4 && lua_toboolean(state, -4) == 1);
-    OA_CHECK(results >= 5 && lua_tointeger(state, -3) == 7);
-    OA_CHECK(results >= 6 && std::strcmp(lua_tostring(state, -2), "b") == 0);
-    OA_CHECK(results >= 7 && std::strcmp(lua_tostring(state, -1), "function") == 0);
+    OA_CHECK(results == 8);
+    OA_CHECK(results >= 1 && std::strcmp(lua_tostring(state, -8), "AB") == 0);
+    OA_CHECK(results >= 2 && std::strcmp(lua_tostring(state, -7), "ab") == 0);
+    OA_CHECK(results >= 3 && std::strcmp(lua_tostring(state, -6), "A") == 0);
+    OA_CHECK(results >= 4 && lua_toboolean(state, -5) == 1);
+    OA_CHECK(results >= 5 && lua_tointeger(state, -4) == 7);
+    OA_CHECK(results >= 6 && std::strcmp(lua_tostring(state, -3), "b") == 0);
+    OA_CHECK(results >= 7 && std::strcmp(lua_tostring(state, -2), "function") == 0);
+    OA_CHECK(results >= 8 && std::strcmp(lua_tostring(state, -1), "table") == 0);
 }
 
 void libraries_match_the_sandbox() {
@@ -225,13 +226,12 @@ void libraries_match_the_sandbox() {
         return;
     host::CallHooks absent;
     absent.read = read_absent;
-    // H03 adds math and changes this line.
     const bool closed = run_source(
         *sandbox,
         package,
         "mutator.lua",
         "return load, loadfile, dofile, collectgarbage, string.dump, io, os, debug, package, "
-        "coroutine, math\n",
+        "coroutine\n",
         "plan",
         error,
         &absent
@@ -249,7 +249,7 @@ void libraries_match_the_sandbox() {
         "local ok, value = pcall(function() return 7 end)\n"
         "local selected = select(2, \"a\", \"b\", \"c\")\n"
         "local listed = ipairs({})\n"
-        "return upper, joined, letter, ok, value, selected, type(listed)\n",
+        "return upper, joined, letter, ok, value, selected, type(listed), type(math)\n",
         "plan",
         error,
         &present
