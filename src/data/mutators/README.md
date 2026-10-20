@@ -45,7 +45,8 @@ it returns.
   the layout's `units`, `Weapons`, `ai`, `unitpics` and `download`
   folders. Under `gamedata/` only `moveinfo.tdf`, `sidedata.tdf`,
   `los.tdf` and `meteor.tdf` are allowed. Under `anims/` only
-  `<unit><digits>.gaf` is allowed, and only when `is_unit_name` accepts
+  `<unit><digits>.gaf` and `<unit>_gadget.gaf` are allowed, one level down
+  (a variant folder follows `anims/`), and only when `is_unit_name` accepts
   that unit. `guis/` is refused as a whole: build pages and screens
   change only through a mutator's menus. `maps/` changes only through a
   mutator's maps hook. `sounds/` is read once per run.
@@ -61,8 +62,9 @@ and that every message starts with the path and every rule has its own name.
 
 The checks do not look at a mutator's files and do not apply a verdict.
 Build pages stay refused, because they change through the menus hook; only
-a named unit's button art is a file a mutator may add, and only as that
-one file. `sounds/` stays refused until a later ticket shows the game
+a named unit's build picture and its download-button art are files a
+mutator may add under `anims/`, and only as those files. `sounds/` stays
+refused until a later ticket shows the game
 reads it again for every match, or changes the game so that it does.
 
 ## Moving a path to the allowed side
@@ -86,6 +88,30 @@ This ticket moved two paths onto the allowed side:
   defaults (the file name `kMeteorDefaults` in
   `src/app/runtime_saveload.cpp`), and `bootstrap_match` calls
   `reset_meteors` for every match.
+
+`anims/<unit>_gadget.gaf` moved onto the allowed side the same way, for a
+unit `is_unit_name` accepts. The path is one level under `anims/` (a
+variant folder such as `Anims-German/` follows it), and the suffix
+`_gadget.gaf` matches without regard to case.
+
+- `Runtime::bind_gadget_gaf_art` (`src/app/runtime_order_panel.cpp:249`)
+  appends `anims/<name>_gadget.gaf` for each button whose picture comes
+  from a GAF and is not already in the panel. `Runtime::load_match_hud_layout`
+  (`src/app/runtime_match_menus.cpp:1565`) calls it (`:1635`) for every
+  panel a match shows, and a download page calls it again when it links
+  buttons (the redraw on `Runtime::order_panel_loader`,
+  `runtime_order_panel.cpp:350`).
+- `Runtime::append_gaf_file` (`src/app/runtime_gaf.cpp:284`) reads those
+  bytes from the store each time. A path it could not read is remembered
+  only for that match: `Runtime::teardown_match`
+  (`src/app/runtime_loading.cpp:243`) drops the panel (`:297`) and clears
+  the set (`:299`). A GAF that fails to parse is still logged once in the
+  run. A file the store does not hold stays silent.
+- `--check-gadget-art-per-match` (`native-gadget-art-per-match`) is the
+  evidence: three matches of one run. The lab's download page links a
+  button with no picture, then draws the picture after the mod folder
+  gains the button's GAF (the bytes of the lab's build-page art, read
+  through the store), then shows no picture once that file is gone.
 
 ## Files layer
 
@@ -125,9 +151,10 @@ has no files of its own. A folder that exists is read as follows.
   no note. A path an earlier mutator added is replaced with an
   `add_replaced` note naming the later mutator as the one that won.
 - Every path that remains is judged with `check_mutable_path`, and every
-  mask with `check_mutable_mask`. A unit's build picture under `anims/` is
-  allowed when the mod already names that unit, or when this mutator or an
-  earlier one still adds that unit's file under the layout's units folder.
+  mask with `check_mutable_mask`. A unit's build picture under `anims/`, and
+  its download-button art `anims/<unit>_gadget.gaf`, are allowed when the
+  mod already names that unit, or when this mutator or an earlier one still
+  adds that unit's file under the layout's units folder.
 
 The spec lists entries in mutator order and, within a mutator, in the order
 the paths were first added. Each folder's new paths are sorted by the folded

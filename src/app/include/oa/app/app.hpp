@@ -444,6 +444,9 @@ struct Options {
     // Plays skirmishes over a --mod-dir folder and checks each match reads
     // side data again when gamedata/sidedata.tdf has changed.
     bool check_side_data_per_match = false;
+    // Plays three skirmishes over a --mod-dir folder and checks a download
+    // button's picture appears only in the match whose folder holds its art.
+    bool check_gadget_art_per_match = false;
     // Opens a download page through the SDL presenter and builds a download
     // unit from it.
     bool check_download_builds = false;

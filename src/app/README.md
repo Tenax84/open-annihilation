@@ -2177,6 +2177,11 @@ hosts them on the OA layer.
   that commander, and the menus return to the started sides afterwards. A
   file with no sides, or a commander the game has no unit for, refuses the
   start and leaves those sides in place.
+- `runtime_gadget_art_check.cpp`: `--check-gadget-art-per-match`
+  (`native-gadget-art-per-match`): three skirmishes of one run. A download
+  button is linked with no picture, then draws the picture after the mod
+  folder gains its GAF, then has no picture once that file is gone. A GAF
+  the previous match could not read is read again.
 - `runtime_match_menus.cpp` also registers the load-game overlay
   (`register_load_game_screens`).
 - The Open Annihilation settings ([oa/ui/engine_settings.hpp](../ui/engine-settings/README.md)):

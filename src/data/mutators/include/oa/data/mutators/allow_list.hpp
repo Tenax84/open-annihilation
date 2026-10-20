@@ -24,7 +24,7 @@ enum class PathRule : uint8_t {
     maps_only,      ///< maps change through a mutator's maps hook
     read_once,      ///< read once when the game starts
     not_confirmed,  ///< not yet shown to be read again for every match
-    interface_art,  ///< interface art, other than a unit's build picture
+    interface_art,  ///< interface art, other than a unit's build picture or download button
     unknown_folder, ///< a folder the allow-list does not name
 };
 
@@ -46,7 +46,9 @@ struct PathContext {
     /// The mod's directory names. Null means the layout in use.
     const oa::data::defs::DataLayout* layout{};
     /// True when `name` is a unit this mod has. The letters are as the path
-    /// spells them. Empty means no unit is known.
+    /// spells them; the test decides whether case matters. A unit's build
+    /// picture and its download-button art are allowed only when this holds.
+    /// Empty means no unit is known.
     std::function<bool(std::string_view)> is_unit_name;
 };
 
