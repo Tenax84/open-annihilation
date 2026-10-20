@@ -137,6 +137,22 @@ inline constexpr int PlainArchiveMountLimit = 10;
 /// Most files one pack layer lists. A longer list is refused.
 inline constexpr std::size_t PackLayerFileLimit = 4096;
 
+/// Most paths one mutator layer holds, served and hidden together.
+inline constexpr std::size_t MutatorLayerEntryLimit = 65536;
+/// Most mask patterns one mutator layer holds: 32 mutators of 64 masks.
+inline constexpr std::size_t MutatorLayerPatternLimit = 2048;
+/// Most archives one mutator layer holds open.
+inline constexpr std::size_t MutatorLayerArchiveLimit = 512;
+/// Most bytes of content given in memory one mutator layer holds, taken together.
+/// 256 MiB.
+inline constexpr uint64_t MutatorLayerContentByteLimit = 256ULL << 20;
+/// Most bytes one mask pattern holds.
+inline constexpr std::size_t MutatorMaskByteLimit = 256;
+/// Most `*` and `?` one mask pattern holds, counted together.
+inline constexpr std::size_t MutatorMaskWildcardLimit = 16;
+/// FoundEntry::mount of a match from the mutator layer.
+inline constexpr int MutatorLayerMount = -2;
+
 // Squash codec status; squash_status_name gives each value's SQUASHERR_* name.
 enum class SquashStatus : uint8_t {
     ok = 0,
@@ -427,28 +443,40 @@ struct AssetData {
     bool archived = false;
 };
 
-// One match of a find over loose files, then archives, then the pack layer.
+// One match of a find over the mutator layer, then loose files, then
+// archives, then the pack layer.
 struct FoundEntry {
     std::string name;
     bool directory = false;
     uint32_t size = 0;
     // -1 for a loose file. An archive match is its mount index. A pack-layer
     // match uses mount_paths().size(), past every archive, and pack_layer.
+    // A mutator-layer match uses formats::hpi::MutatorLayerMount.
     int mount = -1;
     /// True when the match comes from the pack layer. mount is then
     /// mount_paths().size().
     bool pack_layer = false;
+    /// True when the match comes from the mutator layer. mount is then
+    /// formats::hpi::MutatorLayerMount.
+    bool mutator_layer = false;
 };
 
-// Where a find enumeration starts: loose files first (then every mount when
-// `continue_into_mounts`), or one mount onward. The pack layer follows the
-// mounts when include_pack_layer is set and the search reaches it.
+// Where a find enumeration starts: the mutator layer when the search starts
+// at the top and include_mutator_layer is set, then loose files (then every
+// mount when `continue_into_mounts`), or one mount onward. The pack layer
+// follows the mounts when include_pack_layer is set and the search reaches
+// it. FindScope{formats::hpi::MutatorLayerMount, false} lists the mutator
+// layer alone.
 struct FindScope {
     int first_mount = -1;
     bool continue_into_mounts = true;
     /// True to list the pack layer once the search reaches it. A search that
-    /// stays inside one archive leaves the layer out.
+    /// stays inside one archive leaves the pack layer out.
     bool include_pack_layer = true;
+    /// True to list the mutator layer when the search starts at the top.
+    /// A file the layer serves or hides is still left out of the lower
+    /// sources when this is false.
+    bool include_mutator_layer = true;
 };
 
 /// Whether a pack layer reads a folder or a zip archive.
@@ -483,24 +511,115 @@ struct PackLayerSpec {
     std::string label;
 };
 
+/// Where one path in a mutator layer is read from, or that the path is hidden.
+enum class MutatorSourceKind : uint8_t {
+    loose,    ///< a loose file of a mutator package
+    archive,  ///< a file inside an archive the layer holds
+    contents, ///< bytes given in memory
+    hidden,   ///< the path is missing from lookups and listings
+};
+
+/// One path a mutator layer serves or hides.
+///
+/// `owner` is the mutator's id: one line, never empty. A loose entry is read
+/// from `host`. An archive entry is read from `archives[archive]` at
+/// `archive_path`. A contents entry is read from `contents`. A hidden entry
+/// uses none of them.
+struct MutatorLayerEntry {
+    /// Resource path the store shows, with '/' or '\\' between parts.
+    std::string path;
+    /// Id of the mutator this path comes from.
+    std::string owner;
+    /// Which source serves the path, or hidden.
+    MutatorSourceKind kind{};
+    /// Host path of a loose entry.
+    std::filesystem::path host;
+    /// Index into MutatorLayerSpec::archives for an archive entry.
+    std::size_t archive{};
+    /// Path of an archive entry inside its archive, with '/' or '\\' between parts.
+    std::string archive_path;
+    /// Bytes of a contents entry. Null for every other kind.
+    std::shared_ptr<const std::vector<uint8_t>> contents{};
+};
+
+/// One archive a mutator layer holds open.
+struct MutatorLayerArchive {
+    /// The archive handed to the layer. Reads use this, not a path reopened later.
+    std::shared_ptr<const HpiArchive> archive;
+    /// Host path lookups report for a file served from `archive`.
+    std::filesystem::path location;
+    /// Id of the mutator this archive comes from.
+    std::string owner;
+};
+
+/// One mask pattern and the mutator it comes from.
+struct MutatorMask {
+    /// Path pattern, matched without ASCII case and with either slash.
+    std::string pattern;
+    /// Id of the mutator this mask comes from.
+    std::string owner;
+};
+
+/// The paths, archives and masks of one mutator layer.
+///
+/// Entries are listed in the order listings report the served paths.
+struct MutatorLayerSpec {
+    /// Archives the layer holds, indexed by MutatorLayerEntry::archive.
+    std::vector<MutatorLayerArchive> archives;
+    /// Served and hidden paths, in the order given.
+    std::vector<MutatorLayerEntry> entries;
+    /// Masks applied to any path the table does not list. At most
+    /// formats::hpi::MutatorLayerPatternLimit.
+    std::vector<MutatorMask> masks;
+    /// Single-line name of the layer, kept for its errors.
+    std::string label;
+};
+
+/// Returns why a mask pattern is refused, or empty when it is valid.
+///
+/// A valid pattern is not empty, holds at most MutatorMaskByteLimit bytes,
+/// is relative, holds no ':' or NUL, has no empty, "." or ".." segment, does
+/// not start with the backup folder, holds at most MutatorMaskWildcardLimit
+/// '*' and '?' together, and uses "**" only as a whole segment.
+///
+/// @param pattern the pattern
+/// @return the reason, or empty when the pattern can be stored
+[[nodiscard]] std::string mutator_mask_problem(std::string_view pattern);
+
+/// Returns whether a mask pattern matches a resource path.
+///
+/// ASCII case is ignored and '\\' matches '/'. '*' matches any run of
+/// characters inside one segment, '?' one character inside a segment, and a
+/// "**" segment any number of whole segments, none included. A pattern
+/// mutator_mask_problem refuses matches nothing. The work is bounded by the
+/// sizes of the pattern and the path and by the wildcard limit.
+///
+/// @param pattern the pattern
+/// @param path the resource path
+/// @return true when the pattern matches the path
+[[nodiscard]] bool mutator_mask_matches(std::string_view pattern, std::string_view path) noexcept;
+
 /// Which part of the store provides a resource.
 enum class ProviderKind : uint8_t {
-    none,       ///< nothing provides the resource
-    loose,      ///< a loose file
-    archive,    ///< a mounted archive
-    pack_layer, ///< the pack layer
+    none,          ///< nothing provides the resource
+    loose,         ///< a loose file
+    archive,       ///< a mounted archive
+    pack_layer,    ///< the pack layer
+    mutator_layer, ///< the mutator layer
 };
 
 /// Where a resource comes from, and an identity that stays put while it does.
 struct Provider {
     /// Which part provides the resource.
     ProviderKind kind{ProviderKind::none};
-    /// Host path of the loose file, the archive, or the pack folder or zip.
-    /// Empty when nothing provides the resource.
+    /// Host path of the loose file, the archive, the pack folder or zip, a
+    /// mutator's loose file, or a mutator archive's location. Empty when the
+    /// mutator gave the bytes, or when nothing provides the resource.
     std::filesystem::path path;
-    /// "loose:" and the file's path, "archive:" and the archive's path, or
-    /// "pack:", the layer's label, '#' and its serial. Empty when nothing
-    /// provides the resource.
+    /// "loose:" and the file's path, "archive:" and the archive's path,
+    /// "pack:", the layer's label, '#' and its serial, or "mutator:", the
+    /// mutator's id, '#' and the layer's serial. Empty when nothing provides
+    /// the resource.
     std::string identity;
 };
 
@@ -571,6 +690,13 @@ struct LookupObserver {
     /// Receives each resource path or listing a lookup names, as the caller
     /// wrote it, from the thread that looks it up; null watches nothing.
     void (*looked_up)(void* context, std::string_view name){};
+    /// Receives each path the mutator layer serves or hides, from the thread
+    /// that looks it up. `hidden` is false when the layer served the path,
+    /// and true when it hid the path or a listing left the path out. `owner`
+    /// is the mutator of the entry or the mask. Null watches nothing.
+    void (*mutator_layer_used)(
+        void* context, std::string_view path, std::string_view owner, bool hidden
+    ){};
 };
 
 /// The folder at the top of a layered folder that the store never reads: no

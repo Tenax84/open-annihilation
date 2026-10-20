@@ -12,6 +12,7 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -2015,6 +2016,183 @@ std::vector<std::string> AssetStore::list_resources(
                 if (matches(entry.key) && keys.insert(entry.key).second)
                     result.push_back(entry.key);
     return result;
+}
+
+namespace {
+
+/// Returns why a mask pattern is refused, or null when it is valid.
+///
+/// Allocates nothing, so a noexcept caller can use it.
+///
+/// @param pattern the pattern
+/// @return a static reason, or null
+const char* mask_problem(std::string_view pattern) noexcept {
+    if (pattern.empty())
+        return "empty pattern";
+    if (pattern.size() > formats::hpi::MutatorMaskByteLimit)
+        return "pattern is too long";
+    if (pattern.front() == '/' || pattern.front() == '\\')
+        return "absolute pattern";
+    if (pattern.find(':') != std::string_view::npos)
+        return "pattern contains ':'";
+    if (pattern.find('\0') != std::string_view::npos)
+        return "pattern contains NUL";
+    std::size_t wildcards = 0;
+    bool first = true;
+    for (std::size_t begin = 0; begin <= pattern.size();) {
+        std::size_t end = begin;
+        while (end < pattern.size() && pattern[end] != '/' && pattern[end] != '\\')
+            ++end;
+        const auto segment = pattern.substr(begin, end - begin);
+        if (segment.empty() || segment == "." || segment == "..")
+            return "pattern contains an empty or traversal segment";
+        if (first) {
+            if (segment.size() == backup_folder_name.size()) {
+                bool backup = true;
+                for (std::size_t index = 0; index < segment.size(); ++index) {
+                    if (ascii_lower(segment[index]) != backup_folder_name[index]) {
+                        backup = false;
+                        break;
+                    }
+                }
+                if (backup)
+                    return "pattern starts with the backup folder";
+            }
+            first = false;
+        }
+        if (segment.find("**") != std::string_view::npos && segment != "**")
+            return "'**' is not a whole segment";
+        for (const char character : segment)
+            if (character == '*' || character == '?')
+                ++wildcards;
+        if (end >= pattern.size())
+            break;
+        begin = end + 1;
+    }
+    if (wildcards > formats::hpi::MutatorMaskWildcardLimit)
+        return "too many wildcards";
+    return nullptr;
+}
+
+/// One '/' separated piece of a folded path, as offsets into that path.
+struct FoldedSegment {
+    std::size_t begin = 0;
+    std::size_t length = 0;
+};
+
+/// Splits a folded path into segments. The path has no empty segment.
+///
+/// @param text the path, '/' separated and ASCII lower case
+/// @param[out] segments the pieces
+void split_folded(std::string_view text, std::vector<FoldedSegment>& segments) {
+    for (std::size_t begin = 0; begin < text.size();) {
+        const auto end = text.find('/', begin);
+        const auto length = end == std::string_view::npos ? text.size() - begin : end - begin;
+        segments.push_back({begin, length});
+        if (end == std::string_view::npos)
+            break;
+        begin = end + 1;
+    }
+}
+
+/// Returns whether one pattern segment matches one path segment.
+///
+/// Both are ASCII lower case and hold no '/'. '*' matches any run and '?'
+/// one character. The match is a scan over the two lengths, not a search
+/// that branches on every wildcard.
+///
+/// @param pattern the pattern segment
+/// @param text the path segment
+/// @return true when the whole segment matches
+bool segment_matches(std::string_view pattern, std::string_view text) {
+    // prev[j] is true when the pattern consumed so far matches text[0, j).
+    std::vector<char> previous(text.size() + 1, 0);
+    std::vector<char> next(text.size() + 1, 0);
+    previous[0] = 1;
+    for (const char wanted : pattern) {
+        std::fill(next.begin(), next.end(), 0);
+        if (wanted == '*') {
+            char reached = 0;
+            for (std::size_t index = 0; index < next.size(); ++index) {
+                reached = static_cast<char>(reached | previous[index]);
+                next[index] = reached;
+            }
+        } else {
+            for (std::size_t index = 1; index < next.size(); ++index) {
+                const char have = text[index - 1];
+                if (previous[index - 1] != 0 && (wanted == '?' || wanted == have))
+                    next[index] = 1;
+            }
+        }
+        previous.swap(next);
+    }
+    return previous.back() != 0;
+}
+
+/// Returns whether folded pattern segments match folded path segments.
+///
+/// A "**" segment matches any run of path segments, including none. The
+/// scan walks each pattern segment once and remembers which path segments
+/// are reachable, so a run of "**" does not branch on every split.
+///
+/// @param pattern the folded pattern
+/// @param pattern_segments its segments
+/// @param path the folded path
+/// @param path_segments its segments
+/// @return true when the whole path matches
+bool segments_match(
+    std::string_view pattern,
+    const std::vector<FoldedSegment>& pattern_segments,
+    std::string_view path,
+    const std::vector<FoldedSegment>& path_segments
+) {
+    std::vector<char> reachable(path_segments.size() + 1, 0);
+    reachable[0] = 1;
+    for (const auto& piece : pattern_segments) {
+        const auto token = pattern.substr(piece.begin, piece.length);
+        std::vector<char> next(reachable.size(), 0);
+        if (token == "**") {
+            char reached = 0;
+            for (std::size_t index = 0; index < reachable.size(); ++index) {
+                reached = static_cast<char>(reached | reachable[index]);
+                next[index] = reached;
+            }
+        } else {
+            for (std::size_t index = 0; index < path_segments.size(); ++index) {
+                if (reachable[index] == 0)
+                    continue;
+                const auto& path_piece = path_segments[index];
+                if (segment_matches(token, path.substr(path_piece.begin, path_piece.length)))
+                    next[index + 1] = 1;
+            }
+        }
+        reachable.swap(next);
+    }
+    return reachable.back() != 0;
+}
+
+} // namespace
+
+std::string mutator_mask_problem(std::string_view pattern) {
+    if (const char* problem = mask_problem(pattern))
+        return problem;
+    return {};
+}
+
+bool mutator_mask_matches(std::string_view pattern, std::string_view path) noexcept {
+    if (mask_problem(pattern) != nullptr)
+        return false;
+    try {
+        const auto folded_pattern = normalized_path(pattern);
+        const auto folded_path = normalized_path(path);
+        std::vector<FoldedSegment> pattern_segments;
+        std::vector<FoldedSegment> path_segments;
+        split_folded(folded_pattern, pattern_segments);
+        split_folded(folded_path, path_segments);
+        return segments_match(folded_pattern, pattern_segments, folded_path, path_segments);
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
 }
 
 } // namespace oa
