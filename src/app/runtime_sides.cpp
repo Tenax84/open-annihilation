@@ -6,6 +6,7 @@
 #include "oa/app/runtime.hpp"
 
 #include "oa/app/asset_files.hpp"
+#include "oa/base/sha256.hpp"
 #include "oa/app/hook_call.hpp"
 #include "oa/app/mod_profile_loader.hpp"
 #include "oa/data/defs/files.hpp"
@@ -109,13 +110,49 @@ std::string first_side_file_gap(
     return side_file_report(table, missing.front());
 }
 
+// The bytes of gamedata/sidedata.tdf, or none when the store has no such file.
+struct SideBytes {
+    bool missing = true;
+    oa::base::sha256::Digest digest{};
+};
+
+SideBytes side_bytes(const oa::AssetStore& assets, const std::string& path) {
+    SideBytes read;
+    try {
+        const auto data = assets.read(path);
+        read.missing = false;
+        read.digest = oa::base::sha256::digest_of(data.bytes);
+    } catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()).find("asset not found") == std::string_view::npos)
+            throw;
+    }
+    return read;
+}
+
+/// Writes the commanders a match parsed, one line, when its side data differs from the run's.
+void log_match_sides(const oa::data::defs::SideTable& table) {
+    std::cerr << "open-annihilation: side data: this match reads gamedata/sidedata.tdf again: "
+              << table.count << (table.count == 1 ? " side" : " sides") << ", commanders ";
+    for (uint32_t side = 0; side < table.count && side < OA_SIDE_COUNT; ++side) {
+        if (side != 0)
+            std::cerr << ", ";
+        const auto& name = table.sides[side].commander;
+        std::cerr << std::string_view(name, strnlen(name, sizeof name));
+    }
+    std::cerr << '\n';
+}
+
 } // namespace
 
 void Runtime::load_side_table() {
-    // The language the game starts in, whose folders are looked in first for
-    // SIDEDATA and the files its sides name, all read once for the run.
+    // The language the game starts in, whose folders are looked in first.
+    // It stays the run's language: a language chosen later reads them at
+    // the next start.
     const char* language = game_language();
     side_files_language_ = language != nullptr ? language : "";
+    const SideBytes bytes = side_bytes(assets_, side_data_path());
+    side_data_missing_ = bytes.missing;
+    side_data_digest_ = bytes.digest;
     const oa::data::defs::Files files = asset_files(assets_);
     // Side.font stays null: the match HUD loads the viewed side's font by its
     // name and nothing reads the handle.
@@ -129,6 +166,41 @@ void Runtime::load_side_table() {
     oa::ui::frontend_multiplayer::multiplayer_bind_side_count(
         static_cast<int32_t>(side_table_.count)
     );
+}
+
+void Runtime::load_match_side_table() {
+    const SideBytes again = side_bytes(assets_, side_data_path());
+    const bool same = again.missing == side_data_missing_ && again.digest == side_data_digest_;
+    if (same) {
+        // A match that played other bytes has ended, and this one has the run's file.
+        if (run_side_table_)
+            restore_run_side_table();
+        return;
+    }
+    // Parsed aside, so a table that cannot be played leaves the one in place.
+    const auto fresh = std::make_unique<oa::data::defs::SideTable>();
+    const oa::data::defs::Files files = asset_files(assets_);
+    const bool loaded =
+        oa::data::defs::load_side_data(&files, fresh.get(), side_files_language_.c_str(), nullptr);
+    if (const auto problem = side_table_problem(loaded, *fresh); !problem.empty())
+        throw std::runtime_error(problem);
+    if (!plays_mod()) {
+        if (const auto gap = first_side_file_gap(files, *fresh, side_files_language_.c_str());
+            !gap.empty())
+            throw std::runtime_error(gap);
+    }
+    if (!run_side_table_)
+        run_side_table_ = std::make_unique<oa::data::defs::SideTable>(std::move(side_table_));
+    side_table_ = std::move(*fresh);
+    log_match_sides(side_table_);
+}
+
+void Runtime::restore_run_side_table() noexcept {
+    if (!run_side_table_)
+        return;
+    side_table_ = std::move(*run_side_table_);
+    run_side_table_.reset();
+    std::cerr << "open-annihilation: side data: the run's sides are back\n";
 }
 
 std::string Runtime::side_data_path() const {
