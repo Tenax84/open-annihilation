@@ -103,7 +103,8 @@ for mod profiles and does use an exponent.
 `tdf-parser` covers the reader. `tdf-writer` covers editing, writing and the
 number table, including the 16.16 values `2.4` and `2.399993896484375`.
 `installed-tdf-writer`, with game data, writes every installed FBI, weapon,
-feature, download, gamedata, GUI and OTA file the store lists.
+feature, download, gamedata, GUI and OTA file the store lists and the reader
+accepts; it names each file the reader refuses and counts it as skipped.
 
 Build and test this module on its own:
 

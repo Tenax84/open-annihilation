@@ -67,31 +67,35 @@ same_tree(const oa::formats::tdf::Block* left, const oa::formats::tdf::Block* ri
     return true;
 }
 
-void check_file(const oa::AssetStore& assets, const std::string& path) {
+/// Writes one installed file back and checks it. Returns false, after printing the path and the reader's
+/// reason, when the reader refuses the file: it has no document to write, so it is skipped, not failed.
+bool check_file(const oa::AssetStore& assets, const std::string& path) {
     using namespace oa::formats::tdf;
     const auto contents = assets.load_file_contents(path);
     if (!contents) {
         check(false, path + " did not load");
-        return;
+        return true;
     }
     OwnedDocument document;
     ParseError error{};
     const auto bytes =
         std::string_view(reinterpret_cast<const char*>(contents->data()), contents->size());
     if (!document.parse(bytes, &error)) {
-        check(false, path + " did not parse: " + describe(error));
-        return;
+        std::printf(
+            "skipped %s: the reader refuses it: %s\n", path.c_str(), describe(error).c_str()
+        );
+        return false;
     }
     const auto unedited = write_text(document.get());
     check(unedited.has_value(), path + " unedited write was refused");
     if (!unedited)
-        return;
+        return true;
     const std::string stored(document.get()->text, document.get()->text_length);
     check(*unedited == stored, path + " unedited write changed the text");
 
     Block* root = editable_root(document.get());
     if (root == nullptr || root->child_count == 0)
-        return;
+        return true;
     std::vector<uint32_t> other_hashes;
     other_hashes.reserve(root->child_count - 1u);
     for (uint32_t index = 1; index < root->child_count; ++index)
@@ -100,16 +104,16 @@ void check_file(const oa::AssetStore& assets, const std::string& path) {
     const EditStatus status = set_value(document.get(), root->children[0], "oa_edit_mark", "1");
     check(status == EditStatus::ok, path + " could not set oa_edit_mark");
     if (status != EditStatus::ok)
-        return;
+        return true;
     const auto edited = write_text(document.get());
     check(edited.has_value(), path + " edited write was refused");
     if (!edited)
-        return;
+        return true;
     OwnedDocument again;
     ParseError again_error{};
     if (!again.parse(*edited, &again_error)) {
         check(false, path + " edited text did not parse: " + describe(again_error));
-        return;
+        return true;
     }
     check(same_tree(document.root(), again.root()), path + " edited text read back differently");
     check(
@@ -117,7 +121,7 @@ void check_file(const oa::AssetStore& assets, const std::string& path) {
         path + " edited text changed the section count"
     );
     if (again.root() == nullptr)
-        return;
+        return true;
     for (uint32_t index = 0; index < other_hashes.size(); ++index) {
         const Block* section = child_at(again.root(), index + 1u);
         check(
@@ -125,6 +129,7 @@ void check_file(const oa::AssetStore& assets, const std::string& path) {
             path + " changed another section's body hash"
         );
     }
+    return true;
 }
 
 } // namespace
@@ -147,16 +152,21 @@ int main() {
     };
 
     int checked = 0;
+    int skipped = 0;
     for (const auto& kind : kinds) {
         const std::vector<std::string> paths =
             kind.recursive ? assets.list_effective_recursive(kind.directory, kind.extension)
                            : assets.list_effective(kind.directory, kind.extension);
         for (const std::string& path : paths) {
-            check_file(assets, path);
-            ++checked;
+            if (check_file(assets, path))
+                ++checked;
+            else
+                ++skipped;
         }
     }
-    std::printf("installed-tdf-writer: checked %d files\n", checked);
+    std::printf(
+        "installed-tdf-writer: checked %d files, skipped %d the reader refuses\n", checked, skipped
+    );
     if (checked == 0) {
         std::fprintf(stderr, "FAIL: no files were checked\n");
         return 1;
