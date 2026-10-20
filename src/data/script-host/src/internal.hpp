@@ -174,42 +174,16 @@ inline HostDetail::Control* control_from(lua_State* state) {
 /// @param state the state being opened
 void open_libraries(lua_State* state);
 
-/// Finds a pattern, counting each matcher step against the phase allowance.
+/// Replaces `string.find`, `match`, `gmatch` and `gsub` in the table on top
+/// of the stack with the counted copies of Lua 5.4.9's matcher.
 ///
-/// Same arguments and results as Lua's `string.find`, including a plain
-/// search. Past the allowance it raises the budget message and marks the
-/// allowance spent.
+/// They take the same arguments and give the same results and messages as
+/// Lua's own; each matcher step counts against the phase allowance, and past
+/// it they raise the budget message and mark the allowance spent. `gmatch`'s
+/// iterator keeps its place in a userdata value.
 ///
-/// @param state the sandbox state
-/// @return how many values were pushed
-extern "C" int find(lua_State* state);
-
-/// Matches a pattern, counting each matcher step against the phase allowance.
-///
-/// Same arguments and results as Lua's `string.match`. Past the allowance it
-/// raises the budget message and marks the allowance spent.
-///
-/// @param state the sandbox state
-/// @return how many values were pushed
-extern "C" int match(lua_State* state);
-
-/// Returns a `string.gmatch` iterator whose steps count against the allowance.
-///
-/// The iterator keeps its place in a userdata value. Past the allowance a
-/// step raises the budget message and marks the allowance spent.
-///
-/// @param state the sandbox state
-/// @return how many values were pushed
-extern "C" int gmatch(lua_State* state);
-
-/// Replaces matches, counting each matcher step against the phase allowance.
-///
-/// Same arguments and results as Lua's `string.gsub`. Past the allowance it
-/// raises the budget message and marks the allowance spent.
-///
-/// @param state the sandbox state
-/// @return how many values were pushed
-extern "C" int gsub(lua_State* state);
+/// @param state the sandbox state, with the `string` table on top
+void install_patterns(lua_State* state);
 
 /// Opens the math library. May raise.
 ///

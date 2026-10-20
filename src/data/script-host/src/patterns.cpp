@@ -705,22 +705,36 @@ int str_gsub(lua_State* L) {
     return 2;
 }
 
-} // namespace
-
-extern "C" int find(lua_State* state) {
+// Lua calls these through its C function type; they stay file-local.
+extern "C" {
+static int counted_find(lua_State* state) {
     return str_find(state);
 }
 
-extern "C" int match(lua_State* state) {
+static int counted_match(lua_State* state) {
     return str_match(state);
 }
 
-extern "C" int gmatch(lua_State* state) {
+static int counted_gmatch(lua_State* state) {
     return str_gmatch(state);
 }
 
-extern "C" int gsub(lua_State* state) {
+static int counted_gsub(lua_State* state) {
     return str_gsub(state);
+}
+} // extern "C"
+
+} // namespace
+
+void install_patterns(lua_State* state) {
+    lua_pushcfunction(state, counted_find);
+    lua_setfield(state, -2, "find");
+    lua_pushcfunction(state, counted_match);
+    lua_setfield(state, -2, "match");
+    lua_pushcfunction(state, counted_gmatch);
+    lua_setfield(state, -2, "gmatch");
+    lua_pushcfunction(state, counted_gsub);
+    lua_setfield(state, -2, "gsub");
 }
 
 } // namespace oa::data::script_host
