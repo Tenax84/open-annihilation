@@ -434,6 +434,8 @@ void errors() {
     expect_kept("[RIDGECOM]{A=+1;Kept=9;}", sm::DiagnosticCode::bad_number, 1);
     expect_kept("[*Group*]{[Needs]{A=hello;}[Changes]{Kept=9;}}", sm::DiagnosticCode::bad_need, 1);
     expect_kept("[RIDGECOM]{A=(2);Kept=9;}", sm::DiagnosticCode::bad_change, 1);
+    // A value that starts like a number keeps R01's reading when it is malformed.
+    expect_kept("[RIDGECOM]{A=-x;Kept=9;}", sm::DiagnosticCode::bad_change, 1);
     expect_kept("[RIDGECOM]{A=1,2;Kept=9;}", sm::DiagnosticCode::need_form_in_changes, 1);
     expect_kept("[RIDGECOM]{A=\"x\"*;Kept=9;}", sm::DiagnosticCode::need_form_in_changes, 1);
     expect_kept(

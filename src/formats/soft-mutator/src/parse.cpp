@@ -216,6 +216,7 @@ void trim_trailing(std::string& text) {
     case '!':
     case '(':
     case ',':
+    case '-':
         return false;
     default:
         return true;
