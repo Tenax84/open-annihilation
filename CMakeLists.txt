@@ -1137,7 +1137,8 @@ set(oa_game_self_check_sources src/app/runtime_checks.cpp src/app/runtime_order_
   src/app/runtime_match_panel_keys_check.cpp src/app/runtime_turret_draw_check.cpp
   src/app/runtime_megamap_check.cpp src/app/runtime_radar_orders_check.cpp
   src/app/runtime_inactive_loop_check.cpp src/app/runtime_factory_check.cpp
-  src/app/runtime_unit_speech_check.cpp src/app/runtime_build_page_check.cpp
+  src/app/runtime_unit_speech_check.cpp src/app/runtime_side_data_check.cpp
+  src/app/runtime_build_page_check.cpp
   src/app/runtime_language_check.cpp src/app/runtime_language_switch_check.cpp
   src/app/runtime_language_registry_check.cpp
   src/app/runtime_language_notice_check.cpp
@@ -1737,6 +1738,18 @@ if(OA_BUILD_PLATFORM)
         --preferences-file "${oa_user_folder_dir}/user-folder.conf")
       set_tests_properties(native-user-folder PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
         WORKING_DIRECTORY "${oa_user_folder_dir}"
+        ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
+      # Each match reads gamedata/sidedata.tdf again. The scratch mod folder
+      # starts empty; the check writes that file there between skirmishes.
+      set(oa_side_data_dir "${CMAKE_CURRENT_BINARY_DIR}/native-checks/side-data-per-match")
+      file(MAKE_DIRECTORY "${oa_side_data_dir}")
+      file(MAKE_DIRECTORY "${oa_side_data_dir}/mod")
+      add_test(NAME native-side-data-per-match COMMAND oa-game --game-dir "${OA_GAME_DIR}"
+        --skip-intro --mute --check-side-data-per-match
+        --mod-dir "${oa_side_data_dir}/mod"
+        --preferences-file "${oa_side_data_dir}/side-data.conf")
+      set_tests_properties(native-side-data-per-match PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+        WORKING_DIRECTORY "${oa_side_data_dir}"
         ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
       # The progress dialog: a short job shows nothing, a long spinner and a
       # long bar animate and close with no input, the four languages have
