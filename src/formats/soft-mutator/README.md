@@ -32,7 +32,7 @@ a point and digits. It is then read by the same reader the game uses for
 the value. An exponent, or a leading `+`, is not a number.
 
 ```ebnf
-file        = { directive | block } ;
+file        = { directive | block | stray_brace } ;
 directive   = ( "folder" | "extension" ) "=" text [ ";" ] ;
 block       = "[" header "]" "{" body "}" ;
 header      = "*all*" | "*group*" | name ;
@@ -41,14 +41,18 @@ body        = { change }                         (* *all* and a named record *)
 needs       = "[Needs]" "{" { need } "}" ;
 changes     = "[Changes]" "{" { change } "}" ;
 need        = field "=" [ "!" ] ( number "," number
-                                | string [ "*" ] ) [ ";" ] ;
+                                | string [ "*" ]
+                                | '""' ) [ ";" ] ;   (* '""' is lenient *)
 change      = ( field | "<AllDepth2>" ) "=" value [ ";" ] ;
 value       = number
           | "*" number [ "(" number "," number ")" ]
           | "^" number
           | string
-          | string "+" ;
+          | string "+"
+          | bare ;                                   (* lenient *)
+bare        = (* empty, or words with their inner spaces *) ;
 string      = '"' { byte - '"' } '"' ;
+stray_brace = "}" ;                                  (* lenient, outside a block *)
 ```
 
 Lenient forms, each kept and warned about:
@@ -70,6 +74,21 @@ Lenient forms, each kept and warned about:
 - A second `[Needs]` or `[Changes]` in one group is merged
   (`repeated_section`).
 - A leading byte-order mark is skipped (`byte_order_mark`).
+- A change whose value is a bare word or words is a text assignment
+  (`unquoted_text`). The words are trimmed at both ends and their inner
+  spaces stay as written. These forms come from rule files written in
+  2005–2008, which leave the quotes off. A value that starts like a
+  number, a scale, a clamp, a meta value or a quote keeps the stricter
+  reading, including a malformed one such as `*7 (2,15)` or `*1e2`.
+- A change with nothing after `=` assigns empty text (`empty_value`).
+  That is not `""`, which removes the field.
+- A need written `""` or `!""` is equality with empty text
+  (`empty_text_need`), negated when it is written `!""`. `""*` and
+  `!""*` stay presence tests.
+- A `}` outside any block is ignored (`stray_closing_brace`), including
+  one after a middle block and one after the last block. A `}` that ends
+  a block still ends it, and a `{` at the top level or inside a body
+  stays an error.
 
 A group's body is only `[Needs]` and `[Changes]`. A statement anywhere else
 in that body is dropped (`stray_text`) at its own line, before the first
@@ -116,6 +135,10 @@ block when its braces or header are broken, and reading continues.
 | `group_without_needs` | a group has no needs, so it matches every record |
 | `repeated_section` | a second needs or changes section was merged |
 | `byte_order_mark` | a leading byte-order mark was skipped |
+| `unquoted_text` | bare words read as a text assignment; the quotes were left off |
+| `empty_value` | a change with nothing after `=`, read as empty text rather than a removal |
+| `empty_text_need` | `""` or `!""` in a need, equality with empty text rather than a presence test |
+| `stray_closing_brace` | a `}` outside any block, ignored so the blocks around it are still read |
 | `unknown_section` | a section other than needs or changes, or a section inside a section |
 | `unclosed_block` | a header or a brace was never closed |
 | `unexpected_brace` | a brace where a block did not call for one |
@@ -144,7 +167,7 @@ None. `parse_rules` reads its arguments and returns a value.
 - A text longer than 1 MiB is refused before any of it is read, and the
   reader opens no file and throws nothing of its own.
 - At most 4096 blocks are kept, at most 4096 statements in one block, and
-  at most 1024 bytes of one name, field or quoted text. The 1000th
+  at most 1024 bytes of one name, field, quoted text or bare text. The 1000th
   diagnostic is the last one stored; a further finding replaces it with
   `too_many_diagnostics` and collection stops.
 - A bad statement is dropped. A block whose header or braces are broken is
@@ -160,7 +183,8 @@ None. `parse_rules` reads its arguments and returns a value.
 
 `formats-soft-mutator` checks each need and change form, both selectors and
 a repeated named block, a group header with no asterisks, directives, the
-lenient layouts, every diagnostic, the malformed texts, and `equivalent`.
+lenient layouts, the later lenient forms, every diagnostic, the malformed
+texts, and `equivalent`.
 
 The real rule files are not part of the engine. From a build:
 
@@ -171,6 +195,12 @@ build/src/formats/soft-mutator/oa-formats-soft-mutator-test --corpus DIR
 That reads every `*.sm` in `DIR`, prints one line per file and then
 `N files, N blocks, N warnings, N errors`, and exits non-zero when `DIR`
 holds no rule file or any file has an error. It is not a ctest.
+
+Run it on the early set of rule files and on the 2005–2008 set. Both
+should report 0 errors. The later set is where the four lenient forms
+above are used: bare words (`unquoted_text`), a change with no value
+(`empty_value`), `""` and `!""` written as needs (`empty_text_need`),
+and a `}` after a block (`stray_closing_brace`).
 
 ## Limitations
 
