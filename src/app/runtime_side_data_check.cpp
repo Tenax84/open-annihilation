@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace oa::app {
@@ -132,6 +133,30 @@ void write_text(const fs::path& path, std::string_view text) {
         fail("could not write gamedata/sidedata.tdf");
 }
 
+/// Removes the side data file the check wrote, and the gamedata folder it made,
+/// however the check ends, so a failed run leaves the mod folder as it found it.
+class WrittenSideData {
+  public:
+
+    WrittenSideData(fs::path file, bool made_folder)
+        : file_(std::move(file)), made_folder_(made_folder) {}
+
+    WrittenSideData(const WrittenSideData&) = delete;
+    WrittenSideData& operator=(const WrittenSideData&) = delete;
+
+    ~WrittenSideData() {
+        std::error_code ignored;
+        fs::remove(file_, ignored);
+        if (made_folder_ && fs::is_empty(file_.parent_path(), ignored))
+            fs::remove(file_.parent_path(), ignored);
+    }
+
+  private:
+
+    fs::path file_;
+    bool made_folder_;
+};
+
 } // namespace
 
 void Runtime::check_side_data_per_match() {
@@ -143,6 +168,20 @@ void Runtime::check_side_data_per_match() {
         fail("needs a mod folder with no gamedata/sidedata.tdf");
     if (io_error)
         fail("could not look in the mod folder");
+    // The check writes into the mod folder, never into the game folder it layers over.
+    std::size_t roots_at_mod_dir = 0;
+    for (const auto& root : assets_.loose_roots()) {
+        std::error_code same_error;
+        if (fs::equivalent(root, options_.mod_dir, same_error))
+            ++roots_at_mod_dir;
+    }
+    std::error_code game_error;
+    if (roots_at_mod_dir > 1 || (!options_.game_dir.empty() &&
+                                 fs::equivalent(options_.game_dir, options_.mod_dir, game_error)))
+        fail("needs a mod folder that is not the game folder");
+    std::error_code folder_error;
+    const bool made_folder = !fs::exists(mod_sidedata.parent_path(), folder_error);
+    const WrittenSideData cleanup(mod_sidedata, made_folder);
     if (side_table_.count < 2)
         fail("the run lists fewer than two sides");
 
@@ -240,9 +279,7 @@ void Runtime::check_side_data_per_match() {
     const std::string run_text(
         reinterpret_cast<const char*>(run_bytes.bytes.data()), run_bytes.bytes.size()
     );
-    write_text(
-        mod_sidedata, replace_commander(run_text, played_side, run_commanders[*other_side])
-    );
+    write_text(mod_sidedata, replace_commander(run_text, played_side, run_commanders[*other_side]));
     assets_.mark_loose_shadows();
     start_benchmark_skirmish();
     if (!run_side_table_ ||
