@@ -5,6 +5,7 @@
 #include "tdf_detail.hpp"
 
 #include <cstring>
+#include <new>
 #include <string_view>
 
 namespace oa::formats::tdf {
@@ -319,7 +320,7 @@ add_child(Document* document, Block* parent, std::string_view name, EditStatus* 
         report(status, EditStatus::out_of_memory);
         return nullptr;
     }
-    std::memset(child, 0, sizeof *child);
+    new (child) Block{};
     child->name = stored_name;
     if (!detail::grow(
             &document->arena, &parent->children, parent->child_count, &parent->child_capacity
