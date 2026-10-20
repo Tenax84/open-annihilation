@@ -287,6 +287,16 @@ inline constexpr std::string_view note_command_line = "The command line chose th
 /// GET and UPDATE stay on. `{names}` is the mods it works with.
 inline constexpr std::string_view note_not_compatible =
     "Not compatible with this mod: it works with {names}";
+/// A Large row's chip when a mutator still needs another. `{name}` is that
+/// mutator's name. Drawn in the lock colour; GET stays on.
+inline constexpr std::string_view chip_needs = "Needs {name}";
+/// A Large row's chip when a mutator does not work with the mod being played.
+/// Information only, in the lock colour. GET stays on, and the row is not dimmed.
+inline constexpr std::string_view chip_not_compatible = "Not compatible with this mod";
+/// After a Compact row's title when a mutator still needs another.
+inline constexpr std::string_view row_needs = "· needs {name}";
+/// After a Compact row's title when a mutator does not work with this mod.
+inline constexpr std::string_view row_not_compatible = "· not compatible with this mod";
 
 // The download queue in the footer.
 inline constexpr std::string_view queue_package = "{name} {version}";
