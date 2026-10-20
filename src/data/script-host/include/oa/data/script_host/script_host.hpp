@@ -120,6 +120,10 @@ struct OpenOptions {
     std::string package_id;
     Profile profile{};
     SourceHooks sources{};
+    /// Value `math.random` starts from, and the value `math.randomseed()` with
+    /// no argument returns to. The caller passes the game's seed. Zero is a
+    /// defined sequence, not an extra draw.
+    uint64_t random_seed{};
 };
 
 /// Pushes a call and reads it, both inside the protected phase.

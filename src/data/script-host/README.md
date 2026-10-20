@@ -41,7 +41,8 @@ moves that state; the moved-from object has no state.
 
 - A script cannot reach a file, a clock, the environment, a process or a
   network. `load`, `loadfile`, `dofile`, `collectgarbage` and `string.dump`
-  are nil. `io`, `os`, `debug`, `package`, `coroutine` and `math` are absent.
+  are nil. `io`, `os`, `debug`, `package` and `coroutine` are absent. `math` is
+  the library described below.
   Every chunk is loaded as text. Bytes that start with the precompiled mark,
   and a file past the source cap, are refused before the loader sees them.
 - `require` accepts only lower-case names, digits and `_`, in parts joined by
@@ -68,6 +69,53 @@ moves that state; the moved-from object has no state.
   engine's floating-point options: no fused multiply-add and no
   value-changing optimisation, and Visual Studio's strict floating-point
   mode.
+
+## Maths
+
+`math` is Lua 5.4's library. `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
+`exp` and `log` (every base), and the `^` operator, are computed by the
+engine, so a script gets the same bits on every machine. Sine, cosine and
+tangent come from the engine's 64-bit angle functions and are rounded once
+to a double. An angle at or above 2147483648 in magnitude, infinity
+included, is refused. A NaN comes back as a NaN. `exp` and `log` are series
+on the same 64-bit numbers, rounded once at the end. `log` of a power of
+two, and of `10^k` for k from 0 to 22,
+is the exact integer. `^` follows the usual power rules. An exponent of 2
+is an IEEE multiply, and an exponent of 0.5 is an IEEE square root. An
+integer exponent of magnitude at most 256 is repeated squaring at 64 bits.
+A larger integer exponent is `exp(y · log x)` on two 64-bit words, and a
+negative base keeps the sign an odd integer calls for. `sqrt`, `floor`,
+`ceil`, `fmod` and the four
+basic operations are the IEEE results. The compatibility names `cosh`,
+`sinh`, `tanh`, `pow`, `frexp`, `ldexp` and `log10` are absent.
+
+`math.random` is Lua 5.4's generator. It starts from `OpenOptions::random_seed`,
+which the caller sets from the game's seed, and `math.randomseed()` with no
+argument returns to that same seed. It does not read a clock or a place in
+memory. Zero is a defined sequence.
+
+## Iteration
+
+`pairs` visits number keys in ascending order, then string keys in byte
+order, then `false` and then `true`. The key list is taken when `pairs` is
+called. A value changed before the walk reaches it is the value the walk
+sees, and a key whose value became nil is skipped. Keys added during the
+walk are not visited. A table whose keys include a table, a function or any
+other type with no fixed order raises, and tells the script to keep those
+values in a sequence and walk it with `ipairs`. A table with a `__pairs`
+metamethod keeps that metamethod. `ipairs` is unchanged. `next` is unchanged
+too, so `next(t) == nil` is still the emptiness test, and its order is not
+fixed: it depends on the table's history, and a key that is itself a table
+has no order that two machines share. A mutator that lets the last write in
+a loop win, or that joins text in loop order, has to use `pairs` or a
+sequence. Depending on `next` builds different game data on different
+machines.
+
+`name_less` compares names without regard to ASCII letter case, then breaks
+a tie by the raw bytes. `sort_names` uses that order and does not call Lua.
+`push_names` pushes a sequence in the order it is given; the caller sorts
+first, outside any protected region. `push_sorted_keys` pushes one table's
+keys in the `pairs` order and raises as `pairs` does.
 
 ## Profiles
 
@@ -98,10 +146,17 @@ use part of the allowance both pass. Keeping strings stops on the memory
 cap, including inside `pcall`. A required module that loops forever is
 reported at that module's chunk.
 
+`data-script-host-maths` checks the engine maths against
+`tests/maths_reference.py`, the exact powers of two and ten, and the math
+library's argument rules. `tests/random_reference.py` prints the generator's
+draws. Both scripts are run with `python3 -I` and print the tables the test
+holds. `data-script-host-iteration` checks `pairs`, the refusal of unordered
+keys, and the name helpers.
+
 ## Limitations
 
 Work done inside a C function, such as pattern matching, is not counted
-against the allowance. `math` and text that must come out the same on every
-platform are not part of this library yet. A `__gc` or `__mode` entry added
+against the allowance. Text of numbers that must come out the same on every
+platform is not part of this library yet. A `__gc` or `__mode` entry added
 to a metatable after `setmetatable` is not caught. `instructions_used`
 counts in steps of the check interval, so a short phase can report zero.

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The libraries a script may use, and the replacements that keep them inside
-// the sandbox. The maths library is left closed; a later change adds it.
+// the sandbox. `math` is the engine's library. `pairs` walks keys in a fixed
+// order.
 
 #include "internal.hpp"
 
@@ -276,6 +277,7 @@ void open_libraries(lua_State* state) {
     lua_pop(state, 1);
     luaL_requiref(state, "utf8", luaopen_utf8, 1);
     lua_pop(state, 1);
+    open_math_library(state);
 
     const char* const removed[] = {"load", "loadfile", "dofile", "collectgarbage"};
     for (const char* name : removed) {
@@ -304,6 +306,8 @@ void open_libraries(lua_State* state) {
 
     lua_pushcfunction(state, host_print);
     lua_setglobal(state, "print");
+
+    install_pairs(state);
 
     lua_getglobal(state, "xpcall");
     lua_rawsetp(state, LUA_REGISTRYINDEX, &xpcall_key);

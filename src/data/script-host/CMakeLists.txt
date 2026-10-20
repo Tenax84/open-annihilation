@@ -5,6 +5,18 @@
 # unchanged, as C, in one translation unit, with the engine's floating-point
 # options and with warnings off.
 
+# The ^ operator calls this library, so it has to follow the Lua archive on a
+# link line. H05 adds its number text here as well. libm supplies sqrt and
+# frexp; a Linux link drops an earlier libm once those references appear.
+add_library(oa-data-script-host-numbers STATIC src/deterministic_math.cpp)
+add_library(oa::data::script_host_numbers ALIAS oa-data-script-host-numbers)
+target_include_directories(oa-data-script-host-numbers PUBLIC include)
+target_compile_features(oa-data-script-host-numbers PUBLIC cxx_std_20)
+target_link_libraries(oa-data-script-host-numbers PRIVATE oa-base-game-math oa-options)
+if(NOT MSVC)
+  target_link_libraries(oa-data-script-host-numbers PRIVATE m)
+endif()
+
 add_library(oa-data-script-host-lua STATIC src/lua_build.c)
 add_library(oa::data::script_host_lua ALIAS oa-data-script-host-lua)
 target_include_directories(oa-data-script-host-lua SYSTEM PUBLIC
@@ -24,16 +36,20 @@ endif()
 # differently from the formatting the engine's C++ files already use.
 target_compile_definitions(oa-data-script-host-lua PRIVATE
   $<$<BOOL:${MINGW}>:__USE_MINGW_ANSI_STDIO=1>)
-# pow, floor and the rest of the C maths calls. Visual Studio's C library
-# provides them; every other target takes them from libm.
+# floor, frexp and the other C maths calls the interpreter still makes.
+# Visual Studio's C library provides them; every other target takes them
+# from libm. The ^ operator is not one of them.
 if(NOT MSVC)
   target_link_libraries(oa-data-script-host-lua PUBLIC m)
 endif()
+target_link_libraries(oa-data-script-host-lua PUBLIC oa-data-script-host-numbers)
 
 add_library(oa-data-script-host
   src/sandbox.cpp
   src/libraries.cpp
-  src/require.cpp)
+  src/require.cpp
+  src/math_library.cpp
+  src/sorted.cpp)
 add_library(oa::data::script_host ALIAS oa-data-script-host)
 target_include_directories(oa-data-script-host PUBLIC include)
 target_compile_features(oa-data-script-host PUBLIC cxx_std_20)
@@ -63,4 +79,18 @@ if(BUILD_TESTING)
     oa-data-script-host oa-test-support oa-options)
   add_test(NAME data-script-host-budgets COMMAND oa-data-script-host-budgets-test)
   set_tests_properties(data-script-host-budgets PROPERTIES TIMEOUT 120)
+
+  # Engine maths, the seeded generator and the math library's argument rules.
+  add_executable(oa-data-script-host-maths-test tests/deterministic_math_test.cpp)
+  target_link_libraries(oa-data-script-host-maths-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-maths COMMAND oa-data-script-host-maths-test)
+  set_tests_properties(data-script-host-maths PROPERTIES TIMEOUT 60)
+
+  # Sorted pairs, the refusal of unordered keys, and the host's name helpers.
+  add_executable(oa-data-script-host-iteration-test tests/iteration_test.cpp)
+  target_link_libraries(oa-data-script-host-iteration-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-iteration COMMAND oa-data-script-host-iteration-test)
+  set_tests_properties(data-script-host-iteration PROPERTIES TIMEOUT 30)
 endif()
