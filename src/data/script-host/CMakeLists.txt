@@ -30,6 +30,17 @@ if(NOT MSVC)
   target_link_libraries(oa-data-script-host-lua PUBLIC m)
 endif()
 
+add_library(oa-data-script-host
+  src/sandbox.cpp
+  src/libraries.cpp
+  src/require.cpp)
+add_library(oa::data::script_host ALIAS oa-data-script-host)
+target_include_directories(oa-data-script-host PUBLIC include)
+target_compile_features(oa-data-script-host PUBLIC cxx_std_20)
+target_link_libraries(oa-data-script-host
+  PUBLIC oa-data-script-host-lua
+  PRIVATE oa-options)
+
 if(BUILD_TESTING)
   # A text chunk, the open libraries and their numbers, one table order from
   # three states, and a refused precompiled chunk.
@@ -38,4 +49,18 @@ if(BUILD_TESTING)
     oa-data-script-host-lua oa-test-support oa-options)
   add_test(NAME data-script-host-lua COMMAND oa-data-script-host-lua-test)
   set_tests_properties(data-script-host-lua PROPERTIES TIMEOUT 30)
+
+  # Libraries, require, errors, profiles and a phase that does not run a chunk.
+  add_executable(oa-data-script-host-sandbox-test tests/sandbox_test.cpp)
+  target_link_libraries(oa-data-script-host-sandbox-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-sandbox COMMAND oa-data-script-host-sandbox-test)
+  set_tests_properties(data-script-host-sandbox PROPERTIES TIMEOUT 60)
+
+  # Instruction and memory allowances, including one run at the default budget.
+  add_executable(oa-data-script-host-budgets-test tests/budgets_test.cpp)
+  target_link_libraries(oa-data-script-host-budgets-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-budgets COMMAND oa-data-script-host-budgets-test)
+  set_tests_properties(data-script-host-budgets PROPERTIES TIMEOUT 120)
 endif()
