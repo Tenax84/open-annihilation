@@ -334,8 +334,13 @@ void test_composed_name() {
     const fs::path source = scratch.path / "in";
     const std::string composed = std::string("{}") + "\xC3\x9C" + "berwind";
     const std::string decomposed = std::string("{}u") + "\xCC\x88" + "berwind";
-    const fs::path tam_path = source / (composed + ".tam");
-    const fs::path sm_path = source / (decomposed + ".sm");
+    // The names are UTF-8, as oa-tool reads its arguments; a path made from a
+    // plain string would use Windows' code page instead.
+    const auto utf8_path = [](const std::string& text) {
+        return fs::path(std::u8string(text.begin(), text.end()));
+    };
+    const fs::path tam_path = source / utf8_path(composed + ".tam");
+    const fs::path sm_path = source / utf8_path(decomposed + ".sm");
     // The title is Windows-1252. Byte 0xDC is Ü, which the id folds to u.
     write_text(
         tam_path,
