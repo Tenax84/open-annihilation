@@ -229,6 +229,41 @@ void expect_absent_unit(rules::DocumentSet& docs, std::string_view path, std::st
     OA_CHECK(unit_value(docs, path, key) == nullptr);
 }
 
+void expect_section(
+    rules::DocumentSet& docs,
+    std::string_view path,
+    std::string_view section_name,
+    std::string_view key,
+    std::string_view want
+) {
+    const char* got = section_value(docs, path, section_name, key);
+    OA_CHECK(got != nullptr && std::string_view(got) == want);
+}
+
+void expect_child(
+    rules::DocumentSet& docs,
+    std::string_view path,
+    std::string_view section_name,
+    std::string_view child_name,
+    std::string_view key,
+    std::string_view want
+) {
+    const char* got = child_value(docs, path, section_name, child_name, key);
+    OA_CHECK(got != nullptr && std::string_view(got) == want);
+}
+
+bool has_exact_key(const tdf::Block* section, std::string_view want) {
+    if (section == nullptr)
+        return false;
+    const uint32_t count = tdf::property_count(section);
+    for (uint32_t place = 0; place < count; ++place) {
+        const char* stored = tdf::property_key_at(section, static_cast<int32_t>(place));
+        if (stored != nullptr && std::string_view(stored) == want)
+            return true;
+    }
+    return false;
+}
+
 bool edited(rules::DocumentSet& docs, std::string_view path) {
     rules::LoadedDocument* loaded = docs.find(path);
     if (loaded == nullptr)
@@ -819,40 +854,17 @@ void weapons() {
         "[*Group*]\n{\n[Needs]\n{\nid=-1,-1;\n}\n[Changes]\n{\naccuracy=7;\n}\n}\n"
     ));
     const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-    const char* laser_default =
-        child_value(docs, "weapons/ridge.tdf", "RIDGE_LASER", "DAMAGE", "default");
-    const char* laser_com =
-        child_value(docs, "weapons/ridge.tdf", "RIDGE_LASER", "DAMAGE", "RIDGECOM");
-    const char* bolt_default =
-        child_value(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "DAMAGE", "default");
-    const char* bolt_tank =
-        child_value(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "DAMAGE", "RIDGETANK");
-    OA_CHECK(laser_default != nullptr && std::string_view(laser_default) == "50");
-    OA_CHECK(laser_com != nullptr && std::string_view(laser_com) == "20");
-    OA_CHECK(bolt_default != nullptr && std::string_view(bolt_default) == "40");
-    OA_CHECK(bolt_tank != nullptr && std::string_view(bolt_tank) == "10");
-    OA_CHECK(
-        std::string_view(section_value(docs, "weapons/ridge.tdf", "RIDGE_LASER", "range")) ==
-        "32000"
-    );
-    OA_CHECK(
-        std::string_view(section_value(docs, "weapons/ridge.tdf", "RIDGE_LASER", "reloadtime")) ==
-        "8"
-    );
+    expect_child(docs, "weapons/ridge.tdf", "RIDGE_LASER", "DAMAGE", "default", "50");
+    expect_child(docs, "weapons/ridge.tdf", "RIDGE_LASER", "DAMAGE", "RIDGECOM", "20");
+    expect_child(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "DAMAGE", "default", "40");
+    expect_child(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "DAMAGE", "RIDGETANK", "10");
+    expect_section(docs, "weapons/ridge.tdf", "RIDGE_LASER", "range", "32000");
+    expect_section(docs, "weapons/ridge.tdf", "RIDGE_LASER", "reloadtime", "8");
     OA_CHECK(section_value(docs, "weapons/ridge.tdf", "RIDGE_LASER", "burst") == nullptr);
-    OA_CHECK(
-        std::string_view(section_value(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "reloadtime")) ==
-        "9"
-    );
-    OA_CHECK(
-        std::string_view(section_value(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "burst")) == "3"
-    );
-    OA_CHECK(
-        std::string_view(section_value(docs, "weapons/ridge.tdf", "RIDGE_LASER", "accuracy")) == "7"
-    );
-    OA_CHECK(
-        std::string_view(section_value(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "accuracy")) == "7"
-    );
+    expect_section(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "reloadtime", "9");
+    expect_section(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "burst", "3");
+    expect_section(docs, "weapons/ridge.tdf", "RIDGE_LASER", "accuracy", "7");
+    expect_section(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "accuracy", "7");
     OA_CHECK(find_write(result, "weapons/ridge.tdf", "", "range") == nullptr);
     const rules::FieldWrite* halved = find_write(result, "weapons/ridge.tdf", "DAMAGE", "default");
     OA_CHECK(halved != nullptr && halved->block == "DAMAGE");
@@ -866,7 +878,7 @@ void features_and_moveinfo() {
     std::vector<rules::MutatorRules> list;
     list.push_back(rules_of(
         "corpses",
-        "folder=features\\corpses;\n"
+        "folder=features\\corpses;\nextension=tdf;\n"
         "[*All*]\n{\nmetal=7;\n}\n"
         "[*Group*]\n{\n[Needs]\n{\nridge_tag=0,0;\n}\n[Changes]\n{\ndamage=1;\n}\n}\n"
         "[*Group*]\n{\n[Needs]\n{\nridge_tag=1,1;\n}\n[Changes]\n{\ndamage=5;\n}\n}\n"
@@ -876,33 +888,14 @@ void features_and_moveinfo() {
         "[*Group*]\n{\n[Needs]\n{\nmaxslope=0,0;\n}\n[Changes]\n{\nresurrect=4;\n}\n}\n"
     ));
     const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-    OA_CHECK(
-        std::string_view(
-            section_value(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "metal")
-        ) == "7"
-    );
-    OA_CHECK(
-        std::string_view(
-            section_value(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "damage")
-        ) == "1"
-    );
-    OA_CHECK(
-        std::string_view(
-            section_value(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "energy")
-        ) == "1"
-    );
-    OA_CHECK(
-        std::string_view(
-            section_value(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "resurrect")
-        ) == "4"
-    );
+    expect_section(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "metal", "7");
+    expect_section(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "damage", "1");
+    expect_section(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "energy", "1");
+    expect_section(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "resurrect", "4");
     OA_CHECK(
         section_value(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "reclaimtime") == nullptr
     );
-    OA_CHECK(
-        std::string_view(section_value(docs, "features/rocks/ridge.tdf", "RIDGE_STONE", "metal")) ==
-        "10"
-    );
+    expect_section(docs, "features/rocks/ridge.tdf", "RIDGE_STONE", "metal", "10");
     OA_CHECK(section_value(docs, "features/rocks/ridge.tdf", "RIDGE_STONE", "damage") == nullptr);
     OA_CHECK(!edited(docs, "features/rocks/ridge.tdf"));
     OA_CHECK(edited(docs, "features/corpses/ridge.tdf"));
@@ -917,11 +910,7 @@ void features_and_moveinfo() {
         "[*Group*]\n{\n[Needs]\n{\nmaxslope=255,255;\n}\n[Changes]\n{\ncrushstrength=1;\n}\n}\n"
     ));
     static_cast<void>(rules::apply_rules(move_rules, move, {}));
-    OA_CHECK(
-        std::string_view(
-            section_value(move, "gamedata/moveinfo.tdf", "RIDGE_MOVE", "crushstrength")
-        ) == "1"
-    );
+    expect_section(move, "gamedata/moveinfo.tdf", "RIDGE_MOVE", "crushstrength", "1");
 }
 
 void sidedata_and_names() {
@@ -935,10 +924,7 @@ void sidedata_and_names() {
         "folder=gamedata;\nextension=sidedata.tdf;\n[SIDE0]\n{\ncommander=\"RIDGECOM\";\n}\n"
     ));
     static_cast<void>(rules::apply_rules(side_rules, sides, {}));
-    OA_CHECK(
-        std::string_view(section_value(sides, "gamedata/sidedata.tdf", "SIDE0", "commander")) ==
-        "RIDGECOM"
-    );
+    expect_section(sides, "gamedata/sidedata.tdf", "SIDE0", "commander", "RIDGECOM");
 
     rules::DocumentSet docs;
     OA_CHECK(add_text(
@@ -974,6 +960,53 @@ void layout_rename() {
     expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "30");
     OA_CHECK(edited(docs, "machines/RIDGEFAB.fbi"));
     OA_CHECK(!edited(docs, "units/RIDGEFAB.fbi"));
+}
+
+void created_spelling() {
+    auto run = [](bool swapped) {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(docs, "units/RIDGECOM.fbi", "[UNITINFO]\n{\nUnitName=RIDGECOM;\n}\n"));
+        rules::MutatorRules lower = rules_of("lower", "[*All*]\n{\nenergystorage=^10;\n}\n");
+        rules::MutatorRules upper = rules_of("upper", "[*All*]\n{\nEnergyStorage=^30;\n}\n");
+        std::vector<rules::MutatorRules> list;
+        if (!swapped) {
+            list.push_back(std::move(lower));
+            list.push_back(std::move(upper));
+        } else {
+            list.push_back(std::move(upper));
+            list.push_back(std::move(lower));
+        }
+        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        expect_unit(docs, "units/RIDGECOM.fbi", "EnergyStorage", "20");
+        const tdf::Block* section = unit_section(docs, "units/RIDGECOM.fbi");
+        OA_CHECK(has_exact_key(section, "EnergyStorage"));
+        OA_CHECK(!has_exact_key(section, "energystorage"));
+        const rules::FieldWrite* write =
+            find_write(result, "units/RIDGECOM.fbi", "", "EnergyStorage");
+        OA_CHECK(write != nullptr && write->key == "EnergyStorage");
+        OA_CHECK(write != nullptr && write->new_text.has_value() && *write->new_text == "20");
+    };
+    run(false);
+    run(true);
+}
+
+void depth_case() {
+    rules::DocumentSet docs;
+    OA_CHECK(add_text(
+        docs,
+        "weapons/ridge.tdf",
+        "[RIDGE_LASER]\n{\n[DAMAGE]\n{\ndefault=100;\nDEFAULT=60;\n}\n}\n"
+    ));
+    std::vector<rules::MutatorRules> list;
+    list.push_back(
+        rules_of("halver", "folder=weapons;\nextension=tdf;\n[*All*]\n{\n<AllDepth2>=*0.5;\n}\n")
+    );
+    const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+    expect_child(docs, "weapons/ridge.tdf", "RIDGE_LASER", "DAMAGE", "DEFAULT", "30");
+    OA_CHECK(result.writes.size() == 1);
+    const rules::FieldWrite* write = find_write(result, "weapons/ridge.tdf", "DAMAGE", "DEFAULT");
+    OA_CHECK(write != nullptr && write->old_text.has_value() && *write->old_text == "60");
+    OA_CHECK(write != nullptr && write->new_text.has_value() && *write->new_text == "30");
 }
 
 void schema_kinds() {
@@ -1134,6 +1167,8 @@ int main() {
     features_and_moveinfo();
     sidedata_and_names();
     layout_rename();
+    created_spelling();
+    depth_case();
     schema_kinds();
     notes();
     return oa::test::check_exit_status();

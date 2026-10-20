@@ -58,7 +58,9 @@ matches every record of its target. There is no or between needs.
 `<AllDepth2>` writes every key of every block directly inside the record,
 each key its own field. A weapon's `[DAMAGE]` entries are reached that way.
 Keys of the record itself are left alone. A record that has no such keys
-still matched; it is not "no effect".
+still matched; it is not "no effect". Two spellings of one key inside a
+block, differing only in ASCII case, are one field: the reader keeps the
+newest, and the change is applied once.
 
 ## Combination
 
@@ -155,7 +157,10 @@ current value and is therefore not written.
 - One field is written at most once. The mutators on that write are the ones
   whose contribution is in the value, in list order.
 - Numeric results do not depend on mutator order. Appends do, and follow the
-  list.
+  list. A key the record does not hold is written with the spelling that
+  sorts first by raw bytes among the changes that name it, so the file's
+  bytes do not depend on list order either. `EnergyStorage` precedes
+  `energystorage`.
 - A value that is not finite is never written. Numbers become text only
   through the TDF number spelling.
 - Two text assignments, or two removals, never pick a silent winner.
@@ -167,7 +172,9 @@ checks the written text, the writes and the notes for stacked factors, meta
 values and the fields they create, a widened clamp, text cancellation and
 append order, the within-mutator rule, needs on fields a record leaves out
 (including a movement class and a key no schema holds), targets and folders,
-a layout that renames `units`, and the notes for a block that matched
+a layout that renames `units`, the spelling of a key a record does not
+hold, a depth change applied once when a block has two case variants of a
+key, and the notes for a block that matched
 nothing, a field that is not a number, a result that is not finite, and a
 check that warns or refuses.
 

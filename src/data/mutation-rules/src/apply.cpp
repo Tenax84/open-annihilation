@@ -1162,10 +1162,17 @@ ApplyResult apply_rules(
         key.key_fold = fold_copy(change.field);
         std::string key_spell = change.field;
         const char* existing = property_spelling(target, change.field);
-        if (existing != nullptr)
+        // A key the record already holds keeps the spelling the reader sees
+        // (the newest case variant). A key it lacks takes, across every
+        // change that names it, the spelling that sorts first by raw bytes,
+        // so the written text does not depend on mutator order.
+        const bool created = existing == nullptr;
+        if (!created)
             key_spell = existing;
         Slot& slot =
             ensure(key, doc_index, hit, kind, std::move(block_spell), std::move(key_spell));
+        if (created && change.field < slot.key)
+            slot.key = change.field;
         if (mutator_index < slot.contribs.size())
             fold_one(slot.contribs[mutator_index], change, source_name);
     };
@@ -1201,6 +1208,11 @@ ApplyResult apply_rules(
                                     const std::string block_spell =
                                         inner->name != nullptr ? inner->name : "";
                                     const uint32_t key_count = tdf::property_count(inner);
+                                    // Case variants are one field. The reader
+                                    // keeps the newest, so the change is folded
+                                    // once, not once per spelling.
+                                    std::vector<std::string_view> taken_keys;
+                                    taken_keys.reserve(key_count);
                                     for (uint32_t key_index = 0; key_index < key_count;
                                          ++key_index) {
                                         const char* key_text = tdf::property_key_at(
@@ -1208,6 +1220,16 @@ ApplyResult apply_rules(
                                         );
                                         if (key_text == nullptr)
                                             continue;
+                                        bool repeated = false;
+                                        for (const std::string_view earlier : taken_keys) {
+                                            if (same_text(earlier, key_text)) {
+                                                repeated = true;
+                                                break;
+                                            }
+                                        }
+                                        if (repeated)
+                                            continue;
+                                        taken_keys.emplace_back(key_text);
                                         sm::Change one = change;
                                         one.all_depth2 = false;
                                         one.field = key_text;
@@ -1259,7 +1281,9 @@ ApplyResult apply_rules(
     ordered.reserve(slots.size());
     for (auto& entry : slots)
         ordered.push_back(&entry.second);
-    std::sort(ordered.begin(), ordered.end(), slot_before);
+    // Ties keep map order, which already includes the section index, so two
+    // sections of the same name stay in file order on every standard library.
+    std::stable_sort(ordered.begin(), ordered.end(), slot_before);
 
     std::vector<Planned> waiting;
     for (const Slot* slot : ordered) {
@@ -1269,8 +1293,8 @@ ApplyResult apply_rules(
     for (Planned& write : waiting)
         commit_write(documents, write, options, result);
 
-    std::sort(result.writes.begin(), result.writes.end(), write_before);
-    std::sort(result.notes.begin(), result.notes.end(), note_before);
+    std::stable_sort(result.writes.begin(), result.writes.end(), write_before);
+    std::stable_sort(result.notes.begin(), result.notes.end(), note_before);
     return result;
 }
 
