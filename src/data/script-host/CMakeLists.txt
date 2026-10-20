@@ -29,3 +29,13 @@ target_compile_definitions(oa-data-script-host-lua PRIVATE
 if(NOT MSVC)
   target_link_libraries(oa-data-script-host-lua PUBLIC m)
 endif()
+
+if(BUILD_TESTING)
+  # A text chunk, the open libraries and their numbers, one table order from
+  # three states, and a refused precompiled chunk.
+  add_executable(oa-data-script-host-lua-test tests/lua_build_test.cpp)
+  target_link_libraries(oa-data-script-host-lua-test PRIVATE
+    oa-data-script-host-lua oa-test-support oa-options)
+  add_test(NAME data-script-host-lua COMMAND oa-data-script-host-lua-test)
+  set_tests_properties(data-script-host-lua PROPERTIES TIMEOUT 30)
+endif()
