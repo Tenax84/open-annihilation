@@ -45,8 +45,11 @@
 #include "oa/data/registry/descriptor.hpp"
 #include "oa/data/registry/trust.hpp"
 #include "oa/formats/hpi.hpp"
+#include "oa/data/mutator_library/library.hpp"
 #include "oa/formats/oamod/package_keys.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/formats/url.hpp"
+#include "oa/platform/files.hpp"
 #include "oa/ui/map_previews/map_previews.hpp"
 #include "oa/netgame/http/client.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
@@ -63,9 +66,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
 #include <atomic>
 #include <filesystem>
@@ -138,8 +143,7 @@ library::Kind kind_of(data::catalogue::Kind kind) noexcept {
         // not build a Library row for it.
         return library::Kind::mod;
     case data::catalogue::Kind::oamut:
-        // Not reached. The row loop takes a mutator aside before it builds a row.
-        return library::Kind::mod;
+        return library::Kind::mutator;
     }
     return library::Kind::mod;
 }
@@ -157,6 +161,8 @@ std::optional<library::Kind> kind_of(const package_install::PackageKind* kind) {
         return library::Kind::map_pack;
     if (kind->name == "oalang")
         return library::Kind::language;
+    if (kind->name == "oamut")
+        return library::Kind::mutator;
     return std::nullopt;
 }
 
@@ -414,10 +420,182 @@ registry_view(const content::Snapshot& snapshot, std::string_view registry) {
     return nullptr;
 }
 
+/// Reads a mutator's icon and decodes it as a mod badge.
+///
+/// A file larger than max_mod_badge_bytes, an empty file, or one that cannot
+/// be read gives no badge. The bytes are decoded with read_mod_badge.
+///
+/// @param path the icon file
+/// @return the badge; empty when there is none
+ModBadge read_limited_badge(const std::filesystem::path& path) {
+    std::FILE* file = oa::platform::open_file(path, "rb");
+    if (file == nullptr)
+        return {};
+    std::vector<uint8_t> bytes;
+    std::array<uint8_t, 4096> chunk{};
+    bool failed = false;
+    while (!failed) {
+        const std::size_t read = std::fread(chunk.data(), 1, chunk.size(), file);
+        if (read > 0) {
+            if (bytes.size() + read > max_mod_badge_bytes) {
+                failed = true;
+                break;
+            }
+            bytes.insert(
+                bytes.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(read)
+            );
+        }
+        if (read < chunk.size()) {
+            if (std::ferror(file) != 0)
+                failed = true;
+            break;
+        }
+    }
+    std::fclose(file);
+    if (failed || bytes.empty())
+        return {};
+    return read_mod_badge(bytes);
+}
+
+/// Copies a mutator manifest's facts. Names stay empty for the main thread.
+///
+/// @param manifest the installed manifest
+/// @return the facts
+library::MutatorFacts facts_of(const formats::oamut::Manifest& manifest) {
+    library::MutatorFacts facts;
+    facts.tags = manifest.tags;
+    for (const formats::oamut::Condition& condition : manifest.works_with) {
+        library::WorksWith item;
+        item.id = condition.id;
+        item.range = condition.range_text;
+        facts.works_with.push_back(std::move(item));
+    }
+    for (const formats::oamut::Condition& condition : manifest.requires_mutators) {
+        library::Prerequisite need;
+        need.id = condition.id;
+        need.range = condition.range_text;
+        facts.needs.push_back(std::move(need));
+    }
+    for (const formats::oamut::Condition& condition : manifest.conflicts_with)
+        facts.conflicts.push_back(condition.id);
+    for (const formats::oamut::Layer layer : manifest.layers)
+        facts.layers.emplace_back(formats::oamut::layer_name(layer));
+    for (const formats::oamut::Option& option : manifest.options) {
+        library::OptionLine line;
+        line.label = option.label;
+        if (!option.value_labels.empty())
+            line.values = option.value_labels;
+        else
+            for (const formats::oamut::ChoiceValue& value : option.values)
+                line.values.push_back(value.text);
+        facts.options.push_back(std::move(line));
+    }
+    return facts;
+}
+
+/// Copies a catalogue mutator's facts. Names stay empty for the main thread.
+///
+/// @param package the catalogue entry
+/// @return the facts
+library::MutatorFacts facts_of(const data::catalogue::Package& package) {
+    library::MutatorFacts facts;
+    facts.tags = package.tags;
+    for (const std::string& written : package.works_with) {
+        const std::optional<formats::oamut::Condition> condition =
+            formats::oamut::parse_condition(written);
+        if (!condition)
+            continue;
+        library::WorksWith item;
+        item.id = condition->id;
+        item.range = condition->range_text;
+        facts.works_with.push_back(std::move(item));
+    }
+    for (const data::catalogue::MutatorRequirement& requirement : package.requires_mutators) {
+        library::Prerequisite need;
+        need.id = requirement.id;
+        need.range = requirement.range_text;
+        facts.needs.push_back(std::move(need));
+    }
+    for (const data::catalogue::MutatorRequirement& requirement : package.conflicts_with)
+        facts.conflicts.push_back(requirement.id);
+    for (const formats::oamut::Layer layer : package.layers)
+        facts.layers.emplace_back(formats::oamut::layer_name(layer));
+    for (const data::catalogue::OptionSummary& option : package.options) {
+        library::OptionLine line;
+        line.label = option.label;
+        if (!option.value_labels.empty())
+            line.values = option.value_labels;
+        else
+            for (const data::catalogue::ChoiceValueText& value : option.values)
+                line.values.push_back(value.text);
+        facts.options.push_back(std::move(line));
+    }
+    return facts;
+}
+
+/// Finds the installed mutator whose folder is a package's folder.
+///
+/// @param listing the Mutators folder
+/// @param folder the package's folder
+/// @return the mutator, or null
+const data::mutator_library::InstalledMutator*
+mutator_at(const data::mutator_library::Listing& listing, const std::filesystem::path& folder) {
+    for (const data::mutator_library::InstalledMutator& mutator : listing.mutators) {
+        if (mutator.folder == folder)
+            return &mutator;
+        std::error_code error;
+        if (std::filesystem::equivalent(mutator.folder, folder, error))
+            return &mutator;
+    }
+    return nullptr;
+}
+
+/// Fills the names a player reads on mutator facts: a prerequisite from a
+/// mutator of that id, a works-with mod from a mod of that id. `*` and the
+/// base game stay unnamed. Installed copies are tried before listings.
+///
+/// @param[in,out] inputs the Library's inputs, listings and installed filled
+void name_mutator_facts(library::Inputs& inputs) {
+    const auto mutator_name = [&](std::string_view id) -> std::string {
+        for (const library::Installed& item : inputs.installed)
+            if (item.kind == library::Kind::mutator && item.key == id)
+                return item.name;
+        for (const library::Listing& listing : inputs.listings)
+            if (listing.kind == library::Kind::mutator && listing.key == id)
+                return listing.name;
+        return {};
+    };
+    const auto mod_name = [&](std::string_view id) -> std::string {
+        for (const library::Installed& item : inputs.installed)
+            if (item.kind == library::Kind::mod && item.key == id)
+                return item.name;
+        for (const library::Listing& listing : inputs.listings)
+            if (listing.kind == library::Kind::mod && listing.key == id)
+                return listing.name;
+        return {};
+    };
+    const auto name_one = [&](library::MutatorFacts& facts) {
+        for (library::Prerequisite& need : facts.needs)
+            if (need.name.empty())
+                need.name = mutator_name(need.id);
+        for (library::WorksWith& item : facts.works_with) {
+            if (!item.name.empty() || item.id == "*" || item.id == library::supported_base)
+                continue;
+            item.name = mod_name(item.id);
+        }
+    };
+    for (library::Listing& listing : inputs.listings)
+        if (listing.mutator)
+            name_one(*listing.mutator);
+    for (library::Installed& installed : inputs.installed)
+        if (installed.mutator)
+            name_one(*installed.mutator);
+}
+
 /// Searches for the installed packages and their updates on the worker:
 /// lists the player's folder, matches each package to the catalogues and
 /// adopts each file install a catalogue lists, finds the updates, and reads
-/// each installed mod's own picture.
+/// each installed mod's own picture and each installed mutator's icon.
 ///
 /// @param work the worker's state, whose results it fills under its lock
 /// @param snapshot the catalogues in effect
@@ -429,9 +607,15 @@ void search_updates(
     std::vector<content::Match> matches;
     std::vector<content::Update> updates;
     std::vector<ModBadge> pictures;
+    std::vector<std::optional<library::MutatorFacts>> mutator_facts;
     try {
         if (!folder.empty())
             installed = content::list_installed(folder);
+        const data::mutator_library::Listing mutators =
+            folder.empty() ? data::mutator_library::Listing{}
+                           : data::mutator_library::list_installed(
+                                 folder / std::string(data::mutator_library::mutators_folder_name)
+                             );
         for (const content::InstalledPackage& package : installed) {
             content::Match match = content::match_installed(package, snapshot);
             if (match.provenance == content::Provenance::matched) {
@@ -440,10 +624,21 @@ void search_updates(
                     std::cerr << "open-annihilation: library: " << error << '\n';
             }
             matches.push_back(std::move(match));
-            pictures.push_back(
-                kind_of(package.kind) == library::Kind::mod ? read_mod_summary(package.folder).badge
-                                                            : ModBadge{}
-            );
+            const std::optional<library::Kind> kind = kind_of(package.kind);
+            ModBadge badge;
+            std::optional<library::MutatorFacts> facts;
+            if (kind == library::Kind::mod)
+                badge = read_mod_summary(package.folder).badge;
+            else if (kind == library::Kind::mutator) {
+                if (const data::mutator_library::InstalledMutator* mutator =
+                        mutator_at(mutators, package.folder)) {
+                    facts = facts_of(mutator->manifest);
+                    if (!mutator->manifest.icon.empty())
+                        badge = read_limited_badge(mutator->folder / mutator->manifest.icon);
+                }
+            }
+            pictures.push_back(std::move(badge));
+            mutator_facts.push_back(std::move(facts));
         }
         updates = content::find_updates(installed, snapshot, content::this_engine_rules());
     } catch (const std::exception& error) {
@@ -460,6 +655,7 @@ void search_updates(
     work.matches = std::move(matches);
     work.updates = std::move(updates);
     work.installed_badges = std::move(pictures);
+    work.installed_mutators = std::move(mutator_facts);
     ++work.searches;
 }
 
@@ -1298,10 +1494,6 @@ library::Inputs Runtime::library_inputs() {
             if (entry.package == nullptr)
                 continue;
             const data::catalogue::Package& package = *entry.package;
-            if (package.kind == data::catalogue::Kind::oamut) {
-                // The Library does not list a mutator among mods, maps and languages.
-                continue;
-            }
             if (package.kind == data::catalogue::Kind::expansion) {
                 library::DownloadableExpansion offered;
                 offered.id = package.id;
@@ -1341,6 +1533,16 @@ library::Inputs Runtime::library_inputs() {
             listing.published = package.published;
             listing.supported_games = package.supported_games;
             listing.required_expansions = package.required_expansions;
+            if (package.kind == data::catalogue::Kind::oamut) {
+                // A mutator's base and hacks are not a mod's. Another base,
+                // or a hack list, would block GET for the wrong reason.
+                if (listing.base != library::supported_base)
+                    listing.base.clear();
+                listing.hack_ids.clear();
+                listing.game_hacks = 0;
+                listing.view_hacks = 0;
+                listing.mutator = facts_of(package);
+            }
             const content::RegistryView* view = registry_view(*snapshot, entry.registry);
             for (const data::catalogue::MapEntry& map : package.maps) {
                 library::MapLine line;
@@ -1392,12 +1594,14 @@ library::Inputs Runtime::library_inputs() {
     std::vector<content::Match> matches;
     std::vector<content::Update> updates;
     std::vector<ModBadge> pictures;
+    std::vector<std::optional<library::MutatorFacts>> mutator_facts;
     {
         base::threads::LockGuard guard(host.work.mutex);
         installed = host.work.installed;
         matches = host.work.matches;
         updates = host.work.updates;
         pictures = host.work.installed_badges;
+        mutator_facts = host.work.installed_mutators;
         // searches starts at 0. One more keeps a named reading apart from
         // "the inputs do not say", which is 0.
         inputs.installed_generation = host.work.searches + 1;
@@ -1433,6 +1637,8 @@ library::Inputs Runtime::library_inputs() {
         shown.in_use = *kind == library::Kind::language && language_pack_in_use(package.folder);
         if (index < pictures.size())
             shown.badge = badge_of(pictures[index]);
+        if (index < mutator_facts.size())
+            shown.mutator = std::move(mutator_facts[index]);
         inputs.installed.push_back(std::move(shown));
     }
     // The mod folders the game offers, as the Library lists them beside
@@ -1524,6 +1730,7 @@ library::Inputs Runtime::library_inputs() {
             inputs.installed.push_back(std::move(shown));
         }
     }
+    name_mutator_facts(inputs);
     for (const content::Update& update : updates) {
         if (update.installed >= installed.size())
             continue;
@@ -1625,6 +1832,10 @@ library::Inputs Runtime::library_inputs() {
                 played.version = details.version;
             played.badge = badge_of(details.badge);
             inputs.playing_mod = std::move(played);
+            inputs.played.id = details.profile_id;
+            inputs.played.name = mods.mod_names[index];
+            if (details.version != mod_summary_no_version)
+                inputs.played.version = details.version;
             break;
         }
     }

@@ -27,6 +27,7 @@ namespace words {
 inline constexpr std::string_view tab_active = "Active";
 inline constexpr std::string_view tab_mods = "Mods";
 inline constexpr std::string_view tab_maps = "Maps";
+inline constexpr std::string_view tab_mutators = "Mutators";
 inline constexpr std::string_view tab_languages = "Languages";
 inline constexpr std::string_view tab_languages_short = "Lang";
 inline constexpr std::string_view tab_updates = "Updates";
@@ -282,6 +283,10 @@ inline constexpr std::string_view note_playing_other =
     "You are playing {playing}. Updating {name} doesn't restart the game.";
 /// Why PLAY NOW and SWITCH OFF are off: --mod-dir or --base-game.
 inline constexpr std::string_view note_command_line = "The command line chose this run's mod.";
+/// A mutator that does not work with the mod being played. Information only:
+/// GET and UPDATE stay on. `{names}` is the mods it works with.
+inline constexpr std::string_view note_not_compatible =
+    "Not compatible with this mod: it works with {names}";
 
 // The download queue in the footer.
 inline constexpr std::string_view queue_package = "{name} {version}";
@@ -322,6 +327,7 @@ inline constexpr std::string_view offline_mark = "offline";
 
 // The search and the filters.
 inline constexpr std::string_view search_mods = "Search mods, authors, tags";
+inline constexpr std::string_view search_mutators = "Search mutators, authors, tags";
 inline constexpr std::string_view search_maps = "Search maps, authors, tags";
 inline constexpr std::string_view search_languages = "Search languages";
 /// The Active tab's maps field, above the maps pane.
@@ -333,13 +339,21 @@ inline constexpr std::string_view filter_tag = "Tag: {tag} ({count})";
 inline constexpr std::string_view tag_with_count = "{tag} ({count})";
 /// The drop-down holding the tags that do not fit, and the filter pane's heading over them.
 inline constexpr std::string_view tags_menu = "TAGS";
+/// The eight catalogue tag ids, as a player reads them. Any other id is shown as written.
+inline constexpr std::string_view tag_statistics = "Statistics";
+inline constexpr std::string_view tag_economy = "Economy";
+inline constexpr std::string_view tag_commanders = "Commanders";
+inline constexpr std::string_view tag_new_units = "New Units";
+inline constexpr std::string_view tag_disable = "Disable";
+inline constexpr std::string_view tag_gameplay = "Gameplay";
+inline constexpr std::string_view tag_ai = "AI";
 /// The Compact details page's drop-down holding the actions after the first three.
 inline constexpr std::string_view more_menu = "MORE";
 /// How many updates the Updates tab shows.
 inline constexpr std::string_view update_count_one = "{count} update";
 inline constexpr std::string_view update_count_many = "{count} updates";
 /// How many packages the player has added, as the main menu's Library button says.
-/// A package is a mod, a map pack, a language pack or a downloaded expansion.
+/// A package is a mod, a map pack, a language pack, a mutator or a downloaded expansion.
 inline constexpr std::string_view package_count_one = "{count} package";
 inline constexpr std::string_view package_count_many = "{count} packages";
 
@@ -560,6 +574,40 @@ using Place = std::pair<std::string_view, std::string_view>;
 /// @param english the text, in English as text.hpp writes it
 /// @return the text to show; the English when the hooks give no lookup
 [[nodiscard]] std::string_view shown(const TextHooks& text, std::string_view english);
+
+/// Returns the label a mutator's catalogue tag id shows.
+///
+/// The eight ids give their words, looked up. Any other id, including a
+/// different case of one of those, is returned as written. The id `maps`
+/// uses the Maps tab's word. The screen uses this for a mutator's chips
+/// and detail pills, and for the Mutators tab's filter pills, pane and
+/// menu. A mod's or a map pack's tag is shown as the id was written.
+///
+/// @param tag the catalogue id
+/// @param text how texts are looked up; empty shows the English label
+/// @return the label; a view of `tag` when the id is not one of the eight
+[[nodiscard]] inline std::string_view tag_label(std::string_view tag, const TextHooks& text = {}) {
+    std::string_view english;
+    if (tag == "statistics")
+        english = words::tag_statistics;
+    else if (tag == "economy")
+        english = words::tag_economy;
+    else if (tag == "commanders")
+        english = words::tag_commanders;
+    else if (tag == "new-units")
+        english = words::tag_new_units;
+    else if (tag == "disable")
+        english = words::tag_disable;
+    else if (tag == "gameplay")
+        english = words::tag_gameplay;
+    else if (tag == "ai")
+        english = words::tag_ai;
+    else if (tag == "maps")
+        english = words::tab_maps;
+    else
+        return tag;
+    return shown(text, english);
+}
 
 /// Looks a pattern up whole and fills its places.
 ///

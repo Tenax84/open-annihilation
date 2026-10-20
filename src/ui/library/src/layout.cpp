@@ -90,11 +90,11 @@ constexpr std::string_view name_prefix = "library.";
 
 /// The tabs, in the order they are shown.
 constexpr std::array<Tab, tab_total> tab_order{
-    Tab::active, Tab::mods, Tab::maps, Tab::languages, Tab::updates, Tab::registries
+    Tab::active, Tab::mods, Tab::maps, Tab::mutators, Tab::languages, Tab::updates, Tab::registries
 };
 /// The words the tabs are named by, in that order.
 constexpr std::array<std::string_view, tab_total> tab_words{
-    "active", "mods", "maps", "languages", "updates", "registries"
+    "active", "mods", "maps", "mutators", "languages", "updates", "registries"
 };
 /// The filters, in the order they are shown.
 constexpr std::array<Filter, filter_total> filter_order{
@@ -104,6 +104,36 @@ constexpr std::array<Filter, filter_total> filter_order{
 constexpr std::array<std::string_view, filter_total> filter_words{
     "all", "new", "installed", "updates"
 };
+
+/// Returns the tags a row or the details show.
+///
+/// A mutator's come from its facts. Any other kind uses its listing's tags.
+///
+/// @param entry the entry
+/// @return the tags, or null when it has none
+const std::vector<std::string>* shown_tags(const Entry& entry) {
+    if (entry.id.kind == Kind::mutator)
+        return mutator_tag_list(entry);
+    if (entry.listing != nullptr)
+        return &entry.listing->tags;
+    return nullptr;
+}
+
+/// Returns the words a tag shows in one place.
+///
+/// A mutator's chips and detail pills, and the Mutators tab's filter pills,
+/// pane and menu, use the eight ids' labels. Every other tag is the id as
+/// written, so a mod's or a map pack's own tag does not change.
+///
+/// @param library the Library
+/// @param tag the catalogue id
+/// @param labelled true for a mutator's tags, or for the Mutators tab's filters
+/// @return the words; a view of `tag` when this place does not label it
+std::string_view tag_caption(const Library& library, std::string_view tag, bool labelled) {
+    if (!labelled)
+        return tag;
+    return tag_label(tag, library.text);
+}
 
 /// Returns the word an action's button is named by.
 ///
@@ -826,12 +856,14 @@ kit::ListRowLook row_look(const Building& building, const Entry& entry, RowForm 
         look.aside.push_back(version);
     if (!size.empty())
         look.aside.push_back(size);
-    if (form == RowForm::large && entry.listing != nullptr) {
-        for (const std::string& tag : entry.listing->tags) {
-            kit::ChipLook chip;
-            chip.text = tag;
-            chip.state = kit::ChipState::filter;
-            look.tags.push_back(std::move(chip));
+    if (form == RowForm::large) {
+        if (const std::vector<std::string>* tags = shown_tags(entry)) {
+            for (const std::string& tag : *tags) {
+                kit::ChipLook chip;
+                chip.text = std::string(tag_caption(library, tag, entry.id.kind == Kind::mutator));
+                chip.state = kit::ChipState::filter;
+                look.tags.push_back(std::move(chip));
+            }
         }
     }
     return look;
@@ -1161,6 +1193,8 @@ std::string_view placeholder_of(const Library& library) {
         return shown(library.text, words::search_mods);
     case Tab::maps:
         return shown(library.text, words::search_maps);
+    case Tab::mutators:
+        return shown(library.text, words::search_mutators);
     case Tab::languages:
         return shown(library.text, words::search_languages);
     case Tab::updates:
@@ -1369,11 +1403,12 @@ void add_chip_row(Building& building, const kit::Rect& row) {
         );
     }
     const std::vector<std::pair<std::string, std::size_t>> tags = tags_in_tab(library);
+    const bool labelled = library.tab == Tab::mutators;
     std::vector<int32_t> widths;
     int32_t total = 0;
     for (const auto& [tag, count] : tags) {
         kit::PillLook look;
-        look.text = tag;
+        look.text = std::string(tag_caption(library, tag, labelled));
         widths.push_back(kit::pill_width(*building.fonts, look));
         total += widths.back() + metrics.chip_gap;
     }
@@ -1398,7 +1433,7 @@ void add_chip_row(Building& building, const kit::Rect& row) {
             break;
         }
         kit::PillLook look;
-        look.text = tags[index].first;
+        look.text = std::string(tag_caption(library, tags[index].first, labelled));
         look.state =
             library.tag == tags[index].first ? kit::PillState::active : kit::PillState::inactive;
         add_one(
@@ -1490,7 +1525,8 @@ void add_filter_pane(Building& building, const kit::Rect& pane) {
                 filled(
                     library.text,
                     words::tag_with_count,
-                    {{"tag", tags[index].first}, {"count", std::to_string(tags[index].second)}}
+                    {{"tag", tag_caption(library, tags[index].first, library.tab == Tab::mutators)},
+                     {"count", std::to_string(tags[index].second)}}
                 ),
                 library.tag == tags[index].first,
                 controls::first_tag + static_cast<kit::ControlId>(index),
@@ -2530,17 +2566,19 @@ int32_t add_detail_tags(
     const kit::Rect& clip,
     int32_t scroll_group
 ) {
-    if (entry.listing == nullptr || entry.listing->tags.empty() || width <= 0)
+    const std::vector<std::string>* tags = shown_tags(entry);
+    if (tags == nullptr || tags->empty() || width <= 0)
         return top;
     const kit::Metrics& metrics = *building.metrics;
     const int32_t height = kit::pill_height();
     int32_t x = left;
     int32_t y = top;
-    const std::size_t count = std::min(entry.listing->tags.size(), controls::most_detail_tags);
+    const std::size_t count = std::min(tags->size(), controls::most_detail_tags);
     for (std::size_t index = 0; index < count; ++index) {
-        const std::string& tag = entry.listing->tags[index];
+        const std::string& tag = (*tags)[index];
         kit::PillLook look;
-        look.text = tag;
+        look.text =
+            std::string(tag_caption(*building.library, tag, entry.id.kind == Kind::mutator));
         look.state = kit::PillState::inactive;
         const kit::ControlId id = controls::first_detail_tag + static_cast<kit::ControlId>(index);
         look.hovered = hovered(building, id);
@@ -5758,12 +5796,14 @@ menu_items(const Library& library, MenuKind menu, const std::vector<bool>& tag_s
             items.push_back(std::move(item));
         }
         const std::vector<std::pair<std::string, std::size_t>> tags = tags_in_tab(library);
+        const bool labelled = library.tab == Tab::mutators;
         for (std::size_t index = 0; index < tags.size(); ++index) {
             MenuItem item;
             item.caption = filled(
                 library.text,
                 words::filter_tag,
-                {{"tag", tags[index].first}, {"count", std::to_string(tags[index].second)}}
+                {{"tag", tag_caption(library, tags[index].first, labelled)},
+                 {"count", std::to_string(tags[index].second)}}
             );
             item.word = "tag-" + name_word(tags[index].first);
             item.tag = index;
@@ -5780,7 +5820,8 @@ menu_items(const Library& library, MenuKind menu, const std::vector<bool>& tag_s
             item.caption = filled(
                 library.text,
                 words::tag_with_count,
-                {{"tag", tags[index].first}, {"count", std::to_string(tags[index].second)}}
+                {{"tag", tag_caption(library, tags[index].first, library.tab == Tab::mutators)},
+                 {"count", std::to_string(tags[index].second)}}
             );
             item.word = name_word(tags[index].first);
             item.tag = index;
