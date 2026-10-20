@@ -83,7 +83,8 @@ void sort_keys(lua_State* state, int sequence, lua_Integer count) {
     }
 }
 
-extern "C" int pairs_step(lua_State* state) {
+extern "C" {
+static int pairs_step(lua_State* state) {
     for (;;) {
         const lua_Integer slot = lua_tointeger(state, lua_upvalueindex(3)) + 1;
         lua_pushinteger(state, slot);
@@ -98,6 +99,7 @@ extern "C" int pairs_step(lua_State* state) {
         return 2;
     }
 }
+} // extern "C"
 
 } // namespace
 
@@ -166,7 +168,8 @@ int push_sorted_keys(lua_State* state, int index) {
     return static_cast<int>(count);
 }
 
-extern "C" int ordered_pairs(lua_State* state) {
+extern "C" {
+static int ordered_pairs(lua_State* state) {
     luaL_checkany(state, 1);
     if (luaL_getmetafield(state, 1, "__pairs") != LUA_TNIL) {
         lua_pushvalue(state, 1);
@@ -181,6 +184,12 @@ extern "C" int ordered_pairs(lua_State* state) {
     lua_pushvalue(state, 1);
     lua_pushnil(state);
     return 3;
+}
+} // extern "C"
+
+void install_pairs(lua_State* state) {
+    lua_pushcfunction(state, ordered_pairs);
+    lua_setglobal(state, "pairs");
 }
 
 } // namespace oa::data::script_host

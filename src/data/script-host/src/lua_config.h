@@ -12,6 +12,7 @@
 
 // pow differs across libm and the old Windows runtime, so the operator calls
 // the engine. Squaring stays a multiply: that result is exact in IEEE 754.
+/// Returns `base` raised to `exponent` with the engine's arithmetic.
 double oa_script_host_power(double base, double exponent);
 #define luai_numpow(L, a, b) ((void)(L), (b) == 2 ? (a) * (a) : oa_script_host_power((a), (b)))
 

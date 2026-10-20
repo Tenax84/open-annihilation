@@ -264,7 +264,7 @@ Extended log_extended(double value) noexcept {
     return add64(high, low);
 }
 
-// Natural log as two 64-bit parts, for a power that is not an integer.
+// Natural log as two 64-bit parts, for a power that is not a small integer.
 Pair log_pair(double value) noexcept {
     int binade = 0;
     double mantissa = std::frexp(value, &binade);
@@ -455,6 +455,13 @@ double inverse_with_root(double value, bool arc_sine) noexcept {
     return oa::base::game_math::to_double(add64(angle, correction));
 }
 
+double power_from_log(double magnitude, double exponent) noexcept {
+    const Pair logarithm = log_pair(magnitude);
+    const Pair product =
+        dd_mul(Pair{oa::base::game_math::to_extended(exponent), zero()}, logarithm);
+    return exp_pair(product);
+}
+
 } // namespace
 
 double sine(double radians) noexcept {
@@ -614,17 +621,22 @@ double power(double base, double exponent) noexcept {
     if (exponent == 0.5)
         return base < 0.0 ? quiet_nan() : std::sqrt(base);
     int64_t whole = 0;
-    if (exponent == std::floor(exponent)) {
-        if (integer_exponent(exponent, whole))
+    if (integer_exponent(exponent, whole)) {
+        const int64_t magnitude = whole < 0 ? -whole : whole;
+        // Past this magnitude each extra squaring doubles the error, and the
+        // result leaves the eighth of a unit the goldens rely on.
+        if (magnitude <= repeated_squaring_limit)
             return integer_power(base, whole);
-        return huge_integer_power(base, exponent);
+        const double raised = power_from_log(absolute_value(base), exponent);
+        if (is_negative(base) && (whole & 1) != 0)
+            return is_zero(raised) ? signed_zero(true) : -raised;
+        return raised;
     }
+    if (exponent == std::floor(exponent))
+        return huge_integer_power(base, exponent);
     if (base < 0.0)
         return quiet_nan();
-    const Pair logarithm = log_pair(base);
-    const Pair product =
-        dd_mul(Pair{oa::base::game_math::to_extended(exponent), zero()}, logarithm);
-    return exp_pair(product);
+    return power_from_log(base, exponent);
 }
 
 } // namespace oa::data::script_host

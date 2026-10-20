@@ -16,6 +16,13 @@ namespace oa::data::script_host {
 /// an out-of-range angle to the engine.
 inline constexpr double largest_angle = 2147483648.0;
 
+/// Largest magnitude of an integer exponent raised by repeated squaring.
+///
+/// Squaring at 64 bits stays inside an eighth of a unit through this
+/// magnitude. A larger integer exponent is `exp(y · log x)` on two 64-bit
+/// words, and a negative base keeps the sign an odd integer calls for.
+inline constexpr int repeated_squaring_limit = 256;
+
 /// Returns the sine of an angle.
 ///
 /// A NaN returns that NaN. An infinity, or a magnitude at or above

@@ -277,8 +277,7 @@ void open_libraries(lua_State* state) {
     lua_pop(state, 1);
     luaL_requiref(state, "utf8", luaopen_utf8, 1);
     lua_pop(state, 1);
-    luaL_requiref(state, "math", open_math, 1);
-    lua_pop(state, 1);
+    open_math_library(state);
 
     const char* const removed[] = {"load", "loadfile", "dofile", "collectgarbage"};
     for (const char* name : removed) {
@@ -308,8 +307,7 @@ void open_libraries(lua_State* state) {
     lua_pushcfunction(state, host_print);
     lua_setglobal(state, "print");
 
-    lua_pushcfunction(state, ordered_pairs);
-    lua_setglobal(state, "pairs");
+    install_pairs(state);
 
     lua_getglobal(state, "xpcall");
     lua_rawsetp(state, LUA_REGISTRYINDEX, &xpcall_key);

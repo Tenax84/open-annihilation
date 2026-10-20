@@ -177,14 +177,13 @@ void open_libraries(lua_State* state);
 /// Opens the math library. May raise.
 ///
 /// @param state the state being opened
-/// @return one math table
-extern "C" int open_math(lua_State* state);
+void open_math_library(lua_State* state);
 
-/// `pairs` for number, string and boolean keys, in a fixed order. May raise.
+/// Installs `pairs` for number, string and boolean keys, in a fixed order.
+/// May raise.
 ///
-/// @param state the state calling `pairs`
-/// @return the iterator, the table and the initial value
-extern "C" int ordered_pairs(lua_State* state);
+/// @param state the state being opened
+void install_pairs(lua_State* state);
 
 /// Adds the package `require` and an empty module cache.
 ///

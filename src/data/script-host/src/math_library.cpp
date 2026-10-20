@@ -19,7 +19,7 @@ namespace {
 constexpr double pi = 3.141592653589793238462643383279502884;
 
 struct RandomState {
-    uint64_t word[4];
+    uint64_t word[4]{};
 };
 
 uint64_t rotate_left(uint64_t bits, int places) {
@@ -92,7 +92,8 @@ bool angle_rejected(lua_State* state, double radians, const char* name) {
     return false;
 }
 
-extern "C" int math_abs(lua_State* state) {
+extern "C" {
+static int math_abs(lua_State* state) {
     if (lua_isinteger(state, 1)) {
         lua_Integer number = lua_tointeger(state, 1);
         if (number < 0)
@@ -104,7 +105,7 @@ extern "C" int math_abs(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_sin(lua_State* state) {
+static int math_sin(lua_State* state) {
     const double radians = luaL_checknumber(state, 1);
     if (angle_rejected(state, radians, "sin"))
         return 1;
@@ -112,7 +113,7 @@ extern "C" int math_sin(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_cos(lua_State* state) {
+static int math_cos(lua_State* state) {
     const double radians = luaL_checknumber(state, 1);
     if (angle_rejected(state, radians, "cos"))
         return 1;
@@ -120,7 +121,7 @@ extern "C" int math_cos(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_tan(lua_State* state) {
+static int math_tan(lua_State* state) {
     const double radians = luaL_checknumber(state, 1);
     if (angle_rejected(state, radians, "tan"))
         return 1;
@@ -128,24 +129,24 @@ extern "C" int math_tan(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_asin(lua_State* state) {
+static int math_asin(lua_State* state) {
     lua_pushnumber(state, arcsine(luaL_checknumber(state, 1)));
     return 1;
 }
 
-extern "C" int math_acos(lua_State* state) {
+static int math_acos(lua_State* state) {
     lua_pushnumber(state, arccosine(luaL_checknumber(state, 1)));
     return 1;
 }
 
-extern "C" int math_atan(lua_State* state) {
+static int math_atan(lua_State* state) {
     const double y = luaL_checknumber(state, 1);
     const double x = luaL_optnumber(state, 2, 1);
     lua_pushnumber(state, arctangent(y, x));
     return 1;
 }
 
-extern "C" int math_tointeger(lua_State* state) {
+static int math_tointeger(lua_State* state) {
     int valid = 0;
     const lua_Integer number = lua_tointegerx(state, 1, &valid);
     if (valid)
@@ -157,7 +158,7 @@ extern "C" int math_tointeger(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_floor(lua_State* state) {
+static int math_floor(lua_State* state) {
     if (lua_isinteger(state, 1))
         lua_settop(state, 1);
     else
@@ -165,7 +166,7 @@ extern "C" int math_floor(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_ceil(lua_State* state) {
+static int math_ceil(lua_State* state) {
     if (lua_isinteger(state, 1))
         lua_settop(state, 1);
     else
@@ -173,7 +174,7 @@ extern "C" int math_ceil(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_fmod(lua_State* state) {
+static int math_fmod(lua_State* state) {
     if (lua_isinteger(state, 1) && lua_isinteger(state, 2)) {
         const lua_Integer divisor = lua_tointeger(state, 2);
         if (static_cast<lua_Unsigned>(divisor) + 1u <= 1u) {
@@ -188,7 +189,7 @@ extern "C" int math_fmod(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_modf(lua_State* state) {
+static int math_modf(lua_State* state) {
     if (lua_isinteger(state, 1)) {
         lua_settop(state, 1);
         lua_pushnumber(state, 0);
@@ -201,19 +202,19 @@ extern "C" int math_modf(lua_State* state) {
     return 2;
 }
 
-extern "C" int math_sqrt(lua_State* state) {
+static int math_sqrt(lua_State* state) {
     lua_pushnumber(state, std::sqrt(luaL_checknumber(state, 1)));
     return 1;
 }
 
-extern "C" int math_ult(lua_State* state) {
+static int math_ult(lua_State* state) {
     const lua_Integer left = luaL_checkinteger(state, 1);
     const lua_Integer right = luaL_checkinteger(state, 2);
     lua_pushboolean(state, static_cast<lua_Unsigned>(left) < static_cast<lua_Unsigned>(right));
     return 1;
 }
 
-extern "C" int math_log(lua_State* state) {
+static int math_log(lua_State* state) {
     const double value = luaL_checknumber(state, 1);
     double result = 0;
     if (lua_isnoneornil(state, 2)) {
@@ -231,22 +232,22 @@ extern "C" int math_log(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_exp(lua_State* state) {
+static int math_exp(lua_State* state) {
     lua_pushnumber(state, exponential(luaL_checknumber(state, 1)));
     return 1;
 }
 
-extern "C" int math_deg(lua_State* state) {
+static int math_deg(lua_State* state) {
     lua_pushnumber(state, luaL_checknumber(state, 1) * (180.0 / pi));
     return 1;
 }
 
-extern "C" int math_rad(lua_State* state) {
+static int math_rad(lua_State* state) {
     lua_pushnumber(state, luaL_checknumber(state, 1) * (pi / 180.0));
     return 1;
 }
 
-extern "C" int math_min(lua_State* state) {
+static int math_min(lua_State* state) {
     const int count = lua_gettop(state);
     int chosen = 1;
     luaL_argcheck(state, count >= 1, 1, "value expected");
@@ -258,7 +259,7 @@ extern "C" int math_min(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_max(lua_State* state) {
+static int math_max(lua_State* state) {
     const int count = lua_gettop(state);
     int chosen = 1;
     luaL_argcheck(state, count >= 1, 1, "value expected");
@@ -270,7 +271,7 @@ extern "C" int math_max(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_type(lua_State* state) {
+static int math_type(lua_State* state) {
     if (lua_type(state, 1) == LUA_TNUMBER)
         lua_pushstring(state, lua_isinteger(state, 1) ? "integer" : "float");
     else {
@@ -280,7 +281,7 @@ extern "C" int math_type(lua_State* state) {
     return 1;
 }
 
-extern "C" int math_random(lua_State* state) {
+static int math_random(lua_State* state) {
     auto* random_state = static_cast<RandomState*>(lua_touserdata(state, lua_upvalueindex(1)));
     const uint64_t drawn = next_word(random_state->word);
     switch (lua_gettop(state)) {
@@ -316,7 +317,7 @@ extern "C" int math_random(lua_State* state) {
     }
 }
 
-extern "C" int math_randomseed(lua_State* state) {
+static int math_randomseed(lua_State* state) {
     auto* random_state = static_cast<RandomState*>(lua_touserdata(state, lua_upvalueindex(1)));
     if (lua_isnone(state, 1)) {
         set_seed(state, random_state->word, control_from(state)->random_seed, 0);
@@ -329,6 +330,7 @@ extern "C" int math_randomseed(lua_State* state) {
     }
     return 2;
 }
+} // extern "C"
 
 const luaL_Reg math_functions[] = {
     {"abs", math_abs},     {"acos", math_acos}, {"asin", math_asin},
@@ -345,9 +347,8 @@ const luaL_Reg random_functions[] = {
     {"random", math_random}, {"randomseed", math_randomseed}, {nullptr, nullptr}
 };
 
-} // namespace
-
-extern "C" int open_math(lua_State* state) {
+extern "C" {
+static int open_math(lua_State* state) {
     luaL_newlib(state, math_functions);
     auto* random_state =
         static_cast<RandomState*>(lua_newuserdatauv(state, sizeof(RandomState), 0));
@@ -363,6 +364,14 @@ extern "C" int open_math(lua_State* state) {
     lua_pushinteger(state, LUA_MININTEGER);
     lua_setfield(state, -2, "mininteger");
     return 1;
+}
+} // extern "C"
+
+} // namespace
+
+void open_math_library(lua_State* state) {
+    luaL_requiref(state, "math", open_math, 1);
+    lua_pop(state, 1);
 }
 
 } // namespace oa::data::script_host

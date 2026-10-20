@@ -80,9 +80,12 @@ to a double. An angle at or above 2147483648 in magnitude, infinity
 included, is refused. A NaN comes back as a NaN. `exp` and `log` are series
 on the same 64-bit numbers, rounded once at the end. `log` of a power of
 two, and of `10^k` for k from 0 to 22,
-is the exact integer. `^` follows the usual power rules: an exponent of 2 is
-an IEEE multiply, an exponent of 0.5 is an IEEE square root, and an integer
-exponent is repeated squaring. `sqrt`, `floor`, `ceil`, `fmod` and the four
+is the exact integer. `^` follows the usual power rules. An exponent of 2
+is an IEEE multiply, and an exponent of 0.5 is an IEEE square root. An
+integer exponent of magnitude at most 256 is repeated squaring at 64 bits.
+A larger integer exponent is `exp(y · log x)` on two 64-bit words, and a
+negative base keeps the sign an odd integer calls for. `sqrt`, `floor`,
+`ceil`, `fmod` and the four
 basic operations are the IEEE results. The compatibility names `cosh`,
 `sinh`, `tanh`, `pow`, `frexp`, `ldexp` and `log10` are absent.
 

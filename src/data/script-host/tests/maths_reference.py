@@ -30,6 +30,24 @@ def hex_bits(value):
     return f"0x{bits_of(value):016x}ULL"
 
 
+def spacing(rounded, below):
+    """Width of the binade `rounded` lies in, or of the binade just below it.
+
+    A value that rounds up to a power of two sits in the binade below that
+    power, whose numbers are half as far apart.
+    """
+    bits = bits_of(abs(rounded))
+    field = (bits >> 52) & 0x7FF
+    if field == 0:
+        return Decimal(2) ** -1074
+    unit = Decimal(2) ** (int(field) - 1023 - 52)
+    if below and (bits & ((1 << 52) - 1)) == 0:
+        if field == 1:
+            return Decimal(2) ** -1074
+        return unit / 2
+    return unit
+
+
 def keep(exact):
     """Bits of the correctly rounded double, or None when the rounding is close."""
     if not exact.is_finite():
@@ -45,13 +63,23 @@ def keep(exact):
     magnitude = abs(exact)
     if magnitude == 0:
         return bits_of(math.copysign(0.0, rounded))
-    field = (bits_of(abs(rounded)) >> 52) & 0x7FF
-    unit = Decimal(2) ** (-1074 if field == 0 else int(field) - 1023 - 52)
+    unit = spacing(rounded, magnitude < abs(Decimal(rounded)))
     quotient = magnitude / unit
     fraction = quotient - quotient.to_integral_value(rounding=ROUND_FLOOR)
     if abs(fraction - Decimal("0.5")) < Decimal("0.125"):
         return None
     return bits_of(rounded)
+
+
+def unambiguous_underflow(exact):
+    """Bits of zero when `exact` is unambiguously closer to zero than to any subnormal."""
+    if not exact.is_finite() or exact == 0:
+        return None
+    margin = (Decimal(2) ** -1074) * Decimal("0.125")
+    midpoint = Decimal(2) ** -1075
+    if exact.copy_abs() + margin >= midpoint:
+        return None
+    return bits_of(math.copysign(0.0, -1.0 if exact < 0 else 1.0))
 
 
 def sin_cos(value):
@@ -370,8 +398,36 @@ def main():
 
         bases = [0.5, 1.5, 2.0, 3.0, 10.0, 0.1, 1.1, 0.9, 100.0, 1e-3, 1e3, 1.0000001, 9.9, 1.7]
         powers = [0.5, 1.5, 2.5, 3.25, -0.5, -1.5, 10.5, -3.5, 0.1, -0.1, 20.2, -8.5, 7.0, -2.0]
+        # Integer exponents past the squaring limit. The result has to be a
+        # normal number, apart from 0.999^(2^31-1), which underflows and is
+        # unambiguously zero.
+        large_powers = [
+            (1.0001, 100000.0),
+            (1.0 + 2.0**-52, float(2**53 + 2)),
+            (0.999, float(2**31 - 1)),
+            (1.0000001, float(2**20)),
+            (0.999999, -float(2**20)),
+            (1.0 + 2.0**-30, float(2**30)),
+            (1.0 + 2.0**-30, -float(2**30)),
+            (1.0 + 2.0**-40, float(2**40)),
+            (1.0 - 2.0**-40, -float(2**40)),
+            (1.0 + 2.0**-48, float(2**52)),
+            (1.0 - 2.0**-48, -float(2**52)),
+            (-1.0001, 100001.0),
+            (1.0001, -100000.0),
+        ]
         power_rows = []
         seen_power = set()
+        for base, exponent in large_powers:
+            exact = Decimal(base) ** Decimal(exponent)
+            bits = keep(exact)
+            if bits is None:
+                bits = unambiguous_underflow(exact)
+            if bits is None:
+                print(f"power dropped {base} ^ {exponent}", file=sys.stderr)
+                continue
+            seen_power.add((bits_of(base), bits_of(exponent)))
+            power_rows.append((base, exponent, struct.unpack(">d", struct.pack(">Q", bits))[0]))
         for base in bases:
             for exponent in powers:
                 key = (bits_of(base), bits_of(exponent))
