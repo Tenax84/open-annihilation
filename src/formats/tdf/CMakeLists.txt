@@ -6,7 +6,7 @@ project(oa_formats_tdf LANGUAGES CXX)
 
 include(CTest)
 
-add_library(oa-formats-tdf src/tdf.cpp)
+add_library(oa-formats-tdf src/tdf.cpp src/edit.cpp)
 add_library(oa::formats::tdf ALIAS oa-formats-tdf)
 # In the engine these targets supply the two header-only helpers tdf.cpp
 # calls. A standalone configure has neither target; the helpers are then
