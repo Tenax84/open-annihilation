@@ -4620,9 +4620,13 @@ void mutator_rows_show_badges_chips_and_icons() {
         OA_EXPECT_NONE(
             fixture::texts_not_fitting(detail_list, fonts()), named.name + " mutator details"
         );
-        const kit::BadgeLook* badge = detail_tag_badge(detail_list);
-        OA_CHECK(badge != nullptr && badge->tag == kit::TagIcon::economy);
-        OA_CHECK(badge == nullptr || badge->face == kit::colour::hint);
+        // The Compact details are a page of their own whose header carries the
+        // name and no badge; the other size classes show the 40-point badge.
+        if (!compact) {
+            const kit::BadgeLook* badge = detail_tag_badge(detail_list);
+            OA_CHECK(badge != nullptr && badge->tag == kit::TagIcon::economy);
+            OA_CHECK(badge == nullptr || badge->face == kit::colour::hint);
+        }
         const kit::PillLook* detail_economy = pill_named(detail_list, "library.detail.tag.economy");
         OA_CHECK(detail_economy != nullptr && detail_economy->tag == kit::TagIcon::economy);
         const kit::PillLook* detail_statistics =
