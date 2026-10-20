@@ -4,8 +4,9 @@
 // TDF/FBI/GUI text documents, parsed the way the game parses them.
 //
 // A document is a tree of blocks. Each block has a name, an ordered list of
-// child blocks and a property list kept sorted by case-insensitive key. All
-// storage lives in one bounded arena owned by the document.
+// child blocks and a property list kept sorted by case-insensitive key. Each
+// key also records its place in the file, so a later write can keep that
+// order. All storage lives in one bounded arena owned by the document.
 #pragma once
 
 #include <cstddef>
@@ -23,8 +24,14 @@ inline constexpr uint32_t max_nesting_depth = 64;
 struct Property {
     char* key{};
     char* value{};
+    uint32_t order{}; ///< place in the block; a repeated identical key keeps its first place
 };
 
+/// One block of a TDF document.
+///
+/// `properties` stay sorted by case-insensitive key. `body_hash` describes
+/// the body text the block was parsed from. An edit marks the block and
+/// leaves that hash stale until the written text is parsed again.
 struct Block {
     char* name{};
     Block** children{};
@@ -33,8 +40,13 @@ struct Block {
     Property* properties{}; // sorted by case-insensitive key
     uint32_t property_count{};
     uint32_t property_capacity{};
-    // Buffer hash of the block body; see parse_text for the covered span.
-    uint32_t body_hash{};
+    uint32_t
+        body_hash{}; ///< hash of the parsed body; stale after an edit until a rewrite is parsed
+    const char*
+        body_text{}; ///< parsed body, after '{' up to '}'; empty when add_child made the block
+    uint32_t body_length{}; ///< bytes of body_text
+    uint32_t next_order{};  ///< place the next new key takes
+    bool edited{};          ///< set when an edit changes this block
 };
 
 struct ArenaChunk;
@@ -51,6 +63,8 @@ struct Document {
     const Block* cursor{};
     bool from_archive{}; // file was read from an HPI rather than a loose file
     Arena arena;
+    const char* text{};     ///< comment-stripped copy of the parsed text, in the arena
+    uint32_t text_length{}; ///< bytes of text, not counting the terminating NUL
 };
 
 enum class ParseStatus : uint8_t {
