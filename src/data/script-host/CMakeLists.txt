@@ -30,6 +30,17 @@ if(NOT MSVC)
   target_link_libraries(oa-data-script-host-lua PUBLIC m)
 endif()
 
+add_library(oa-data-script-host
+  src/sandbox.cpp
+  src/libraries.cpp
+  src/require.cpp)
+add_library(oa::data::script_host ALIAS oa-data-script-host)
+target_include_directories(oa-data-script-host PUBLIC include)
+target_compile_features(oa-data-script-host PUBLIC cxx_std_20)
+target_link_libraries(oa-data-script-host
+  PUBLIC oa-data-script-host-lua
+  PRIVATE oa-options)
+
 if(BUILD_TESTING)
   # A text chunk, the open libraries and their numbers, one table order from
   # three states, and a refused precompiled chunk.
@@ -38,4 +49,5 @@ if(BUILD_TESTING)
     oa-data-script-host-lua oa-test-support oa-options)
   add_test(NAME data-script-host-lua COMMAND oa-data-script-host-lua-test)
   set_tests_properties(data-script-host-lua PROPERTIES TIMEOUT 30)
+
 endif()
