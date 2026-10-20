@@ -50,11 +50,11 @@ moves that state; the moved-from object has no state.
 - `open`, `run_file`, `call`, `run_host` and `compile_check` do their Lua work
   inside one protected call. A failure marks the sandbox failed, and every
   later phase returns that same error and runs nothing.
-- A count hook that leaves through an error does not restore the flag that
-  allows the next hook. The hook turns that flag back on. Once a raise is
-  already under way it drops the script's message handler, so a handler that
-  loops cannot keep the phase alive. An instruction error or a memory error
-  is reported even when the script's own `pcall` caught it.
+- Once the instruction allowance is spent, or the sandbox has failed,
+  `xpcall` returns the error unchanged and does not run the handler the
+  script passed. A handler that loops, or one that catches errors with
+  `pcall`, cannot keep the phase alive. An instruction error or a memory
+  error is reported even when the script's own `pcall` caught it.
 - No C++ object with a destructor is alive across a Lua raise. `install`,
   `push`, `read` and the `run_host` work may raise and must not throw.
 - The instruction allowance is per phase and is not a clock. The memory cap
@@ -92,7 +92,8 @@ profiles in one process.
 
 `data-script-host-budgets` uses a small test allowance and one run at the
 mutator default. A plain loop, a loop inside `pcall`, and an `xpcall` whose
-handler loops all stop on the instruction allowance. Two phases that each
+handler loops or catches with `pcall` all stop on the instruction allowance.
+Two phases that each
 use part of the allowance both pass. Keeping strings stops on the memory
 cap, including inside `pcall`. A required module that loops forever is
 reported at that module's chunk.
@@ -103,6 +104,4 @@ Work done inside a C function, such as pattern matching, is not counted
 against the allowance. `math` and text that must come out the same on every
 platform are not part of this library yet. A `__gc` or `__mode` entry added
 to a metatable after `setmetatable` is not caught. `instructions_used`
-counts in steps of the check interval, so a short phase can report zero. A
-`require` whose error a script catches can leave that module marked loading
-until the next phase.
+counts in steps of the check interval, so a short phase can report zero.

@@ -33,7 +33,7 @@ struct Sandbox::Control {
     uint64_t instruction_allowance{default_instruction_budget};
     uint64_t instructions_used{};
     bool allowance_spent{};
-    bool budget_raise_started{};
+    bool sandbox_failed{};
 
     ErrorKind pending_kind{ErrorKind::none};
     ErrorKind raised_kind{ErrorKind::none};

@@ -285,6 +285,36 @@ void string_rep_obeys_the_limit() {
     OA_CHECK(built);
     OA_CHECK(length == 2999);
 
+    struct Repeated {
+        std::string first;
+        std::string second;
+        int results = 0;
+    } repeated;
+
+    host::CallHooks empty_rep;
+    empty_rep.context = &repeated;
+    empty_rep.read = [](void* context, lua_State* state, int results) {
+        auto* out = static_cast<Repeated*>(context);
+        out->results = results;
+        if (results >= 1 && lua_isstring(state, -results))
+            out->first = lua_tostring(state, -results);
+        if (results >= 2 && lua_isstring(state, -results + 1))
+            out->second = lua_tostring(state, -results + 1);
+    };
+    const bool empty = run_source(
+        *sandbox,
+        package,
+        "empty.lua",
+        "return string.rep(\"\", 0x7fffffffffffffff), string.rep(\"\", 0x7fffffffffffffff, \"\")\n",
+        "plan",
+        error,
+        &empty_rep
+    );
+    OA_CHECK(empty);
+    OA_CHECK(repeated.results == 2);
+    OA_CHECK(repeated.first.empty());
+    OA_CHECK(repeated.second.empty());
+
     const char* sources[] = {
         "local marker = 1\nstring.rep(\"a\", 1048577)\n",
         "local marker = 1\nstring.rep(\"a\", 524289, \"b\")\n",
@@ -494,6 +524,28 @@ void print_keeps_lines_and_writes_nothing() {
                 ran && lines.size() == 101 && lines[0] == "x" && lines[100] == "1 line left out";
         }
     }
+    bool long_text = false;
+    {
+        Package package;
+        host::ScriptError error;
+        auto sandbox = open_sample(package, error);
+        if (sandbox) {
+            const bool ran = run_source(
+                *sandbox,
+                package,
+                "mutator.lua",
+                "print((\"y\"):rep(2000))\n"
+                "print((\"y\"):rep(2000), (\"z\"):rep(2000), (\"w\"):rep(2000))\n",
+                "plan",
+                error
+            );
+            const auto lines = sandbox->printed();
+            const std::string y(2000, 'y');
+            const std::string joined =
+                y + '\t' + std::string(2000, 'z') + '\t' + std::string(2000, 'w');
+            long_text = ran && lines.size() == 2 && lines[0] == y && lines[1] == joined;
+        }
+    }
 
     out.end();
     err.end();
@@ -505,6 +557,7 @@ void print_keeps_lines_and_writes_nothing() {
     OA_CHECK(line_cap);
     OA_CHECK(byte_cap);
     OA_CHECK(note_fits);
+    OA_CHECK(long_text);
 }
 
 void require_finds_and_caches() {
@@ -727,6 +780,72 @@ void require_reports_missing_loop_and_bytecode() {
                 run_source(*sandbox, package, "mutator.lua", "require(\"e1\")\n", "plan", error)
             );
     }
+}
+
+void require_clears_a_caught_failure() {
+    Package package;
+    put(package, "lua/bad.lua", "error(\"bad failed\")\n");
+    put(package, "lua/good.lua", "return 4\n");
+    for (int index = 1; index <= 33; ++index)
+        put(package, "lua/m" + std::to_string(index) + ".lua", "error(\"missed\")\n");
+    host::ScriptError error;
+    auto sandbox = open_sample(package, error);
+    if (!sandbox)
+        return;
+
+    struct Caught {
+        std::string first;
+        std::string second;
+        int caught = 0;
+        int good = 0;
+        int results = 0;
+    } caught;
+
+    host::CallHooks hooks;
+    hooks.context = &caught;
+    hooks.read = [](void* context, lua_State* state, int results) {
+        auto* out = static_cast<Caught*>(context);
+        out->results = results;
+        if (results < 4)
+            return;
+        if (lua_isstring(state, -4))
+            out->first = lua_tostring(state, -4);
+        if (lua_isstring(state, -3))
+            out->second = lua_tostring(state, -3);
+        if (lua_isinteger(state, -2))
+            out->caught = static_cast<int>(lua_tointeger(state, -2));
+        if (lua_isinteger(state, -1))
+            out->good = static_cast<int>(lua_tointeger(state, -1));
+    };
+    const bool ran = run_source(
+        *sandbox,
+        package,
+        "mutator.lua",
+        "local function failed_text(name)\n"
+        "  local ok, err = pcall(require, name)\n"
+        "  if ok then return \"ran\" end\n"
+        "  return err\n"
+        "end\n"
+        "local first = failed_text(\"bad\")\n"
+        "local second = failed_text(\"bad\")\n"
+        "local caught = 0\n"
+        "for i = 1, 33 do\n"
+        "  local ok, err = pcall(require, \"m\" .. i)\n"
+        "  if not ok and err == \"lua/m\" .. i .. \".lua:1: missed\" then\n"
+        "    caught = caught + 1\n"
+        "  end\n"
+        "end\n"
+        "return first, second, caught, require(\"good\")\n",
+        "plan",
+        error,
+        &hooks
+    );
+    OA_CHECK(ran);
+    OA_CHECK(caught.results == 4);
+    OA_CHECK(caught.first == "lua/bad.lua:1: bad failed");
+    OA_CHECK(caught.second == "lua/bad.lua:1: bad failed");
+    OA_CHECK(caught.caught == 33);
+    OA_CHECK(caught.good == 4);
 }
 
 void errors_name_the_chunk_and_the_line() {
@@ -1046,6 +1165,7 @@ int main() {
     const std::string long_name(65, 'a');
     require_refuses_a_bad_name(long_name.c_str(), true);
     require_reports_missing_loop_and_bytecode();
+    require_clears_a_caught_failure();
     errors_name_the_chunk_and_the_line();
     a_failed_sandbox_runs_nothing_later();
     compile_check_does_not_run();

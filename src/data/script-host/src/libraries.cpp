@@ -6,7 +6,6 @@
 
 #include "internal.hpp"
 
-#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -22,6 +21,7 @@ using Control = HostDetail::Control;
 const char string_rep_key = 0;
 const char setmetatable_key = 0;
 const char rawset_key = 0;
+const char xpcall_key = 0;
 
 static_assert(string_rep_limit == 1048576);
 static_assert(max_source_bytes == 1048576);
@@ -88,6 +88,24 @@ bool keep_printed_line(Control& control, const char* text, std::size_t length) {
     }
 }
 
+// True when `count` copies of `length` plus the separators between them fit in
+// a uint64. `total` is that size. An empty result is 0.
+bool rep_total(uint64_t count, std::size_t length, std::size_t separator_length, uint64_t* total) {
+    const auto bytes = static_cast<uint64_t>(length);
+    const auto separator = static_cast<uint64_t>(separator_length);
+    if (bytes != 0 && count > std::numeric_limits<uint64_t>::max() / bytes)
+        return false;
+    uint64_t size = count * bytes;
+    const uint64_t gaps = count - 1;
+    if (separator != 0 && gaps > std::numeric_limits<uint64_t>::max() / separator)
+        return false;
+    const uint64_t gap_bytes = gaps * separator;
+    if (size > std::numeric_limits<uint64_t>::max() - gap_bytes)
+        return false;
+    *total = size + gap_bytes;
+    return true;
+}
+
 extern "C" {
 static int host_print(lua_State* state) {
     const int count = lua_gettop(state);
@@ -96,10 +114,10 @@ static int host_print(lua_State* state) {
     for (int index = 1; index <= count; ++index) {
         if (index > 1)
             luaL_addchar(&buffer, '\t');
-        std::size_t length = 0;
-        const char* text = luaL_tolstring(state, index, &length);
-        luaL_addlstring(&buffer, text, length);
-        lua_pop(state, 1);
+        // luaL_addvalue is the buffer call that takes the value on top.
+        // Popping that slot by hand frees the buffer once it grows.
+        luaL_tolstring(state, index, nullptr);
+        luaL_addvalue(&buffer);
     }
     luaL_pushresult(&buffer);
     std::size_t length = 0;
@@ -112,44 +130,61 @@ static int host_print(lua_State* state) {
     return 0;
 }
 
+static int rep_refused(lua_State* state, uint64_t bytes) {
+    char number[32];
+    append_u64(number, number + sizeof number, bytes);
+    char message[128];
+    char* cursor = message;
+    char* end = message + sizeof message;
+    cursor = append_text(cursor, end, "string.rep would make a string of ");
+    cursor = append_text(cursor, end, number);
+    append_text(cursor, end, " bytes; the most is 1048576");
+    return luaL_error(state, "%s", message);
+}
+
 static int host_string_rep(lua_State* state) {
     std::size_t length = 0;
-    luaL_checklstring(state, 1, &length);
+    const char* text = luaL_checklstring(state, 1, &length);
     const lua_Integer copies = luaL_checkinteger(state, 2);
     std::size_t separator_length = 0;
-    luaL_optlstring(state, 3, "", &separator_length);
+    const char* separator = luaL_optlstring(state, 3, "", &separator_length);
 
-    bool too_large_for_lua = false;
-    bool over_limit = false;
-    std::size_t total = 0;
-    if (copies > 0) {
-        const auto count64 = static_cast<uint64_t>(copies);
-        const auto size_max = static_cast<uint64_t>(std::numeric_limits<std::size_t>::max());
-        if (count64 > size_max ||
-            separator_length > std::numeric_limits<std::size_t>::max() - length) {
-            too_large_for_lua = true;
-        } else {
-            const std::size_t count = static_cast<std::size_t>(count64);
-            const std::size_t unit = length + separator_length;
-            constexpr std::size_t lua_max = static_cast<std::size_t>(INT_MAX);
-            if (unit > 0 && (count > lua_max || unit > lua_max / count)) {
-                too_large_for_lua = true;
-            } else {
-                total = count * unit - separator_length;
-                over_limit = total > string_rep_limit;
+    // Lua's own rep loops `copies` times even when every copy is empty.
+    if (copies <= 0 || (length == 0 && separator_length == 0)) {
+        lua_pushliteral(state, "");
+        return 1;
+    }
+
+    const auto count = static_cast<uint64_t>(copies);
+    const auto limit = static_cast<uint64_t>(string_rep_limit);
+    uint64_t total = 0;
+    const bool fits = rep_total(count, length, separator_length, &total);
+    if (fits && total == 0) {
+        lua_pushliteral(state, "");
+        return 1;
+    }
+    if (!fits || total > limit) {
+        // A count past the cap must not reach Lua: its size check misses an
+        // empty copy and then loops. A size that does not fit is past the cap.
+        if (!fits)
+            return rep_refused(state, std::numeric_limits<uint64_t>::max());
+        return rep_refused(state, total);
+    }
+    if (count > limit) {
+        // The result is within the cap (an empty text plus a short separator)
+        // but the count is not. Build it here instead of calling Lua.
+        luaL_Buffer built;
+        char* cursor = luaL_buffinitsize(state, &built, static_cast<std::size_t>(total));
+        for (uint64_t gap = 1; gap < count; ++gap) {
+            if (separator_length > 0) {
+                std::memcpy(cursor, separator, separator_length);
+                cursor += separator_length;
             }
         }
-    }
-    if (!too_large_for_lua && over_limit) {
-        char number[32];
-        append_u64(number, number + sizeof number, static_cast<uint64_t>(total));
-        char message[128];
-        char* cursor = message;
-        char* end = message + sizeof message;
-        cursor = append_text(cursor, end, "string.rep would make a string of ");
-        cursor = append_text(cursor, end, number);
-        append_text(cursor, end, " bytes; the most is 1048576");
-        return luaL_error(state, "%s", message);
+        if (length > 0)
+            std::memcpy(cursor, text, length);
+        luaL_pushresultsize(&built, static_cast<std::size_t>(total));
+        return 1;
     }
 
     lua_rawgetp(state, LUA_REGISTRYINDEX, &string_rep_key);
@@ -203,6 +238,31 @@ static int host_rawset(lua_State* state) {
     lua_call(state, 3, 1);
     return 1;
 }
+
+// Once the allowance is spent, or the sandbox has failed, the script's handler
+// must not run: a looping handler would never return the error to the host.
+static int host_xpcall_handler(lua_State* state) {
+    const Control* control = control_from(state);
+    if (control->allowance_spent || control->sandbox_failed)
+        return 1;
+    const int count = lua_gettop(state);
+    lua_pushvalue(state, lua_upvalueindex(1));
+    lua_insert(state, 1);
+    lua_call(state, count, LUA_MULTRET);
+    return lua_gettop(state);
+}
+
+static int host_xpcall(lua_State* state) {
+    luaL_checktype(state, 2, LUA_TFUNCTION);
+    lua_pushvalue(state, 2);
+    lua_pushcclosure(state, host_xpcall_handler, 1);
+    lua_replace(state, 2);
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &xpcall_key);
+    lua_insert(state, 1);
+    const int arguments = lua_gettop(state) - 1;
+    lua_call(state, arguments, LUA_MULTRET);
+    return lua_gettop(state);
+}
 } // extern "C"
 
 } // namespace
@@ -244,6 +304,11 @@ void open_libraries(lua_State* state) {
 
     lua_pushcfunction(state, host_print);
     lua_setglobal(state, "print");
+
+    lua_getglobal(state, "xpcall");
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &xpcall_key);
+    lua_pushcfunction(state, host_xpcall);
+    lua_setglobal(state, "xpcall");
 
     install_require(state);
 }

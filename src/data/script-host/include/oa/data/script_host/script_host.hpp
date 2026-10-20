@@ -141,8 +141,11 @@ class Sandbox {
 
     Sandbox(const Sandbox&) = delete;
     Sandbox& operator=(const Sandbox&) = delete;
+    /// Moves the state from another sandbox and leaves that sandbox empty.
     Sandbox(Sandbox&&) noexcept;
+    /// Moves the state from another sandbox and closes the state held here.
     Sandbox& operator=(Sandbox&&) noexcept;
+    /// Closes the state.
     ~Sandbox();
 
     /// Opens a state, loads the shared libraries and runs the profile's install.
@@ -237,11 +240,25 @@ class Sandbox {
     /// Lets this module's own sources name `Control`.
     friend struct HostDetail;
 
+    /// Builds a sandbox that already owns its control block and state.
     Sandbox(std::unique_ptr<Control> control, lua_State* state) noexcept;
 
+    /// Closes the state and leaves this sandbox empty.
     void close() noexcept;
+    /// Rejects a moved-from sandbox or one whose phase has already failed.
+    ///
+    /// @param[out] error set when the call returns false
+    /// @return false when no phase can run
     [[nodiscard]] bool prepare(ScriptError& error);
+    /// Runs one protected phase.
+    ///
+    /// @param phase name recorded on an error
+    /// @param[out] error set when the call returns false
+    /// @return false when this phase or an earlier one failed
     [[nodiscard]] bool enter(std::string_view phase, ScriptError& error);
+    /// Records `error` and marks the sandbox failed.
+    ///
+    /// @param error the failure later phases return
     void fail(const ScriptError& error);
 
     /// Records that the host ran out of memory while finishing a phase.
@@ -255,6 +272,7 @@ class Sandbox {
     bool failed_{};
     ScriptError failure_{};
 
+    /// Loads a chunk in a throwaway state and does not run it.
     friend bool
     compile_check(std::span<const uint8_t> source, std::string_view path, ScriptError& error);
 };

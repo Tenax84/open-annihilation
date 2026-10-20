@@ -87,6 +87,8 @@ void caught_loops_still_stop() {
         "while true do pcall(function() while true do end end) end\n",
         "while true do xpcall(function() while true do end end, function() while true do end end) "
         "end\n",
+        "while true do xpcall(function() while true do end end, "
+        "function() while true do pcall(function() while true do end end) end end) end\n",
     };
     for (const char* source : sources) {
         Package package;

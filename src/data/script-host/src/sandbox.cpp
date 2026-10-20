@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The state, its allocator, the instruction hook and the one protected entry
-// every phase uses. A count hook that leaves through an error does not restore
-// the flag that allows the next hook, so the hook turns that flag back on and,
-// once a raise is already under way, drops the script's message handler.
+// every phase uses. A spent allowance makes xpcall return the error unchanged,
+// so a script message handler cannot keep running after the budget is gone.
 
 #include "internal.hpp"
 
@@ -15,26 +14,10 @@
 #include <string>
 #include <utility>
 
-// The count hook turns hooks back on after a raise, and drops a script
-// message handler that would otherwise run again. Those fields live in the
-// interpreter's own state header. The header is included at file scope: inside
-// a namespace its C typedefs name a different type from the Lua API.
-extern "C" {
-#include "lstate.h"
-}
-
 namespace oa::data::script_host {
 namespace {
 
 using Control = HostDetail::Control;
-
-void allow_hooks(lua_State* state) {
-    state->allowhook = 1;
-}
-
-void clear_handler(lua_State* state) {
-    state->errfunc = 0;
-}
 
 void write_budget_messages(Control& control) {
     char number[32]{};
@@ -257,19 +240,12 @@ static void* allocate(void* user, void* pointer, size_t old_size, size_t new_siz
 
 static void count_hook(lua_State* state, lua_Debug* /*activation*/) {
     Control* control = control_from(state);
-    if (control->allowance_spent) {
-        if (control->budget_raise_started)
-            clear_handler(state);
-        control->budget_raise_started = true;
-        allow_hooks(state);
+    if (control->allowance_spent)
         luaL_error(state, "%s", control->instruction_message);
-    }
     control->instructions_used += static_cast<uint64_t>(budget_check_interval);
     if (control->instructions_used >= control->instruction_allowance) {
         control->allowance_spent = true;
-        control->budget_raise_started = true;
         lua_sethook(state, count_hook, LUA_MASKCOUNT, 1);
-        allow_hooks(state);
         luaL_error(state, "%s", control->instruction_message);
     }
 }
@@ -292,7 +268,6 @@ static int trampoline(lua_State* state) {
     Control* control = control_from(state);
     control->instructions_used = 0;
     control->allowance_spent = false;
-    control->budget_raise_started = false;
     control->pending_kind = ErrorKind::none;
     control->raised_kind = ErrorKind::none;
     control->location_locked = false;
@@ -390,6 +365,7 @@ void Sandbox::close() noexcept {
         return;
     if (control_ != nullptr) {
         control_->allowance_spent = true;
+        control_->sandbox_failed = true;
         lua_sethook(state_, count_hook, LUA_MASKCOUNT, 1);
     }
     lua_close(state_);
@@ -424,11 +400,15 @@ Sandbox& Sandbox::operator=(Sandbox&& other) noexcept {
 
 void Sandbox::fail(const ScriptError& error) {
     failed_ = true;
+    if (control_ != nullptr)
+        control_->sandbox_failed = true;
     failure_ = error;
 }
 
 bool Sandbox::fail_allocation(ScriptError& error) {
     failed_ = true;
+    if (control_ != nullptr)
+        control_->sandbox_failed = true;
     try {
         error = {};
         error.kind = ErrorKind::memory_budget;

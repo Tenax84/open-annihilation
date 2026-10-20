@@ -143,9 +143,31 @@ void mark_loading(Control* control) {
     ++control->loading_count;
 }
 
+// How many host_require frames are still on the stack, including this call.
+// A caught error leaves its mark behind; the next require drops marks whose
+// frames are gone.
+int require_frames(lua_State* state, lua_CFunction require_function) {
+    int found = 0;
+    lua_Debug activation;
+    for (int level = 0; lua_getstack(state, level, &activation) != 0; ++level) {
+        lua_getinfo(state, "f", &activation);
+        const bool is_require =
+            lua_iscfunction(state, -1) != 0 && lua_tocfunction(state, -1) == require_function;
+        lua_pop(state, 1);
+        if (is_require)
+            ++found;
+    }
+    return found;
+}
+
 extern "C" {
 static int host_require(lua_State* state) {
     Control* control = control_from(state);
+    if (control->require_function != nullptr) {
+        const int parents = require_frames(state, control->require_function) - 1;
+        if (parents >= 0 && control->loading_count > parents)
+            control->loading_count = parents;
+    }
     std::size_t name_length = 0;
     const char* name = luaL_checklstring(state, 1, &name_length);
     if (!valid_module_name(name, name_length)) {
