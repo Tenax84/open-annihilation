@@ -50,4 +50,17 @@ if(BUILD_TESTING)
   add_test(NAME data-script-host-lua COMMAND oa-data-script-host-lua-test)
   set_tests_properties(data-script-host-lua PROPERTIES TIMEOUT 30)
 
+  # Libraries, require, errors, profiles and a phase that does not run a chunk.
+  add_executable(oa-data-script-host-sandbox-test tests/sandbox_test.cpp)
+  target_link_libraries(oa-data-script-host-sandbox-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-sandbox COMMAND oa-data-script-host-sandbox-test)
+  set_tests_properties(data-script-host-sandbox PROPERTIES TIMEOUT 60)
+
+  # Instruction and memory allowances, including one run at the default budget.
+  add_executable(oa-data-script-host-budgets-test tests/budgets_test.cpp)
+  target_link_libraries(oa-data-script-host-budgets-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-budgets COMMAND oa-data-script-host-budgets-test)
+  set_tests_properties(data-script-host-budgets PROPERTIES TIMEOUT 120)
 endif()
