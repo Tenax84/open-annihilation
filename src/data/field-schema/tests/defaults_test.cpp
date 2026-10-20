@@ -593,7 +593,7 @@ void compare_weapon(
     } else if (key == "name")
         expect_text(weapon.name, def);
     else if (key == "pitchtolerance")
-        expect_int(weapon.pitch_tolerance, def);
+        expect_int(static_cast<uint16_t>(weapon.pitch_tolerance), def);
     else if (key == "randomdecay")
         expect_zero_count(weapon.random_decay, def);
     else if (key == "range")

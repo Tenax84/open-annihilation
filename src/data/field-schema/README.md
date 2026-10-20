@@ -224,8 +224,9 @@ Wraps, by the width the loader keeps. `parse_int` wraps modulo 2^32
   back at `combat_state.cpp:108`) and `color2` (`weapons.cpp:361`, read back
   at `combat_state.cpp:109`).
 - Unsigned 16 bits, outside 0 to 65535: unit `buildangle`
-  (`unit_def_loader.cpp:291`, read back at `runtime.cpp:90`); weapon
-  `tolerance` (`weapons.cpp:365`, read back at `combat_state.cpp:100`).
+  (`unit_def_loader.cpp:291`, read back at `unit-spawn/src/runtime.cpp:90`); weapon
+  `tolerance` (`weapons.cpp:365`, read back at `combat_state.cpp:100`) and
+  `pitchtolerance` (`weapons.cpp:366`, read back at `combat_state.cpp:101`).
 - Signed 16 bits, outside −32768 to 32767: unit `attackrunlength`
   (`unit_def_loader.cpp:397`), `builddistance` (`unit_def_loader.cpp:292`), `cruisealt`
   (`unit_def_loader.cpp:294`), `healtime` (`unit_def_loader.cpp:254`),
@@ -239,8 +240,7 @@ Wraps, by the width the loader keeps. `parse_int` wraps modulo 2^32
   `workertime` (`unit_def_loader.cpp:253`), and the movement depths
   `maxwaterdepth` (`move_classes.cpp:33`) and `minwaterdepth`
   (`move_classes.cpp:36`). Weapon `accuracy` (`weapons.cpp:364`),
-  `areaofeffect` (`weapons.cpp:335`), `pitchtolerance` (`weapons.cpp:366`),
-  `sprayangle` (`weapons.cpp:345`).
+  `areaofeffect` (`weapons.cpp:335`) and `sprayangle` (`weapons.cpp:345`).
   `burst` refuses below 0 and warns above 32767. Footprints refuse outside
   1 to 1024 before this wrap applies.
 - Signed 32 bits, outside ±2147483647: unit `buildcostenergy`
