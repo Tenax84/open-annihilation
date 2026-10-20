@@ -292,6 +292,8 @@ void open_libraries(lua_State* state) {
     lua_setfield(state, -2, "dump");
     lua_pushcfunction(state, host_string_rep);
     lua_setfield(state, -2, "rep");
+    // The string metatable's __index is this table, so ("x"):find uses these.
+    install_patterns(state);
     lua_pop(state, 1);
 
     lua_getglobal(state, "setmetatable");

@@ -47,6 +47,7 @@ target_link_libraries(oa-data-script-host-lua PUBLIC oa-data-script-host-numbers
 add_library(oa-data-script-host
   src/sandbox.cpp
   src/libraries.cpp
+  src/patterns.cpp
   src/require.cpp
   src/math_library.cpp
   src/sorted.cpp)
@@ -72,6 +73,13 @@ if(BUILD_TESTING)
     oa-data-script-host oa-test-support oa-options)
   add_test(NAME data-script-host-sandbox COMMAND oa-data-script-host-sandbox-test)
   set_tests_properties(data-script-host-sandbox PROPERTIES TIMEOUT 60)
+
+  # Counted patterns against Lua's own results, and a match that spends the allowance.
+  add_executable(oa-data-script-host-patterns-test tests/patterns_test.cpp)
+  target_link_libraries(oa-data-script-host-patterns-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-patterns COMMAND oa-data-script-host-patterns-test)
+  set_tests_properties(data-script-host-patterns PROPERTIES TIMEOUT 60)
 
   # Instruction and memory allowances, including one run at the default budget.
   add_executable(oa-data-script-host-budgets-test tests/budgets_test.cpp)

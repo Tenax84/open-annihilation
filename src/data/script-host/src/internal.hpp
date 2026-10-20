@@ -174,6 +174,17 @@ inline HostDetail::Control* control_from(lua_State* state) {
 /// @param state the state being opened
 void open_libraries(lua_State* state);
 
+/// Replaces `string.find`, `match`, `gmatch` and `gsub` in the table on top
+/// of the stack with the counted copies of Lua 5.4.9's matcher.
+///
+/// They take the same arguments and give the same results and messages as
+/// Lua's own; each matcher step counts against the phase allowance, and past
+/// it they raise the budget message and mark the allowance spent. `gmatch`'s
+/// iterator keeps its place in a userdata value.
+///
+/// @param state the sandbox state, with the `string` table on top
+void install_patterns(lua_State* state);
+
 /// Opens the math library. May raise.
 ///
 /// @param state the state being opened

@@ -60,6 +60,15 @@ moves that state; the moved-from object has no state.
   `push`, `read` and the `run_host` work may raise and must not throw.
 - The instruction allowance is per phase and is not a clock. The memory cap
   is the Lua allocation only. Passing either one sticks for that phase.
+- `string.find`, `string.match`, `string.gmatch` and `string.gsub` count
+  their work against that allowance. A step is one entry into the matcher,
+  one character a `*`, `+` or `-` repetition tries, or one character a `%b`
+  pair scans. When the count reaches the allowance, the phase stops with the
+  same instruction-budget error as a loop that does not end, and a `pcall`
+  around the call does not let the phase continue. Within the allowance the
+  four functions return the same values, of the same types, and raise the
+  same errors, as Lua 5.4.9. A call on a string value, such as `("x"):find`,
+  uses the same functions.
 - The sources in `third_party/lua` are unchanged. Every string hash uses one
   constant seed, `0x4F414C55` (the letters OALU), so two states walk the same
   table in the same order wherever they sit. `table.sort` does not draw a
@@ -153,10 +162,19 @@ draws. Both scripts are run with `python3 -I` and print the tables the test
 holds. `data-script-host-iteration` checks `pairs`, the refusal of unordered
 keys, and the name helpers.
 
+`data-script-host-patterns` runs each pattern case through the sandbox and
+through Lua's own string functions and compares every returned value, its
+type, and any error text. It also checks that a match which backtracks past
+the allowance stops with an instruction-budget error, including when the
+script catches that error itself, and that a long match which stays inside
+the allowance adds to `instructions_used`.
+
 ## Limitations
 
-Work done inside a C function, such as pattern matching, is not counted
-against the allowance. Text of numbers that must come out the same on every
-platform is not part of this library yet. A `__gc` or `__mode` entry added
-to a metatable after `setmetatable` is not caught. `instructions_used`
-counts in steps of the check interval, so a short phase can report zero.
+Some work inside a C function is bounded by memory, not by the instruction
+count: `table.sort` with no comparison function, `table.concat`, and
+`string.rep` up to its cap. Text of numbers that must come out the same on
+every platform is not part of this library yet. A `__gc` or `__mode` entry
+added to a metatable after `setmetatable` is not caught. `instructions_used`
+counts Lua instructions in steps of the check interval, so a short phase can
+report zero; pattern steps are counted one by one.
