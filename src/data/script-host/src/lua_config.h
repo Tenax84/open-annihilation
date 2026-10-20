@@ -10,6 +10,12 @@
 #define l_randomizePivot() (~0u)                  // stops table.sort drawing a pivot from the clock
 #define lua_getlocaledecpoint() ('.')             // stops numbers taking the locale's decimal point
 
+// pow differs across libm and the old Windows runtime, so the operator calls
+// the engine. Squaring stays a multiply: that result is exact in IEEE 754.
+/// Returns `base` raised to `exponent` with the engine's arithmetic.
+double oa_script_host_power(double base, double exponent);
+#define luai_numpow(L, a, b) ((void)(L), (b) == 2 ? (a) * (a) : oa_script_host_power((a), (b)))
+
 #include "lprefix.h"
 
 #include <assert.h>

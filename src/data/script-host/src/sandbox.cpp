@@ -529,6 +529,7 @@ std::optional<Sandbox> Sandbox::open(const OpenOptions& options, ScriptError& er
             control->instruction_allowance = options.profile.budget.instructions;
             control->sources = options.sources;
             control->package_id = options.package_id;
+            control->random_seed = options.random_seed;
             control->install = options.profile.install;
             control->install_context = options.profile.context;
             write_budget_messages(*control);
