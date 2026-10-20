@@ -3,10 +3,12 @@
 
 // The Library's search over made-up packages: a name beats a tag, a tag an
 // author or publisher, and those a summary; several words; a word in no
-// field hides the entry; ASCII folding; tag prefixes; the 64-byte cap at a
+// field hides the entry; ASCII folding; tag prefixes, including a translated
+// label of a known id and a different case of that id; the 64-byte cap at a
 // character boundary; and ties ordered by name and then registry.
 #include "oa/test/check.hpp"
 #include "oa/ui/library/library.hpp"
+#include "oa/ui/library/text.hpp"
 
 #include <cstddef>
 #include <optional>
@@ -249,6 +251,29 @@ void test_ties() {
     OA_CHECK(found(library, "") == by_name);
 }
 
+/// Translates the Economy tag and leaves every other word as written.
+///
+/// @param english the pattern
+/// @return its translation, or the pattern
+std::string_view economy_in_german(void*, std::string_view english) {
+    if (english == lib::words::tag_economy)
+        return "Wirtschaft";
+    return english;
+}
+
+void test_translated_tag() {
+    lib::Listing known = mod(core, "quarry", "Quarry");
+    known.tags = {"economy"};
+    lib::Listing capital = mod(core, "capital", "Capital Tag");
+    capital.tags = {"Economy"};
+    lib::Library library = on_mods();
+    library.text.shown = economy_in_german;
+    lib::refresh(library, inputs_with({known, capital}));
+    // The shown label matches the id economy. A different case is not that id.
+    OA_CHECK(found(library, "Wirtschaft") == Keys({"quarry@fixture-core"}));
+    OA_CHECK(found(library, "econ") == Keys({"capital@fixture-core", "quarry@fixture-core"}));
+}
+
 void test_installed_names() {
     lib::Inputs inputs = inputs_with({});
     lib::Installed own;
@@ -268,6 +293,7 @@ int main() {
     test_several_words();
     test_folding();
     test_tag_prefix();
+    test_translated_tag();
     test_query_cap();
     test_ties();
     test_installed_names();

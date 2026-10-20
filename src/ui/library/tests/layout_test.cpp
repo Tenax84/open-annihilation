@@ -1274,6 +1274,7 @@ void tab_follows_the_declared_order() {
         "library.tab.active",
         "library.tab.mods",
         "library.tab.maps",
+        "library.tab.mutators",
         "library.tab.languages",
         "library.tab.updates",
         "library.tab.registries",
@@ -1316,9 +1317,9 @@ void tab_follows_the_declared_order() {
     OA_CHECK(regular.size() > regular_end.size() + 5);
     OA_CHECK(std::equal(regular_end.rbegin(), regular_end.rend(), regular.rbegin()));
     OA_CHECK(
-        regular.size() > 10 && regular[0] == "library.tab.active" &&
-        regular[6] == "library.search" && regular[7] == "library.filter.all" &&
-        regular[8] == "library.filter.new"
+        regular.size() > 11 && regular[0] == "library.tab.active" &&
+        regular[7] == "library.search" && regular[8] == "library.filter.all" &&
+        regular[9] == "library.filter.new"
     );
 }
 
@@ -4239,6 +4240,8 @@ std::string_view wordy_tabs(void*, std::string_view english) {
         return "Modyfikatsiyi";
     if (english == lib::words::tab_maps)
         return "Mapyyyyyyy";
+    if (english == lib::words::tab_mutators)
+        return "Mutatoryyyyyy";
     if (english == lib::words::tab_languages)
         return "Movyyyyyyyy";
     if (english == lib::words::tab_updates)
@@ -4261,7 +4264,8 @@ kit::Rect pressed_area(const kit::Control& control) {
 /// Where a catalogue tab's names do not fit beside the search, at Regular
 /// and Large, the tabs take the whole row and the search a row under them:
 /// every tab is shown whole and none lies under the search, so a press on
-/// a tab, Registries among them, opens it. English keeps the search beside.
+/// a tab, Registries among them, opens it. English fits beside the search
+/// at Large. At Regular the seven captions take the row.
 void wordy_tabs_take_the_row_over_the_search() {
     for (const fixture::NamedFrame& named : fixture::frames()) {
         if (named.frame.size_class == kit::SizeClass::compact)
@@ -4280,10 +4284,14 @@ void wordy_tabs_take_the_row_over_the_search() {
             const auto* look = std::get_if<kit::TabsLook>(&strip->look);
             OA_CHECK(look != nullptr && !kit::place_tabs(fonts(), strip->rect, *look).overflows);
             const bool beside = search->rect.y < strip->rect.y + strip->rect.height;
-            if (!wordy)
-                OA_CHECK(beside);
+            if (!wordy) {
+                if (named.frame.size_class == kit::SizeClass::large)
+                    OA_CHECK(beside);
+                if (named.frame.size_class == kit::SizeClass::regular)
+                    OA_CHECK(!beside);
+            }
             for (const std::string_view word :
-                 {"active", "mods", "maps", "languages", "updates", "registries"}) {
+                 {"active", "mods", "maps", "mutators", "languages", "updates", "registries"}) {
                 const kit::Control* tab = fixture::named(list, "library.tab." + std::string(word));
                 OA_CHECK(tab != nullptr);
                 if (tab == nullptr)
@@ -4308,8 +4316,98 @@ void wordy_tabs_take_the_row_over_the_search() {
     }
 }
 
+/// A Library of the five made-up mutators, on the Mutators tab.
+///
+/// @return the Library
+lib::Library mutators_library() {
+    lib::Inputs inputs;
+    lib::Registry built_in;
+    built_in.id = "fixture-core";
+    built_in.name = "Fixture Core";
+    built_in.built_in = true;
+    inputs.registries.push_back(built_in);
+    inputs.engine = {0, 8, 0};
+    inputs.version_text = "v0.8.0";
+    const auto add = [&](std::string key, std::string name, std::vector<std::string> tags) {
+        lib::Listing made;
+        made.registry = "fixture-core";
+        made.kind = lib::Kind::mutator;
+        made.key = std::move(key);
+        made.name = std::move(name);
+        made.version = "1.0";
+        made.author = "Fixture Author";
+        made.summary = "A made-up mutator.";
+        made.size = 1024;
+        lib::MutatorFacts facts;
+        facts.tags = std::move(tags);
+        facts.works_with.push_back({"*", {}, {}});
+        made.mutator = std::move(facts);
+        inputs.listings.push_back(std::move(made));
+    };
+    add("fast-builders", "Fast Builders", {"economy", "statistics"});
+    add("gatehouse", "Gatehouse", {"gameplay", "new-units"});
+    add("gatehouse-keep", "Gatehouse Keep", {"economy"});
+    add("ridge-walls", "Ridge Walls", {"commanders"});
+    add("grounded", "Grounded", {"disable", "ai", "maps"});
+    lib::Library library;
+    lib::refresh(library, std::move(inputs));
+    lib::set_tab(library, lib::Tab::mutators);
+    return library;
+}
+
+/// The search field's placeholder, or empty when the layout has no search.
+///
+/// @param list the display list
+/// @return the placeholder
+std::string search_placeholder(const kit::DisplayList& list) {
+    for (const kit::Item& item : list.items) {
+        if (item.role != kit::Role::field)
+            continue;
+        if (const auto* look = std::get_if<kit::SearchLook>(&item.look))
+            return look->placeholder;
+    }
+    return {};
+}
+
+/// The Mutators tab lays out at every frame: its parts stay inside the
+/// window, its controls do not meet, Tab's order and the names hold, and
+/// every text fits. The open tab stays wholly in view, including on a
+/// strip narrower than Compact.
+void mutators_tab_holds_its_invariants() {
+    const lib::Library library = mutators_library();
+    const std::string full(lib::words::search_mutators);
+    for (const fixture::NamedFrame& named : fixture::frames()) {
+        const kit::DisplayList list = laid_out(library, {}, named.frame);
+        const kit::Point window = lib::window_size(named.frame);
+        OA_EXPECT_NONE(fixture::outside_window(list, window), named.name + " mutators");
+        OA_EXPECT_NONE(meeting_controls(list), named.name + " mutators");
+        OA_EXPECT_NONE(order_problems(list), named.name + " mutators");
+        OA_EXPECT_NONE(name_problems(list), named.name + " mutators");
+        OA_EXPECT_NONE(fixture::texts_not_fitting(list, fonts()), named.name + " mutators");
+        const kit::Control* tab = fixture::named(list, "library.tab.mutators");
+        OA_CHECK(tab != nullptr && tab->text.starts_with("Mutators ("));
+        OA_CHECK(open_tab_is_shown(list));
+        const std::string placeholder = search_placeholder(list);
+        const bool whole = placeholder == full;
+        const bool cut = placeholder.size() >= 3 && placeholder.ends_with("...") &&
+                         full.starts_with(placeholder.substr(0, placeholder.size() - 3));
+        OA_CHECK(whole || cut);
+        if (named.frame.size_class != kit::SizeClass::compact)
+            OA_CHECK(whole);
+    }
+
+    kit::Frame narrow;
+    narrow.area = {0, 0, 280, 480};
+    narrow.size_class = kit::SizeClass::compact;
+    narrow.scale_percent = 100;
+    const kit::DisplayList narrow_list = laid_out(library, {}, narrow);
+    OA_CHECK(open_tab_is_shown(narrow_list));
+    OA_EXPECT_NONE(fixture::texts_not_fitting(narrow_list, fonts()), "narrow mutators");
+}
+
 int main() {
     every_frame_holds_its_invariants();
+    mutators_tab_holds_its_invariants();
     wordy_tabs_take_the_row_over_the_search();
     larger_classes_show_more();
     built_in_languages_show_on_the_list();

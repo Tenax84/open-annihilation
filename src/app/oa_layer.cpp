@@ -753,7 +753,7 @@ std::string_view library_word(void* /*context*/, std::string_view english) {
 /// shown. While the package count is final it is "Library · 1 package" or
 /// "Library · N packages", and "Library · N packages · 1 update" or
 /// "Library · N packages · M updates" while updates wait. A package is a
-/// mod, a map pack, a language pack or a downloaded expansion. While the
+/// mod, a map pack, a language pack, a mutator or a downloaded expansion. While the
 /// count is not final the package count is left out: "Library", or
 /// "Library · 1 update" and "Library · N updates".
 ///

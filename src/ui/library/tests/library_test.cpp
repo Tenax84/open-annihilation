@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -1949,6 +1950,16 @@ std::string_view reversed_words(void*, std::string_view english) {
     return english;
 }
 
+/// A made-up lookup that translates the Economy tag and nothing else.
+///
+/// @param english the pattern
+/// @return its translation, or the pattern
+std::string_view economy_in_german(void*, std::string_view english) {
+    if (english == lib::words::tag_economy)
+        return "Wirtschaft";
+    return english;
+}
+
 /// Tells whether the visible list holds a key.
 ///
 /// @param library the Library
@@ -2287,6 +2298,7 @@ void test_tab_counts() {
     OA_CHECK(lib::tab_count(library, lib::Tab::active) == 0);
     OA_CHECK(lib::tab_count(library, lib::Tab::mods) == 2);
     OA_CHECK(lib::tab_count(library, lib::Tab::maps) == 1);
+    OA_CHECK(lib::tab_count(library, lib::Tab::mutators) == 0);
     OA_CHECK(lib::tab_count(library, lib::Tab::languages) == 1);
     OA_CHECK(lib::tab_count(library, lib::Tab::updates) == lib::update_count(library));
     OA_CHECK(lib::tab_count(library, lib::Tab::registries) == 2);
@@ -2333,6 +2345,10 @@ void test_added_package_count() {
     OA_CHECK(lib::added_package_count(listed) == 4);
     listed.content.downloaded = {"cavedog-units"};
     OA_CHECK(lib::added_package_count(listed) == 5);
+    listed.installed.push_back(
+        installed(core, Kind::mutator, "counted-mutator", "Counted Mutator")
+    );
+    OA_CHECK(lib::added_package_count(listed) == 6);
 }
 
 void test_tabs_list_what_their_counts_hold() {
@@ -4258,6 +4274,288 @@ void test_command_line_lock() {
     OA_CHECK(locked_states > 0);
 }
 
+void test_mutators() {
+    // Mutators sits between Maps and Languages. Updates still opens on
+    // Updates; Mutators opens on All. The tab keeps its full word.
+    OA_CHECK(lib::tab_total == 7);
+    const lib::Tab order[] = {
+        lib::Tab::active,
+        lib::Tab::mods,
+        lib::Tab::maps,
+        lib::Tab::mutators,
+        lib::Tab::languages,
+        lib::Tab::updates,
+        lib::Tab::registries,
+    };
+    OA_CHECK(std::size(order) == lib::tab_total);
+    for (std::size_t index = 0; index < std::size(order); ++index)
+        OA_CHECK(static_cast<lib::Tab>(index) == order[index]);
+    const lib::Library fresh;
+    OA_CHECK(fresh.filters[static_cast<std::size_t>(lib::Tab::mods)] == lib::Filter::all);
+    OA_CHECK(fresh.filters[static_cast<std::size_t>(lib::Tab::mutators)] == lib::Filter::all);
+    OA_CHECK(fresh.filters[static_cast<std::size_t>(lib::Tab::languages)] == lib::Filter::all);
+    OA_CHECK(fresh.filters[static_cast<std::size_t>(lib::Tab::updates)] == lib::Filter::updates);
+    OA_CHECK(fresh.filters[static_cast<std::size_t>(lib::Tab::registries)] == lib::Filter::all);
+    OA_CHECK_TEXT(lib::tab_text(lib::Tab::mutators, false), "Mutators");
+    OA_CHECK_TEXT(lib::tab_text(lib::Tab::mutators, true), "Mutators");
+
+    lib::Inputs inputs = base_inputs();
+    lib::Listing fast = listing(core, Kind::mutator, "fast-builders", "Fast Builders");
+    fast.published = "2026-02-01";
+    fast.tags = {"not-a-fact"};
+    lib::MutatorFacts fast_facts;
+    fast_facts.tags = {"economy", "statistics"};
+    fast_facts.works_with.push_back({"*", "", ""});
+    fast.mutator = fast_facts;
+    inputs.listings.push_back(fast);
+    lib::Installed fast_held = installed(core, Kind::mutator, "fast-builders", "Fast Builders");
+    lib::MutatorFacts fast_installed_facts;
+    fast_installed_facts.tags = {"installed-only"};
+    fast_installed_facts.works_with.push_back({"*", "", ""});
+    fast_held.mutator = fast_installed_facts;
+    inputs.installed.push_back(fast_held);
+    inputs.updates.push_back(update(core, Kind::mutator, "fast-builders"));
+
+    lib::Listing gatehouse = listing(core, Kind::mutator, "gatehouse", "Gatehouse");
+    gatehouse.version = "4.1";
+    lib::MutatorFacts gatehouse_facts;
+    gatehouse_facts.tags = {"gameplay", "new-units"};
+    gatehouse.mutator = gatehouse_facts;
+    inputs.listings.push_back(gatehouse);
+    lib::Installed gatehouse_held = installed(core, Kind::mutator, "gatehouse", "Gatehouse");
+    gatehouse_held.version = "4.1";
+    gatehouse_held.mutator = gatehouse_facts;
+    inputs.installed.push_back(gatehouse_held);
+
+    lib::Listing keep = listing(core, Kind::mutator, "gatehouse-keep", "Gatehouse Keep");
+    keep.version = "2.0";
+    keep.published = "2026-03-01";
+    lib::MutatorFacts keep_facts;
+    keep_facts.tags = {"economy"};
+    lib::Prerequisite need;
+    need.id = "gatehouse";
+    need.range = ">= 4.0";
+    need.name = "Gatehouse";
+    keep_facts.needs.push_back(need);
+    keep.mutator = keep_facts;
+    inputs.listings.push_back(keep);
+
+    lib::Listing walls = listing(core, Kind::mutator, "ridge-walls", "Ridge Walls");
+    lib::MutatorFacts wall_facts;
+    wall_facts.tags = {"commanders", "alpha-extra"};
+    wall_facts.works_with.push_back({"ridge", "", "Ridge"});
+    walls.mutator = wall_facts;
+    inputs.listings.push_back(walls);
+
+    lib::Listing grounded = listing(core, Kind::mutator, "grounded", "Grounded");
+    lib::MutatorFacts grounded_facts;
+    grounded_facts.tags = {"disable", "ai", "maps", "zebra"};
+    grounded.mutator = grounded_facts;
+    inputs.listings.push_back(grounded);
+
+    lib::Installed own = installed({}, Kind::mutator, "homemade", "homemade");
+    lib::MutatorFacts own_facts;
+    own_facts.tags = {"statistics"};
+    own.mutator = own_facts;
+    inputs.installed.push_back(own);
+
+    inputs.listings.push_back(listing(core, Kind::mod, "ridge", "Ridge"));
+    inputs.installed.push_back(installed(core, Kind::mod, "ridge", "Ridge"));
+    inputs.updates.push_back(update(core, Kind::mod, "ridge"));
+
+    lib::Library library = built(std::move(inputs));
+    lib::set_tab(library, lib::Tab::mutators);
+    OA_CHECK(lib::shown_filter(library) == lib::Filter::all);
+
+    const auto entry_of = [&](std::string_view registry, std::string_view key) {
+        return at(library, registry, Kind::mutator, key);
+    };
+    const lib::Entry* fast_row = entry_of(core, "fast-builders");
+    const lib::Entry* own_row = entry_of("", "homemade");
+    const lib::Entry* gatehouse_row = entry_of(core, "gatehouse");
+    const lib::Entry* keep_row = entry_of(core, "gatehouse-keep");
+    const lib::Entry* walls_row = entry_of(core, "ridge-walls");
+    OA_CHECK(fast_row != nullptr && fast_row->state == State::update && fast_row->can_act);
+    OA_CHECK(fast_row != nullptr && fast_row->blocked.empty() && !fast_row->not_compatible);
+    OA_CHECK(own_row != nullptr && own_row->state == State::installed && own_row->can_act);
+    OA_CHECK(own_row != nullptr && own_row->blocked.empty() && own_row->id.registry.empty());
+    OA_CHECK(gatehouse_row != nullptr && gatehouse_row->state == State::installed);
+    OA_CHECK(keep_row != nullptr && keep_row->state == State::get && keep_row->can_act);
+    OA_CHECK(keep_row != nullptr && keep_row->blocked.empty() && keep_row->needs_missing.empty());
+    OA_CHECK(walls_row != nullptr && walls_row->state == State::get && walls_row->not_compatible);
+    OA_CHECK(walls_row != nullptr && walls_row->blocked.empty() && walls_row->can_act);
+    if (walls_row != nullptr) {
+        OA_CHECK(actions_of(library, *walls_row).front() == std::make_pair(lib::Action::get, true));
+    }
+
+    using Keys = std::vector<std::string>;
+    const Keys every = {
+        "fast-builders@fixture-core",
+        "gatehouse@fixture-core",
+        "homemade@",
+        "gatehouse-keep@fixture-core",
+        "grounded@fixture-core",
+        "ridge-walls@fixture-core",
+    };
+    OA_CHECK(visible_keys(library) == every);
+    OA_CHECK(lib::tab_count(library, lib::Tab::mutators) == 6);
+    OA_CHECK(lib::filter_count(library, lib::Filter::all) == 6);
+    OA_CHECK(lib::filter_count(library, lib::Filter::installed) == 3);
+    OA_CHECK(lib::filter_count(library, lib::Filter::updates) == 1);
+    OA_CHECK(lib::filter_count(library, lib::Filter::newest) == 2);
+    OA_CHECK_TEXT(lib::filter_caption(library, lib::Filter::all), "All (6)");
+    OA_CHECK_TEXT(lib::filter_caption(library, lib::Filter::installed), "Installed (3)");
+    OA_CHECK_TEXT(lib::filter_caption(library, lib::Filter::updates), "Updates (1)");
+    OA_CHECK_TEXT(lib::filter_caption(library, lib::Filter::newest), "New (2)");
+
+    using Counts = std::vector<std::pair<std::string, std::size_t>>;
+    const Counts tags = {
+        {"statistics", 2},
+        {"economy", 2},
+        {"commanders", 1},
+        {"new-units", 1},
+        {"disable", 1},
+        {"gameplay", 1},
+        {"ai", 1},
+        {"maps", 1},
+        {"alpha-extra", 1},
+        {"zebra", 1},
+    };
+    OA_CHECK(lib::tags_in_tab(library) == tags);
+
+    lib::set_filter(library, lib::Filter::newest);
+    OA_CHECK(
+        visible_keys(library) == Keys({"gatehouse-keep@fixture-core", "fast-builders@fixture-core"})
+    );
+    lib::set_filter(library, lib::Filter::installed);
+    OA_CHECK(
+        visible_keys(library) ==
+        Keys({"fast-builders@fixture-core", "gatehouse@fixture-core", "homemade@"})
+    );
+    lib::set_filter(library, lib::Filter::updates);
+    OA_CHECK(visible_keys(library) == Keys({"fast-builders@fixture-core"}));
+    lib::set_filter(library, lib::Filter::all);
+
+    lib::set_tab(library, lib::Tab::updates);
+    OA_CHECK(lib::shown_filter(library) == lib::Filter::updates);
+    OA_CHECK(visible_keys(library) == Keys({"fast-builders@fixture-core", "ridge@fixture-core"}));
+    OA_CHECK(lib::update_count(library) == 2);
+
+    lib::set_tab(library, lib::Tab::mutators);
+    lib::select(library, {std::string(core), Kind::mutator, "ridge-walls"});
+    const std::string note = lib::details_note(library);
+    OA_CHECK(note.find("Not compatible with this mod") != std::string::npos);
+    OA_CHECK(note.find("Ridge") != std::string::npos);
+
+    // A game, then downloads turned off, then an engine this build lacks.
+    // An installed mutator is never blocked.
+    lib::Inputs blocked_inputs = base_inputs();
+    lib::Listing old = listing(core, Kind::mutator, "old-engine", "Old Engine");
+    old.requires_engine = ">= 9.0.0";
+    lib::MutatorFacts old_facts;
+    old_facts.works_with.push_back({"*", "", ""});
+    old.mutator = old_facts;
+    blocked_inputs.listings.push_back(old);
+    blocked_inputs.in_match = true;
+    lib::Library blocked = built(blocked_inputs);
+    const auto blocked_of = [&](const lib::Library& held) {
+        const lib::Entry* entry = at(held, core, Kind::mutator, "old-engine");
+        OA_CHECK(entry != nullptr);
+        return entry != nullptr ? entry->blocked : std::string("(none)");
+    };
+    OA_CHECK_TEXT(blocked_of(blocked), "Not during a game");
+    blocked_inputs.in_match = false;
+    blocked_inputs.registries[0].downloads_on = false;
+    lib::refresh(blocked, blocked_inputs);
+    OA_CHECK_TEXT(
+        blocked_of(blocked), "Downloads from Fixture Core are off (Settings › Downloads)"
+    );
+    blocked_inputs.registries[0].downloads_on = true;
+    lib::refresh(blocked, blocked_inputs);
+    OA_CHECK_TEXT(blocked_of(blocked), "Needs Open Annihilation 9.0.0 or later");
+    blocked_inputs.in_match = true;
+    blocked_inputs.registries[0].downloads_on = false;
+    blocked_inputs.installed.push_back(installed(core, Kind::mutator, "old-engine", "Old Engine"));
+    lib::refresh(blocked, blocked_inputs);
+    const lib::Entry* held = at(blocked, core, Kind::mutator, "old-engine");
+    OA_CHECK(held != nullptr && held->state == State::installed);
+    OA_CHECK(held != nullptr && held->can_act && held->blocked.empty());
+
+    // The name is the one the inputs carry. 4.1 meets the range; 3.9 does not.
+    lib::Inputs needed = base_inputs();
+    lib::Listing unmet = listing(core, Kind::mutator, "gatehouse-keep", "Gatehouse Keep");
+    unmet.mutator = keep_facts;
+    needed.listings.push_back(unmet);
+    lib::Library none_held = built(needed);
+    const lib::Entry* absent = at(none_held, core, Kind::mutator, "gatehouse-keep");
+    OA_CHECK(absent != nullptr && absent->needs_missing == "Gatehouse" && absent->can_act);
+    needed.installed.push_back(installed(core, Kind::mutator, "gatehouse", "Gatehouse"));
+    needed.installed.back().version = "3.9";
+    lib::Library too_old = built(needed);
+    const lib::Entry* short_version = at(too_old, core, Kind::mutator, "gatehouse-keep");
+    OA_CHECK(short_version != nullptr && short_version->needs_missing == "Gatehouse");
+    OA_CHECK(short_version != nullptr && short_version->can_act && short_version->blocked.empty());
+    needed.installed.back().version = "4.1";
+    lib::Library met = built(needed);
+    const lib::Entry* satisfied = at(met, core, Kind::mutator, "gatehouse-keep");
+    OA_CHECK(satisfied != nullptr && satisfied->needs_missing.empty() && satisfied->can_act);
+
+    // An empty installed works-with list means any mod, ahead of the listing.
+    lib::Inputs over = base_inputs();
+    lib::Listing listed_walls = listing(core, Kind::mutator, "ridge-walls", "Ridge Walls");
+    listed_walls.mutator = wall_facts;
+    over.listings.push_back(listed_walls);
+    lib::Installed held_walls = installed(core, Kind::mutator, "ridge-walls", "Ridge Walls");
+    held_walls.mutator = lib::MutatorFacts{};
+    over.installed.push_back(held_walls);
+    const lib::Library overridden = built(std::move(over));
+    const lib::Entry* freed = at(overridden, core, Kind::mutator, "ridge-walls");
+    OA_CHECK(freed != nullptr && !freed->not_compatible && freed->can_act);
+
+    lib::Inputs played = base_inputs();
+    lib::MutatorFacts any;
+    OA_CHECK(lib::works_with_played(played, any));
+    any.works_with.push_back({"*", "", ""});
+    OA_CHECK(lib::works_with_played(played, any));
+    lib::MutatorFacts base_only;
+    base_only.works_with.push_back({std::string(lib::supported_base), "", ""});
+    OA_CHECK(lib::works_with_played(played, base_only));
+    played.played.id = "ridge";
+    OA_CHECK(!lib::works_with_played(played, base_only));
+    lib::MutatorFacts ridge_only;
+    ridge_only.works_with.push_back({"ridge", ">= 4.0", "Ridge"});
+    played.played = {"ridge", "5.0", "Ridge"};
+    OA_CHECK(lib::works_with_played(played, ridge_only));
+    played.played.version = "3.9";
+    OA_CHECK(!lib::works_with_played(played, ridge_only));
+    played.played.version = "5b";
+    OA_CHECK(!lib::works_with_played(played, ridge_only));
+    played.played = {"other", "5.0", "Other"};
+    OA_CHECK(!lib::works_with_played(played, ridge_only));
+
+    OA_CHECK(lib::tag_label("statistics") == lib::words::tag_statistics);
+    OA_CHECK(lib::tag_label("economy") == lib::words::tag_economy);
+    OA_CHECK(lib::tag_label("commanders") == lib::words::tag_commanders);
+    OA_CHECK(lib::tag_label("new-units") == lib::words::tag_new_units);
+    OA_CHECK(lib::tag_label("disable") == lib::words::tag_disable);
+    OA_CHECK(lib::tag_label("gameplay") == lib::words::tag_gameplay);
+    OA_CHECK(lib::tag_label("ai") == lib::words::tag_ai);
+    OA_CHECK(lib::tag_label("maps") == lib::words::tab_maps);
+    OA_CHECK(lib::tag_label("balance") == "balance");
+    OA_CHECK(lib::tag_label("Economy") == "Economy");
+    lib::TextHooks hooks;
+    hooks.shown = economy_in_german;
+    OA_CHECK(lib::tag_label("economy", hooks) == "Wirtschaft");
+    OA_CHECK(lib::tag_label("Economy", hooks) == "Economy");
+
+    lib::Inputs capital_inputs = base_inputs();
+    lib::Listing capital = listing(core, Kind::mod, "capital-mod", "Capital Mod");
+    capital.tags = {"Economy"};
+    capital_inputs.listings.push_back(capital);
+    const lib::Library capital_library = built(std::move(capital_inputs));
+    OA_CHECK(lib::tags_in_tab(capital_library) == Counts({{"Economy", 1}}));
+}
+
 void test_lookup() {
     lib::TextHooks hooks;
     hooks.shown = reversed_words;
@@ -4318,6 +4616,7 @@ int main() {
     test_texts();
     test_registry_texts();
     test_package_needs();
+    test_mutators();
     test_lookup();
     return oa::test::check_exit_status();
 }
