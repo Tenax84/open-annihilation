@@ -632,30 +632,26 @@ void masks_hide_files() {
     check(oa::mutator_mask_problem("*").empty(), "a star segment is valid");
     check(oa::mutator_mask_problem("*a*").empty(), "stars inside a segment are valid");
 
-    const char* refused[] = {
-        "",
-        "/units/*",
-        "\\units\\*",
-        "c:/units/*",
-        "units/\0*",
-        "units//a",
-        "units/",
-        "units/./a",
-        "units/../a",
-        ".backup/a",
-        ".BACKUP/*",
-        "*****************",
-        "***",
-        "a**b",
-        "**.fbi",
+    // Each pattern keeps its own length, so "units/\0*" holds its embedded NUL.
+    const std::string_view refused[] = {
+        std::string_view{"", 0},
+        std::string_view{"/units/*", 8},
+        std::string_view{"\\units\\*", 8},
+        std::string_view{"c:/units/*", 10},
+        std::string_view{"units/\0*", 8},
+        std::string_view{"units//a", 8},
+        std::string_view{"units/", 6},
+        std::string_view{"units/./a", 9},
+        std::string_view{"units/../a", 10},
+        std::string_view{".backup/a", 9},
+        std::string_view{".BACKUP/*", 9},
+        std::string_view{"*****************", 17},
+        std::string_view{"***", 3},
+        std::string_view{"a**b", 4},
+        std::string_view{"**.fbi", 6},
     };
-    for (const char* pattern : refused) {
-        // "units/\0*" is the one element that holds an embedded NUL.
-        std::string text_pattern;
-        if (pattern[0] == 'u' && std::char_traits<char>::length(pattern) == 6 && pattern[5] == '/')
-            text_pattern.assign(pattern, 8);
-        else
-            text_pattern = pattern;
+    for (const std::string_view pattern : refused) {
+        const std::string text_pattern(pattern);
         check(!oa::mutator_mask_problem(text_pattern).empty(), "refused: " + fold(text_pattern));
         check(
             !oa::mutator_mask_matches(text_pattern, "units/a"), "a refused pattern matches nothing"
