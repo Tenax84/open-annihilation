@@ -90,9 +90,11 @@ cut_to_width(const Fonts& fonts, FontRole role, std::string_view text, int32_t w
 /// The face is the hover colour while hovered; a selected row is tinted
 /// with the accent and outlined in it. The badge is a square of the row's
 /// height less two insets, at most list_row_badge, at the left inset and
-/// centred down the row: the picture when it is drawable, else the badge
-/// text on its colour, else a blank dashed square. Right of it, the title in
-/// the regular font with the byline after it in the small font, then each
+/// centred down the row, drawn by draw_badge: the picture when it is
+/// drawable, else the row's tag icon on badge_colour, else the badge text
+/// on its colour, else a blank dashed square. Right of it, the title in
+/// the regular font with the byline after it in the small font, in
+/// by_colour or the hint colour, then each
 /// line in the small font one under another, each cut with "..." to its
 /// room, and the tags as chips on the line after the last. The text is
 /// centred down the row; in a row short_list_row_height high it lies as the
@@ -122,6 +124,51 @@ void draw_list_row(const Canvas& canvas, const Rect& rect, const ListRowLook& lo
 /// @param name the control's automation name
 void add_list_row(
     DisplayList& list, const Rect& rect, const ListRowLook& look, ControlId id, std::string name
+);
+
+// ---- Package badges ----
+
+/// Draws a package badge in a square: the picture, with a control_border
+/// outline, when it is drawable; else the tag's icon in on_accent on the
+/// face, its square 70 percent of the badge's shorter side and centred;
+/// else the letters on the face, cut to the whole letters that fit the
+/// square, with no ellipsis; else a dashed blank square.
+///
+/// @param canvas where it is drawn
+/// @param rect the badge's rectangle; a square uses its side
+/// @param look what the badge shows
+void draw_badge(const Canvas& canvas, const Rect& rect, const BadgeLook& look);
+
+/// Appends a package badge: one item and no control.
+///
+/// @param[in,out] list the display list
+/// @param rect the badge
+/// @param look what the badge shows
+void add_badge(DisplayList& list, const Rect& rect, const BadgeLook& look);
+
+// ---- Drag handles ----
+
+/// Draws a drag handle: two columns of four discs, 3 points apart and 1
+/// point in radius, centred in the rectangle and worked out at the canvas's
+/// own pixels. Rest is quiet, hovered is the text colour, held is the accent
+/// and disabled is control_hover. Disabled wins over held, and held over hovered.
+///
+/// @param canvas where it is drawn
+/// @param rect the handle; grip_width by grip_height in the gallery
+/// @param look which colour
+void draw_grip(const Canvas& canvas, const Rect& rect, const GripLook& look);
+
+/// Appends a drag handle: one item and, for a control id, one control of
+/// kind button that takes no steps, its text empty, enabled unless the
+/// handle is disabled. no_control adds the item alone.
+///
+/// @param[in,out] list the display list
+/// @param rect the handle
+/// @param look which colour
+/// @param id the control's number, or no_control for the item alone
+/// @param name the control's automation name
+void add_grip(
+    DisplayList& list, const Rect& rect, const GripLook& look, ControlId id, std::string name
 );
 
 // ---- Chips ----
@@ -174,8 +221,9 @@ void add_chip(
 
 /// Returns a pill's width: its text in the small font, the semicircle at
 /// each end, and chip_padding more so the word stays clear of the border,
-/// and at least the pill's height so an empty pill stays a circle. An icon
-/// adds its square and a gap before the right end.
+/// and at least the pill's height so an empty pill stays a circle. A tag
+/// icon at the left, and a state icon at the right, each add their square
+/// and a gap.
 ///
 /// @param fonts the fonts
 /// @param look the pill
@@ -202,8 +250,9 @@ void add_chip(
 }
 
 /// Draws a pill: a small-font word centred on a fully rounded ground about
-/// chip_height high. An icon sits at the right, inside the capsule, and the
-/// word is centred in the room left of it. Playing and active are filled
+/// chip_height high. A tag icon sits at the left and a state icon at the
+/// right, each inside the capsule, and the word is centred in the room
+/// between them. Playing and active are filled
 /// with the accent under on_accent text. Neutral and inactive are a muted
 /// ground (control_hover) under the text colour. Installed, update and
 /// problem use that muted
