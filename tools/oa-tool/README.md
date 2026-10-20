@@ -47,8 +47,10 @@ same. `--` ends options. A command takes its options through
 | `asset-extract ROOT ENTRY OUTPUT [ARCHIVE...]` | Writes ENTRY from loose files under ROOT, or from the named archives, and prints where it was read. A loose file wins. |
 | `preview ARCHIVE PCX_ENTRY OUTPUT.ppm\|OUTPUT.png` | Decodes a PCX image from an archive as a PPM file, or a PNG file when the path ends in `.png`, and prints its size. |
 | `decode-pcx INPUT.pcx OUTPUT.ppm\|OUTPUT.png` | Decodes a PCX file the same way. |
-| `pack FOLDER [--out FILE] [--force] [--game-dir DIR]` | Packs FOLDER as a `.oamod`, a `.oalang` or a `.oamap`. The manifest is first, then every other file in byte order of its path. A file whose extension, without case, is png, jpg, jpeg, gif, ogg, mp3, zip, gz, bz2, xz, 7z, oamod, oalang or oamap, and an empty file, is stored; every other file is deflated. The same files give the same bytes. `--game-dir` is the game's data; map packs need the game's palette for previews. `--force` replaces an existing file. A map's `players` is the largest whole number in its OTA `numplayers` when every number is from 2 to 10, and otherwise the most start positions of a Network schema. The folder's `oamap.yaml` may leave `maps` out, or set a map's `name`, `description` or `players`. `size`, `preview` and `files` are computed. |
-| `check FILE [--game-dir DIR] [--mod FOLDER[=KEY]]... [--accept-unimplemented-hacks] [--json]` | Runs the checks an install runs before it writes, and reports the facts a catalogue lists. A map pack needs `--game-dir` and may name each further target with `--mod`. `--json` prints one JSON object, and a map pack adds `maps`. Otherwise each fact is a `key: value` line, a map pack then prints one line per map and target, and the last line is `result: ok` or `result: refused`. Exit 0 when the package would be installed, 1 when it would be refused or a map does not fit `ta-3.1c`. A mod that does not fit leaves that exit code unchanged. |
+| `pack FOLDER [--out FILE] [--force] [--game-dir DIR]` | Packs FOLDER as a `.oamod`, a `.oalang`, a `.oamap` or a `.oamut`. The manifest is first, then every other file in byte order of its path. A file whose extension, without case, is png, jpg, jpeg, gif, ogg, mp3, zip, gz, bz2, xz, 7z, oamod, oalang or oamap, and an empty file, is stored; every other file is deflated. The same files give the same bytes. `--game-dir` is the game's data; map packs need the game's palette for previews. `--force` replaces an existing file. A map's `players` is the largest whole number in its OTA `numplayers` when every number is from 2 to 10, and otherwise the most start positions of a Network schema. The folder's `oamap.yaml` may leave `maps` out, or set a map's `name`, `description` or `players`. `size`, `preview` and `files` are computed. A mutator's default name is `<id>-<version>.oamut`. Its Lua is compiled and its rule files are parsed before the file is written, and neither is run. `--game-dir` with a mutator is a usage error. |
+| `check FILE [--game-dir DIR] [--mod FOLDER[=KEY]]... [--accept-unimplemented-hacks] [--json]` | Runs the checks an install runs before it writes, and reports the facts a catalogue lists. A map pack needs `--game-dir` and may name each further target with `--mod`. `--json` prints one JSON object, and a map pack adds `maps`. A mutator adds `summary`, `description`, `homepage`, `tags`, `author`, `requires`, `works_with`, `conflicts_with`, `layers`, `options`, `icon`, `entry`, `scripts`, `rules` and `legacy`, and its `revision` is null. Without `--json` each fact is a `key: value` line, a map pack then prints one line per map and target, and the last line is `result: ok` or `result: refused`. Exit 0 when the package would be installed, 1 when it would be refused or a map does not fit `ta-3.1c`. A mod that does not fit leaves that exit code unchanged. |
+| `mutator pack FOLDER [--out FILE] [--force]` | Packs a folder whose top holds `oamut.yaml`, the same way `pack` does. A folder without `oamut.yaml` is a usage error. |
+| `mutator check FILE [--json]` | Checks a `.oamut` and reports the same facts as `check`. A file of another kind is a usage error. |
 | `catalogue keygen --id ID --out FILE [--passphrase-file FILE]` | Makes a new Ed25519 key, seals its seed with a passphrase and writes FILE. The file is created only when that name is new, and on macOS and Linux its mode is 0600. The passphrase is read from the terminal with echo off, twice, and has to be at least 12 bytes. `--passphrase-file` reads the file's first line instead. Prints `key:`, `public: ed25519:` and `fingerprint:`. |
 | `catalogue public KEY_FILE` | Prints the same three lines. The passphrase is not used. |
 | `catalogue sign --key KEY_FILE CATALOGUE [--out SIG] [--passphrase-file FILE]` | Signs CATALOGUE's exact bytes and writes CATALOGUE.sig, or SIG. The line is the one a catalogue check reads: `ed25519`, the key id and the signature. A catalogue this build would refuse is refused before the key is opened. The written pair is checked before the command reports success. Prints `signed <file> with <id>`. |
@@ -87,8 +89,9 @@ given, so a test can capture every line.
   files give the same bytes.
 - `check` accepts a package exactly when an install would, and reports
   `sim_hash` and `full_hash` from the profile resolved without the packaged
-  settings. A missing fact is left out; `revision` is null only when a
-  language pack has no packaging revision.
+  settings. A missing fact is left out. `revision` is null when a language
+  pack has no packaging revision, and for every mutator. A mutator's Lua is
+  compiled and its rule files are parsed, and neither is run.
 - The exit code is 0, 1 or 2.
 - `catalogue sign` writes the signature with the catalogue check's own
   line, and reports success only after that check accepts the written pair.
@@ -147,6 +150,11 @@ refused. Two packs of one folder have the same bytes.
 `tools-oa-tool-check` (`oa-tool-check-test`) checks a made-up mod package,
 its refusals, and a language manifest read on its own. Its argument is the
 pseudo pack's `language.yaml`.
+
+`tools-oa-tool-mutator` (`oa-tool-mutator-test`) packs a made-up mutator,
+checks the entry order, the methods and the JSON facts, and checks the
+refusals from `pack` and from `check`. `mutator pack` and `mutator check`
+are the same commands limited to a mutator.
 
 `tools-oa-tool-check-map` (`oa-tool-check-map-test`) checks a made-up map
 pack against a stand-in game and a made-up mod. `tools-oa-tool-check-map-data`

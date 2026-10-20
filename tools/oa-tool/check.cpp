@@ -11,6 +11,7 @@
 
 #include "arguments.hpp"
 #include "check_map.hpp"
+#include "check_mutator.hpp"
 #include "command.hpp"
 
 #include "oa/app/package_install/oamod.hpp"
@@ -813,6 +814,11 @@ int report(
         facts.end_object();
     }
 
+    const bool oamut = package != nullptr && kind != nullptr && kind->name == "oamut";
+    MutatorChecked mutator;
+    if (oamut)
+        check_mutator_scripts_and_rules(entries_of(*package), problems, mutator);
+
     json::JsonWriter writer;
     writer.begin_object();
     writer.key("check");
@@ -834,7 +840,10 @@ int report(
         write_text(writer, "name", package->incoming.name);
         write_text(writer, "version", package->incoming.version);
         writer.key("revision");
-        writer.integer(package->incoming.revision);
+        if (oamut)
+            writer.null();
+        else
+            writer.integer(package->incoming.revision);
     }
     if (hashed) {
         writer.key("size");
@@ -856,6 +865,8 @@ int report(
             copy_object_members(writer, facts.text());
         else if (kind != nullptr && kind->name == "expansion")
             describe_expansion(*package, writer);
+        else if (oamut)
+            describe_oamut(*package, writer, mutator);
     }
     writer.end_object();
 
