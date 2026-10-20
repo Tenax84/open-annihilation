@@ -22,6 +22,30 @@ inline constexpr std::size_t chunk_buffer_bytes = 160;
 inline constexpr std::size_t scratch_buffer_bytes = 3072;
 inline constexpr std::size_t budget_message_bytes = 160;
 
+/// Bytes of allocation or of a scan that count as one instruction.
+inline constexpr std::size_t bytes_per_charge = 64;
+
+/// One Lua value, laid out as the interpreter's own value.
+///
+/// The header that names that value is private to the interpreter, so the
+/// sandbox keeps this copy. `table_range_limit` is
+/// `default_memory_budget / sizeof(TValue)` from it.
+union ValueSlot {
+    void* pointer;
+    lua_CFunction function;
+    lua_Integer integer;
+    lua_Number number;
+    unsigned char byte;
+};
+
+struct TableSlot {
+    ValueSlot value;
+    unsigned char tag;
+};
+
+/// Most elements one table call may move or visit.
+inline constexpr std::size_t table_range_limit = default_memory_budget / sizeof(TableSlot);
+
 /// Which protected entry the trampoline runs.
 enum class PhaseMode : uint8_t { open_libraries, run_chunk, call, host, compile };
 
@@ -29,6 +53,19 @@ struct Sandbox::Control {
     std::size_t memory_cap{default_memory_budget};
     std::size_t memory_in_use{};
     bool allocation_refused{};
+
+    /// The state this block belongs to. Set before the libraries open.
+    lua_State* main_state{};
+    /// Set while the open measures the string header.
+    bool measuring_string_header{};
+    /// `nsize - length - 1` of one long string, or 0 until that measurement.
+    std::size_t string_header{};
+    /// A string past `string_length_limit` was refused. Sticky for the phase.
+    bool string_refused{};
+    uint64_t string_refused_length{};
+    /// Set while a chunk is being loaded, so a literal is blamed on that chunk.
+    bool loading_chunk{};
+    char string_message[budget_message_bytes]{};
 
     uint64_t instruction_allowance{default_instruction_budget};
     uint64_t instructions_used{};
@@ -206,5 +243,89 @@ void install_require(lua_State* state);
 /// @param control the state that tried to load
 /// @param state the state, with the loader's message at the top
 void remember_load_error(HostDetail::Control* control, lua_State* state);
+
+/// The instruction hook. Library code re-arms it when a charge spends the allowance.
+extern "C" void script_count_hook(lua_State* state, lua_Debug* activation);
+
+/// How many instruction units `bytes` cost, one per `bytes_per_charge`, rounded up.
+///
+/// @param bytes requested bytes, not the size the allocator happened to reserve
+/// @return the units, 0 when `bytes` is 0
+inline uint64_t units_for_bytes(std::size_t bytes) {
+    return (static_cast<uint64_t>(bytes) + bytes_per_charge - 1) / bytes_per_charge;
+}
+
+/// Adds `units` to the phase count and marks the allowance spent when it is reached.
+///
+/// Does not raise. The allocator uses this, because it cannot call into the
+/// state. The count hook raises on its next check.
+///
+/// @param control the state being charged
+/// @param units instruction units to add; 0 adds nothing
+inline void add_charge(HostDetail::Control* control, uint64_t units) {
+    if (control == nullptr || units == 0)
+        return;
+    const uint64_t room = UINT64_MAX - control->instructions_used;
+    if (units > room)
+        control->instructions_used = UINT64_MAX;
+    else
+        control->instructions_used += units;
+    if (control->instructions_used >= control->instruction_allowance)
+        control->allowance_spent = true;
+}
+
+/// Adds `units` and raises, as the count hook does, when the allowance is spent.
+///
+/// A string refusal raises the string message instead. No object with a
+/// destructor may be alive across this call.
+///
+/// @param state the sandbox state
+/// @param units instruction units to add
+inline void charge(lua_State* state, uint64_t units) {
+    HostDetail::Control* control = control_from(state);
+    if (control->string_refused) {
+        lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
+        luaL_error(state, "%s", control->string_message);
+    }
+    if (control->allowance_spent)
+        luaL_error(state, "%s", control->instruction_message);
+    add_charge(control, units);
+    if (control->allowance_spent) {
+        lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
+        luaL_error(state, "%s", control->instruction_message);
+    }
+}
+
+/// Records that `length` bytes would pass the string cap, and where it happened.
+///
+/// The first refusal sticks. `message` null uses the standard sentence naming
+/// `length` and 65536. Later calls do nothing.
+///
+/// @param control the state that refused the string
+/// @param length how many bytes the string would have held
+/// @param message the sentence to keep, or null for the standard one
+void record_string_limit(HostDetail::Control* control, uint64_t length, const char* message);
+
+/// Records the refusal and raises at the calling line.
+///
+/// @param state the sandbox state
+/// @param length how many bytes the string would have held
+/// @param message the sentence to keep; null uses the standard one
+/// @return does not return
+void raise_string_limit(lua_State* state, uint64_t length, const char* message);
+
+/// Raises when `have + extra` would pass the string cap.
+///
+/// @param state the sandbox state
+/// @param have bytes already in the buffer
+/// @param extra bytes about to be added
+/// @param message the early sentence naming the function
+inline void
+reject_long_piece(lua_State* state, std::size_t have, std::size_t extra, const char* message) {
+    if (extra > string_length_limit || have > string_length_limit - extra) {
+        const uint64_t length = static_cast<uint64_t>(have) + static_cast<uint64_t>(extra);
+        raise_string_limit(state, length, message);
+    }
+}
 
 } // namespace oa::data::script_host

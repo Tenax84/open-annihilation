@@ -54,24 +54,32 @@ struct GMatchState {
     MatchState ms{};
 };
 
-extern "C" {
-/// Raises the budget message on the next instruction after the allowance is spent.
-static void pattern_budget_hook(lua_State* state, lua_Debug* /*activation*/) {
-    luaL_error(state, "%s", control_from(state)->instruction_message);
-}
-} // extern "C"
-
 /// Adds one matcher step to the phase count and raises when the allowance is spent.
 void charge_step(lua_State* state) {
-    HostDetail::Control* control = control_from(state);
-    if (control->allowance_spent)
-        luaL_error(state, "%s", control->instruction_message);
-    ++control->instructions_used;
-    if (control->instructions_used >= control->instruction_allowance) {
-        control->allowance_spent = true;
-        lua_sethook(state, pattern_budget_hook, LUA_MASKCOUNT, 1);
-        luaL_error(state, "%s", control->instruction_message);
-    }
+    charge(state, 1);
+}
+
+constexpr const char* gsub_limit_message =
+    "string.gsub would make a string of more than 65536 bytes";
+
+/// Refuses a replacement that would pass the string cap, then appends `bytes`.
+void add_limited(lua_State* state, luaL_Buffer* buffer, const char* bytes, std::size_t count) {
+    reject_long_piece(state, luaL_bufflen(buffer), count, gsub_limit_message);
+    luaL_addlstring(buffer, bytes, count);
+}
+
+/// Refuses a replacement that would pass the string cap, then appends one byte.
+void add_limited_byte(lua_State* state, luaL_Buffer* buffer, char byte) {
+    reject_long_piece(state, luaL_bufflen(buffer), 1, gsub_limit_message);
+    luaL_addchar(buffer, byte);
+}
+
+/// Refuses a replacement that would pass the string cap, then appends the top string.
+void add_limited_value(lua_State* state, luaL_Buffer* buffer) {
+    std::size_t count = 0;
+    lua_tolstring(state, -1, &count);
+    reject_long_piece(state, luaL_bufflen(buffer), count, gsub_limit_message);
+    luaL_addvalue(buffer);
 }
 
 /// Returns one byte as a value the character classes can test.
@@ -516,7 +524,16 @@ int str_find_aux(lua_State* L, int finding) {
         return 1;
     }
     if (finding != 0 && (lua_toboolean(L, 4) != 0 || nospecials(p, lp) != 0)) {
-        const char* s2 = lmemfind(s + init, ls - init, p, lp);
+        const char* const haystack = s + init;
+        const std::size_t haystack_length = ls - init;
+        const char* s2 = lmemfind(haystack, haystack_length, p, lp);
+        std::size_t scanned = haystack_length;
+        if (s2 != nullptr) {
+            scanned = static_cast<std::size_t>(s2 - haystack) + lp;
+            if (scanned > haystack_length)
+                scanned = haystack_length;
+        }
+        charge(L, units_for_bytes(scanned));
         if (s2 != nullptr) {
             lua_pushinteger(L, static_cast<lua_Integer>(s2 - s) + 1);
             lua_pushinteger(L, static_cast<lua_Integer>(s2 - s) + static_cast<lua_Integer>(lp));
@@ -601,26 +618,26 @@ void add_s(MatchState* ms, luaL_Buffer* b, const char* s, const char* e) {
     const char* news = lua_tolstring(L, 3, &l);
     while (const void* found = std::memchr(news, escape, l)) {
         const auto* cursor = static_cast<const char*>(found);
-        luaL_addlstring(b, news, static_cast<size_t>(cursor - news));
+        add_limited(L, b, news, static_cast<size_t>(cursor - news));
         cursor++;
         if (*cursor == escape) {
-            luaL_addchar(b, *cursor);
+            add_limited_byte(L, b, *cursor);
         } else if (*cursor == '0') {
-            luaL_addlstring(b, s, static_cast<size_t>(e - s));
+            add_limited(L, b, s, static_cast<size_t>(e - s));
         } else if (std::isdigit(byte_of(*cursor)) != 0) {
             const char* cap = nullptr;
             const ptrdiff_t resl = get_onecapture(ms, *cursor - '1', s, e, &cap);
             if (resl == capture_position)
-                luaL_addvalue(b);
+                add_limited_value(L, b);
             else
-                luaL_addlstring(b, cap, static_cast<size_t>(resl));
+                add_limited(L, b, cap, static_cast<size_t>(resl));
         } else {
             luaL_error(L, "invalid use of '%c' in replacement string", escape);
         }
         l -= static_cast<size_t>(cursor + 1 - news);
         news = cursor + 1;
     }
-    luaL_addlstring(b, news, l);
+    add_limited(L, b, news, l);
 }
 
 /// Appends the replacement for one match. Returns 1 when the text changes.
@@ -645,12 +662,12 @@ int add_value(MatchState* ms, luaL_Buffer* b, const char* s, const char* e, int 
     }
     if (lua_toboolean(L, -1) == 0) {
         lua_pop(L, 1);
-        luaL_addlstring(b, s, static_cast<size_t>(e - s));
+        add_limited(L, b, s, static_cast<size_t>(e - s));
         return 0;
     }
     if (lua_isstring(L, -1) == 0)
         return luaL_error(L, "invalid replacement value (a %s)", luaL_typename(L, -1));
-    luaL_addvalue(b);
+    add_limited_value(L, b);
     return 1;
 }
 
@@ -688,7 +705,7 @@ int str_gsub(lua_State* L) {
             changed = add_value(&ms, &buffer, src, e, tr) | changed;
             src = lastmatch = e;
         } else if (src < ms.src_end) {
-            luaL_addchar(&buffer, *src++);
+            add_limited_byte(L, &buffer, *src++);
         } else {
             break;
         }
@@ -698,7 +715,7 @@ int str_gsub(lua_State* L) {
     if (changed == 0)
         lua_pushvalue(L, 1);
     else {
-        luaL_addlstring(&buffer, src, static_cast<size_t>(ms.src_end - src));
+        add_limited(L, &buffer, src, static_cast<size_t>(ms.src_end - src));
         luaL_pushresult(&buffer);
     }
     lua_pushinteger(L, n);

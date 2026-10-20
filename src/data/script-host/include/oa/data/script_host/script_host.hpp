@@ -28,8 +28,11 @@ inline constexpr std::size_t default_memory_budget = std::size_t{64} << 20;
 /// Instructions between checks of the running allowance.
 inline constexpr int budget_check_interval = 1000;
 
+/// Most bytes in one string. A script that would make a longer one stops.
+inline constexpr std::size_t string_length_limit = std::size_t{64} << 10;
+
 /// Most bytes string.rep may build, separators included.
-inline constexpr std::size_t string_rep_limit = std::size_t{1} << 20;
+inline constexpr std::size_t string_rep_limit = string_length_limit;
 
 /// Most bytes of source one file may hold.
 inline constexpr std::size_t max_source_bytes = std::size_t{1} << 20;
@@ -60,7 +63,9 @@ enum class ErrorKind : uint8_t {
     source_too_large,
     module_name,
     module_missing,
-    module_loop
+    module_loop,
+    /// A string would have passed `string_length_limit`.
+    string_length
 };
 
 /// A phase that stopped, naming the package and where in its source.
@@ -222,6 +227,14 @@ class Sandbox {
     ///
     /// @return instructions counted in the last phase, or 0 after a move
     [[nodiscard]] uint64_t instructions_used() const noexcept;
+
+    /// Returns the interpreter's string header, measured when the state opened.
+    ///
+    /// Every sandbox measures the same size. The string cap uses it so a
+    /// string's length, not the size of its header, is what the cap compares.
+    ///
+    /// @return that size in bytes, or 0 after a move
+    [[nodiscard]] std::size_t string_header_bytes() const noexcept;
 
     /// Returns the bytes the state currently holds.
     ///

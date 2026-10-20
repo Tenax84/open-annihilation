@@ -518,7 +518,7 @@ void a_long_match_stays_inside_the_allowance() {
     lua_State* raw = open_raw();
     if (raw == nullptr)
         return;
-    const char* body = "return show(((\"x \"):rep(50000)):gsub(\"%s+\", \"_\"))";
+    const char* body = "return show(((\"x \"):rep(30000)):gsub(\"%s+\", \"_\"))";
     const std::string source = script_for(body);
     bool raw_ran = false;
     const std::string raw_text = run_raw(raw, source, &raw_ran);
@@ -546,7 +546,7 @@ void a_long_match_stays_inside_the_allowance() {
         lua_close(raw);
         return;
     }
-    put(plain, "mutator.lua", "return #((\"x \"):rep(50000))\n");
+    put(plain, "mutator.lua", "return #((\"x \"):rep(30000))\n");
     OA_CHECK(other->run_file("mutator.lua", "patterns", nullptr, plain_error));
     OA_CHECK(with_match > other->instructions_used());
     lua_close(raw);

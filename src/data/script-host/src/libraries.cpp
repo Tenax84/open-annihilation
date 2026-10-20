@@ -4,9 +4,19 @@
 // The libraries a script may use, and the replacements that keep them inside
 // the sandbox. `math` is the engine's library. `pairs` walks keys in a fixed
 // order.
+//
+// string.byte, the table functions move, insert, remove, concat, unpack and
+// sort, and utf8.len, utf8.codepoint, utf8.offset and utf8.codes follow
+// lstrlib.c, ltablib.c and lutf8lib.c of Lua 5.4.9.
+// Copyright (C) 1994-2026 Lua.org, PUC-Rio.
+// The licence is the MIT licence; the text is licenses/lua-LICENSE.txt.
+// Each copy counts its work against the phase allowance and refuses a table
+// range no table can hold. string.char and utf8.char stay Lua's own: the
+// string cap refuses a result that would pass it.
 
 #include "internal.hpp"
 
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -24,7 +34,8 @@ const char setmetatable_key = 0;
 const char rawset_key = 0;
 const char xpcall_key = 0;
 
-static_assert(string_rep_limit == 1048576);
+static_assert(string_length_limit == 65536);
+static_assert(string_rep_limit == string_length_limit);
 static_assert(max_source_bytes == 1048576);
 
 std::string omission_note(std::size_t lines) {
@@ -107,22 +118,285 @@ bool rep_total(uint64_t count, std::size_t length, std::size_t separator_length,
     return true;
 }
 
+// string.byte positions, from lstrlib.c. A negative index counts back from
+// the end. The initial position clips to at least 1; the final one clips to
+// the closed interval from 0 through the length.
+std::size_t byte_position(lua_Integer pos, std::size_t length) {
+    if (pos > 0)
+        return static_cast<std::size_t>(pos);
+    if (pos == 0)
+        return 1;
+    if (pos < -static_cast<lua_Integer>(length))
+        return 1;
+    return length + static_cast<std::size_t>(pos) + 1;
+}
+
+std::size_t byte_end(lua_State* state, int argument, lua_Integer fallback, std::size_t length) {
+    const lua_Integer pos = luaL_optinteger(state, argument, fallback);
+    if (pos > static_cast<lua_Integer>(length))
+        return length;
+    if (pos >= 0)
+        return static_cast<std::size_t>(pos);
+    if (pos < -static_cast<lua_Integer>(length))
+        return 0;
+    return length + static_cast<std::size_t>(pos) + 1;
+}
+
+constexpr int tab_read = 1;
+constexpr int tab_write = 2;
+constexpr int tab_length = 4;
+
+constexpr const char* concat_limit_message =
+    "table.concat would make a string of more than 65536 bytes";
+
+// A table call asked for more elements than the memory cap could hold.
+// luaL_error does not return; the attribute is omitted because this build
+// does not see that on the Lua declaration.
+void refuse_range(lua_State* state, const char* function, uint64_t count) {
+    char number[32];
+    char limit_text[32];
+    append_u64(number, number + sizeof number, count);
+    append_u64(
+        limit_text, limit_text + sizeof limit_text, static_cast<uint64_t>(table_range_limit)
+    );
+    char message[160];
+    char* cursor = message;
+    char* end = message + sizeof message;
+    cursor = append_text(cursor, end, function);
+    cursor = append_text(cursor, end, ": a range of ");
+    cursor = append_text(cursor, end, number);
+    cursor = append_text(cursor, end, " elements is past the most of ");
+    append_text(cursor, end, limit_text);
+    luaL_error(state, "%s", message);
+}
+
+int check_field(lua_State* state, const char* key, int depth) {
+    lua_pushstring(state, key);
+    return lua_rawget(state, -depth) != LUA_TNIL;
+}
+
+// A value is usable when it is a table or its metatable has the operations
+// `what` names. Anything else raises Lua's own "table expected" error.
+void check_table(lua_State* state, int argument, int what) {
+    if (lua_type(state, argument) != LUA_TTABLE) {
+        int depth = 1;
+        if (lua_getmetatable(state, argument) &&
+            (!(what & tab_read) || check_field(state, "__index", ++depth)) &&
+            (!(what & tab_write) || check_field(state, "__newindex", ++depth)) &&
+            (!(what & tab_length) || check_field(state, "__len", ++depth))) {
+            lua_pop(state, depth);
+        } else {
+            luaL_checktype(state, argument, LUA_TTABLE);
+        }
+    }
+}
+
+lua_Integer table_length(lua_State* state, int argument, int what) {
+    check_table(state, argument, what | tab_length);
+    return luaL_len(state, argument);
+}
+
+void add_concat_field(lua_State* state, luaL_Buffer* buffer, lua_Integer index) {
+    lua_geti(state, 1, index);
+    if (!lua_isstring(state, -1)) {
+        luaL_error(
+            state,
+            "invalid value (%s) at index %I in table for 'concat'",
+            luaL_typename(state, -1),
+            static_cast<lua_Integer>(index)
+        );
+    }
+    std::size_t field_length = 0;
+    lua_tolstring(state, -1, &field_length);
+    reject_long_piece(state, luaL_bufflen(buffer), field_length, concat_limit_message);
+    luaL_addvalue(buffer);
+}
+
+// utf8, from lutf8lib.c. The largest code point a lax decode accepts.
+constexpr unsigned utf8_max_code = 0x7FFFFFFFu;
+constexpr unsigned utf8_max_unicode = 0x10FFFFu;
+constexpr const char* utf8_invalid = "invalid UTF-8 code";
+
+bool utf8_continuation(unsigned char byte) {
+    return (byte & 0xC0u) == 0x80u;
+}
+
+lua_Integer utf8_position(lua_Integer pos, std::size_t length) {
+    if (pos >= 0)
+        return pos;
+    if ((std::size_t{0} - static_cast<std::size_t>(pos)) > length)
+        return 0;
+    return static_cast<lua_Integer>(length) + pos + 1;
+}
+
+// Decodes one sequence. Returns null when the bytes are not well formed.
+// `strict` also rejects values past U+10FFFF and the surrogate range.
+const char* utf8_decode(const char* text, unsigned* value, bool strict) {
+    static const unsigned limits[] = {~0u, 0x80u, 0x800u, 0x10000u, 0x200000u, 0x4000000u};
+    unsigned lead = static_cast<unsigned char>(text[0]);
+    unsigned decoded = 0;
+    if (lead < 0x80u) {
+        decoded = lead;
+    } else if (lead >= 0xFEu) {
+        return nullptr;
+    } else {
+        int count = 0;
+        for (; (lead & 0x40u) != 0; lead <<= 1) {
+            const unsigned continuation = static_cast<unsigned char>(text[++count]);
+            if (!utf8_continuation(static_cast<unsigned char>(continuation)))
+                return nullptr;
+            decoded = (decoded << 6) | (continuation & 0x3Fu);
+        }
+        decoded |= (lead & 0x7Fu) << (count * 5);
+        if (decoded > utf8_max_code || decoded < limits[count])
+            return nullptr;
+        text += count;
+    }
+    if (strict) {
+        if (decoded > utf8_max_unicode || (0xD800u <= decoded && decoded <= 0xDFFFu))
+            return nullptr;
+    }
+    if (value != nullptr)
+        *value = decoded;
+    return text + 1;
+}
+
+// table.sort, from ltablib.c. The pivot salt starts at 0, so the first
+// partitions use the middle element. After an unbalanced cut it becomes
+// ~0u, the same fixed value the interpreter uses instead of the clock.
+using SortIndex = unsigned int;
+constexpr unsigned sort_random_limit = 100u;
+
+void set_pair(lua_State* state, SortIndex first, SortIndex second) {
+    lua_seti(state, 1, static_cast<lua_Integer>(first));
+    lua_seti(state, 1, static_cast<lua_Integer>(second));
+}
+
+int sort_less(lua_State* state, int left, int right) {
+    if (lua_isnil(state, 2)) {
+        charge(state, 1);
+        return lua_compare(state, left, right, LUA_OPLT);
+    }
+    lua_pushvalue(state, 2);
+    lua_pushvalue(state, left - 1);
+    lua_pushvalue(state, right - 2);
+    lua_call(state, 2, 1);
+    const int result = lua_toboolean(state, -1);
+    lua_pop(state, 1);
+    return result;
+}
+
+SortIndex sort_partition(lua_State* state, SortIndex lo, SortIndex up) {
+    SortIndex low_index = lo;
+    SortIndex high_index = up - 1;
+    for (;;) {
+        for (;;) {
+            lua_geti(state, 1, static_cast<lua_Integer>(++low_index));
+            if (!sort_less(state, -1, -2))
+                break;
+            if (low_index == up - 1)
+                luaL_error(state, "invalid order function for sorting");
+            lua_pop(state, 1);
+        }
+        for (;;) {
+            lua_geti(state, 1, static_cast<lua_Integer>(--high_index));
+            if (!sort_less(state, -3, -1))
+                break;
+            if (high_index < low_index)
+                luaL_error(state, "invalid order function for sorting");
+            lua_pop(state, 1);
+        }
+        if (high_index < low_index) {
+            lua_pop(state, 1);
+            set_pair(state, up - 1, low_index);
+            return low_index;
+        }
+        set_pair(state, low_index, high_index);
+    }
+}
+
+SortIndex choose_pivot(SortIndex lo, SortIndex up, unsigned salt) {
+    const SortIndex quarter = (up - lo) / 4;
+    return salt % (quarter * 2) + (lo + quarter);
+}
+
+void aux_sort(lua_State* state, SortIndex lo, SortIndex up, unsigned salt) {
+    while (lo < up) {
+        lua_geti(state, 1, static_cast<lua_Integer>(lo));
+        lua_geti(state, 1, static_cast<lua_Integer>(up));
+        if (sort_less(state, -1, -2))
+            set_pair(state, lo, up);
+        else
+            lua_pop(state, 2);
+        if (up - lo == 1)
+            return;
+        SortIndex pivot = 0;
+        if (up - lo < sort_random_limit || salt == 0)
+            pivot = (lo + up) / 2;
+        else
+            pivot = choose_pivot(lo, up, salt);
+        lua_geti(state, 1, static_cast<lua_Integer>(pivot));
+        lua_geti(state, 1, static_cast<lua_Integer>(lo));
+        if (sort_less(state, -2, -1))
+            set_pair(state, pivot, lo);
+        else {
+            lua_pop(state, 1);
+            lua_geti(state, 1, static_cast<lua_Integer>(up));
+            if (sort_less(state, -1, -2))
+                set_pair(state, pivot, up);
+            else
+                lua_pop(state, 2);
+        }
+        if (up - lo == 2)
+            return;
+        lua_geti(state, 1, static_cast<lua_Integer>(pivot));
+        lua_pushvalue(state, -1);
+        lua_geti(state, 1, static_cast<lua_Integer>(up - 1));
+        set_pair(state, pivot, up - 1);
+        pivot = sort_partition(state, lo, up);
+        SortIndex smaller = 0;
+        if (pivot - lo < up - pivot) {
+            aux_sort(state, lo, pivot - 1, salt);
+            smaller = pivot - lo;
+            lo = pivot + 1;
+        } else {
+            aux_sort(state, pivot + 1, up, salt);
+            smaller = up - pivot;
+            up = pivot - 1;
+        }
+        if ((up - lo) / 128 > smaller)
+            salt = ~0u;
+    }
+}
+
 extern "C" {
 static int host_print(lua_State* state) {
     const int count = lua_gettop(state);
+    // One past the kept line, so a long value is cut before it becomes a string.
+    constexpr std::size_t ceiling = max_printed_bytes + 1;
     luaL_Buffer buffer;
     luaL_buffinit(state, &buffer);
-    for (int index = 1; index <= count; ++index) {
-        if (index > 1)
+    std::size_t kept = 0;
+    for (int index = 1; index <= count && kept < ceiling; ++index) {
+        if (index > 1) {
             luaL_addchar(&buffer, '\t');
-        // luaL_addvalue is the buffer call that takes the value on top.
-        // Popping that slot by hand frees the buffer once it grows.
+            ++kept;
+        }
         luaL_tolstring(state, index, nullptr);
-        luaL_addvalue(&buffer);
+        std::size_t length = 0;
+        const char* text = lua_tolstring(state, -1, &length);
+        const std::size_t room = ceiling - kept;
+        const std::size_t take = length < room ? length : room;
+        if (take > 0)
+            luaL_addlstring(&buffer, text != nullptr ? text : "", take);
+        lua_pop(state, 1);
+        kept += take;
     }
     luaL_pushresult(&buffer);
     std::size_t length = 0;
     const char* text = lua_tolstring(state, -1, &length);
+    if (length > max_printed_bytes)
+        length = max_printed_bytes;
     Control* control = control_from(state);
     if (!keep_printed_line(*control, text, length)) {
         control->allocation_refused = true;
@@ -139,8 +413,9 @@ static int rep_refused(lua_State* state, uint64_t bytes) {
     char* end = message + sizeof message;
     cursor = append_text(cursor, end, "string.rep would make a string of ");
     cursor = append_text(cursor, end, number);
-    append_text(cursor, end, " bytes; the most is 1048576");
-    return luaL_error(state, "%s", message);
+    append_text(cursor, end, " bytes; the most is 65536");
+    raise_string_limit(state, bytes, message);
+    return 0;
 }
 
 static int host_string_rep(lua_State* state) {
@@ -244,7 +519,7 @@ static int host_rawset(lua_State* state) {
 // must not run: a looping handler would never return the error to the host.
 static int host_xpcall_handler(lua_State* state) {
     const Control* control = control_from(state);
-    if (control->allowance_spent || control->sandbox_failed)
+    if (control->string_refused || control->allowance_spent || control->sandbox_failed)
         return 1;
     const int count = lua_gettop(state);
     lua_pushvalue(state, lua_upvalueindex(1));
@@ -264,7 +539,368 @@ static int host_xpcall(lua_State* state) {
     lua_call(state, arguments, LUA_MULTRET);
     return lua_gettop(state);
 }
+
+static int host_string_byte(lua_State* state) {
+    std::size_t length = 0;
+    const char* text = luaL_checklstring(state, 1, &length);
+    const lua_Integer first = luaL_optinteger(state, 2, 1);
+    const std::size_t start = byte_position(first, length);
+    const std::size_t finish = byte_end(state, 3, first, length);
+    if (start > finish)
+        return 0;
+    if (finish - start >= static_cast<std::size_t>(INT_MAX))
+        return luaL_error(state, "string slice too long");
+    const int count = static_cast<int>(finish - start) + 1;
+    luaL_checkstack(state, count, "string slice too long");
+    charge(state, static_cast<uint64_t>(count));
+    for (int index = 0; index < count; ++index) {
+        const auto byte =
+            static_cast<unsigned char>(text[start + static_cast<std::size_t>(index) - 1]);
+        lua_pushinteger(state, static_cast<lua_Integer>(byte));
+    }
+    return count;
+}
+
+static int host_table_insert(lua_State* state) {
+    lua_Integer hole = table_length(state, 1, tab_read | tab_write);
+    hole = luaL_intop(+, hole, 1);
+    lua_Integer pos = 0;
+    switch (lua_gettop(state)) {
+    case 2:
+        pos = hole;
+        break;
+    case 3: {
+        pos = luaL_checkinteger(state, 2);
+        luaL_argcheck(
+            state,
+            static_cast<lua_Unsigned>(pos) - 1u < static_cast<lua_Unsigned>(hole),
+            2,
+            "position out of bounds"
+        );
+        if (hole > pos) {
+            const lua_Unsigned shifted =
+                static_cast<lua_Unsigned>(hole) - static_cast<lua_Unsigned>(pos);
+            if (shifted > table_range_limit)
+                refuse_range(state, "table.insert", static_cast<uint64_t>(shifted));
+            charge(state, static_cast<uint64_t>(shifted));
+            for (lua_Integer index = hole; index > pos; --index) {
+                lua_geti(state, 1, index - 1);
+                lua_seti(state, 1, index);
+            }
+        }
+        break;
+    }
+    default:
+        return luaL_error(state, "wrong number of arguments to 'insert'");
+    }
+    lua_seti(state, 1, pos);
+    return 0;
+}
+
+static int host_table_remove(lua_State* state) {
+    const lua_Integer size = table_length(state, 1, tab_read | tab_write);
+    lua_Integer pos = luaL_optinteger(state, 2, size);
+    if (pos != size) {
+        luaL_argcheck(
+            state,
+            static_cast<lua_Unsigned>(pos) - 1u <= static_cast<lua_Unsigned>(size),
+            2,
+            "position out of bounds"
+        );
+    }
+    lua_Unsigned shifted = 0;
+    if (pos < size)
+        shifted = static_cast<lua_Unsigned>(size) - static_cast<lua_Unsigned>(pos);
+    if (shifted > table_range_limit)
+        refuse_range(state, "table.remove", static_cast<uint64_t>(shifted));
+    lua_geti(state, 1, pos);
+    if (shifted > 0)
+        charge(state, static_cast<uint64_t>(shifted));
+    lua_Integer cursor = pos;
+    for (; cursor < size; ++cursor) {
+        lua_geti(state, 1, cursor + 1);
+        lua_seti(state, 1, cursor);
+    }
+    lua_pushnil(state);
+    lua_seti(state, 1, cursor);
+    return 1;
+}
+
+static int host_table_move(lua_State* state) {
+    const lua_Integer from = luaL_checkinteger(state, 2);
+    const lua_Integer last = luaL_checkinteger(state, 3);
+    const lua_Integer destination = luaL_checkinteger(state, 4);
+    const int target = !lua_isnoneornil(state, 5) ? 5 : 1;
+    check_table(state, 1, tab_read);
+    check_table(state, target, tab_write);
+    if (last >= from) {
+        luaL_argcheck(
+            state, from > 0 || last < LUA_MAXINTEGER + from, 3, "too many elements to move"
+        );
+        const lua_Integer count = last - from + 1;
+        luaL_argcheck(
+            state, destination <= LUA_MAXINTEGER - count + 1, 4, "destination wrap around"
+        );
+        if (static_cast<lua_Unsigned>(count) > table_range_limit)
+            refuse_range(state, "table.move", static_cast<uint64_t>(count));
+        charge(state, static_cast<uint64_t>(count));
+        const bool forwards = destination > last || destination <= from ||
+                              (target != 1 && !lua_compare(state, 1, target, LUA_OPEQ));
+        if (forwards) {
+            for (lua_Integer index = 0; index < count; ++index) {
+                lua_geti(state, 1, from + index);
+                lua_seti(state, target, destination + index);
+            }
+        } else {
+            for (lua_Integer index = count - 1; index >= 0; --index) {
+                lua_geti(state, 1, from + index);
+                lua_seti(state, target, destination + index);
+            }
+        }
+    }
+    lua_pushvalue(state, target);
+    return 1;
+}
+
+static int host_table_concat(lua_State* state) {
+    lua_Integer last = table_length(state, 1, tab_read);
+    std::size_t separator_length = 0;
+    const char* separator = luaL_optlstring(state, 2, "", &separator_length);
+    lua_Integer start = luaL_optinteger(state, 3, 1);
+    last = luaL_optinteger(state, 4, last);
+    uint64_t fields = 0;
+    if (start <= last) {
+        const lua_Unsigned span =
+            static_cast<lua_Unsigned>(last) - static_cast<lua_Unsigned>(start);
+        if (span >= table_range_limit)
+            refuse_range(state, "table.concat", static_cast<uint64_t>(span) + 1);
+        fields = static_cast<uint64_t>(span) + 1;
+    }
+    if (fields > 0)
+        charge(state, fields);
+    luaL_Buffer buffer;
+    luaL_buffinit(state, &buffer);
+    for (; start < last; ++start) {
+        add_concat_field(state, &buffer, start);
+        reject_long_piece(state, luaL_bufflen(&buffer), separator_length, concat_limit_message);
+        luaL_addlstring(&buffer, separator, separator_length);
+    }
+    if (start == last)
+        add_concat_field(state, &buffer, start);
+    luaL_pushresult(&buffer);
+    return 1;
+}
+
+static int host_table_unpack(lua_State* state) {
+    const lua_Integer start = luaL_optinteger(state, 2, 1);
+    lua_Integer cursor = start;
+    const lua_Integer last = luaL_opt(state, luaL_checkinteger, 3, luaL_len(state, 1));
+    if (cursor > last)
+        return 0;
+    const lua_Unsigned span = static_cast<lua_Unsigned>(last) - static_cast<lua_Unsigned>(cursor);
+    const uint64_t count = static_cast<uint64_t>(span) + 1;
+    if (count > table_range_limit)
+        refuse_range(state, "table.unpack", count);
+    if (span >= static_cast<lua_Unsigned>(INT_MAX) ||
+        !lua_checkstack(state, static_cast<int>(span + 1)))
+        return luaL_error(state, "too many results to unpack");
+    charge(state, count);
+    for (; cursor < last; ++cursor)
+        lua_geti(state, 1, cursor);
+    lua_geti(state, 1, last);
+    return static_cast<int>(count);
+}
+
+static int host_table_sort(lua_State* state) {
+    const lua_Integer length = table_length(state, 1, tab_read | tab_write);
+    if (length > 1) {
+        luaL_argcheck(state, length < INT_MAX, 1, "array too big");
+        if (static_cast<lua_Unsigned>(length) > table_range_limit)
+            refuse_range(state, "table.sort", static_cast<uint64_t>(length));
+        if (!lua_isnoneornil(state, 2))
+            luaL_checktype(state, 2, LUA_TFUNCTION);
+        lua_settop(state, 2);
+        aux_sort(state, 1, static_cast<SortIndex>(length), 0);
+    }
+    return 0;
+}
+
+static int host_utf8_len(lua_State* state) {
+    std::size_t length = 0;
+    const char* text = luaL_checklstring(state, 1, &length);
+    lua_Integer posi = utf8_position(luaL_optinteger(state, 2, 1), length);
+    lua_Integer posj = utf8_position(luaL_optinteger(state, 3, -1), length);
+    const int lax = lua_toboolean(state, 4);
+    luaL_argcheck(
+        state,
+        1 <= posi && --posi <= static_cast<lua_Integer>(length),
+        2,
+        "initial position out of bounds"
+    );
+    luaL_argcheck(
+        state, --posj < static_cast<lua_Integer>(length), 3, "final position out of bounds"
+    );
+    if (posi <= posj) {
+        const auto bytes = static_cast<std::size_t>(posj - posi) + 1;
+        charge(state, units_for_bytes(bytes));
+    }
+    lua_Integer count = 0;
+    while (posi <= posj) {
+        const char* next = utf8_decode(text + posi, nullptr, lax == 0);
+        if (next == nullptr) {
+            luaL_pushfail(state);
+            lua_pushinteger(state, posi + 1);
+            return 2;
+        }
+        posi = static_cast<lua_Integer>(next - text);
+        ++count;
+    }
+    lua_pushinteger(state, count);
+    return 1;
+}
+
+static int host_utf8_codepoint(lua_State* state) {
+    std::size_t length = 0;
+    const char* text = luaL_checklstring(state, 1, &length);
+    const lua_Integer posi = utf8_position(luaL_optinteger(state, 2, 1), length);
+    const lua_Integer pose = utf8_position(luaL_optinteger(state, 3, posi), length);
+    const int lax = lua_toboolean(state, 4);
+    luaL_argcheck(state, posi >= 1, 2, "out of bounds");
+    luaL_argcheck(state, pose <= static_cast<lua_Integer>(length), 3, "out of bounds");
+    if (posi > pose)
+        return 0;
+    if (pose - posi >= INT_MAX)
+        return luaL_error(state, "string slice too long");
+    const int room = static_cast<int>(pose - posi) + 1;
+    luaL_checkstack(state, room, "string slice too long");
+    int produced = 0;
+    const char* cursor = text + (posi - 1);
+    const char* finish = text + pose;
+    for (; cursor < finish;) {
+        unsigned code = 0;
+        cursor = utf8_decode(cursor, &code, lax == 0);
+        if (cursor == nullptr)
+            return luaL_error(state, utf8_invalid);
+        lua_pushinteger(state, static_cast<lua_Integer>(code));
+        ++produced;
+    }
+    charge(state, static_cast<uint64_t>(produced));
+    return produced;
+}
+
+static int host_utf8_offset(lua_State* state) {
+    std::size_t length = 0;
+    const char* text = luaL_checklstring(state, 1, &length);
+    lua_Integer step = luaL_checkinteger(state, 2);
+    lua_Integer origin = step >= 0 ? 1 : static_cast<lua_Integer>(length) + 1;
+    origin = utf8_position(luaL_optinteger(state, 3, origin), length);
+    luaL_argcheck(
+        state,
+        1 <= origin && --origin <= static_cast<lua_Integer>(length),
+        3,
+        "position out of bounds"
+    );
+    std::size_t scanned = 0;
+    if (step == 0) {
+        while (origin > 0 && utf8_continuation(static_cast<unsigned char>(text[origin]))) {
+            --origin;
+            ++scanned;
+        }
+    } else {
+        if (utf8_continuation(static_cast<unsigned char>(text[origin])))
+            return luaL_error(state, "initial position is a continuation byte");
+        if (step < 0) {
+            while (step < 0 && origin > 0) {
+                do {
+                    --origin;
+                    ++scanned;
+                } while (origin > 0 && utf8_continuation(static_cast<unsigned char>(text[origin])));
+                ++step;
+            }
+        } else {
+            --step;
+            while (step > 0 && origin < static_cast<lua_Integer>(length)) {
+                do {
+                    ++origin;
+                    ++scanned;
+                } while (utf8_continuation(static_cast<unsigned char>(text[origin])));
+                --step;
+            }
+        }
+    }
+    charge(state, units_for_bytes(scanned));
+    if (step == 0)
+        lua_pushinteger(state, origin + 1);
+    else
+        luaL_pushfail(state);
+    return 1;
+}
+
+static int host_utf8_codes_next(lua_State* state) {
+    const int strict = lua_toboolean(state, lua_upvalueindex(1));
+    std::size_t length = 0;
+    const char* text = luaL_checklstring(state, 1, &length);
+    lua_Unsigned index = static_cast<lua_Unsigned>(lua_tointeger(state, 2));
+    if (index < length) {
+        while (utf8_continuation(static_cast<unsigned char>(text[index])))
+            ++index;
+    }
+    if (index >= length)
+        return 0;
+    unsigned code = 0;
+    const char* next = utf8_decode(text + index, &code, strict != 0);
+    if (next == nullptr || utf8_continuation(static_cast<unsigned char>(*next)))
+        return luaL_error(state, utf8_invalid);
+    lua_pushinteger(state, static_cast<lua_Integer>(index) + 1);
+    lua_pushinteger(state, static_cast<lua_Integer>(code));
+    charge(state, 1);
+    return 2;
+}
+
+static int host_utf8_codes(lua_State* state) {
+    const int lax = lua_toboolean(state, 2);
+    const char* text = luaL_checkstring(state, 1);
+    luaL_argcheck(state, !utf8_continuation(static_cast<unsigned char>(text[0])), 1, utf8_invalid);
+    lua_pushboolean(state, lax == 0);
+    lua_pushcclosure(state, host_utf8_codes_next, 1);
+    lua_pushvalue(state, 1);
+    lua_pushinteger(state, 0);
+    return 3;
+}
 } // extern "C"
+
+void install_c_work(lua_State* state) {
+    lua_getglobal(state, "string");
+    lua_pushcfunction(state, host_string_byte);
+    lua_setfield(state, -2, "byte");
+    lua_pop(state, 1);
+
+    lua_getglobal(state, "table");
+    lua_pushcfunction(state, host_table_concat);
+    lua_setfield(state, -2, "concat");
+    lua_pushcfunction(state, host_table_insert);
+    lua_setfield(state, -2, "insert");
+    lua_pushcfunction(state, host_table_move);
+    lua_setfield(state, -2, "move");
+    lua_pushcfunction(state, host_table_remove);
+    lua_setfield(state, -2, "remove");
+    lua_pushcfunction(state, host_table_sort);
+    lua_setfield(state, -2, "sort");
+    lua_pushcfunction(state, host_table_unpack);
+    lua_setfield(state, -2, "unpack");
+    lua_pop(state, 1);
+
+    lua_getglobal(state, "utf8");
+    lua_pushcfunction(state, host_utf8_offset);
+    lua_setfield(state, -2, "offset");
+    lua_pushcfunction(state, host_utf8_codepoint);
+    lua_setfield(state, -2, "codepoint");
+    lua_pushcfunction(state, host_utf8_len);
+    lua_setfield(state, -2, "len");
+    lua_pushcfunction(state, host_utf8_codes);
+    lua_setfield(state, -2, "codes");
+    lua_pop(state, 1);
+}
 
 } // namespace
 
@@ -317,6 +953,7 @@ void open_libraries(lua_State* state) {
     lua_setglobal(state, "xpcall");
 
     install_require(state);
+    install_c_work(state);
 }
 
 } // namespace oa::data::script_host

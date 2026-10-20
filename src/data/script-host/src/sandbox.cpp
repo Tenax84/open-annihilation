@@ -15,6 +15,23 @@
 #include <utility>
 
 namespace oa::data::script_host {
+
+extern "C" void script_count_hook(lua_State* state, lua_Debug* /*activation*/) {
+    HostDetail::Control* control = control_from(state);
+    if (control->string_refused) {
+        lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
+        luaL_error(state, "%s", control->string_message);
+    }
+    if (control->allowance_spent)
+        luaL_error(state, "%s", control->instruction_message);
+    control->instructions_used += static_cast<uint64_t>(budget_check_interval);
+    if (control->instructions_used >= control->instruction_allowance) {
+        control->allowance_spent = true;
+        lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
+        luaL_error(state, "%s", control->instruction_message);
+    }
+}
+
 namespace {
 
 using Control = HostDetail::Control;
@@ -215,6 +232,23 @@ static void* allocate(void* user, void* pointer, size_t old_size, size_t new_siz
         }
         return nullptr;
     }
+    // A new string object arrives as a null block tagged LUA_TSTRING. The
+    // size is the header plus the bytes plus one. The header was measured
+    // at open, so the length compared with the cap is the same on every build.
+    if (pointer == nullptr && old_size == LUA_TSTRING) {
+        if (control->measuring_string_header) {
+            if (new_size >= 201)
+                control->string_header = new_size - 201;
+        } else if (control->string_refused) {
+            return nullptr;
+        } else if (control->string_header != 0 && new_size > control->string_header + 1) {
+            const std::size_t length = new_size - control->string_header - 1;
+            if (length > string_length_limit) {
+                record_string_limit(control, static_cast<uint64_t>(length), nullptr);
+                return nullptr;
+            }
+        }
+    }
     const std::size_t previous = pointer == nullptr ? 0 : old_size;
     if (new_size > previous) {
         const std::size_t growth = new_size - previous;
@@ -235,24 +269,14 @@ static void* allocate(void* user, void* pointer, size_t old_size, size_t new_siz
         control->memory_in_use = new_size;
     else
         control->memory_in_use = control->memory_in_use - previous + new_size;
+    if (new_size > previous)
+        add_charge(control, units_for_bytes(new_size - previous));
     return block;
-}
-
-static void count_hook(lua_State* state, lua_Debug* /*activation*/) {
-    Control* control = control_from(state);
-    if (control->allowance_spent)
-        luaL_error(state, "%s", control->instruction_message);
-    control->instructions_used += static_cast<uint64_t>(budget_check_interval);
-    if (control->instructions_used >= control->instruction_allowance) {
-        control->allowance_spent = true;
-        lua_sethook(state, count_hook, LUA_MASKCOUNT, 1);
-        luaL_error(state, "%s", control->instruction_message);
-    }
 }
 
 static int message_handler(lua_State* state) {
     Control* control = control_from(state);
-    if (control->location_locked)
+    if (control->string_refused || control->location_locked)
         return 1;
     if (raised_by_require(state, control->require_function) &&
         control->raised_kind != ErrorKind::none)
@@ -268,6 +292,10 @@ static int trampoline(lua_State* state) {
     Control* control = control_from(state);
     control->instructions_used = 0;
     control->allowance_spent = false;
+    control->string_refused = false;
+    control->string_refused_length = 0;
+    control->string_message[0] = '\0';
+    control->loading_chunk = false;
     control->pending_kind = ErrorKind::none;
     control->raised_kind = ErrorKind::none;
     control->location_locked = false;
@@ -276,23 +304,36 @@ static int trampoline(lua_State* state) {
     control->error_chunk[0] = '\0';
     control->traceback_text[0] = '\0';
     control->loading_count = 0;
-    lua_sethook(state, count_hook, LUA_MASKCOUNT, budget_check_interval);
+    lua_sethook(state, script_count_hook, LUA_MASKCOUNT, budget_check_interval);
 
     switch (control->mode) {
-    case PhaseMode::open_libraries:
+    case PhaseMode::open_libraries: {
+        // One long string, past the short-string limit, so the allocator sees
+        // a fresh LUA_TSTRING and can record the header. The cap stays off until then.
+        control->main_state = state;
+        control->measuring_string_header = true;
+        char sample[200];
+        std::memset(sample, 'a', sizeof sample);
+        lua_pushlstring(state, sample, sizeof sample);
+        lua_pop(state, 1);
+        control->measuring_string_header = false;
         open_libraries(state);
         if (control->install != nullptr)
             control->install(control->install_context, state);
         break;
+    }
     case PhaseMode::run_chunk:
     case PhaseMode::compile: {
         const char* bytes =
             control->chunk_size == 0 ? "" : reinterpret_cast<const char*>(control->chunk_data);
         control->active_chunk_name = control->chunk_name_storage.c_str();
+        control->loading_chunk = true;
         const int loaded =
             luaL_loadbufferx(state, bytes, control->chunk_size, control->active_chunk_name, "t");
+        control->loading_chunk = false;
         if (loaded == LUA_ERRMEM) {
-            control->allocation_refused = true;
+            if (!control->string_refused)
+                control->allocation_refused = true;
             return lua_error(state);
         }
         if (loaded != LUA_OK) {
@@ -325,6 +366,75 @@ static int trampoline(lua_State* state) {
 } // extern "C"
 
 } // namespace
+
+void keep_string_place(HostDetail::Control* control, const char* source, int line) {
+    const char* chunk = source;
+    if (chunk == nullptr || chunk[0] == '\0')
+        chunk = "";
+    else if (chunk[0] == '@')
+        ++chunk;
+    copy_bounded(control->error_chunk, sizeof control->error_chunk, chunk, std::strlen(chunk));
+    control->error_line = line > 0 ? static_cast<int32_t>(line) : 0;
+    control->location_locked = true;
+}
+
+void write_string_sentence(HostDetail::Control* control, uint64_t length) {
+    char number[32];
+    append_u64(number, number + sizeof number, length);
+    char* cursor = control->string_message;
+    char* end = control->string_message + sizeof control->string_message;
+    cursor = append_text(cursor, end, "the script made a string of ");
+    cursor = append_text(cursor, end, number);
+    append_text(cursor, end, " bytes; the most is 65536");
+}
+
+void note_string_place(HostDetail::Control* control) {
+    if (control->loading_chunk) {
+        const char* path = control->active_chunk_name != nullptr ? control->active_chunk_name : "";
+        keep_string_place(control, path, 0);
+        return;
+    }
+    lua_State* state = control->main_state;
+    if (state == nullptr) {
+        control->error_chunk[0] = '\0';
+        control->error_line = 0;
+        control->location_locked = true;
+        return;
+    }
+    lua_Debug activation;
+    for (int level = 0; lua_getstack(state, level, &activation) != 0; ++level) {
+        lua_getinfo(state, "Sl", &activation);
+        if (activation.what != nullptr && activation.what[0] == 'C')
+            continue;
+        const int line = activation.currentline > 0 ? activation.currentline : 0;
+        keep_string_place(control, activation.source, line);
+        return;
+    }
+    control->error_chunk[0] = '\0';
+    control->error_line = 0;
+    control->location_locked = true;
+}
+
+void record_string_limit(HostDetail::Control* control, uint64_t length, const char* message) {
+    if (control == nullptr || control->string_refused)
+        return;
+    control->string_refused = true;
+    control->string_refused_length = length;
+    if (message != nullptr) {
+        copy_bounded(
+            control->string_message, sizeof control->string_message, message, std::strlen(message)
+        );
+    } else {
+        write_string_sentence(control, length);
+    }
+    note_string_place(control);
+}
+
+void raise_string_limit(lua_State* state, uint64_t length, const char* message) {
+    HostDetail::Control* control = control_from(state);
+    record_string_limit(control, length, message);
+    luaL_error(state, "%s", control->string_message);
+}
 
 void remember_load_error(HostDetail::Control* control, lua_State* state) {
     control->pending_kind = ErrorKind::syntax;
@@ -366,7 +476,7 @@ void Sandbox::close() noexcept {
     if (control_ != nullptr) {
         control_->allowance_spent = true;
         control_->sandbox_failed = true;
-        lua_sethook(state_, count_hook, LUA_MASKCOUNT, 1);
+        lua_sethook(state_, script_count_hook, LUA_MASKCOUNT, 1);
     }
     lua_close(state_);
     state_ = nullptr;
@@ -482,9 +592,10 @@ bool Sandbox::enter(std::string_view phase, ScriptError& error) {
             lua_settop(state_, 2);
         lua_sethook(state_, nullptr, 0, 0);
 
+        const bool too_long = control_->string_refused;
         const bool memory = control_->allocation_refused || status == LUA_ERRMEM;
         const bool instructions = control_->allowance_spent;
-        if (status == LUA_OK && !memory && !instructions) {
+        if (status == LUA_OK && !too_long && !memory && !instructions) {
             error = {};
             return true;
         }
@@ -496,7 +607,10 @@ bool Sandbox::enter(std::string_view phase, ScriptError& error) {
         result.line = control_->error_line;
         result.traceback = control_->traceback_text;
         result.message = control_->error_message;
-        if (memory) {
+        if (too_long) {
+            result.kind = ErrorKind::string_length;
+            result.message = control_->string_message;
+        } else if (memory) {
             result.kind = ErrorKind::memory_budget;
             result.message = control_->memory_message;
         } else if (instructions) {
@@ -549,6 +663,7 @@ std::optional<Sandbox> Sandbox::open(const OpenOptions& options, ScriptError& er
             error.message = control->memory_message;
             return std::nullopt;
         }
+        control->main_state = state;
         // Both pushes are light C functions. The new stack has room, and neither
         // call allocates, so neither can raise.
         lua_pushcfunction(state, message_handler);
@@ -690,6 +805,10 @@ uint64_t Sandbox::instructions_used() const noexcept {
 
 std::size_t Sandbox::memory_in_use() const noexcept {
     return control_ == nullptr ? 0 : control_->memory_in_use;
+}
+
+std::size_t Sandbox::string_header_bytes() const noexcept {
+    return control_ == nullptr ? 0 : control_->string_header;
 }
 
 std::span<const std::string> Sandbox::printed() const noexcept {

@@ -69,6 +69,37 @@ moves that state; the moved-from object has no state.
   four functions return the same values, of the same types, and raise the
   same errors, as Lua 5.4.9. A call on a string value, such as `("x"):find`,
   uses the same functions.
+- Allocation counts against that same allowance: one unit per 64 bytes
+  requested, rounded up. Freeing a block does not give the units back, so
+  the default allowance bounds the bytes a phase can allocate in total, not
+  only the bytes it holds at once. At the default allowance that total is
+  3,200,000,000 bytes.
+- `string.byte` counts one unit per byte it returns. `utf8.codepoint` counts
+  one per code point it returns, and `utf8.codes` counts one per code point
+  it yields. `utf8.len` and `utf8.offset` count one unit per 64 bytes of the
+  interval they walk. A plain `string.find` counts one unit per 64 bytes it
+  examines. `require` counts one unit per caller it walks.
+- `table.move`, `table.insert`, `table.remove`, `table.concat` and
+  `table.unpack` count one unit per element they move or visit. A range
+  longer than the default memory cap could hold, one element per value the
+  interpreter stores, is refused before the call loops. The message names
+  the function, the number of elements and that limit. `table.sort` with no
+  comparison function counts one unit per comparison. With a comparison
+  function, that function's own instructions count. Within these limits the
+  calls return the same values and raise the same errors as Lua 5.4.9.
+- No string may be longer than 65,536 bytes. Every string the interpreter
+  creates passes the allocator, and Lua has no switch that stops a longer
+  one, so the cap is applied there. The header in front of the bytes differs
+  by build, so each state measures it once, from one 200-byte string, before
+  the libraries open. A longer string ends the phase with `string_length`.
+  The message names the size and 65,536, at the line that made the string.
+  `string.rep`, `table.concat` and `string.gsub` refuse earlier with the
+  same error when they can see the size coming. `print` keeps at most one
+  byte past its own 16 KiB line, so a long value is cut instead of refused.
+  A `pcall` that catches the refusal does not let the phase continue. A
+  value the host pushes counts as a string too, so text longer than 65,536
+  bytes fails the script that receives it. A string literal that long fails
+  the chunk that contains it.
 - The sources in `third_party/lua` are unchanged. Every string hash uses one
   constant seed, `0x4F414C55` (the letters OALU), so two states walk the same
   table in the same order wherever they sit. `table.sort` does not draw a
@@ -169,12 +200,25 @@ the allowance stops with an instruction-budget error, including when the
 script catches that error itself, and that a long match which stays inside
 the allowance adds to `instructions_used`.
 
+`data-script-host-c-work` compares `string.byte`, the charged table calls
+and the charged `utf8` calls with Lua's own results, and checks that a loop
+or an impossible range in each one stops the phase. It also runs a phase
+that reads several hundred small tables and rewrites their text.
+
+`data-script-host-string-length` checks that a string of 65,536 bytes is
+kept and that each way of making a longer one stops with `string_length`,
+naming the place it happened. It also checks that catching the refusal does
+not let the phase continue, and that filling memory with shorter strings is
+still a memory error.
+
 ## Limitations
 
-Some work inside a C function is bounded by memory, not by the instruction
-count: `table.sort` with no comparison function, `table.concat`, and
-`string.rep` up to its cap. Text of numbers that must come out the same on
-every platform is not part of this library yet. A `__gc` or `__mode` entry
-added to a metatable after `setmetatable` is not caught. `instructions_used`
-counts Lua instructions in steps of the check interval, so a short phase can
-report zero; pattern steps are counted one by one.
+Comparing two strings is one instruction. The comparison walks at most
+65,536 bytes, which takes about 1.2 microseconds on the machine where this
+was measured, both for order and for equality. A phase cannot build a
+longer string. Text of numbers that must come out the same on every platform
+is not part of this library yet. A `__gc` or `__mode` entry added to a
+metatable after `setmetatable` is not caught. `instructions_used` counts
+Lua instructions in steps of the check interval, so a short phase can report
+zero; pattern steps, allocation, scans and table work are counted in the
+units above.
