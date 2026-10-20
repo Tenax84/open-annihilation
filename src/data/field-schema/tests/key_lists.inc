@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
 // Unit keys, 120. Full pass: unit_def_loader.cpp (106). Header pass:
 // unit_header.cpp (ai_limit, ai_weight, copyright, side, version, wacky).
 // Movement keys read when a unit names no class: move_classes.cpp

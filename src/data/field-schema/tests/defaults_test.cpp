@@ -86,8 +86,8 @@ struct MemoryFiles {
 };
 
 struct Notes {
-    const char* key;
-    const char* reason;
+    const char* key{};
+    const char* reason{};
 };
 
 // Text the loader turns into an index, or a number it does not store on the record.
@@ -115,12 +115,12 @@ bool empty_default(const Value& def) {
     return false;
 }
 
-void expect_int(std::int64_t member, const Value& def) {
+void expect_int(int64_t member, const Value& def) {
     OA_CHECK(def.kind == Value::Kind::integer);
     OA_CHECK(member == def.integer);
 }
 
-void expect_fixed(std::int32_t member, const Value& def) {
+void expect_fixed(int32_t member, const Value& def) {
     OA_CHECK(def.kind == Value::Kind::number);
     OA_CHECK(static_cast<double>(member) / 65536.0 == def.number);
 }
@@ -135,7 +135,7 @@ void expect_whole_float(float member, const Value& def) {
     OA_CHECK(static_cast<double>(member) == static_cast<double>(def.integer));
 }
 
-void expect_flag(std::uint32_t word, std::uint32_t bit, const Value& def) {
+void expect_flag(uint32_t word, uint32_t bit, const Value& def) {
     OA_CHECK(def.kind == Value::Kind::boolean);
     OA_CHECK(((word & bit) != 0) == def.boolean);
 }
@@ -145,7 +145,7 @@ void expect_text(const char* member, const Value& def) {
     OA_CHECK(std::strcmp(member, def.text.c_str()) == 0);
 }
 
-void expect_zero_count(std::int64_t member, const Value& def) {
+void expect_zero_count(int64_t member, const Value& def) {
     OA_CHECK(def.kind == Value::Kind::number);
     OA_CHECK(def.number == 0.0);
     OA_CHECK(member == 0);
@@ -354,7 +354,7 @@ void compare_unit(
         const auto bits = (unit.abilities & OA_UNIT_DEF_ABILITY_SELF_DESTRUCT_MASK) >>
                           OA_UNIT_DEF_ABILITY_SELF_DESTRUCT_SHIFT;
         OA_CHECK(def.kind == Value::Kind::integer);
-        OA_CHECK(bits == (static_cast<std::uint32_t>(def.integer) & 7u));
+        OA_CHECK(bits == (static_cast<uint32_t>(def.integer) & 7u));
     } else if (key == "shootme")
         expect_flag(unit.flags, OA_UNIT_DEF_FLAG_SHOOT_ME, def);
     else if (key == "showplayername")
@@ -373,11 +373,11 @@ void compare_unit(
         const auto bits =
             (unit.flags & OA_UNIT_DEF_FLAG_FIRE_ORDER_MASK) >> OA_UNIT_DEF_FLAG_FIRE_ORDER_SHIFT;
         OA_CHECK(def.kind == Value::Kind::integer);
-        OA_CHECK(bits == (static_cast<std::uint32_t>(def.integer) & 3u));
+        OA_CHECK(bits == (static_cast<uint32_t>(def.integer) & 3u));
     } else if (key == "standingmoveorder") {
         const auto bits = unit.flags & OA_UNIT_DEF_FLAG_MOVE_ORDER_MASK;
         OA_CHECK(def.kind == Value::Kind::integer);
-        OA_CHECK(bits == (static_cast<std::uint32_t>(def.integer) & 3u));
+        OA_CHECK(bits == (static_cast<uint32_t>(def.integer) & 3u));
     } else if (key == "stealth")
         expect_flag(unit.flags, OA_UNIT_DEF_FLAG_STEALTH, def);
     else if (key == "teleporter")
@@ -435,7 +435,7 @@ void compare_unit(
         OA_CHECK(false);
 }
 
-void compare_weapon_flag(std::string_view key, const Value& def, std::uint32_t word) {
+void compare_weapon_flag(std::string_view key, const Value& def, uint32_t word) {
     namespace defs = oa::data::defs;
     if (key == "ballistic")
         expect_flag(word, defs::weapon_flag_ballistic, def);
