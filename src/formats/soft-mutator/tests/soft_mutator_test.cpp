@@ -428,12 +428,12 @@ void layout() {
 void errors() {
     expect_kept("[RIDGECOM]{[Foo]{A=1;}Kept=9;}", sm::DiagnosticCode::unknown_section, 1);
     expect_kept("[RIDGECOM]\n[RIDGEFAB]{Kept=9;}", sm::DiagnosticCode::unclosed_block, 1);
-    expect_kept("}\n[RIDGECOM]{Kept=9;}", sm::DiagnosticCode::unexpected_brace, 1);
+    expect_kept("{\n[RIDGECOM]{Kept=9;}", sm::DiagnosticCode::unexpected_brace, 1);
     expect_kept("[RIDGECOM]{folder=weapons;Kept=9;}", sm::DiagnosticCode::directive_in_block, 1);
     expect_kept("[RIDGECOM]{A=1e2;Kept=9;}", sm::DiagnosticCode::bad_number, 1);
     expect_kept("[RIDGECOM]{A=+1;Kept=9;}", sm::DiagnosticCode::bad_number, 1);
     expect_kept("[*Group*]{[Needs]{A=hello;}[Changes]{Kept=9;}}", sm::DiagnosticCode::bad_need, 1);
-    expect_kept("[RIDGECOM]{A=hello;Kept=9;}", sm::DiagnosticCode::bad_change, 1);
+    expect_kept("[RIDGECOM]{A=(2);Kept=9;}", sm::DiagnosticCode::bad_change, 1);
     expect_kept("[RIDGECOM]{A=1,2;Kept=9;}", sm::DiagnosticCode::need_form_in_changes, 1);
     expect_kept("[RIDGECOM]{A=\"x\"*;Kept=9;}", sm::DiagnosticCode::need_form_in_changes, 1);
     expect_kept(
@@ -603,6 +603,229 @@ void loose_in_group() {
     }
 }
 
+[[nodiscard]] const sm::Need* need_named(const sm::Block& block, std::string_view field) {
+    for (const sm::Need& need : block.needs) {
+        if (need.field == field)
+            return &need;
+    }
+    return nullptr;
+}
+
+void lenient_forms() {
+    const sm::ParseResult word = parse("[RIDGECOM]{Blast=ridgeburst;}\n");
+    OA_CHECK(!word.has_errors());
+    OA_CHECK(has_code_at(word, sm::DiagnosticCode::unquoted_text, 1));
+    OA_CHECK(word.diagnostics.size() == 1);
+    OA_CHECK(word.diagnostics[0].severity == sm::Severity::warning);
+    OA_CHECK(word.rules.blocks.size() == 1 && word.rules.blocks[0].changes.size() == 1);
+    if (word.rules.blocks.size() == 1 && word.rules.blocks[0].changes.size() == 1) {
+        const sm::Change& change = word.rules.blocks[0].changes[0];
+        OA_CHECK(change.field == "Blast");
+        OA_CHECK(change.kind == sm::ChangeKind::assign_text);
+        OA_CHECK(change.text == "ridgeburst");
+        OA_CHECK(change.value == 0);
+        OA_CHECK(change.line == 1);
+    }
+
+    const sm::ParseResult words = parse("[RIDGECOM]{Note=weight RIDGE 0;}\n");
+    OA_CHECK(!words.has_errors());
+    OA_CHECK(has_code_at(words, sm::DiagnosticCode::unquoted_text, 1));
+    OA_CHECK(!has_code(words, sm::DiagnosticCode::spaces_in_value));
+    OA_CHECK(words.rules.blocks.size() == 1 && words.rules.blocks[0].changes.size() == 1);
+    if (words.rules.blocks[0].changes.size() == 1) {
+        const sm::Change& change = words.rules.blocks[0].changes[0];
+        OA_CHECK(change.kind == sm::ChangeKind::assign_text);
+        OA_CHECK(change.text == "weight RIDGE 0");
+    }
+
+    const sm::ParseResult gaps = parse("[RIDGECOM]{Note=ridge  gate;}\n");
+    OA_CHECK(gaps.rules.blocks.size() == 1 && gaps.rules.blocks[0].changes.size() == 1);
+    if (gaps.rules.blocks[0].changes.size() == 1)
+        OA_CHECK(gaps.rules.blocks[0].changes[0].text == "ridge  gate");
+
+    const sm::ParseResult noted = parse("[RIDGECOM]{Note=weight RIDGE 0; // stays out\n}\n");
+    OA_CHECK(noted.rules.blocks.size() == 1 && noted.rules.blocks[0].changes.size() == 1);
+    if (noted.rules.blocks[0].changes.size() == 1) {
+        OA_CHECK(noted.rules.blocks[0].changes[0].text == "weight RIDGE 0");
+        OA_CHECK(noted.rules.blocks[0].changes[0].text.find("stays") == std::string::npos);
+    }
+    const sm::ParseResult commented = parse("[RIDGECOM]{Note=ridge gate // stays out\n}\n");
+    OA_CHECK(has_code_at(commented, sm::DiagnosticCode::missing_semicolon, 1));
+    OA_CHECK(commented.rules.blocks.size() == 1 && commented.rules.blocks[0].changes.size() == 1);
+    if (commented.rules.blocks[0].changes.size() == 1)
+        OA_CHECK(commented.rules.blocks[0].changes[0].text == "ridge gate");
+
+    const sm::ParseResult beside = parse("[RIDGECOM]{\nBlast=ridgeburst;\nSpeed=2;\n}\n");
+    OA_CHECK(!beside.has_errors());
+    OA_CHECK(has_code_at(beside, sm::DiagnosticCode::unquoted_text, 2));
+    OA_CHECK(count_code(beside, sm::DiagnosticCode::unquoted_text) == 1);
+    OA_CHECK(beside.rules.blocks.size() == 1 && beside.rules.blocks[0].changes.size() == 2);
+    if (beside.rules.blocks[0].changes.size() == 2) {
+        const sm::Change& blast = beside.rules.blocks[0].changes[0];
+        const sm::Change& speed = beside.rules.blocks[0].changes[1];
+        OA_CHECK(blast.kind == sm::ChangeKind::assign_text && blast.text == "ridgeburst");
+        OA_CHECK(blast.line == 2);
+        OA_CHECK(speed.kind == sm::ChangeKind::assign && speed.value == 2 && speed.text.empty());
+        OA_CHECK(speed.line == 3);
+    }
+
+    const sm::ParseResult empty = parse("[RIDGECOM]{Mark=;}\n");
+    OA_CHECK(!empty.has_errors());
+    OA_CHECK(has_code_at(empty, sm::DiagnosticCode::empty_value, 1));
+    OA_CHECK(!has_code(empty, sm::DiagnosticCode::unquoted_text));
+    OA_CHECK(empty.rules.blocks.size() == 1 && empty.rules.blocks[0].changes.size() == 1);
+    if (empty.rules.blocks[0].changes.size() == 1) {
+        const sm::Change& change = empty.rules.blocks[0].changes[0];
+        OA_CHECK(change.kind == sm::ChangeKind::assign_text);
+        OA_CHECK(change.text.empty());
+        OA_CHECK(change.field == "Mark");
+    }
+    const sm::ParseResult removed = parse("[RIDGECOM]{Mark=\"\";}\n");
+    OA_CHECK(!has_code(removed, sm::DiagnosticCode::empty_value));
+    OA_CHECK(removed.rules.blocks.size() == 1 && removed.rules.blocks[0].changes.size() == 1);
+    if (removed.rules.blocks[0].changes.size() == 1)
+        OA_CHECK(removed.rules.blocks[0].changes[0].kind == sm::ChangeKind::remove);
+
+    const sm::ParseResult needs = parse(
+        "[*Group*]\n"
+        "{\n"
+        "[Needs]\n"
+        "{\n"
+        "Time=\"\";\n"
+        "Weapon=!\"\";\n"
+        "Present=\"\"*;\n"
+        "Absent=!\"\"*;\n"
+        "}\n"
+        "[Changes]\n"
+        "{\n"
+        "Kept=1;\n"
+        "}\n"
+        "}\n"
+    );
+    OA_CHECK(!needs.has_errors());
+    OA_CHECK(has_code_at(needs, sm::DiagnosticCode::empty_text_need, 5));
+    OA_CHECK(has_code_at(needs, sm::DiagnosticCode::empty_text_need, 6));
+    OA_CHECK(count_code(needs, sm::DiagnosticCode::empty_text_need) == 2);
+    OA_CHECK(!has_code(needs, sm::DiagnosticCode::change_form_in_needs));
+    OA_CHECK(needs.rules.blocks.size() == 1);
+    if (needs.rules.blocks.size() == 1) {
+        const sm::Block& block = needs.rules.blocks[0];
+        OA_CHECK(block.needs.size() == 4);
+        const sm::Need* time = need_named(block, "Time");
+        const sm::Need* weapon = need_named(block, "Weapon");
+        const sm::Need* present = need_named(block, "Present");
+        const sm::Need* absent = need_named(block, "Absent");
+        OA_CHECK(time != nullptr && weapon != nullptr && present != nullptr && absent != nullptr);
+        if (time != nullptr && weapon != nullptr && present != nullptr && absent != nullptr) {
+            OA_CHECK(time->kind == sm::NeedKind::equals && !time->negated && time->text.empty());
+            OA_CHECK(time->line == 5);
+            OA_CHECK(
+                weapon->kind == sm::NeedKind::equals && weapon->negated && weapon->text.empty()
+            );
+            OA_CHECK(weapon->line == 6);
+            OA_CHECK(
+                present->kind == sm::NeedKind::contains && !present->negated &&
+                present->text.empty()
+            );
+            OA_CHECK(
+                absent->kind == sm::NeedKind::contains && absent->negated && absent->text.empty()
+            );
+        }
+    }
+
+    const sm::ParseResult after_last = parse("[RIDGECOM]{A=1;}\n}\n");
+    OA_CHECK(!after_last.has_errors());
+    OA_CHECK(has_code_at(after_last, sm::DiagnosticCode::stray_closing_brace, 2));
+    OA_CHECK(after_last.diagnostics.size() == 1);
+    OA_CHECK(after_last.diagnostics[0].severity == sm::Severity::warning);
+    OA_CHECK(after_last.rules.blocks.size() == 1);
+    if (after_last.rules.blocks.size() == 1) {
+        OA_CHECK(after_last.rules.blocks[0].name == "RIDGECOM");
+        OA_CHECK(after_last.rules.blocks[0].changes.size() == 1);
+    }
+
+    const sm::ParseResult after_middle = parse("[RIDGECOM]{A=1;}\n}\n[RIDGEFAB]{B=2;}\n}\n");
+    OA_CHECK(!after_middle.has_errors());
+    OA_CHECK(has_code_at(after_middle, sm::DiagnosticCode::stray_closing_brace, 2));
+    OA_CHECK(has_code_at(after_middle, sm::DiagnosticCode::stray_closing_brace, 4));
+    OA_CHECK(count_code(after_middle, sm::DiagnosticCode::stray_closing_brace) == 2);
+    OA_CHECK(after_middle.rules.blocks.size() == 2);
+    if (after_middle.rules.blocks.size() == 2) {
+        OA_CHECK(after_middle.rules.blocks[0].name == "RIDGECOM");
+        OA_CHECK(after_middle.rules.blocks[1].name == "RIDGEFAB");
+        OA_CHECK(after_middle.rules.blocks[1].changes.size() == 1);
+        OA_CHECK(after_middle.rules.blocks[1].changes[0].value == 2);
+    }
+
+    const sm::ParseResult leading = parse("}\n[RIDGECOM]{Kept=9;}\n");
+    OA_CHECK(!leading.has_errors());
+    OA_CHECK(has_code_at(leading, sm::DiagnosticCode::stray_closing_brace, 1));
+    OA_CHECK(kept_nine(leading));
+
+    // A '}' in the body ends that body. It is not ignored, so a statement
+    // written after it is outside the block and stays an error. A '{' in
+    // the body, and a '{' at the top level, stay errors as well.
+    const sm::ParseResult ended_early = parse("[RIDGECOM]{\n}\nKept=9;\n}\n");
+    OA_CHECK(ended_early.has_errors());
+    OA_CHECK(has_code_at(ended_early, sm::DiagnosticCode::stray_text, 3));
+    OA_CHECK(has_code_at(ended_early, sm::DiagnosticCode::stray_closing_brace, 4));
+    OA_CHECK(!kept_nine(ended_early));
+    OA_CHECK(ended_early.rules.blocks.size() == 1);
+    if (ended_early.rules.blocks.size() == 1)
+        OA_CHECK(ended_early.rules.blocks[0].changes.empty());
+
+    const sm::ParseResult inner_open = parse("[RIDGECOM]{{\nKept=9;\n}\n");
+    OA_CHECK(inner_open.has_errors());
+    OA_CHECK(has_code_at(inner_open, sm::DiagnosticCode::unexpected_brace, 1));
+    OA_CHECK(!has_code(inner_open, sm::DiagnosticCode::stray_closing_brace));
+    OA_CHECK(kept_nine(inner_open));
+
+    const sm::ParseResult top_open = parse("{\n[RIDGECOM]{Kept=9;}\n");
+    OA_CHECK(top_open.has_errors());
+    OA_CHECK(has_code_at(top_open, sm::DiagnosticCode::unexpected_brace, 1));
+    OA_CHECK(!has_code(top_open, sm::DiagnosticCode::stray_closing_brace));
+    OA_CHECK(kept_nine(top_open));
+
+    const sm::ParseResult clamped = parse("[*All*]{Worker=*7 (2,15);}\n");
+    OA_CHECK(has_code(clamped, sm::DiagnosticCode::spaces_in_value));
+    OA_CHECK(!has_code(clamped, sm::DiagnosticCode::unquoted_text));
+    OA_CHECK(clamped.rules.blocks.size() == 1 && clamped.rules.blocks[0].changes.size() == 1);
+    if (clamped.rules.blocks[0].changes.size() == 1) {
+        const sm::Change& change = clamped.rules.blocks[0].changes[0];
+        OA_CHECK(change.kind == sm::ChangeKind::scale_clamp);
+        OA_CHECK(change.value == 7 && change.low == 2 && change.high == 15);
+    }
+
+    // '*x' has no number token, so it stays a bad change. A '*' followed by
+    // a malformed number stays a bad number.
+    const sm::ParseResult star_x = parse("[RIDGECOM]{A=*x;Kept=9;}\n");
+    OA_CHECK(star_x.has_errors());
+    OA_CHECK(has_code_at(star_x, sm::DiagnosticCode::bad_change, 1));
+    OA_CHECK(!has_code(star_x, sm::DiagnosticCode::bad_number));
+    OA_CHECK(!has_code(star_x, sm::DiagnosticCode::unquoted_text));
+    OA_CHECK(kept_nine(star_x));
+    if (star_x.rules.blocks.size() == 1)
+        OA_CHECK(change_named(star_x.rules.blocks[0], "A") == nullptr);
+
+    const sm::ParseResult star_bad = parse("[RIDGECOM]{A=*1e2;Kept=9;}\n");
+    OA_CHECK(has_code_at(star_bad, sm::DiagnosticCode::bad_number, 1));
+    OA_CHECK(!has_code(star_bad, sm::DiagnosticCode::unquoted_text));
+    OA_CHECK(kept_nine(star_bad));
+
+    const sm::ParseResult bare_rule = parse("[RIDGECOM]{Note=ridge gate;}\n");
+    const sm::ParseResult quoted_rule = parse("[RIDGECOM]{Note=\"ridge gate\";}\n");
+    OA_CHECK(bare_rule.rules.blocks.size() == 1 && quoted_rule.rules.blocks.size() == 1);
+    OA_CHECK(sm::equivalent(bare_rule.rules, quoted_rule.rules));
+    OA_CHECK(sm::equivalent(bare_rule.rules.blocks[0], quoted_rule.rules.blocks[0]));
+    const sm::ParseResult other_text = parse("[RIDGECOM]{Note=\"ridge  gate\";}\n");
+    OA_CHECK(!sm::equivalent(bare_rule.rules, other_text.rules));
+
+    OA_CHECK(sm::code_name(sm::DiagnosticCode::unquoted_text) == "unquoted_text");
+    OA_CHECK(sm::code_name(sm::DiagnosticCode::empty_value) == "empty_value");
+    OA_CHECK(sm::code_name(sm::DiagnosticCode::empty_text_need) == "empty_text_need");
+    OA_CHECK(sm::code_name(sm::DiagnosticCode::stray_closing_brace) == "stray_closing_brace");
+}
+
 void same_rules() {
     const sm::ParseResult spaced = parse(
         "[*Group*]\n"
@@ -756,6 +979,7 @@ int main(int argc, char** argv) {
     errors();
     malformed();
     loose_in_group();
+    lenient_forms();
     same_rules();
     return oa::test::check_exit_status();
 }

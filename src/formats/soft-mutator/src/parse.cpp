@@ -203,6 +203,25 @@ void trim_trailing(std::string& text) {
     return token.read == NumberRead::ok && token.end == text.size();
 }
 
+// A change value that matched no number, scale, clamp, meta or quoted form,
+// and does not start like one of those forms, is bare text. An empty value
+// is included: it assigns empty text, which is not the quoted removal.
+[[nodiscard]] bool bare_text_value(std::string_view text) noexcept {
+    if (text.empty())
+        return true;
+    switch (text.front()) {
+    case '"':
+    case '*':
+    case '^':
+    case '!':
+    case '(':
+    case ',':
+        return false;
+    default:
+        return true;
+    }
+}
+
 struct Cleaned {
     std::string text;
     bool removed_space{false};
@@ -257,7 +276,17 @@ class Parser {
                 parse_block();
                 continue;
             }
-            if (c == '{' || c == '}') {
+            if (c == '}') {
+                diagnose(
+                    Severity::warning,
+                    DiagnosticCode::stray_closing_brace,
+                    line_,
+                    "closing brace outside a block"
+                );
+                advance();
+                continue;
+            }
+            if (c == '{') {
                 diagnose(
                     Severity::error, DiagnosticCode::unexpected_brace, line_, "unexpected brace"
                 );
@@ -841,7 +870,12 @@ class Parser {
             slot == Slot::needs
                 ? classify_need(field, cleaned.text, cleaned.removed_space, statement_line)
                 : classify_change(
-                      field, cleaned.text, cleaned.removed_space, statement_line, all_depth
+                      field,
+                      cleaned.text,
+                      raw.text,
+                      cleaned.removed_space,
+                      statement_line,
+                      all_depth
                   );
         if (kept && raw.term != Term::semi) {
             diagnose(
@@ -968,12 +1002,13 @@ class Parser {
             }
             if (rest.empty() && inside.empty()) {
                 diagnose(
-                    Severity::error,
-                    DiagnosticCode::change_form_in_needs,
+                    Severity::warning,
+                    DiagnosticCode::empty_text_need,
                     line,
-                    "change form in needs for " + quote(field)
+                    "empty text in the need " + quote(field)
                 );
-                return false;
+                keep_need(field, NeedKind::equals, negated, std::string(), 0, 0, spaced, line);
+                return true;
             }
             NeedKind kind = NeedKind::equals;
             if (rest == "*") {
@@ -1026,6 +1061,7 @@ class Parser {
     [[nodiscard]] bool classify_change(
         const std::string& field,
         const std::string& value,
+        const std::string& written,
         bool spaced,
         uint32_t line,
         bool all_depth
@@ -1262,6 +1298,39 @@ class Parser {
                 Severity::error, DiagnosticCode::bad_number, line, "bad number in " + quote(field)
             );
             return false;
+        }
+        // The forms above are tried on the value with its spaces removed.
+        // What remains, when it does not start like those forms, is the text
+        // as written: inner spaces kept, ends already trimmed.
+        if (bare_text_value(written)) {
+            if (written.size() > max_text_bytes) {
+                diagnose(
+                    Severity::error,
+                    DiagnosticCode::text_too_long,
+                    line,
+                    "text is longer than 1024 bytes"
+                );
+                return false;
+            }
+            if (written.empty()) {
+                diagnose(
+                    Severity::warning,
+                    DiagnosticCode::empty_value,
+                    line,
+                    "empty value for " + quote(field)
+                );
+            } else {
+                diagnose(
+                    Severity::warning,
+                    DiagnosticCode::unquoted_text,
+                    line,
+                    "unquoted text for " + quote(field)
+                );
+            }
+            keep_change(
+                field, ChangeKind::assign_text, 0, 0, 0, written, false, false, line, all_depth
+            );
+            return true;
         }
         diagnose(Severity::error, DiagnosticCode::bad_change, line, "bad change " + quote(field));
         return false;
