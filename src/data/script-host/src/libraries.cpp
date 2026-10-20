@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The libraries a script may use, and the replacements that keep them inside
-// the sandbox. `math` is the engine's library.
+// the sandbox. `math` is the engine's library. `pairs` walks keys in a fixed
+// order.
 
 #include "internal.hpp"
 
@@ -306,6 +307,9 @@ void open_libraries(lua_State* state) {
 
     lua_pushcfunction(state, host_print);
     lua_setglobal(state, "print");
+
+    lua_pushcfunction(state, ordered_pairs);
+    lua_setglobal(state, "pairs");
 
     lua_getglobal(state, "xpcall");
     lua_rawsetp(state, LUA_REGISTRYINDEX, &xpcall_key);

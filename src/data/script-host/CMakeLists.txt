@@ -48,7 +48,8 @@ add_library(oa-data-script-host
   src/sandbox.cpp
   src/libraries.cpp
   src/require.cpp
-  src/math_library.cpp)
+  src/math_library.cpp
+  src/sorted.cpp)
 add_library(oa::data::script_host ALIAS oa-data-script-host)
 target_include_directories(oa-data-script-host PUBLIC include)
 target_compile_features(oa-data-script-host PUBLIC cxx_std_20)
