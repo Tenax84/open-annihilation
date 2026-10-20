@@ -137,8 +137,9 @@ constexpr FieldSpec k_fields[] = {
         .key = "buildangle",
         .record = RecordKind::unit,
         .type = FieldType::integer,
-        .storage = Storage::int16,
-        .why = "the loader keeps this in 16 bits, so a value outside that range wraps",
+        .storage = Storage::uint16,
+        .why = "the loader keeps this in 16 bits and the game reads it back unsigned "
+               "(runtime.cpp:90), so a value outside 0 to 65535 wraps",
         .read_at = "unit_def_loader.cpp:291",
     },
     {
@@ -1173,16 +1174,18 @@ constexpr FieldSpec k_fields[] = {
         .key = "color",
         .record = RecordKind::weapon,
         .type = FieldType::integer,
-        .storage = Storage::int8,
-        .why = "the loader keeps this in 8 bits, so a value outside that range wraps",
+        .storage = Storage::uint8,
+        .why = "the loader keeps this in 8 bits and the game reads it back unsigned "
+               "(combat_state.cpp:108), so a value outside 0 to 255 wraps",
         .read_at = "weapons.cpp:360",
     },
     {
         .key = "color2",
         .record = RecordKind::weapon,
         .type = FieldType::integer,
-        .storage = Storage::int8,
-        .why = "the loader keeps this in 8 bits, so a value outside that range wraps",
+        .storage = Storage::uint8,
+        .why = "the loader keeps this in 8 bits and the game reads it back unsigned "
+               "(combat_state.cpp:109), so a value outside 0 to 255 wraps",
         .read_at = "weapons.cpp:361",
     },
     {
@@ -1454,8 +1457,9 @@ constexpr FieldSpec k_fields[] = {
         .key = "pitchtolerance",
         .record = RecordKind::weapon,
         .type = FieldType::integer,
-        .storage = Storage::int16,
-        .why = "the loader keeps this in 16 bits, so a value outside that range wraps",
+        .storage = Storage::uint16,
+        .why = "the loader keeps this in 16 bits and the game reads it back unsigned "
+               "(combat_state.cpp:101), so a value outside 0 to 65535 wraps",
         .read_at = "weapons.cpp:366",
     },
     {
@@ -1654,8 +1658,9 @@ constexpr FieldSpec k_fields[] = {
         .key = "tolerance",
         .record = RecordKind::weapon,
         .type = FieldType::integer,
-        .storage = Storage::int16,
-        .why = "the loader keeps this in 16 bits, so a value outside that range wraps",
+        .storage = Storage::uint16,
+        .why = "the loader keeps this in 16 bits and the game reads it back unsigned "
+               "(combat_state.cpp:100), so a value outside 0 to 65535 wraps",
         .read_at = "weapons.cpp:365",
     },
     {

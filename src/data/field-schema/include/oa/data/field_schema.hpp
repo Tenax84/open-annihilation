@@ -42,6 +42,7 @@ enum class Storage : uint8_t {
     int8,    ///< signed 8 bits
     uint8,   ///< unsigned 8 bits
     int16,   ///< signed 16 bits
+    uint16,  ///< unsigned 16 bits
     int32,   ///< signed 32 bits
     uint32,  ///< unsigned 32 bits
     float32, ///< a decimal kept in a float

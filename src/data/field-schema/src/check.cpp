@@ -105,6 +105,8 @@ int64_t cast_width(Storage storage, int32_t parsed) noexcept {
         return static_cast<uint8_t>(parsed);
     case Storage::int16:
         return static_cast<int16_t>(parsed);
+    case Storage::uint16:
+        return static_cast<uint16_t>(parsed);
     case Storage::uint32:
         return static_cast<uint32_t>(parsed);
     default:
@@ -240,6 +242,10 @@ Check storage_warning(const FieldSpec& spec, std::string_view key, double value)
     case Storage::int16:
         if (outside_int(value, -32768.0, 32767.0))
             return outside_range(Verdict::warn, key, value, -32768.0, 32767.0, why);
+        break;
+    case Storage::uint16:
+        if (outside_int(value, 0.0, 65535.0))
+            return outside_range(Verdict::warn, key, value, 0.0, 65535.0, why);
         break;
     case Storage::int32:
         if (outside_int(
