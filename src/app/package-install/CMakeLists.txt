@@ -91,6 +91,14 @@ if(BUILD_TESTING)
     ZLIB::ZLIB oa-test-support oa-options)
   add_test(NAME app-package-install-oamap COMMAND oa-app-package-install-oamap-test)
   set_tests_properties(app-package-install-oamap PROPERTIES TIMEOUT 30)
+  # A mutator: its manifest, the files it may hold, its scripts and icon, the
+  # engine it needs, a catalogue replace, a question, and each refusal.
+  add_executable(oa-app-package-install-oamut-test tests/oamut_test.cpp)
+  target_link_libraries(oa-app-package-install-oamut-test PRIVATE oa-app-package-install
+    oa-formats-zip oa-formats-png oa-formats-oamut oa-base-sha256 ZLIB::ZLIB oa-test-support
+    oa-options)
+  add_test(NAME app-package-install-oamut COMMAND oa-app-package-install-oamut-test)
+  set_tests_properties(app-package-install-oamut PROPERTIES TIMEOUT 30)
   # A language pack: its manifest, the engine it needs, its tables, fonts and
   # warm-up, a question, a replace that keeps .backup, and a font that does
   # not open after unpacking.

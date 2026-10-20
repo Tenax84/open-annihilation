@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 // SPDX-License-Identifier: GPL-3.0-only
 
-// The kind table holds oamod, then oamap, then oalang. A made-up kind, built here
-// and not in the table, installs, replaces, rolls back and recovers through
-// the same unpacking and renames, and its own names are the only ones it
-// leaves in its root while it works.
+// The kind table holds oamod, then oamap, then oalang, then expansion, then
+// oamut. A made-up kind, built here and not in the table, installs, replaces,
+// rolls back and recovers through the same unpacking and renames, and its
+// own names are the only ones it leaves in its root while it works.
 
 #include "oa/app/package_install.hpp"
 #include "oa/formats/zip/stream.hpp"
@@ -253,11 +253,12 @@ bool commit_unpacked(
 
 void test_table() {
     const auto kinds = install::package_kinds();
-    OA_CHECK(kinds.size() == 4);
+    OA_CHECK(kinds.size() == 5);
     OA_CHECK(kinds[0].name == "oamod");
     OA_CHECK(kinds[1].name == "oamap");
     OA_CHECK(kinds[2].name == "oalang");
     OA_CHECK(kinds[3].name == "expansion");
+    OA_CHECK(kinds[4].name == "oamut");
     OA_CHECK(install::find_kind("oamod") == &install::mod_kind());
     const install::PackageKind* maps = install::find_kind("oamap");
     OA_CHECK(maps != nullptr && maps == &kinds[1]);
@@ -281,6 +282,24 @@ void test_table() {
     OA_CHECK(expansions != nullptr && expansions->manifest == "oaexp.yaml");
     OA_CHECK(install::kind_for_file("a.oaexp") == expansions);
     OA_CHECK(install::kind_for_file("B.OAEXP") == expansions);
+    const install::PackageKind* mutators = install::find_kind("oamut");
+    OA_CHECK(mutators != nullptr && mutators == &kinds[4]);
+    OA_CHECK(mutators != nullptr && mutators->extension == ".oamut");
+    OA_CHECK(mutators != nullptr && mutators->manifest == "oamut.yaml");
+    OA_CHECK(mutators != nullptr && mutators->root_folder == "Mutators");
+    OA_CHECK(mutators != nullptr && mutators->check_staged == nullptr);
+    OA_CHECK(install::kind_for_file("a.oamut") == mutators);
+    OA_CHECK(install::kind_for_file("x.OAMUT") == mutators);
+    if (mutators != nullptr) {
+        const install::FolderNames mutator_names = install::folder_names(*mutators);
+        OA_CHECK(mutator_names.reserved == ".oamut-");
+        OA_CHECK(mutator_names.staging == ".oamut-staging-");
+        OA_CHECK(mutator_names.old == ".oamut-old-");
+        OA_CHECK(mutator_names.replaced == ".oamut-replaced-");
+        OA_CHECK(mutator_names.restore == ".oamut-restore-");
+        OA_CHECK(mutator_names.discard == ".oamut-discard-");
+        OA_CHECK(mutator_names.lock == ".oamut-lock");
+    }
     OA_CHECK(install::kind_for_file("a.zip") == nullptr);
     OA_CHECK(install::kind_for_file("a.oamod.zip") == nullptr);
     OA_CHECK(install::kind_for_file("oamod") == nullptr);
