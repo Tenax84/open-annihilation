@@ -31,6 +31,7 @@ namespace {
 namespace mut = oa::formats::oamut;
 
 using mut::ChoiceValue;
+using mut::ClashMode;
 using mut::Condition;
 using mut::Layer;
 using mut::Legacy;
@@ -360,7 +361,8 @@ bool same_manifest(const Manifest& first, const Manifest& second) {
         first.author.email != second.author.email || first.description != second.description ||
         first.homepage != second.homepage || first.icon != second.icon ||
         first.tags != second.tags || first.requires_engine != second.requires_engine ||
-        first.layers != second.layers || first.entry != second.entry)
+        first.layers != second.layers || first.clashes != second.clashes ||
+        first.entry != second.entry)
         return false;
     if (first.works_with.size() != second.works_with.size() ||
         first.requires_mutators.size() != second.requires_mutators.size() ||
@@ -662,6 +664,7 @@ options:
     OA_CHECK(manifest.requires_engine == ">= 0.8.5");
     OA_CHECK(manifest.requires_mutators.empty() && manifest.conflicts_with.empty());
     OA_CHECK(manifest.layers.size() == 1 && manifest.layers[0] == Layer::units);
+    OA_CHECK(!manifest.clashes.has_value());
     OA_CHECK(manifest.entry == mut::default_entry);
     OA_CHECK(manifest.options.size() == 1 && manifest.options[0].id == "factor");
     OA_CHECK(manifest.options[0].type == OptionType::choice);
@@ -752,6 +755,8 @@ legacy:
     OA_CHECK(read_ok(base_text(), plain));
     OA_CHECK(plain.legacy.size() == 1 && plain.legacy[0].files.size() == 1);
     OA_CHECK(round_trip(plain));
+    OA_CHECK(!plain.clashes.has_value());
+    OA_CHECK(mut::write_manifest(plain).find("clashes:") == std::string::npos);
 
     const std::string wide(64, 'a');
     Manifest wide_id;
@@ -761,6 +766,44 @@ legacy:
     Manifest wide_named;
     OA_CHECK(read_ok(edited("name: \"Steady Hands\"", "name: \"" + wide_name + "\""), wide_named));
     OA_CHECK(wide_named.name == wide_name);
+}
+
+/// Both clash modes, an absent key, and the values the key refuses.
+void test_clashes() {
+    const std::string layers = "layers: [\"units\", \"weapons\"]\n";
+    Manifest adding;
+    OA_CHECK(read_ok(edited(layers, "layers: [\"units\"]\nclashes: \"add\"\n"), adding));
+    OA_CHECK(adding.clashes == ClashMode::add);
+    OA_CHECK(mut::clash_mode_name(ClashMode::add) == std::string_view{"add"});
+    OA_CHECK(round_trip(adding));
+    OA_CHECK(mut::write_manifest(adding).find("clashes: \"add\"\n") != std::string::npos);
+
+    Manifest replacing;
+    OA_CHECK(read_ok(edited(layers, "layers: [\"weapons\"]\nclashes: \"replace\"\n"), replacing));
+    OA_CHECK(replacing.clashes == ClashMode::replace);
+    OA_CHECK(mut::clash_mode_name(ClashMode::replace) == std::string_view{"replace"});
+    OA_CHECK(mut::parse_clash_mode("replace") == ClashMode::replace);
+    OA_CHECK(mut::parse_clash_mode("Add") == std::nullopt);
+    OA_CHECK(round_trip(replacing));
+
+    expect_one(
+        edited(layers, "layers: [\"units\"]\nclashes: \"Add\"\n"),
+        "clashes",
+        "\"Add\"",
+        "clashes must be add or replace"
+    );
+    expect_one(
+        edited(layers, "layers: [\"units\"]\nclashes: merge\n"),
+        "clashes",
+        "merge",
+        "clashes must be add or replace"
+    );
+    expect_one(
+        edited(layers, "layers: [\"units\"]\nclashes: 1\n"),
+        "clashes",
+        "1",
+        "clashes must be add or replace"
+    );
 }
 
 /// One broken rule of the manifest, each on its own.
@@ -1796,6 +1839,7 @@ void test_choice_values() {
 int main() {
     test_versions();
     test_examples();
+    test_clashes();
     test_refusals();
     test_several();
     test_document_and_summary();

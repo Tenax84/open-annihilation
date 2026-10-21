@@ -460,6 +460,22 @@ bool read_works_with(const json::Json& object, Package& package, std::string& re
     return true;
 }
 
+/// Reads `clashes`. Absent stays absent. Any other value refuses the entry.
+bool read_clashes(const json::Json& object, Package& package, std::string& reason) {
+    const json::Json* value = object.find("clashes");
+    if (value == nullptr)
+        return true;
+    const std::string* text = value->string();
+    const std::optional<oamut::ClashMode> mode =
+        text != nullptr ? oamut::parse_clash_mode(*text) : std::nullopt;
+    if (!mode) {
+        reason = "clashes must be add or replace";
+        return false;
+    }
+    package.clashes = *mode;
+    return true;
+}
+
 /// Reads `layers`. A known name is kept once. An unknown name is skipped.
 bool read_layers(const json::Json& object, Package& package, std::string& reason) {
     constexpr std::size_t most_layers = 16;
@@ -744,6 +760,8 @@ bool read_mutator_facts(const json::Json& object, Package& package, std::string&
         ))
         return false;
     if (!read_layers(object, package, reason))
+        return false;
+    if (!read_clashes(object, package, reason))
         return false;
     return read_options(object, package, reason);
 }

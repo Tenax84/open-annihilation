@@ -149,6 +149,28 @@ enum class Layer : uint8_t {
     hacks,    ///< engine hacks for one match
 };
 
+/// How a mutator treats a unit or weapon that already has that name.
+///
+/// Add keeps the existing record and brings this mutator's beside it.
+/// Replace puts this mutator's record in its place. The game chooses when
+/// the manifest names neither.
+enum class ClashMode : uint8_t {
+    add,     ///< add the unit or weapon beside the one already there
+    replace, ///< replace the unit or weapon that already has that name
+};
+
+/// Returns a clash mode's manifest name.
+///
+/// @param mode the mode
+/// @return its name: add or replace
+[[nodiscard]] const char* clash_mode_name(ClashMode mode) noexcept;
+
+/// Reads a clash mode.
+///
+/// @param text the name, compared byte for byte
+/// @return the mode, or nothing when the text is not add or replace
+[[nodiscard]] std::optional<ClashMode> parse_clash_mode(std::string_view text) noexcept;
+
 /// How a player sets one option.
 enum class OptionType : uint8_t {
     toggle, ///< on or off
@@ -229,9 +251,12 @@ struct Manifest {
     std::vector<std::string> tags{};     ///< one to four tags, in the order written
     std::vector<Condition> works_with{}; ///< mods and the base game it fits
     std::string requires_engine{};       ///< the engine requirement, as written
-    std::vector<Condition> requires_mutators{};    ///< prerequisites, in the order they apply
-    std::vector<Condition> conflicts_with{};       ///< mutators it cannot run beside
-    std::vector<Layer> layers{};                   ///< the layers it uses, in the order written
+    std::vector<Condition> requires_mutators{}; ///< prerequisites, in the order they apply
+    std::vector<Condition> conflicts_with{};    ///< mutators it cannot run beside
+    std::vector<Layer> layers{};                ///< the layers it uses, in the order written
+    /// How units and weapons that already exist are treated. Absent when
+    /// the manifest names none; the game's default then applies.
+    std::optional<ClashMode> clashes{};
     std::vector<Option> options{};                 ///< the player's settings, in the order written
     std::vector<Translation> strings{};            ///< translations, in the order written
     std::string entry{std::string{default_entry}}; ///< the entry script
