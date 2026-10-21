@@ -302,6 +302,9 @@ void Runtime::teardown_match() {
     // The rules the player's overrides changed while it ran apply from here,
     // so that the next match is built with them.
     play_latest_profile();
+    // A match that ended deletes the crash record. A fatal unwind never
+    // reaches here, so the file stays for the next start.
+    clear_mutator_sentinel();
 }
 
 void Runtime::leave_match() {

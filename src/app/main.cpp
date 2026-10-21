@@ -1582,11 +1582,12 @@ void take_launch_opened_at_start(Options& options) {
 /// value outside its choices, and a list the manifests refuse (one id
 /// twice, a prerequisite that is not above it, or two that conflict) end
 /// the run with status 2. With no player folder, an id is refused the
-/// same way and is not looked up.
+/// same way and is not looked up. `--no-mutators` returns without reading
+/// any mutator, so a list that is not installed does not stop the run.
 ///
 /// @param options the parsed command line
 void refuse_unusable_mutators(const Options& options) {
-    if (options.mutators.empty())
+    if (options.mutators.empty() || options.no_mutators)
         return;
     const std::optional<fs::path> player = launch_user_folder(options);
     fs::path mutators_folder;
