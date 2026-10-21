@@ -14,6 +14,7 @@
 #include "oa/data/mutators/rules_lua.hpp"
 
 #include "oa/data/mutators/collections.hpp"
+#include "oa/data/mutators/maps.hpp"
 #include "oa/data/script_host/fixed.hpp"
 #include "oa/data/script_host/script_host.hpp"
 #include "oa/data/script_host/sorted.hpp"
@@ -486,6 +487,17 @@ bool read_need(lua_State* state, std::string_view field, sm::Need& need, std::st
     return need_from_lua(state, -1, field, need, &reason) && text_within_limit(need.text, reason);
 }
 
+/// Like `read_need`, except a map glob or pattern is left for the maps hook.
+///
+/// A units rule reads the same table again through `read_need` and refuses it.
+bool read_where_need(
+    lua_State* state, std::string_view field, sm::Need& need, std::string& reason
+) {
+    if (map_match_value(state, -1))
+        return true;
+    return read_need(state, field, need, reason);
+}
+
 /// Reads the value at -1 as the change to `field`.
 bool read_change(
     lua_State* state, std::string_view field, sm::Change& change, std::string& reason
@@ -608,7 +620,7 @@ bool check_where(lua_State* state, FormPlan& plan, std::string& reason) {
     const uint32_t line = call_line(state);
     uint32_t count = 0;
     if (!walk_table<sm::Need>(
-            state, table_slot, line, sm::max_statements, nullptr, count, reason, read_need
+            state, table_slot, line, sm::max_statements, nullptr, count, reason, read_where_need
         ))
         return false;
     choose_selector(plan, prior, sm::Selector::group, line);
@@ -1279,6 +1291,52 @@ PlanRules assemble(
 }
 
 } // namespace
+
+bool finished_where_rule(lua_State* state, int index) {
+    const RuleBits* bits = rule_at(state, index);
+    return bits != nullptr && bits->complete != 0 && bits->selector_chosen != 0 &&
+           bits->selector == sm::Selector::group;
+}
+
+void push_rule_needs(lua_State* state, int rule) {
+    rule = lua_absindex(state, rule);
+    if (rule_at(state, rule) == nullptr) {
+        lua_pushnil(state);
+        return;
+    }
+    lua_getiuservalue(state, rule, kValueNeeds);
+}
+
+void push_rule_changes(lua_State* state, int rule) {
+    rule = lua_absindex(state, rule);
+    if (rule_at(state, rule) == nullptr) {
+        lua_pushnil(state);
+        return;
+    }
+    lua_getiuservalue(state, rule, kValueChanges);
+}
+
+bool rule_change_at(
+    lua_State* state,
+    int index,
+    oa::formats::soft_mutator::ChangeKind* kind,
+    double* value,
+    double* low,
+    double* high
+) {
+    const auto* box = static_cast<const ChangeBox*>(luaL_testudata(state, index, kChangeMeta));
+    if (box == nullptr)
+        return false;
+    if (kind != nullptr)
+        *kind = box->change_kind;
+    if (value != nullptr)
+        *value = box->value;
+    if (low != nullptr)
+        *low = box->low;
+    if (high != nullptr)
+        *high = box->high;
+    return true;
+}
 
 void install_rule_forms(lua_State* state) {
     install_selection_forms(state);

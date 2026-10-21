@@ -298,6 +298,41 @@ bool hack_refusal_only(
     return unmet;
 }
 
+unsigned char folded_resource_byte(unsigned char byte) noexcept {
+    if (byte == '\\')
+        return '/';
+    if (byte >= 'A' && byte <= 'Z')
+        return static_cast<unsigned char>(byte - 'A' + 'a');
+    return byte;
+}
+
+bool same_resource(std::string_view left, std::string_view right) noexcept {
+    if (left.size() != right.size())
+        return false;
+    for (std::size_t offset = 0; offset < left.size(); ++offset) {
+        const unsigned char lhs = folded_resource_byte(static_cast<unsigned char>(left[offset]));
+        const unsigned char rhs = folded_resource_byte(static_cast<unsigned char>(right[offset]));
+        if (lhs != rhs)
+            return false;
+    }
+    return true;
+}
+
+/// True when the layer serves the chosen map's scenario as given bytes.
+bool serves_chosen_ota(
+    const mutators::PipelineResult& result, const std::optional<mutators::ChosenMap>& chosen
+) noexcept {
+    if (!chosen.has_value())
+        return false;
+    for (const oa::MutatorLayerEntry& entry : result.layer.entries) {
+        if (entry.kind != oa::MutatorSourceKind::contents || entry.contents == nullptr)
+            continue;
+        if (same_resource(entry.path, chosen->ota_path))
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 bool resolve_run_mutator(
@@ -528,6 +563,7 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     input.layout = &oa::data::defs::data_layout();
     input.variant = side_files_language_;
     input.seed = mutator_seed(*this, listed);
+    input.map = chosen_map_for_mutators();
     bind_planned_hack_check(input);
 
     mutators::PipelineResult result = mutators::run_pipeline(assets_, input);
@@ -536,6 +572,7 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         throw std::runtime_error("the mutators did not apply");
     }
     mutator_state_->result = std::move(result);
+    mutator_state_->served_map = serves_chosen_ota(*mutator_state_->result, input.map);
     play_mutator_hacks();
     log_applied(listed, *mutator_state_->result);
     bool blocking = !mutator_state_->result->refusal.empty();
@@ -563,6 +600,8 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         clear_mutator_sentinel();
         throw std::runtime_error(reason);
     }
+    if (mutator_state_->served_map)
+        reread_chosen_map(true);
     // Taken after the hacks were played, so a mutator their check failed is
     // not in the loadout.
     const mutators::Loadout applied = mutators::applied_loadout(requested, *mutator_state_->result);
@@ -595,18 +634,24 @@ void Runtime::release_match_mutators() noexcept {
             mutator_state_->units_per_player.reset();
         }
         const bool held = mutator_state_ != nullptr && mutator_state_->result.has_value();
+        const bool served = mutator_state_ != nullptr && mutator_state_->served_map;
         bool unmounted = false;
         if (assets_.mutator_layer_mounted()) {
             if (!assets_.unmount_mutator_layer())
                 return;
             unmounted = true;
         }
-        if (!unmounted && !held)
+        if (!unmounted && !held && !served)
             return;
         if (mutator_state_ != nullptr) {
             mutator_state_->result.reset();
             mutator_state_->loadout.reset();
             mutator_state_->digest.reset();
+        }
+        if (served) {
+            reread_chosen_map(false);
+            if (mutator_state_ != nullptr)
+                mutator_state_->served_map = false;
         }
         std::cerr << "open-annihilation: mutators: released\n";
     } catch (...) {

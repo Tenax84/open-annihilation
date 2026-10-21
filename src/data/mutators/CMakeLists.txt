@@ -12,6 +12,7 @@ add_library(
   src/hacks.cpp
   src/journal.cpp
   src/loadout.cpp
+  src/maps.cpp
   src/pipeline.cpp
   src/rules_lua.cpp
   src/verdicts.cpp
@@ -90,6 +91,20 @@ if(BUILD_TESTING)
   )
   add_test(NAME data-mutators-journal COMMAND oa-data-mutators-journal-test)
   set_tests_properties(data-mutators-journal PROPERTIES TIMEOUT 60)
+
+  add_executable(oa-data-mutators-maps-test tests/maps_test.cpp)
+  target_link_libraries(
+    oa-data-mutators-maps-test
+    PRIVATE oa-data-mutators oa-data-campaign oa-test-support oa-test-game-data
+  )
+  target_compile_definitions(
+    oa-data-mutators-maps-test
+    PRIVATE "OA_MUTATORS_TEST_DATA=\"${CMAKE_SOURCE_DIR}/tests/data/mutators\""
+  )
+  add_test(NAME data-mutators-maps COMMAND oa-data-mutators-maps-test)
+  set_tests_properties(data-mutators-maps PROPERTIES TIMEOUT 30)
+  oa_add_game_data_test(data-mutators-maps-data oa-data-mutators-maps-test --data)
+  set_tests_properties(data-mutators-maps-data PROPERTIES TIMEOUT 300)
 
   add_executable(oa-data-mutators-pipeline-test tests/pipeline_test.cpp)
   target_link_libraries(

@@ -257,13 +257,9 @@ normalize(const Mutator& mutator, const std::vector<std::pair<std::string, std::
 /// @return the mode, or empty when the mutator brings nothing
 std::optional<Clash>
 kept_clash(const Mutator& mutator, const Inputs& inputs, std::optional<Clash> given) {
-    if (!mutator.brings)
-        return std::nullopt;
-    if (given)
+    if (given && mutator.brings)
         return given;
-    if (mutator.clashes)
-        return mutator.clashes;
-    return inputs.clash_default;
+    return detail::default_clash(mutator, inputs);
 }
 
 /// A mutator switched on with its default options and clash mode.

@@ -68,6 +68,7 @@
 #include "oa/ui/engine_settings.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
 #include "oa/data/content_bundles/content_choice.hpp"
+#include "oa/data/mutators/maps.hpp"
 #include "oa/ui/pad_controls.hpp"
 #include "oa/app/acceleration_status.hpp"
 #include "oa/app/content_copy.hpp"
@@ -4460,7 +4461,9 @@ class Runtime final : public menu::Host,
     /// std::runtime_error naming it. A hack the registry or the profile
     /// refuses fails that mutator in the plan phase, and a mutator excluded
     /// only because it requires one is dropped with it. The match still starts.
-    /// Under `--no-mutators` a chosen list is refused and nothing is applied.
+    /// When the layer serves the chosen map, the cached scenario is read again
+    /// and a campaign mission is bound again. Under `--no-mutators` a chosen
+    /// list is refused and nothing is applied.
     ///
     /// @param bootstrap the match being started
     void apply_match_mutators(const MatchBootstrap& bootstrap);
@@ -4489,6 +4492,32 @@ class Runtime final : public menu::Host,
     /// @return that limit, in units per player
     [[nodiscard]] std::optional<uint16_t> mutator_units_per_player() const noexcept;
 
+    /// The map the match will play, read after the pack map is mounted.
+    ///
+    /// None when no map is selected. A selected name whose scenario file is
+    /// missing is still returned, with no bytes, so a maps hook refuses it.
+    ///
+    /// @return the chosen map, or none
+    [[nodiscard]] std::optional<oa::data::mutators::ChosenMap> chosen_map_for_mutators();
+
+    /// Reads the chosen map again from the store.
+    ///
+    /// Reparses the cached metadata and scenario document. Does not touch the
+    /// terrain or the start markers. Clears the skirmish map cache so the
+    /// next match reads the store. When `rebind_campaign` is set and a
+    /// campaign mission is running, binds that mission again.
+    ///
+    /// @param rebind_campaign true after a served rewrite, false after release
+    void reread_chosen_map(bool rebind_campaign);
+
+    /// Clears the skirmish map's cached mission name so the next read reloads.
+    void clear_campaign_map_cache();
+
+    /// Binds the running campaign mission again from the store.
+    ///
+    /// Throws std::runtime_error when the mission does not bind.
+    void rebind_campaign_mission();
+
     /// Resolves the command line's `--mutator` values and chooses them.
     ///
     /// An empty list chooses nothing and logs nothing. A value that does not
@@ -4501,9 +4530,12 @@ class Runtime final : public menu::Host,
     ///
     /// When this match copied hacks into the played profile, the player's
     /// profile is put back first. Logs one line when a layer was unmounted
-    /// or a result was held. A quiet no-op when neither is true and no hacks
-    /// were played. When a mounted layer cannot be dropped, the result, the
-    /// loadout and the digest are kept so a later call can try again.
+    /// or a result was held, or when the match had served a rewritten map.
+    /// A quiet no-op when none is true and no hacks were played. When a
+    /// mounted layer cannot be dropped, the result, the loadout and the
+    /// digest are kept so a later call can try again. When the match had
+    /// served a rewritten map, the cached scenario is read again from the
+    /// installed files. A campaign mission is not bound again here.
     void release_match_mutators() noexcept;
 
     /// Reads the crash record beside the preferences file into memory and
