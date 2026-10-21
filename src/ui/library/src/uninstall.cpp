@@ -40,22 +40,6 @@ std::string works_with_name(const WorksWith& item, const TextHooks& text) {
     return item.id;
 }
 
-/// Joins names as a sentence lists them, through names_comma and names_and.
-///
-/// @param text how texts are looked up
-/// @param names the names
-/// @return the list; empty when there are none
-std::string join_names(const TextHooks& text, const std::vector<std::string>& names) {
-    if (names.empty())
-        return {};
-    if (names.size() == 1)
-        return names.front();
-    std::string joined = names.front();
-    for (std::size_t index = 1; index + 1 < names.size(); ++index)
-        joined = filled(text, words::names_comma, {{"left", joined}, {"right", names[index]}});
-    return filled(text, words::names_and, {{"left", joined}, {"right", names.back()}});
-}
-
 /// Makes a notice of one paragraph and OK, which every key that answers
 /// a question answers.
 ///

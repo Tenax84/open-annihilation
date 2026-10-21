@@ -175,6 +175,7 @@ inline constexpr std::string_view interface_words[] = {
     "Off for this game: in a shared game, Basic",
     "Off for this game: in a shared game, Full",
     "Off: the processor draws and scales the view.",
+    "On",
     "One-finger drag",
     "Open Annihilation",
     "Open Annihilation opens a launch file's battle room from the main menu. Go back to the main "

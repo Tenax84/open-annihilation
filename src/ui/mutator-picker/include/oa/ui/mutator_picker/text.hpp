@@ -145,6 +145,15 @@ inline constexpr std::string_view details_button = "DETAILS";
 inline constexpr std::string_view back_button = "BACK";
 /// The button that keeps the set.
 inline constexpr std::string_view use_these = "USE THESE";
+/// USE THESE's summary while the first On mutator still downloading is fetched.
+/// `{name}` is that mutator. `{percent}` is how much of it has arrived, 0 when
+/// its size is not known yet.
+inline constexpr std::string_view waiting_getting = "Getting {name} · {percent}%";
+/// USE THESE's summary when that download stopped. `{problem}` is why.
+inline constexpr std::string_view waiting_failed = "{name}: {problem}";
+/// Why a mutator does not work with the mod being played. The row wraps it in
+/// `line_not_compatible`. `{names}` is the list it works with.
+inline constexpr std::string_view works_with_mods = "it works with {names}";
 /// The read-only footer's button, and the header's close mark.
 inline constexpr std::string_view close_button = "CLOSE";
 /// The list when the host gave no mutators.

@@ -14,6 +14,7 @@
 #include "game_files_screen.hpp"
 #include "library_host.hpp"
 #include "oa_layer.hpp"
+#include "oa_layer_check.hpp"
 
 #include "oa/app/game_directory.hpp"
 #include "oa/app/game_files_import.hpp"
@@ -27,6 +28,7 @@
 #include "oa/ui/kit/text.hpp"
 #include "oa/ui/library/library.hpp"
 #include "oa/ui/library/prerequisites.hpp"
+#include "oa/ui/mutator_picker/screen.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -52,6 +54,8 @@ namespace kit = oa::ui::kit;
 namespace library = oa::ui::library;
 namespace first_run = oa::ui::first_run;
 namespace dialogs = oa::ui::frontend_dialogs;
+namespace picker = oa::ui::mutator_picker;
+namespace layout = oa::ui::display_layout;
 
 /// Languages the check opens every screen in, in order, unless --check-language
 /// names others.
@@ -427,9 +431,12 @@ void Runtime::check_text_fit() {
             oa_layer().close(notice);
         if (LayerScreen* question = oa_layer().find(QuestionScreen::screen_name))
             oa_layer().close(question);
+        if (LayerScreen* picker_open = oa_layer().find(picker::screen_name))
+            oa_layer().close(picker_open);
         if (LayerScreen* welcome = oa_layer().find("first-run"))
             oa_layer().close(welcome);
         close_library();
+        restore_mutator_picker_feed();
         if (engine_settings_dialog() != nullptr)
             take_settings_screen_action(settings::DialogAction::cancelled);
         else if (LayerScreen* settings_screen = oa_layer().find("settings"))
@@ -653,6 +660,104 @@ void Runtime::check_text_fit() {
             }
             close_library();
 
+            // The mutator picker, on the check's feed: the list, the details,
+            // the waiting line, the turn-off question and the read-only footer.
+            {
+                const auto named =
+                    [this](std::string_view name) -> std::optional<AutomationControl> {
+                    std::vector<AutomationControl> controls;
+                    oa_layer().automation_controls(controls);
+                    for (const AutomationControl& control : controls)
+                        if (control.name == name && control.visible && control.window_width > 0 &&
+                            control.window_height > 0)
+                            return control;
+                    return std::nullopt;
+                };
+                const auto click_named = [&](std::string_view name) {
+                    const std::optional<AutomationControl> control = named(name);
+                    require(control.has_value(), std::string(name) + " is not shown");
+                    const layout::Point pixel{
+                        control->window_x + control->window_width / 2,
+                        control->window_y + control->window_height / 2
+                    };
+                    bool going = true;
+                    for (const SDL_EventType type :
+                         {SDL_EVENT_MOUSE_MOTION,
+                          SDL_EVENT_MOUSE_BUTTON_DOWN,
+                          SDL_EVENT_MOUSE_BUTTON_UP}) {
+                        SDL_Event event = window_pointer_event(
+                            sdl_.window,
+                            sdl_.renderer,
+                            type,
+                            pixel,
+                            type == SDL_EVENT_MOUSE_MOTION ? 0 : SDL_BUTTON_LEFT
+                        );
+                        dispatch_event(event, going);
+                        require(going, std::string(name) + " ended the run");
+                    }
+                    going = true;
+                    run_frame(going);
+                    require(going, std::string(name) + " ended the run");
+                };
+                const auto open_picker = [&](bool read_only) {
+                    MutatorPickerRequest request;
+                    request.setup = picker::Setup::skirmish;
+                    request.read_only = read_only;
+                    picker::Chosen keep;
+                    keep.id = "gatehouse-keep";
+                    picker::Chosen fast;
+                    fast.id = "fast-builders";
+                    fast.options.emplace_back("build-speed", "4");
+                    request.set.push_back(std::move(keep));
+                    request.set.push_back(std::move(fast));
+                    require(
+                        open_mutator_picker(std::move(request)), "the mutator picker did not open"
+                    );
+                };
+                install_mutator_picker_check_feed();
+                open_picker(false);
+                paint("mutator-picker");
+                click_named("oa.mutators.row.fast-builders");
+                if (width <= 640)
+                    click_named("oa.mutators.details");
+                paint("mutator-picker/details");
+                if (width <= 640)
+                    click_named("oa.mutators.back");
+                if (size_at == 0) {
+                    const int32_t saved_width = width;
+                    const int32_t saved_height = height;
+                    width = 960;
+                    height = 540;
+                    require(
+                        SDL_SetWindowSize(sdl_.window, width, height) &&
+                            SDL_SyncWindow(sdl_.window),
+                        "the window did not take 960x540"
+                    );
+                    apply_output_mode();
+                    paint("mutator-picker/details");
+                    width = saved_width;
+                    height = saved_height;
+                    require(
+                        SDL_SetWindowSize(sdl_.window, width, height) &&
+                            SDL_SyncWindow(sdl_.window),
+                        "the window did not return to 640x480"
+                    );
+                    apply_output_mode();
+                }
+                click_named("oa.mutators.row.grounded.switch.on");
+                paint("mutator-picker/waiting");
+                click_named("oa.mutators.row.gatehouse.switch.off");
+                paint("mutator-picker/turn-off");
+                click_named("oa.prompt.cancel");
+                if (LayerScreen* picker_open = oa_layer().find(picker::screen_name))
+                    oa_layer().close(picker_open);
+                open_picker(true);
+                paint("mutator-picker/read-only");
+                if (LayerScreen* picker_open = oa_layer().find(picker::screen_name))
+                    oa_layer().close(picker_open);
+                restore_mutator_picker_feed();
+            }
+
             kit::Notice told;
             told.title = "NOTICE";
             told.paragraphs.push_back(kit::Paragraph{std::string(kLongText), false});
@@ -758,6 +863,8 @@ void Runtime::check_text_fit() {
         std::cout << "text-fit check: every screen fits in " << joined_languages(languages)
                   << " at 640x480 and 1280x720\n";
         std::cout << "text-fit check: mutator details fit in " << joined_languages(languages)
+                  << " at 640x480, 960x540 and 1280x720\n";
+        std::cout << "text-fit check: mutator-picker fits in " << joined_languages(languages)
                   << " at 640x480, 960x540 and 1280x720\n";
         return;
     }

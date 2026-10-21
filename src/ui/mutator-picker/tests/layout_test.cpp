@@ -1354,7 +1354,7 @@ int main() {
         OA_CHECK(shown[0].id == "fast-builders" && shown[0].on && shown[0].number == 1);
         OA_CHECK(shown[1].id == "scout-post" && shown[1].number == 2);
         OA_CHECK(shown[2].id == "gatehouse" && shown[2].number == 3);
-        OA_CHECK(shown[3].id == "gatehouse-keep" && shown[3].on && !shown[3].to_download);
+        OA_CHECK(shown[3].id == "gatehouse-keep" && shown[3].on && shown[3].to_download);
         OA_CHECK(shown[4].id == "grounded" && !shown[4].on && shown[4].to_download);
         OA_CHECK(shown[5].id == "ridge-walls" && shown[5].locked);
     }

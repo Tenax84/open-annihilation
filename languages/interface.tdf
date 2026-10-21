@@ -3626,6 +3626,14 @@
 	it=Ottenere {name}?;
 	}
 
+[Getting {name} · {percent}%]
+	{
+	de={name} wird geholt · {percent}%;
+	fr=Téléchargement de {name} · {percent} %;
+	es=Bajando {name} · {percent}%;
+	it=Scarico di {name} · {percent}%;
+	}
+
 [Gives this order at the held point.]
 	{
 	de=Gibt diesen Befehl am gehaltenen Punkt.;
@@ -6600,6 +6608,14 @@
 	fr=Hors ligne;
 	es=Sin conexión;
 	it=Non in linea;
+	}
+
+[On]
+	{
+	de=An;
+	fr=Marche;
+	es=Encendido;
+	it=Acceso;
 	}
 
 [On/Off: tap to switch the selected units on or off.]
@@ -11706,6 +11722,14 @@
 	it=intro e finali · facoltativo;
 	}
 
+[it works with {names}]
+	{
+	de=er funktioniert mit {names};
+	fr=il marche avec {names};
+	es=funciona con {names};
+	it=funziona con {names};
+	}
+
 [its mod profile cannot be used]
 	{
 	de=sein Mod-Profil lässt sich nicht verwenden;
@@ -13136,6 +13160,14 @@
 	fr={name} : pas installé;
 	es={name}: no instalado;
 	it={name}: non installato;
+	}
+
+[{name}: {problem}]
+	{
+	de={name}: {problem};
+	fr={name} : {problem};
+	es={name}: {problem};
+	it={name}: {problem};
 	}
 
 [{n} GB]

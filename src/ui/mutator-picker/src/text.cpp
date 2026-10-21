@@ -186,11 +186,15 @@ void fill_line(
         row.tone = Tone::hint;
         return;
     }
-    if (!row.on && !mutator->installed) {
-        row.line = std::string(library::shown(text, words::line_not_installed));
-        row.tone = Tone::hint;
+    // An On mutator from a last set, or one brought with it, needs a download
+    // too. Only an Off row says so in the line; the mark is what USE THESE reads.
+    if (!mutator->installed) {
         row.to_download = true;
-        return;
+        if (!row.on) {
+            row.line = std::string(library::shown(text, words::line_not_installed));
+            row.tone = Tone::hint;
+            return;
+        }
     }
     if (row.on && chosen != nullptr) {
         const std::string options = option_lines(picker, *mutator, *chosen);

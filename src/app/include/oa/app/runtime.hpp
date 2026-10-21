@@ -67,6 +67,7 @@
 #include "oa/ui/frontend/resource_palette.hpp"
 #include "oa/ui/engine_settings.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
+#include "oa/ui/mutator_picker/model.hpp"
 #include "oa/data/content_bundles/content_choice.hpp"
 #include "oa/data/mutators/maps.hpp"
 #include "oa/ui/pad_controls.hpp"
@@ -371,6 +372,47 @@ class Service;
     oa::data::mutators::ResolvedMutator* resolved,
     std::string* error
 );
+
+/// What a caller hands the mutator picker, and what the picker hands back.
+struct MutatorPickerRequest {
+    /// Which setup opened the picker.
+    oa::ui::mutator_picker::Setup setup{oa::ui::mutator_picker::Setup::skirmish};
+    /// The set the picker opens with, in order, each with its options.
+    std::vector<oa::ui::mutator_picker::Chosen> set{};
+    /// True when a guest is looking: only the host can change the set.
+    bool read_only{false};
+    /// Called with the set, in order with its options, when USE THESE closes
+    /// the picker and every mutator in the set is installed.
+    std::function<void(std::vector<oa::ui::mutator_picker::Chosen>)> used{};
+    /// Called when the picker closes without handing a set.
+    std::function<void()> cancelled{};
+};
+
+/// Where the mutator picker reads what it lists, and where it queues a download.
+///
+/// The runtime's own feed is installed until a check replaces it.
+struct MutatorPickerFeed {
+    void* context{nullptr};
+    /// The mutators the picker can show. The screen fills the setup, the set,
+    /// the mod's name and the clash default itself.
+    oa::ui::mutator_picker::Inputs (*inputs)(void* context, oa::ui::mutator_picker::Setup setup){
+        nullptr
+    };
+    /// A count that moves on when `inputs` would give something else.
+    uint64_t (*generation)(void* context){nullptr};
+    /// Queues one package. Nothing is fetched on this thread.
+    std::optional<uint64_t> (*enqueue)(
+        void* context, std::string_view registry, std::string_view key, std::string* why
+    ){nullptr};
+    /// Cancels a download that is still waiting.
+    void (*cancel)(void* context, std::string_view registry, std::string_view key){nullptr};
+    /// Asks for a check of one mutator with these options, never doing the
+    /// work on the main thread. The verdict arrives in a later `inputs`, the
+    /// generation moving on. Null checks nothing.
+    void (*check)(void* context, std::string_view id, const oa::ui::mutator_picker::Chosen& chosen){
+        nullptr
+    };
+};
 
 class Runtime final : public menu::Host,
                       public entry::SinglePlayerHost,
@@ -5211,6 +5253,28 @@ class Runtime final : public menu::Host,
         std::string* why
     );
 
+    /// Opens the mutator picker on the OA layer, over the screen that asked.
+    ///
+    /// The list comes from the installed mutators, the catalogues' mutator
+    /// entries, the download queue and the verdicts the feed gives for the
+    /// mod being played. The picker's own feed is installed the first time,
+    /// unless a check has replaced it. Refused during a match, while a
+    /// front-end dialog is up, while a modal OA screen is up, without the
+    /// layer's fonts, or while the picker is already open.
+    ///
+    /// @param request the setup, the set it opens on, and what it hands back
+    /// @return false when the picker cannot open
+    bool open_mutator_picker(MutatorPickerRequest request);
+
+    /// Replaces the mutator picker's feed.
+    ///
+    /// A check uses this. Restoring the runtime's own feed puts that feed
+    /// back. The catalogue and the badge pictures the own feed was holding
+    /// are dropped.
+    ///
+    /// @param feed the feed
+    void set_mutator_picker_feed(MutatorPickerFeed feed);
+
     /// Returns the download queue, starting the content service on first use.
     ///
     /// @return the queue
@@ -5722,6 +5786,18 @@ class Runtime final : public menu::Host,
     /// The map browser, a screen of the OA layer named map-browser.
     struct MapBrowserScreen;
 
+    /// The mutator picker, a screen of the OA layer named mutator-picker.
+    struct MutatorPickerScreen;
+
+    /// The mutator picker's catalogue, pictures and downloads, while it is
+    /// open. Defined in runtime_mutator_picker.cpp.
+    struct MutatorPickerState;
+
+    /// Frees the mutator picker's state.
+    ///
+    /// @param state the state; null is allowed
+    static void destroy_mutator_picker_state(MutatorPickerState* state) noexcept;
+
     /// Keeps MORE MAPS… on the OA layer while the skirmish map list (SELMAP)
     /// shows, or the host's map dialog in the battle room: pushes it when the
     /// layer has none. OaLayer::tick calls it once a frame.
@@ -5781,6 +5857,37 @@ class Runtime final : public menu::Host,
     ///
     /// Throws std::runtime_error naming the first step that failed.
     void check_map_browser();
+
+    /// Writes --check-mutator-picker's registry list into the player's
+    /// folder, every built-in registry turned off, before the content
+    /// service reads it, so that the check fetches nothing.
+    void prepare_mutator_picker_check();
+
+    /// Runs --check-mutator-picker: the picker over the main menu at
+    /// 640x480, 1280x720, 1920x1080 and 2560x1440, over a feed of made-up
+    /// mutators. Writes each size's opening frame as
+    /// mutator-picker-<w>x<h>.png in the working folder.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_mutator_picker();
+
+    /// Installs the check's feed. The text-fit check opens the picker on it too.
+    void install_mutator_picker_check_feed();
+
+    /// Puts the runtime's own mutator-picker feed back.
+    void restore_mutator_picker_feed();
+
+    /// Publishes the check's canned verdicts and moves its generation on.
+    void publish_mutator_picker_check_verdicts();
+
+    /// Marks one of the check's mutators installed and moves its generation on.
+    ///
+    /// @param id the mutator's id
+    void mark_mutator_picker_check_installed(std::string_view id);
+
+    /// Stops the check's feed from asking for verdicts, clears the ones it
+    /// published, and moves its generation on.
+    void silence_mutator_picker_check();
 
     /// Opens the Game files screen over the main menu (Settings › Game files › Manage…),
     /// which does not respond until it is closed, then refreshes the section's rows
@@ -17395,6 +17502,48 @@ class Runtime final : public menu::Host,
     std::unique_ptr<LibraryHost, void (*)(LibraryHost*) noexcept> library_{
         nullptr, destroy_library_host
     };
+    // The mutator picker's catalogue and pictures, while the picker is open.
+    std::unique_ptr<MutatorPickerState, void (*)(MutatorPickerState*) noexcept> mutator_picker_{
+        nullptr, destroy_mutator_picker_state
+    };
+    /// Where the picker reads its list. The own feed until a check replaces it.
+    MutatorPickerFeed mutator_picker_feed_{};
+    /// True once a feed is installed. The own feed is installed on first open.
+    bool mutator_picker_feed_set_{false};
+
+    /// The own feed's list of mutators.
+    ///
+    /// @param context the runtime
+    /// @param setup which setup opened the picker
+    /// @return the mutators; the screen fills the setup, the set and the mod
+    static oa::ui::mutator_picker::Inputs
+    own_picker_inputs(void* context, oa::ui::mutator_picker::Setup setup);
+
+    /// The own feed's generation: the content service, the download queue
+    /// and, once the Library's host exists, its picture cache.
+    ///
+    /// @param context the runtime
+    /// @return the count
+    static uint64_t own_picker_generation(void* context);
+
+    /// The own feed's enqueue: one catalogue package, nothing fetched here.
+    ///
+    /// @param context the runtime
+    /// @param registry the registry id
+    /// @param key the package key
+    /// @param[out] why why it was not queued; may be null
+    /// @return the queue item, or nothing when it was refused
+    static std::optional<uint64_t> own_picker_enqueue(
+        void* context, std::string_view registry, std::string_view key, std::string* why
+    );
+
+    /// The own feed's cancel: a download of that package that is still waiting.
+    ///
+    /// @param context the runtime
+    /// @param registry the registry id
+    /// @param key the package key
+    static void own_picker_cancel(void* context, std::string_view registry, std::string_view key);
+
     // The player's own folder for this run (start_user_folder); empty
     // before it is chosen.
     fs::path user_folder_;

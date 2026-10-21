@@ -385,7 +385,7 @@ std::string blocked_line(
             library::filled(
                 text,
                 library::words::blocked_cycle,
-                {{"ids", join_names(text, cycle_ids(graph, closure))}}
+                {{"ids", library::join_names(text, cycle_ids(graph, closure))}}
             )
         );
     }
