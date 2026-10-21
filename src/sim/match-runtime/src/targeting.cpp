@@ -21,6 +21,24 @@ int16_t high_word(uint32_t value) {
 }
 
 constexpr uint32_t fire_at_will = 2u << OA_UNIT_FLAG_FIRE_ORDER_SHIFT;
+
+/// Finds the slot whose view is a unit: the slot at the unit's id, or, when
+/// that slot views another unit, the slot found by walking the pool. Each
+/// slot views a unit of its own, so at most one slot matches.
+///
+/// @param slots The pool's slots.
+/// @param unit Unit to find.
+/// @return Its slot, or null when no slot views it.
+sim::unit_spawn::Slot*
+slot_viewing(std::span<sim::unit_spawn::Slot> slots, const sim::simulation_state::Unit& unit) {
+    const auto id = unit.record.id;
+    if (id < slots.size() && slots[id].unit == &unit)
+        return &slots[id];
+    for (auto& candidate : slots)
+        if (candidate.unit == &unit)
+            return &candidate;
+    return nullptr;
+}
 } // namespace
 
 class TargetHost final : public sim::combat_state::IntelligenceHost,
@@ -354,12 +372,7 @@ sim::simulation_state::Unit* Match::find_automatic_target(sim::simulation_state:
 sim::simulation_state::Unit* Match::search_automatic_target(
     sim::simulation_state::Unit& unit, const sim::combat_state::TargetSearchRequest& request
 ) {
-    sim::unit_spawn::Slot* slot = nullptr;
-    for (auto& candidate : slots_)
-        if (candidate.unit == &unit) {
-            slot = &candidate;
-            break;
-        }
+    auto* slot = slot_viewing(slots_, unit);
     if (!slot) {
         fault_.note("target source outside pool");
         return nullptr;
@@ -411,14 +424,8 @@ bool Match::weapon_can_reach(uint16_t source, uint16_t target, uint8_t weapon) {
 bool Match::issue_automatic_attack(
     sim::simulation_state::Unit& source, sim::simulation_state::Unit& target
 ) {
-    sim::unit_spawn::Slot* from = nullptr;
-    sim::unit_spawn::Slot* to = nullptr;
-    for (auto& slot : slots_) {
-        if (slot.unit == &source)
-            from = &slot;
-        if (slot.unit == &target)
-            to = &slot;
-    }
+    const auto* from = slot_viewing(slots_, source);
+    const auto* to = slot_viewing(slots_, target);
     if (!from || !to) {
         fault_.note("attack identities outside match pool");
         return false;
