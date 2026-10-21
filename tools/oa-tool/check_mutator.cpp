@@ -612,6 +612,9 @@ void describe_oamut(
             writer.string(mut::layer_name(layer));
         writer.end_array();
     }
+    // Absent stays absent, so a publisher does not invent a clash mode.
+    if (manifest.clashes.has_value())
+        write_text(writer, "clashes", mut::clash_mode_name(*manifest.clashes));
     if (!manifest.options.empty()) {
         writer.key("options");
         writer.begin_array();

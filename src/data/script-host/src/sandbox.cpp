@@ -509,6 +509,10 @@ void rearm_count_hook(lua_State* state) {
     lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
 }
 
+void charge_work(lua_State* state, uint64_t units) {
+    charge(state, units);
+}
+
 void record_string_limit(HostDetail::Control* control, uint64_t length, const char* message) {
     if (control == nullptr || control->string_refused)
         return;

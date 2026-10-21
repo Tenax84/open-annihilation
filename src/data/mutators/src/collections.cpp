@@ -5,14 +5,16 @@
 // was given and looks that section up again on every access. The name stored
 // in the handle is for messages. Iteration follows the folded name, then the
 // document path, then the ordinal of that name in its document. It does not
-// follow Lua's table order. Name lookup uses an index that a removal builds
-// again; a change to UnitName moves only that unit's entry. Each index entry
-// carries its section's handle slot. A mutator that passes the write or note
-// limit fails.
+// follow Lua's table order. Name lookup uses an index built once per document,
+// in linear time, and kept up to date when a section is added or removed. A
+// change to UnitName moves only that unit's entry. Each index entry carries
+// its section's handle slot and the section's index in its document. A
+// mutator that passes the write or note limit fails.
 #include "oa/data/mutators/collections.hpp"
 
 #include "oa/data/field_schema.hpp"
 #include "oa/data/script_host/fixed.hpp"
+#include "oa/data/script_host/script_host.hpp"
 #include "oa/data/script_host/sorted.hpp"
 #include "oa/formats/tdf/edit.hpp"
 #include "oa/formats/tdf/number.hpp"
@@ -32,6 +34,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -45,9 +48,10 @@ struct CollectionsState {
     /// A value a script asked to store.
     enum class StoredKind : uint8_t { nil_value, boolean, number, text, fixed_value };
 
-    /// One section a handle can name: its document and its block.
+    /// One section a handle can name: its document, its place in that document, and its block.
     struct Identity {
         uint32_t doc_index = 0;
+        uint32_t section_index = 0;
         oa::formats::tdf::Block* section = nullptr;
     };
 
@@ -75,9 +79,21 @@ struct CollectionsState {
         std::string path;
     };
 
+    /// The first section of one lower-cased name in one document, and how many
+    /// sections of that name have been indexed. Later duplicates keep higher
+    /// ordinals, so removing one does not reshuffle the others.
+    struct NamedSection {
+        oa::formats::tdf::Block* section = nullptr;
+        uint32_t next_ordinal = 0;
+    };
+
     struct Index {
         bool ready = false;
         std::vector<Rec> records;
+        /// Next top-level child not yet indexed, per document.
+        std::unordered_map<uint32_t, uint32_t> listed_children;
+        /// Lower-cased record name to `NamedSection`, per document.
+        std::unordered_map<uint32_t, std::unordered_map<std::string, NamedSection>> names;
     };
 
     Index indexes[3]{};
@@ -440,6 +456,65 @@ std::string_view name_of(const RecordBox* box) noexcept {
     return std::string_view(bytes, box->name_size);
 }
 
+/// Charges one key-collecting walk. May raise. No C++ destructor is alive.
+void charge_scan(lua_State* state) {
+    host::charge_work(state, host::scan_call_charge);
+}
+
+/// Charges `visits` elements in one step. May raise. No C++ destructor is alive.
+void charge_visits(lua_State* state, uint64_t visits) {
+    if (host::element_charge != 0 && visits > UINT64_MAX / host::element_charge)
+        visits = UINT64_MAX / host::element_charge;
+    host::charge_work(state, visits * host::element_charge);
+}
+
+/// Elements charged for one field read or write of a record, for the lookup
+/// and the field check around it.
+constexpr uint64_t record_access_charge = 8;
+
+/// Charges the bytes of one key or name. May raise. No C++ destructor is alive.
+void charge_text(lua_State* state, std::size_t bytes) {
+    host::charge_work(state, host::units_for_bytes(bytes));
+}
+
+/// Bytes a stored value writes. The spelled number, when there is one, dies here.
+std::size_t stored_body_bytes(const Stored& stored) {
+    if (stored.kind == StoredKind::text)
+        return trim_view(stored.text).size();
+    if (stored.kind == StoredKind::boolean)
+        return 1;
+    if (stored.kind == StoredKind::fixed_value) {
+        char spelled[host::fixed_text_bytes];
+        if (!host::fixed_text(stored.count, spelled, sizeof spelled))
+            return 0;
+        return std::strlen(spelled);
+    }
+    if (stored.kind == StoredKind::number && std::isfinite(stored.number)) {
+        const std::optional<std::string> spelled = tdf::format_number(stored.number);
+        return spelled.has_value() ? spelled->size() : 0;
+    }
+    return 0;
+}
+
+/// `count` copies of `bytes`, saturated.
+uint64_t repeated_units(std::size_t bytes, std::size_t count) {
+    const uint64_t one = host::units_for_bytes(bytes);
+    if (one == 0 || count == 0)
+        return 0;
+    if (static_cast<uint64_t>(count) > UINT64_MAX / one)
+        return UINT64_MAX;
+    return one * static_cast<uint64_t>(count);
+}
+
+/// `left * right`, or the largest count when the product does not fit.
+uint64_t saturating_product(std::size_t left, std::size_t right) {
+    const uint64_t wide_left = static_cast<uint64_t>(left);
+    const uint64_t wide_right = static_cast<uint64_t>(right);
+    if (wide_left != 0 && wide_right > UINT64_MAX / wide_left)
+        return UINT64_MAX;
+    return wide_left * wide_right;
+}
+
 /// The layout the collections read, or the layout in force.
 const defs::DataLayout& layout_of(const Collections& self) noexcept {
     if (CollectionsAccess::layout_ptr(self) != nullptr)
@@ -521,21 +596,42 @@ std::string unit_name_of(const tdf::Block* section, std::string_view path) {
     return file_stem(path);
 }
 
-/// Forgets a built index. The next lookup builds it again.
-void mark_dirty(Collections& self, Kind kind) {
-    working(self).indexes[static_cast<std::size_t>(kind)].ready = false;
+/// Where a file's stem sits in `path`.
+struct StemSpan {
+    std::size_t offset = 0;
+    std::size_t length = 0;
+};
+
+StemSpan file_stem_span(std::string_view path) noexcept {
+    const std::size_t slash = path.rfind('/');
+    const std::size_t start = slash == std::string_view::npos ? 0 : slash + 1;
+    const std::string_view filename = path.substr(start);
+    const std::size_t dot = filename.rfind('.');
+    StemSpan span;
+    span.offset = start;
+    if (dot == std::string_view::npos || dot == 0)
+        span.length = filename.size();
+    else
+        span.length = dot;
+    return span;
 }
 
 /// Remembers a section and returns its slot. The same block keeps its slot.
 ///
 /// The lookup is a map search, so a walk costs the same however many
-/// sections were remembered before it.
-uint32_t remember(Collections& self, uint32_t doc_index, tdf::Block* section) {
+/// sections were remembered before it. `section_index` is stored on the
+/// slot, not in the map key.
+uint32_t
+remember(Collections& self, uint32_t doc_index, tdf::Block* section, uint32_t section_index) {
     CollectionsState& scratch = working(self);
-    const Identity identity{doc_index, section};
+    const Identity identity{doc_index, section_index, section};
     const auto known = scratch.slots.find(identity);
-    if (known != scratch.slots.end())
+    if (known != scratch.slots.end()) {
+        Identity& kept = scratch.identities[known->second];
+        if (kept.section == section)
+            kept.section_index = section_index;
         return known->second;
+    }
     if (scratch.identities.size() >= static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
         throw std::bad_alloc();
     const auto slot = static_cast<uint32_t>(scratch.identities.size());
@@ -549,9 +645,28 @@ uint32_t remember(Collections& self, uint32_t doc_index, tdf::Block* section) {
     return slot;
 }
 
-/// Lists the records of one collection, in order.
-std::vector<Rec>
-list_records(rules::DocumentSet& documents, const defs::DataLayout& layout, Kind kind) {
+/// One section a document gained since the index listed it.
+struct NewRecord {
+    uint32_t doc_index = 0;
+    uint32_t section_index = 0;
+    tdf::Block* section = nullptr;
+    std::string_view path;
+    const char* name = nullptr;
+    std::size_t name_length = 0;
+};
+
+/// Calls `on_record` for each new record and `on_grown` for each document
+/// whose top-level child list grew. Neither callback may call `charge_work`:
+/// this function holds the folder strings.
+template <typename RecordFn, typename GrownFn>
+void each_new_record(
+    rules::DocumentSet& documents,
+    const defs::DataLayout& layout,
+    Kind kind,
+    const CollectionsState::Index& index,
+    RecordFn on_record,
+    GrownFn on_grown
+) {
     std::string folder;
     std::string suffix;
     bool recursive = false;
@@ -567,76 +682,163 @@ list_records(rules::DocumentSet& documents, const defs::DataLayout& layout, Kind
         recursive = true;
     }
     const std::vector<std::size_t> docs = documents.documents_in(folder, suffix, recursive);
-    std::vector<Rec> records;
     for (const std::size_t doc_index : docs) {
         if (doc_index > static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
             continue;
+        const auto narrow_doc = static_cast<uint32_t>(doc_index);
         rules::LoadedDocument& loaded = documents.at(doc_index);
         tdf::Document* document = loaded.document.get();
         tdf::Block* root = tdf::editable_root(document);
         if (root == nullptr)
             continue;
         const uint32_t sections = tdf::child_count(root);
-        if (kind == Kind::units) {
-            for (uint32_t section = 0; section < sections; ++section) {
-                tdf::Block* block = tdf::editable_child(root, section);
-                if (block == nullptr || block->name == nullptr)
-                    continue;
-                if (tdf::compare_nocase(block->name, "UNITINFO") != 0)
-                    continue;
-                Rec rec;
-                rec.doc_index = static_cast<uint32_t>(doc_index);
-                rec.section = block;
-                rec.ordinal = 0;
-                rec.path = loaded.path;
-                rec.name = unit_name_of(block, loaded.path);
-                records.push_back(std::move(rec));
-                break;
-            }
+        const auto listed = index.listed_children.find(narrow_doc);
+        const uint32_t start = listed == index.listed_children.end() ? 0 : listed->second;
+        if (start >= sections)
             continue;
-        }
-        std::vector<std::string> seen_names;
-        for (uint32_t section = 0; section < sections; ++section) {
+        bool unit_taken = false;
+        if (kind == Kind::units)
+            unit_taken = index.names.find(narrow_doc) != index.names.end();
+        for (uint32_t section = start; section < sections; ++section) {
             tdf::Block* block = tdf::editable_child(root, section);
             if (block == nullptr || block->name == nullptr)
                 continue;
-            Rec rec;
-            rec.doc_index = static_cast<uint32_t>(doc_index);
-            rec.section = block;
-            rec.path = loaded.path;
-            rec.name = block->name;
-            uint32_t ordinal = 0;
-            for (const std::string& earlier : seen_names) {
-                if (same_text(earlier, rec.name))
-                    ++ordinal;
+            NewRecord fresh;
+            fresh.doc_index = narrow_doc;
+            fresh.section_index = section;
+            fresh.section = block;
+            fresh.path = loaded.path;
+            if (kind == Kind::units) {
+                if (unit_taken || tdf::compare_nocase(block->name, "UNITINFO") != 0)
+                    continue;
+                unit_taken = true;
+                const char* unit_name = tdf::find_value(block, "UnitName");
+                if (unit_name != nullptr && unit_name[0] != '\0') {
+                    fresh.name = unit_name;
+                    fresh.name_length = std::strlen(unit_name);
+                } else {
+                    const StemSpan stem = file_stem_span(loaded.path);
+                    fresh.name = loaded.path.data() + stem.offset;
+                    fresh.name_length = stem.length;
+                }
+            } else {
+                fresh.name = block->name;
+                fresh.name_length = std::strlen(block->name);
             }
-            rec.ordinal = ordinal;
-            seen_names.push_back(rec.name);
-            records.push_back(std::move(rec));
+            on_record(fresh);
         }
+        on_grown(narrow_doc, sections);
     }
-    std::sort(records.begin(), records.end(), rec_before);
-    return records;
 }
 
-/// The records of one collection, each with its slot. A removal builds them
-/// again; a UnitName change moves one entry (`rekey_if_renamed`).
-const std::vector<Rec>& ensure_index(Collections& self, Kind kind) {
+/// Sections and name bytes an index build would add. No allocation of names.
+struct IndexBill {
+    uint64_t sections = 0;
+    uint64_t name_units = 0;
+    bool grew = false;
+};
+
+IndexBill measure_index(
+    rules::DocumentSet& documents,
+    const defs::DataLayout& layout,
+    Kind kind,
+    const CollectionsState::Index& index
+) {
+    IndexBill bill;
+    each_new_record(
+        documents,
+        layout,
+        kind,
+        index,
+        [&bill](const NewRecord& fresh) {
+            ++bill.sections;
+            const uint64_t units = host::units_for_bytes(fresh.name_length);
+            if (bill.name_units > UINT64_MAX - units)
+                bill.name_units = UINT64_MAX;
+            else
+                bill.name_units += units;
+        },
+        [&bill](uint32_t, uint32_t) { bill.grew = true; }
+    );
+    return bill;
+}
+
+/// The records of one collection, each with its slot.
+///
+/// The first visit of a document indexes it in linear time and charges one
+/// unit per new section plus the name bytes. Every visit checks each document
+/// for growth and charges one unit per document for that check. A later visit
+/// indexes only a section list that grew. `state` null builds without
+/// charging. May raise when `state` is set, and only before the new records
+/// are allocated.
+const std::vector<Rec>& ensure_index(Collections& self, Kind kind, lua_State* state) {
     CollectionsState::Index& index = working(self).indexes[static_cast<std::size_t>(kind)];
-    if (index.ready)
+    rules::DocumentSet& documents = CollectionsAccess::documents(self);
+    const defs::DataLayout& layout = layout_of(self);
+    if (!index.ready) {
+        index.records.clear();
+        index.listed_children.clear();
+        index.names.clear();
+    }
+    if (state != nullptr)
+        charge_visits(state, static_cast<uint64_t>(documents.size()));
+    const IndexBill bill = measure_index(documents, layout, kind, index);
+    if (!bill.grew) {
+        index.ready = true;
         return index.records;
-    std::vector<Rec> built =
-        list_records(CollectionsAccess::documents(self), layout_of(self), kind);
-    for (Rec& rec : built)
-        rec.slot = remember(self, rec.doc_index, rec.section);
-    index.records.swap(built);
+    }
+    if (state != nullptr) {
+        charge_visits(state, bill.sections);
+        if (bill.name_units != 0)
+            host::charge_work(state, bill.name_units);
+    }
+    std::vector<Rec> added;
+    std::vector<uint32_t> section_indexes;
+    auto names = index.names;
+    auto listed = index.listed_children;
+    each_new_record(
+        documents,
+        layout,
+        kind,
+        index,
+        [&](const NewRecord& fresh) {
+            Rec rec;
+            rec.doc_index = fresh.doc_index;
+            rec.section = fresh.section;
+            rec.path.assign(fresh.path);
+            rec.name.assign(fresh.name != nullptr ? fresh.name : "", fresh.name_length);
+            const std::string folded = fold_copy(rec.name);
+            CollectionsState::NamedSection& named = names[fresh.doc_index][folded];
+            rec.ordinal = named.next_ordinal;
+            if (named.section == nullptr)
+                named.section = fresh.section;
+            if (named.next_ordinal != std::numeric_limits<uint32_t>::max())
+                ++named.next_ordinal;
+            added.push_back(std::move(rec));
+            section_indexes.push_back(fresh.section_index);
+        },
+        [&](uint32_t doc_index, uint32_t sections) { listed[doc_index] = sections; }
+    );
+    for (std::size_t rec_index = 0; rec_index < added.size(); ++rec_index) {
+        added[rec_index].slot = remember(
+            self, added[rec_index].doc_index, added[rec_index].section, section_indexes[rec_index]
+        );
+    }
+    index.records.insert(
+        index.records.end(),
+        std::make_move_iterator(added.begin()),
+        std::make_move_iterator(added.end())
+    );
+    index.names.swap(names);
+    index.listed_children.swap(listed);
+    std::sort(index.records.begin(), index.records.end(), rec_before);
     index.ready = true;
     return index.records;
 }
 
 /// The first record of this name, in collection order, or null.
-const Rec* find_named(Collections& self, Kind kind, std::string_view key) {
-    const std::vector<Rec>& records = ensure_index(self, kind);
+const Rec* find_named(Collections& self, Kind kind, std::string_view key, lua_State* state) {
+    const std::vector<Rec>& records = ensure_index(self, kind, state);
     const auto found = std::lower_bound(
         records.begin(), records.end(), key, [](const Rec& rec, std::string_view sought) {
             return compare_folded(rec.name, sought) < 0;
@@ -656,6 +858,7 @@ void push_record(
     uint32_t slot,
     std::string_view name
 ) {
+    charge_text(state, name.size());
     const std::size_t bytes = sizeof(RecordBox) + name.size();
     void* memory = lua_newuserdatauv(state, bytes, 0);
     auto* box = static_cast<RecordBox*>(memory);
@@ -765,21 +968,15 @@ bool resolve(
         return false;
     }
     const uint32_t sections = tdf::child_count(root);
-    uint32_t found_index = sections;
-    for (uint32_t section = 0; section < sections; ++section) {
-        if (tdf::editable_child(root, section) == identity.section) {
-            found_index = section;
-            break;
-        }
-    }
-    if (found_index == sections) {
+    if (identity.section_index >= sections ||
+        tdf::editable_child(root, identity.section_index) != identity.section) {
         reason = removed_message(message_name);
         return false;
     }
     live.kind = box.kind;
     live.damage = box.damage != 0;
     live.doc_index = identity.doc_index;
-    live.section_index = found_index;
+    live.section_index = identity.section_index;
     live.path = loaded.path;
     live.document = document;
     live.section = identity.section;
@@ -984,6 +1181,26 @@ void rekey_if_renamed(Collections& self, const Live& live, std::string_view key)
     if (entry == records.end() || !same_text(entry->name, live.name))
         return;
     entry->name.swap(renamed);
+    const auto doc_names = index.names.find(live.doc_index);
+    if (doc_names != index.names.end()) {
+        const std::string old_folded = fold_copy(renamed);
+        const std::string new_folded = fold_copy(entry->name);
+        const auto old_place = doc_names->second.find(old_folded);
+        if (old_place != doc_names->second.end()) {
+            CollectionsState::NamedSection moved = old_place->second;
+            doc_names->second.erase(old_place);
+            const auto existing = doc_names->second.find(new_folded);
+            if (existing == doc_names->second.end()) {
+                doc_names->second.emplace(new_folded, moved);
+            } else {
+                entry->ordinal = existing->second.next_ordinal;
+                if (existing->second.section == nullptr)
+                    existing->second.section = entry->section;
+                if (existing->second.next_ordinal != std::numeric_limits<uint32_t>::max())
+                    ++existing->second.next_ordinal;
+            }
+        }
+    }
     if (entry != records.begin() && rec_before(*entry, *(entry - 1))) {
         const auto place = std::upper_bound(records.begin(), entry, *entry, rec_before);
         std::rotate(place, entry, entry + 1);
@@ -1222,6 +1439,64 @@ bool remove_download(Collections& self, std::string_view unit_name, std::string&
     return true;
 }
 
+/// Another live section of `name` in the same document, or null.
+tdf::Block* survivor_section(
+    const std::vector<Rec>& records, uint32_t doc_index, std::string_view name, tdf::Block* removed
+) {
+    const auto start = std::lower_bound(
+        records.begin(), records.end(), name, [](const Rec& rec, std::string_view sought) {
+            return compare_folded(rec.name, sought) < 0;
+        }
+    );
+    for (auto cursor = start; cursor != records.end() && same_text(cursor->name, name); ++cursor) {
+        if (cursor->doc_index == doc_index && cursor->section != nullptr &&
+            cursor->section != removed)
+            return cursor->section;
+    }
+    return nullptr;
+}
+
+/// Drops one section from the index. `shift` moves later siblings down one place.
+void forget_section(
+    Collections& self,
+    Kind kind,
+    uint32_t doc_index,
+    tdf::Block* section,
+    std::string_view name,
+    bool shift,
+    uint32_t section_index
+) {
+    CollectionsState::Index& index = working(self).indexes[static_cast<std::size_t>(kind)];
+    tdf::Block* survivor = survivor_section(index.records, doc_index, name, section);
+    index.records.erase(
+        std::remove_if(
+            index.records.begin(),
+            index.records.end(),
+            [&](const Rec& rec) { return rec.doc_index == doc_index && rec.section == section; }
+        ),
+        index.records.end()
+    );
+    const auto doc_names = index.names.find(doc_index);
+    if (doc_names != index.names.end()) {
+        const auto named = doc_names->second.find(fold_copy(name));
+        if (named != doc_names->second.end() && named->second.section == section)
+            named->second.section = survivor;
+    }
+    for (Identity& id : working(self).identities) {
+        if (id.doc_index != doc_index)
+            continue;
+        if (id.section == section)
+            id.section = nullptr;
+        else if (shift && id.section != nullptr && id.section_index > section_index)
+            --id.section_index;
+    }
+    if (!shift)
+        return;
+    const auto listed = index.listed_children.find(doc_index);
+    if (listed != index.listed_children.end() && section_index < listed->second)
+        --listed->second;
+}
+
 /// Removes one unit document and the download entries that name it.
 bool remove_unit(Collections& self, const Live& live, std::string& reason) {
     if (live.doc_index >= CollectionsAccess::documents(self).size()) {
@@ -1234,7 +1509,7 @@ bool remove_unit(Collections& self, const Live& live, std::string& reason) {
         return false;
     }
     loaded.removed = true;
-    mark_dirty(self, Kind::units);
+    forget_section(self, Kind::units, live.doc_index, live.section, live.name, false, 0);
     RecordRemoval removal;
     removal.mutator = CollectionsAccess::mutator(self);
     removal.kind = RemovalKind::unit;
@@ -1248,7 +1523,6 @@ bool remove_unit(Collections& self, const Live& live, std::string& reason) {
 bool remove_sections(
     Collections& self, Kind kind, const std::vector<Live>& lives, std::string& reason
 ) {
-    mark_dirty(self, kind);
     std::vector<SectionDrop> drops;
     drops.reserve(lives.size());
     for (const Live& live : lives) {
@@ -1305,12 +1579,18 @@ bool remove_sections(
         }
         rules::LoadedDocument& loaded = CollectionsAccess::documents(self).at(drop.doc_index);
         tdf::Block* root = tdf::editable_root(loaded.document.get());
+        tdf::Block* section =
+            root != nullptr ? tdf::editable_child(root, drop.section_index) : nullptr;
         const tdf::EditStatus status =
             tdf::remove_child(loaded.document.get(), root, drop.section_index);
         if (status != tdf::EditStatus::ok) {
             reason = prefixed(kind, drop.name, "", tdf::edit_status_message(status));
             return false;
         }
+        if (section != nullptr)
+            forget_section(
+                self, kind, drop.doc_index, section, drop.name, true, drop.section_index
+            );
     }
     for (const uint32_t doc_index : doc_ids) {
         if (doc_index >= CollectionsAccess::documents(self).size())
@@ -1400,7 +1680,9 @@ bool collect_handles(lua_State* state, Collections& owner, int index) {
     }
     const int sequence = lua_absindex(state, -1);
     const lua_Unsigned length = lua_rawlen(state, sequence);
+    charge_scan(state);
     for (lua_Unsigned slot = 1; slot <= length; ++slot) {
+        charge_visits(state, 1);
         lua_rawgeti(state, sequence, static_cast<lua_Integer>(slot));
         const RecordBox* box = record_at(state, -1);
         if (box == nullptr) {
@@ -1426,7 +1708,9 @@ bool read_keys(lua_State* state, Collections& self, int key_count, const char* t
     CollectionsState& scratch = working(self);
     scratch.keys.clear();
     const int sequence = lua_absindex(state, -1);
+    charge_scan(state);
     for (int slot = 1; slot <= key_count; ++slot) {
+        charge_visits(state, 1);
         lua_rawgeti(state, sequence, slot);
         if (lua_type(state, -1) != LUA_TSTRING) {
             lua_pop(state, 1);
@@ -1435,6 +1719,7 @@ bool read_keys(lua_State* state, Collections& self, int key_count, const char* t
         }
         std::size_t length = 0;
         const char* text = lua_tolstring(state, -1, &length);
+        charge_text(state, length);
         try {
             scratch.keys.emplace_back(text != nullptr ? text : "", length);
         } catch (const std::bad_alloc&) {
@@ -1471,7 +1756,9 @@ int where_from_keys(lua_State* state, Collections& owner, Kind kind, int key_cou
     scratch.needs.clear();
     const int table = 2;
     for (std::size_t index = 0; index < scratch.keys.size(); ++index) {
+        charge_visits(state, 1);
         const std::string& field = scratch.keys[index];
+        charge_text(state, field.size());
         lua_pushlstring(state, field.data(), field.size());
         lua_rawget(state, table);
         if (!need_from_lua(state, -1, trim_view(field), scratch.staging, &scratch.pending_error)) {
@@ -1487,9 +1774,42 @@ int where_from_keys(lua_State* state, Collections& owner, Kind kind, int key_cou
         }
         lua_pop(state, 1);
     }
+    const std::vector<Rec>* indexed = nullptr;
     try {
-        const std::vector<Rec>& records = ensure_index(owner, kind);
+        indexed = &ensure_index(owner, kind, state);
         scratch.matched.clear();
+    } catch (const std::bad_alloc&) {
+        scratch.pending_error = "out of memory";
+        return -1;
+    }
+    if (indexed == nullptr) {
+        scratch.pending_error = "out of memory";
+        return -1;
+    }
+    const std::vector<Rec>& records = *indexed;
+    // The match loops are C++. Charge them before any string is built, so a
+    // spent allowance raises with no destructor alive.
+    charge_scan(state);
+    charge_visits(state, static_cast<uint64_t>(records.size()));
+    charge_visits(state, saturating_product(records.size(), scratch.needs.size()));
+    uint64_t compared_units = 0;
+    for (const Rec& rec : records) {
+        for (const sm::Need& need : scratch.needs) {
+            const char* written = nullptr;
+            if (rec.section != nullptr)
+                written = tdf::find_value(rec.section, need.field.c_str());
+            if (written == nullptr)
+                continue;
+            const uint64_t units = host::units_for_bytes(std::strlen(written));
+            if (compared_units > UINT64_MAX - units)
+                compared_units = UINT64_MAX;
+            else
+                compared_units += units;
+        }
+    }
+    if (compared_units != 0)
+        host::charge_work(state, compared_units);
+    try {
         for (std::size_t index = 0; index < records.size(); ++index) {
             bool keep = true;
             for (const sm::Need& need : scratch.needs) {
@@ -1519,7 +1839,6 @@ int where_from_keys(lua_State* state, Collections& owner, Kind kind, int key_cou
         scratch.pending_error = "too many records";
         return -1;
     }
-    const std::vector<Rec>& records = ensure_index(owner, kind);
     lua_createtable(state, static_cast<int>(scratch.matched.size()), 0);
     for (std::size_t index = 0; index < scratch.matched.size(); ++index) {
         const Rec& rec = records[scratch.matched[index]];
@@ -1554,7 +1873,7 @@ int push_members(lua_State* state, Collections& owner) {
     }
     const Kind kind = collection->kind;
     try {
-        const std::vector<Rec>& records = ensure_index(owner, kind);
+        const std::vector<Rec>& records = ensure_index(owner, kind, state);
         for (const Rec& rec : records) {
             if (rec.name.size() > static_cast<std::size_t>(std::numeric_limits<uint32_t>::max())) {
                 scratch.pending_error = "a record name is too long";
@@ -1565,11 +1884,13 @@ int push_members(lua_State* state, Collections& owner) {
         scratch.pending_error = "out of memory";
         return -1;
     }
-    const std::vector<Rec>& records = ensure_index(owner, kind);
+    const std::vector<Rec>& records = ensure_index(owner, kind, state);
     if (records.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         scratch.pending_error = "too many records";
         return -1;
     }
+    charge_scan(state);
+    charge_visits(state, static_cast<uint64_t>(records.size()));
     lua_createtable(state, static_cast<int>(records.size()), 0);
     for (std::size_t index = 0; index < records.size(); ++index) {
         push_record(state, &owner, kind, false, records[index].slot, records[index].name);
@@ -1750,18 +2071,25 @@ void assign_fixed_error(Collections& owner, const char* shown, bool finite) {
 ///
 /// Present text is read with `fixed_from_text`. A key the block leaves out uses
 /// `default_value`, then `fixed_from_number` (or `fixed_from_text` for text).
-int prepare_fixed(const RecordBox* box, std::string_view key, int64_t* count) {
-    std::string reason;
-    Live live;
-    if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
-        pending_of(*box->owner) = std::move(reason);
-        return -1;
-    }
-    const std::optional<fields::RecordKind> schema = schema_of(live);
-    const std::string owned(key);
+int prepare_fixed(lua_State* state, const RecordBox* box, std::string_view key, int64_t* count) {
+    charge_visits(state, record_access_charge);
     const char* text = nullptr;
-    if (live.block != nullptr)
-        text = tdf::find_value(live.block, owned.c_str());
+    std::optional<fields::RecordKind> schema;
+    const tdf::Block* block = nullptr;
+    {
+        std::string reason;
+        Live live;
+        if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
+            pending_of(*box->owner) = std::move(reason);
+            return -1;
+        }
+        schema = schema_of(live);
+        block = live.block;
+        const std::string owned(key);
+        if (block != nullptr)
+            text = tdf::find_value(block, owned.c_str());
+    }
+    charge_text(state, text != nullptr ? std::strlen(text) : 0);
     if (text != nullptr) {
         const std::optional<int64_t> got = host::fixed_from_text(text);
         if (!got.has_value()) {
@@ -1775,7 +2103,7 @@ int prepare_fixed(const RecordBox* box, std::string_view key, int64_t* count) {
     }
     if (!schema.has_value())
         return 0;
-    const fields::Value fallback = fields::default_value(*schema, key, live.block);
+    const fields::Value fallback = fields::default_value(*schema, key, block);
     if (fallback.kind == fields::Value::Kind::absent)
         return 0;
     std::optional<int64_t> got;
@@ -1812,21 +2140,25 @@ int prepare_fixed(const RecordBox* box, std::string_view key, int64_t* count) {
 }
 
 /// Fills the prepared read. The trampoline pushes it after this returns.
-int prepare_read(const RecordBox* box, std::string_view key) {
-    std::string reason;
-    Live live;
-    if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
-        pending_of(*box->owner) = std::move(reason);
-        return -1;
-    }
-    const std::optional<fields::RecordKind> schema = schema_of(live);
-    const fields::FieldSpec* spec = nullptr;
-    if (schema.has_value())
-        spec = fields::find_field(*schema, key);
-    const std::string owned(key);
+int prepare_read(lua_State* state, const RecordBox* box, std::string_view key) {
+    charge_visits(state, record_access_charge);
     const char* text = nullptr;
-    if (live.block != nullptr)
-        text = tdf::find_value(live.block, owned.c_str());
+    const fields::FieldSpec* spec = nullptr;
+    {
+        std::string reason;
+        Live live;
+        if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
+            pending_of(*box->owner) = std::move(reason);
+            return -1;
+        }
+        const std::optional<fields::RecordKind> schema = schema_of(live);
+        if (schema.has_value())
+            spec = fields::find_field(*schema, key);
+        const std::string owned(key);
+        if (live.block != nullptr)
+            text = tdf::find_value(live.block, owned.c_str());
+    }
+    charge_text(state, text != nullptr ? std::strlen(text) : 0);
     const fields::Value value = fields::read_value(spec, text);
     Prepared& prepared = working(*box->owner).prepared;
     prepared.kind = value.kind;
@@ -1839,15 +2171,20 @@ int prepare_read(const RecordBox* box, std::string_view key) {
 
 /// Assigns one field. The value is already on the stack at index 3.
 int assign_record(lua_State* state, const RecordBox* box, std::string_view key) {
+    charge_visits(state, record_access_charge);
+    {
+        std::string reason;
+        if (!ensure_grant(*box->owner, box->kind, reason)) {
+            pending_of(*box->owner) = std::move(reason);
+            return -1;
+        }
+        if (!read_stored(state, 3, working(*box->owner).stored, reason)) {
+            pending_of(*box->owner) = prefixed(box->kind, name_of(box), key, reason);
+            return -1;
+        }
+    }
+    charge_text(state, stored_body_bytes(working(*box->owner).stored));
     std::string reason;
-    if (!ensure_grant(*box->owner, box->kind, reason)) {
-        pending_of(*box->owner) = std::move(reason);
-        return -1;
-    }
-    if (!read_stored(state, 3, working(*box->owner).stored, reason)) {
-        pending_of(*box->owner) = prefixed(box->kind, name_of(box), key, reason);
-        return -1;
-    }
     Live live;
     if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
         pending_of(*box->owner) = std::move(reason);
@@ -1861,24 +2198,52 @@ int assign_record(lua_State* state, const RecordBox* box, std::string_view key) 
 }
 
 /// Collects a record's keys into the collections object, in name order.
-int prepare_keys(const RecordBox* box) {
-    std::string reason;
-    Live live;
-    if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
-        pending_of(*box->owner) = std::move(reason);
+///
+/// The charges sit outside every `try`: a spent allowance raises, and a
+/// raise leaves a destructor unrun.
+int prepare_keys(lua_State* state, const RecordBox* box) {
+    const tdf::Block* block = nullptr;
+    try {
+        std::string reason;
+        Live live;
+        if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
+            pending_of(*box->owner) = std::move(reason);
+            return -1;
+        }
+        block = live.block;
+    } catch (const std::bad_alloc&) {
+        pending_of(*box->owner) = "out of memory";
         return -1;
     }
     CollectionsState& scratch = working(*box->owner);
     scratch.keys.clear();
-    if (live.block != nullptr) {
-        const uint32_t count = tdf::property_count(live.block);
-        for (uint32_t index = 0; index < count; ++index) {
-            const char* stored = tdf::property_key_at(live.block, static_cast<int32_t>(index));
-            if (stored != nullptr)
-                scratch.keys.emplace_back(stored);
-        }
+    const uint32_t property_count = block != nullptr ? tdf::property_count(block) : 0;
+    charge_scan(state);
+    charge_visits(state, property_count);
+    for (uint32_t scan_index = 0; scan_index < property_count; ++scan_index) {
+        const char* stored = tdf::property_key_at(block, static_cast<int32_t>(scan_index));
+        if (stored == nullptr)
+            continue;
+        charge_text(state, std::strlen(stored));
     }
-    std::stable_sort(scratch.keys.begin(), scratch.keys.end(), host::name_less);
+    try {
+        for (uint32_t copy_index = 0; copy_index < property_count; ++copy_index) {
+            const char* stored = tdf::property_key_at(block, static_cast<int32_t>(copy_index));
+            if (stored == nullptr)
+                continue;
+            scratch.keys.emplace_back(stored);
+        }
+    } catch (const std::bad_alloc&) {
+        pending_of(*box->owner) = "out of memory";
+        return -1;
+    }
+    host::charge_work(state, host::comparison_unit * static_cast<uint64_t>(scratch.keys.size()));
+    try {
+        std::stable_sort(scratch.keys.begin(), scratch.keys.end(), host::name_less);
+    } catch (const std::bad_alloc&) {
+        pending_of(*box->owner) = "out of memory";
+        return -1;
+    }
     return 1;
 }
 
@@ -2023,6 +2388,7 @@ static int form_not(lua_State* state) {
 static int pairs_next(lua_State* state) {
     const bool skip = lua_toboolean(state, lua_upvalueindex(3)) != 0;
     for (;;) {
+        charge_visits(state, 1);
         lua_settop(state, 0);
         const lua_Integer slot = lua_tointeger(state, lua_upvalueindex(2)) + 1;
         lua_pushinteger(state, slot);
@@ -2082,7 +2448,7 @@ static int collection_index(lua_State* state) {
     const Rec* found = nullptr;
     bool failed = false;
     try {
-        found = find_named(owner, collection->kind, key);
+        found = find_named(owner, collection->kind, key, state);
         if (found != nullptr &&
             found->name.size() > static_cast<std::size_t>(std::numeric_limits<uint32_t>::max())) {
             pending_of(owner) = "a record name is too long";
@@ -2114,7 +2480,7 @@ static int collection_len(lua_State* state) {
     std::size_t count = 0;
     bool failed = false;
     try {
-        count = ensure_index(*collection->owner, collection->kind).size();
+        count = ensure_index(*collection->owner, collection->kind, state).size();
     } catch (const std::bad_alloc&) {
         pending_of(*collection->owner) = "out of memory";
         failed = true;
@@ -2158,6 +2524,8 @@ static int collection_each(lua_State* state) {
     if (length > static_cast<lua_Unsigned>(std::numeric_limits<lua_Integer>::max()))
         return luaL_error(state, "each: too many records");
     const auto last = static_cast<lua_Integer>(length);
+    charge_scan(state);
+    charge_visits(state, static_cast<uint64_t>(last));
     for (lua_Integer index = 1; index <= last; ++index) {
         if (skip) {
             lua_rawgeti(state, sequence, index);
@@ -2266,7 +2634,9 @@ static int set_assign(lua_State* state) {
     const Kind kind = set != nullptr ? set->kind : Kind::units;
     const int table = 2;
     for (std::size_t index = 0; index < scratch.keys.size(); ++index) {
+        charge_visits(state, 1);
         const std::string& raw = scratch.keys[index];
+        charge_text(state, raw.size());
         lua_pushlstring(state, raw.data(), raw.size());
         lua_rawget(state, table);
         bool stored_ok = false;
@@ -2293,6 +2663,19 @@ static int set_assign(lua_State* state) {
         if (!stored_ok)
             return raise_pending(state, *owner);
     }
+    charge_visits(state, static_cast<uint64_t>(scratch.handles.size()));
+    charge_visits(state, saturating_product(scratch.handles.size(), scratch.assignments.size()));
+    uint64_t body_units = 0;
+    for (const Assignment& assignment : scratch.assignments) {
+        const uint64_t part =
+            repeated_units(stored_body_bytes(assignment.value), scratch.handles.size());
+        if (body_units > UINT64_MAX - part)
+            body_units = UINT64_MAX;
+        else
+            body_units += part;
+    }
+    if (body_units != 0)
+        host::charge_work(state, body_units);
     bool ok = false;
     try {
         std::string reason;
@@ -2330,7 +2713,9 @@ static int set_scale(lua_State* state) {
                                         ? std::string_view("record")
                                         : std::string_view(scratch.handles[0].name);
     for (std::size_t index = 0; index < scratch.keys.size(); ++index) {
+        charge_visits(state, 1);
         const std::string& raw = scratch.keys[index];
+        charge_text(state, raw.size());
         lua_pushlstring(state, raw.data(), raw.size());
         lua_rawget(state, table);
         const bool number = lua_type(state, -1) == LUA_TNUMBER;
@@ -2358,6 +2743,31 @@ static int set_scale(lua_State* state) {
         if (failed)
             return raise_pending(state, *owner);
     }
+    charge_visits(state, static_cast<uint64_t>(scratch.handles.size()));
+    charge_visits(state, saturating_product(scratch.handles.size(), scratch.factors.size()));
+    uint64_t scaled_units = 0;
+    for (const Factor& factor : scratch.factors) {
+        for (const Handle& handle : scratch.handles) {
+            const char* text = nullptr;
+            {
+                Live live;
+                std::string reason;
+                if (!resolve_handle(*owner, handle, live, reason))
+                    continue;
+                if (live.block != nullptr)
+                    text = tdf::find_value(live.block, factor.key.c_str());
+            }
+            if (text == nullptr)
+                continue;
+            const uint64_t units = host::units_for_bytes(std::strlen(text));
+            if (scaled_units > UINT64_MAX - units)
+                scaled_units = UINT64_MAX;
+            else
+                scaled_units += units;
+        }
+    }
+    if (scaled_units != 0)
+        host::charge_work(state, scaled_units);
     bool ok = false;
     try {
         std::string reason;
@@ -2384,6 +2794,9 @@ static int set_remove(lua_State* state) {
         return luaL_error(state, "remove expects a record or a set");
     if (!collect_handles(state, *owner, 1))
         return raise_pending(state, *owner);
+    // `remove_collected` walks the handles twice. Charge that before the
+    // caller's reason string exists.
+    charge_visits(state, saturating_product(working(*owner).handles.size(), 2));
     bool ok = false;
     try {
         std::string reason;
@@ -2438,7 +2851,7 @@ static int record_index(lua_State* state) {
     }
     int result = 0;
     try {
-        result = prepare_read(box, key);
+        result = prepare_read(state, box, key);
     } catch (const std::bad_alloc&) {
         pending_of(*box->owner) = "out of memory";
         result = -1;
@@ -2487,7 +2900,7 @@ static int record_call_get(lua_State* state) {
     const std::string_view key = trim_view(std::string_view(text != nullptr ? text : "", length));
     int result = 0;
     try {
-        result = prepare_read(box, key);
+        result = prepare_read(state, box, key);
     } catch (const std::bad_alloc&) {
         pending_of(*box->owner) = "out of memory";
         result = -1;
@@ -2533,7 +2946,7 @@ static int record_call_fixed(lua_State* state) {
     int64_t count = 0;
     int result = 0;
     try {
-        result = prepare_fixed(box, key, &count);
+        result = prepare_fixed(state, box, key, &count);
     } catch (const std::bad_alloc&) {
         pending_of(*box->owner) = "out of memory";
         result = -1;
@@ -2552,13 +2965,7 @@ static int record_call_keys(lua_State* state) {
     const RecordBox* box = record_at(state, 1);
     if (box == nullptr || box->owner == nullptr)
         return luaL_error(state, "keys expects a record");
-    int result = 0;
-    try {
-        result = prepare_keys(box);
-    } catch (const std::bad_alloc&) {
-        pending_of(*box->owner) = "out of memory";
-        result = -1;
-    }
+    const int result = prepare_keys(state, box);
     if (result < 0)
         return raise_pending(state, *box->owner);
     const std::vector<std::string>& keys = working(*box->owner).keys;

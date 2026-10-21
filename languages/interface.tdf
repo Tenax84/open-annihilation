@@ -754,6 +754,14 @@
 	it=Qualsiasi;
 	}
 
+[Any mod]
+	{
+	de=Jeder Mod;
+	fr=N'importe quel mod;
+	es=Cualquier mod;
+	it=Qualsiasi mod;
+	}
+
 [Applications]
 	{
 	de=Programme;
@@ -1170,6 +1178,14 @@
 	it=Strumenti di costruzione;
 	}
 
+[Build menus]
+	{
+	de=Baumenüs;
+	fr=Menus de construction;
+	es=Menús de construcción;
+	it=Menu di costruzione;
+	}
+
 [Build ring: presses its build button or toggle, or turns the build page.]
 	{
 	de=Baurad: drückt seine Bautaste oder den Schalter oder blättert die Bauseite.;
@@ -1328,6 +1344,14 @@
 	fr=LE VÉRIFIER;
 	es=COMPROBARLO;
 	it=CONTROLLALO;
+	}
+
+[CHECK WITH THIS MOD]
+	{
+	de=MIT DIESEM MOD PRÜFEN;
+	fr=VÉRIFIER AVEC CE MOD;
+	es=COMPROBAR CON ESTE MOD;
+	it=CONTROLLA CON QUESTO MOD;
 	}
 
 [CHOOSE A FOLDER]
@@ -1546,6 +1570,22 @@
 	it=Celle a cui un clic di recupero si aggancia a un relitto.;
 	}
 
+[Changes]
+	{
+	de=Ändert;
+	fr=Modifie;
+	es=Cambia;
+	it=Cambia;
+	}
+
+[Changes the game: unranked on Core Prime]
+	{
+	de=Ändert das Spiel: ohne Wertung auf Core Prime;
+	fr=Change la partie : non classé sur Core Prime;
+	es=Cambia la partida: sin clasificación en Core Prime;
+	it=Cambia la partita: non classificata su Core Prime;
+	}
+
 [Chat Extension Channel]
 	{
 	de=Chat-Erweiterungskanal;
@@ -1586,6 +1626,14 @@
 	it=La ricerca di aggiornamenti dei contenuti resta su Automaticamente, e l'ID di installazione di Core Prime resta attivo.;
 	}
 
+[Checked]
+	{
+	de=Geprüft;
+	fr=Vérifié;
+	es=Comprobado;
+	it=Controllato;
+	}
+
 [Checked against the keys you trust for {name}]
 	{
 	de=Geprüft gegen die Schlüssel, denen du für {name} vertraust;
@@ -1624,6 +1672,14 @@
 	fr=Vérification des fichiers copiés avec la vérification du jeu…;
 	es=Comprobando los archivos copiados con la comprobación del juego…;
 	it=Controllo dei file copiati con il controllo del gioco…;
+	}
+
+[Checking with {mod}…]
+	{
+	de=Prüfung mit {mod}…;
+	fr=Vérification avec {mod}…;
+	es=Comprobando con {mod}…;
+	it=Controllo con {mod}…;
 	}
 
 [Checking your copy of Total Annihilation]
@@ -2906,6 +2962,14 @@
 	it=Non riuscito;
 	}
 
+[Features]
+	{
+	de=Geländeobjekte;
+	fr=Éléments;
+	es=Elementos;
+	it=Elementi;
+	}
+
 [File Type Registration]
 	{
 	de=Dateitypregistrierung;
@@ -2920,6 +2984,14 @@
 	fr=Types de fichiers;
 	es=Tipos de archivo;
 	it=Tipi di file;
+	}
+
+[Files]
+	{
+	de=Dateien;
+	fr=Fichiers;
+	es=Archivos;
+	it=File;
 	}
 
 [Files added to its folder, or changed, since it was installed are replaced or removed.]
@@ -3384,6 +3456,14 @@
 	fr=Fichiers du jeu;
 	es=Archivos del juego;
 	it=File di gioco;
+	}
+
+[Game tables]
+	{
+	de=Spieltabellen;
+	fr=Tables de jeu;
+	es=Tablas de juego;
+	it=Tabelle di gioco;
 	}
 
 [Game text background]
@@ -5882,6 +5962,14 @@
 	it=Non disponibile qui;
 	}
 
+[Not checked with {mod}]
+	{
+	de=Nicht mit {mod} geprüft;
+	fr=Pas vérifié avec {mod};
+	es=No comprobado con {mod};
+	it=Non controllato con {mod};
+	}
+
 [Not compatible with this mod]
 	{
 	de=Passt nicht zu diesem Mod;
@@ -6008,6 +6096,14 @@
 	fr=Non installé · {size};
 	es=No instalado · {size};
 	it=Non installato · {size};
+	}
+
+[Not installed · {version}]
+	{
+	de=Nicht installiert · {version};
+	fr=Non installé · {version};
+	es=No instalado · {version};
+	it=Non installato · {version};
 	}
 
 [Not now]
@@ -6448,6 +6544,14 @@
 	fr=Optimiser les lignes DT;
 	es=Optimizar filas DT;
 	it=Ottimizza le righe DT;
+	}
+
+[Options]
+	{
+	de=Optionen;
+	fr=Options;
+	es=Opciones;
+	it=Opzioni;
 	}
 
 [Options Dialog]
@@ -7960,6 +8064,14 @@
 	fr=Montre la page précédente.;
 	es=Muestra la página anterior.;
 	it=Mostra la pagina precedente.;
+	}
+
+[Sides]
+	{
+	de=Seiten;
+	fr=Camps;
+	es=Bandos;
+	it=Fazioni;
 	}
 
 [Signing key]
@@ -10498,6 +10610,46 @@
 	it=Programmi Windows, collegamenti, icone, manuali e file di aiuto;
 	}
 
+[With {mod}: it stopped: {reason}]
+	{
+	de=Mit {mod}: es ist stehen geblieben: {reason};
+	fr=Avec {mod} : ça s'est arrêté : {reason};
+	es=Con {mod}: se detuvo: {reason};
+	it=Con {mod}: si è fermato: {reason};
+	}
+
+[With {mod}: no effect]
+	{
+	de=Mit {mod}: keine Wirkung;
+	fr=Avec {mod} : aucun effet;
+	es=Con {mod}: sin efecto;
+	it=Con {mod}: nessun effetto;
+	}
+
+[With {mod}: {reason}]
+	{
+	de=Mit {mod}: {reason};
+	fr=Avec {mod} : {reason};
+	es=Con {mod}: {reason};
+	it=Con {mod}: {reason};
+	}
+
+[With {mod}: {summary}]
+	{
+	de=Mit {mod}: {summary};
+	fr=Avec {mod} : {summary};
+	es=Con {mod}: {summary};
+	it=Con {mod}: {summary};
+	}
+
+[Works with]
+	{
+	de=Funktioniert mit;
+	fr=Fonctionne avec;
+	es=Funciona con;
+	it=Funziona con;
+	}
+
 [Wreck snap radius]
 	{
 	de=Einrastradius für Wracks;
@@ -10762,6 +10914,70 @@
 	it=aggiunto da te;
 	}
 
+[adds {count} feature]
+	{
+	de=fügt {count} Geländeobjekt hinzu;
+	fr=ajoute {count} élément;
+	es=añade {count} elemento;
+	it=aggiunge {count} elemento;
+	}
+
+[adds {count} features]
+	{
+	de=fügt {count} Geländeobjekte hinzu;
+	fr=ajoute {count} éléments;
+	es=añade {count} elementos;
+	it=aggiunge {count} elementi;
+	}
+
+[adds {count} file]
+	{
+	de=fügt {count} Datei hinzu;
+	fr=ajoute {count} fichier;
+	es=añade {count} archivo;
+	it=aggiunge {count} file;
+	}
+
+[adds {count} files]
+	{
+	de=fügt {count} Dateien hinzu;
+	fr=ajoute {count} fichiers;
+	es=añade {count} archivos;
+	it=aggiunge {count} file;
+	}
+
+[adds {count} unit]
+	{
+	de=fügt {count} Einheit hinzu;
+	fr=ajoute {count} unité;
+	es=añade {count} unidad;
+	it=aggiunge {count} unità;
+	}
+
+[adds {count} units]
+	{
+	de=fügt {count} Einheiten hinzu;
+	fr=ajoute {count} unités;
+	es=añade {count} unidades;
+	it=aggiunge {count} unità;
+	}
+
+[adds {count} weapon]
+	{
+	de=fügt {count} Waffe hinzu;
+	fr=ajoute {count} arme;
+	es=añade {count} arma;
+	it=aggiunge {count} arma;
+	}
+
+[adds {count} weapons]
+	{
+	de=fügt {count} Waffen hinzu;
+	fr=ajoute {count} armes;
+	es=añade {count} armas;
+	it=aggiunge {count} armi;
+	}
+
 [after you leave it]
 	{
 	de=nachdem du es verlässt;
@@ -10840,6 +11056,70 @@
 	fr=cellules;
 	es=celdas;
 	it=celle;
+	}
+
+[changes {count} feature]
+	{
+	de=ändert {count} Geländeobjekt;
+	fr=modifie {count} élément;
+	es=cambia {count} elemento;
+	it=cambia {count} elemento;
+	}
+
+[changes {count} features]
+	{
+	de=ändert {count} Geländeobjekte;
+	fr=modifie {count} éléments;
+	es=cambia {count} elementos;
+	it=cambia {count} elementi;
+	}
+
+[changes {count} menu entries]
+	{
+	de=ändert {count} Menüeinträge;
+	fr=modifie {count} entrées de menu;
+	es=cambia {count} entradas de menú;
+	it=cambia {count} voci di menu;
+	}
+
+[changes {count} menu entry]
+	{
+	de=ändert {count} Menüeintrag;
+	fr=modifie {count} entrée de menu;
+	es=cambia {count} entrada de menú;
+	it=cambia {count} voce di menu;
+	}
+
+[changes {count} unit]
+	{
+	de=ändert {count} Einheit;
+	fr=modifie {count} unité;
+	es=cambia {count} unidad;
+	it=cambia {count} unità;
+	}
+
+[changes {count} units]
+	{
+	de=ändert {count} Einheiten;
+	fr=modifie {count} unités;
+	es=cambia {count} unidades;
+	it=cambia {count} unità;
+	}
+
+[changes {count} weapon]
+	{
+	de=ändert {count} Waffe;
+	fr=modifie {count} arme;
+	es=cambia {count} arma;
+	it=cambia {count} arma;
+	}
+
+[changes {count} weapons]
+	{
+	de=ändert {count} Waffen;
+	fr=modifie {count} armes;
+	es=cambia {count} armas;
+	it=cambia {count} armi;
 	}
 
 [changes · {old} saves won't load]
@@ -11000,6 +11280,22 @@
 	fr=fps;
 	es=fps;
 	it=fps;
+	}
+
+[hides {count} file]
+	{
+	de=blendet {count} Datei aus;
+	fr=masque {count} fichier;
+	es=oculta {count} archivo;
+	it=nasconde {count} file;
+	}
+
+[hides {count} files]
+	{
+	de=blendet {count} Dateien aus;
+	fr=masque {count} fichiers;
+	es=oculta {count} archivos;
+	it=nasconde {count} file;
 	}
 
 [icon, manual or help file]
@@ -11304,6 +11600,54 @@
 	fr=rafraîchi {age};
 	es=recargado {age};
 	it=ricaricato {age};
+	}
+
+[removes {count} feature]
+	{
+	de=entfernt {count} Geländeobjekt;
+	fr=retire {count} élément;
+	es=quita {count} elemento;
+	it=toglie {count} elemento;
+	}
+
+[removes {count} features]
+	{
+	de=entfernt {count} Geländeobjekte;
+	fr=retire {count} éléments;
+	es=quita {count} elementos;
+	it=toglie {count} elementi;
+	}
+
+[removes {count} unit]
+	{
+	de=entfernt {count} Einheit;
+	fr=retire {count} unité;
+	es=quita {count} unidad;
+	it=toglie {count} unità;
+	}
+
+[removes {count} units]
+	{
+	de=entfernt {count} Einheiten;
+	fr=retire {count} unités;
+	es=quita {count} unidades;
+	it=toglie {count} unità;
+	}
+
+[removes {count} weapon]
+	{
+	de=entfernt {count} Waffe;
+	fr=retire {count} arme;
+	es=quita {count} arma;
+	it=toglie {count} arma;
+	}
+
+[removes {count} weapons]
+	{
+	de=entfernt {count} Waffen;
+	fr=retire {count} armes;
+	es=quita {count} armas;
+	it=toglie {count} armi;
 	}
 
 [rev {revision}]
@@ -12050,6 +12394,14 @@
 	it={kinds} · {n} file;
 	}
 
+[{label}: {values}]
+	{
+	de={label}: {values};
+	fr={label} : {values};
+	es={label}: {values};
+	it={label}: {values};
+	}
+
 [{label}: {value}]
 	{
 	de={label}: {value};
@@ -12072,6 +12424,14 @@
 	fr={left} et {right};
 	es={left} y {right};
 	it={left} e {right};
+	}
+
+[{left} or {right}]
+	{
+	de={left} oder {right};
+	fr={left} ou {right};
+	es={left} o {right};
+	it={left} o {right};
 	}
 
 [{left} · {right}]
@@ -12250,6 +12610,22 @@
 	it={name} {percent}%;
 	}
 
+[{name} {range} ✓]
+	{
+	de={name} {range} ✓;
+	fr={name} {range} ✓;
+	es={name} {range} ✓;
+	it={name} {range} ✓;
+	}
+
+[{name} {range}: not installed]
+	{
+	de={name} {range}: nicht installiert;
+	fr={name} {range} : pas installé;
+	es={name} {range}: no instalado;
+	it={name} {range}: non installato;
+	}
+
 [{name} {version}]
 	{
 	de={name} {version};
@@ -12304,6 +12680,14 @@
 	fr=Les cartes et les campagnes de {name} quittent les listes jusqu'à ce que tu le rallumes. Rien n'est effacé.;
 	es=Los mapas y las campañas de {name} salen de las listas hasta que lo enciendas de nuevo. No se borra nada.;
 	it=Le mappe e le campagne di {name} escono dalle liste finché non lo riaccendi. Non viene cancellato nulla.;
+	}
+
+[{name}: not installed]
+	{
+	de={name}: nicht installiert;
+	fr={name} : pas installé;
+	es={name}: no instalado;
+	it={name}: non installato;
 	}
 
 [{n} GB]

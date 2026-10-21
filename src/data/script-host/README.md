@@ -32,6 +32,11 @@ The interpreter underneath is Lua 5.4.9, built as the C library
   `<package>: <phase>: <chunk>:<line>: <message>`, and leaves the chunk and
   the line out when the chunk is unknown.
 - `compile_check` loads a chunk in a throwaway state and does not run it.
+- `charge_work` adds instruction units to the running phase and raises when
+  the allowance is spent, as the library charges do. The units come from
+  element counts and byte lengths. Host code outside this module, including
+  the mutator collections and rule forms, uses it. No C++ object with a
+  destructor may be alive across the call: the raise leaves it unrun.
 
 ## State
 
@@ -144,6 +149,16 @@ moves that state; the moved-from object has no state.
   each value after the first. `fixed.min` and `fixed.max` do the same.
   `fixed.parse`, and `fixed` of a text, count one unit per 32 bytes of that
   text. `warn` counts 2 units per argument.
+- `charge_work` is that same count for a walk the libraries do not make.
+  One walk that collects keys costs `scan_call_charge` (4096). A `where`
+  or `:change` table costs `table_walk_charge` (64), then `element_charge`
+  (1) per entry. Past the entry limit only that count is charged, so the
+  count does not depend on which keys `next` visits first. When every key
+  is visited, each key's bytes cost `units_for_bytes`, one unit per 32
+  bytes. A comparison costs `comparison_unit`. The count depends only on
+  those sizes, so one script spends the same count on every build and
+  every run. A call that stays inside the allowance keeps the values and
+  the errors it would raise with no count.
 - `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `string.format`,
   the charged `table` and `utf8` calls and `utf8.char` are copies of Lua
   5.4.9's with the count inside. The script calls them directly, so an
@@ -365,6 +380,12 @@ type, and any error text. It also checks that a match which backtracks past
 the allowance stops with an instruction-budget error, including when the
 script catches that error itself, and that a long match which stays inside
 the allowance adds to `instructions_used`.
+
+`data-mutators-charge` runs the mutator collections and rule forms through
+`charge_work`. A `where` over a 4,000-key table, repeated, and a collection
+`pairs` loop each stop on a small instruction allowance. A small plan stays
+inside one hundredth of the default allowance and spends the same count on
+two runs.
 
 `data-script-host-c-work` compares every copied call with Lua's own
 results and error messages, chunk and line included, method calls among
