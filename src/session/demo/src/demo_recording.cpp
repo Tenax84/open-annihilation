@@ -145,9 +145,7 @@ tad::WriteResult recording_write(const DemoRecording& recording) {
          keep({setup.date_text.begin(), setup.date_text.end()})}
     );
     // One sector chunk holds the length word, the type word and the text.
-    const std::size_t sector_room =
-        tad::limit::chunk_bytes - tad::layout::chunk_length_bytes - tad::layout::sector_type_bytes;
-    if (!setup.loadout_text.empty() && setup.loadout_text.size() <= sector_room) {
+    if (!setup.loadout_text.empty() && setup.loadout_text.size() <= recording_loadout_most_bytes) {
         demo.sectors.push_back(
             {static_cast<uint32_t>(tad::SectorType::mutators),
              keep({setup.loadout_text.begin(), setup.loadout_text.end()})}

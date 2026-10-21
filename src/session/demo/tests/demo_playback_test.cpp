@@ -1300,14 +1300,25 @@ void recording_carries_loadout_text() {
     const auto empty_written = recording_write(empty_text);
     CHECK(empty_written.ok() && empty_written.bytes == plain_written.bytes);
 
-    const std::size_t sector_room = formats::tad::limit::chunk_bytes -
-                                    formats::tad::layout::chunk_length_bytes -
-                                    formats::tad::layout::sector_type_bytes;
+    DemoRecording exact;
+    recording_begin(&exact, live_setup(2, false));
+    const std::string full(recording_loadout_most_bytes, 'q');
+    exact.setup.loadout_text = full;
+    const auto exact_written = recording_write(exact);
+    CHECK(exact_written.ok());
+    const auto exact_parsed = formats::tad::parse(exact_written.bytes);
+    CHECK(exact_parsed.ok());
+    if (exact_parsed.ok()) {
+        const auto* sector =
+            formats::tad::find_sector(*exact_parsed.demo, formats::tad::SectorType::mutators);
+        CHECK(sector != nullptr && formats::tad::sector_text(*sector) == full);
+    }
+
     DemoRecording too_long;
     recording_begin(&too_long, live_setup(2, false));
-    too_long.setup.loadout_text.assign(sector_room + 1, 'q');
+    too_long.setup.loadout_text.assign(recording_loadout_most_bytes + 1, 'q');
     const auto omitted = recording_write(too_long);
-    CHECK(omitted.ok() && omitted.bytes == plain_written.bytes);
+    CHECK(omitted.ok() && omitted.bytes == empty_written.bytes);
     const auto omitted_parsed = formats::tad::parse(omitted.bytes);
     CHECK(omitted_parsed.ok());
     if (omitted_parsed.ok()) {

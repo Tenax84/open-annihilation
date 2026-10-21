@@ -31,6 +31,11 @@ struct RecordingPlayer {
     std::string address;    ///< its network address as text; stored masked
 };
 
+/// The most loadout text one recording holds: a sector chunk less its length and type words.
+inline constexpr std::size_t recording_loadout_most_bytes =
+    formats::tad::limit::chunk_bytes - formats::tad::layout::chunk_length_bytes -
+    formats::tad::layout::sector_type_bytes;
+
 /// What a recording starts with.
 struct RecordingSetup {
     uint16_t max_units{};
@@ -38,8 +43,8 @@ struct RecordingSetup {
     std::string recorder_text; ///< sector 3: the recording program's line
     std::string date_text;     ///< sector 4
     /// The loadout of a game played with mutators, as text. Empty writes no
-    /// sector. A text longer than one sector chunk holds (the chunk limit less
-    /// the length and type words) is left out, and the recording is still written.
+    /// sector. A text longer than recording_loadout_most_bytes is left out,
+    /// and the recording is still written.
     std::string loadout_text;
     std::vector<RecordingPlayer> players; ///< the recording machine's player first; at most 10
     std::vector<std::array<uint8_t, formats::tad::layout::unit_check_record_bytes>> unit_checks;

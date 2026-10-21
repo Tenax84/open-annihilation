@@ -116,8 +116,9 @@ struct Loadout {
 /// The most mutators one loadout names.
 inline constexpr std::size_t loadout_most_entries = 32;
 
-/// The most bytes of canonical loadout text that are read back.
-inline constexpr std::size_t loadout_text_most_bytes = 64 * 1024;
+/// The most a recording's mutators sector holds, so every loadout
+/// parse_loadout accepts can be recorded.
+inline constexpr std::size_t loadout_text_most_bytes = 65529;
 
 /// Writes a loadout as its one canonical text.
 ///
