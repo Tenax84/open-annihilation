@@ -48,6 +48,7 @@ add_library(oa-data-script-host
   src/sandbox.cpp
   src/libraries.cpp
   src/patterns.cpp
+  src/string_format.cpp
   src/require.cpp
   src/math_library.cpp
   src/sorted.cpp)

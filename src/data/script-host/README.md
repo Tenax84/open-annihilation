@@ -70,36 +70,51 @@ moves that state; the moved-from object has no state.
   four functions return the same values, of the same types, and raise the
   same errors, as Lua 5.4.9. A call on a string value, such as `("x"):find`,
   uses the same functions.
-- A new string counts against that same allowance: one unit per 64 bytes of
-  its length, rounded up. The header in front of the bytes is not counted,
-  and neither is any other block, so the same script spends the same count
-  on every build and every run. Freeing a string does not give the units
-  back.
+- A new string longer than 40 bytes counts against that same allowance: one
+  unit per 32 bytes of its length, rounded up. A string of 40 bytes or fewer
+  is shared, and making one allocates only when no live copy exists, which
+  depends on when the collector last ran, so it is not counted; the
+  instruction or call that makes it bounds that work. The header in front of
+  the bytes is not counted, and neither is any other block. Every count
+  depends only on the script and the values the host gives it, so the same
+  script spends the same count on every build and every run. Freeing a
+  string does not give the units back.
 - `string.byte` counts one unit per byte it returns. `utf8.codepoint` counts
-  one per code point it returns. `utf8.codes` counts one unit per 64 bytes
+  one per code point it returns. `utf8.codes` counts one unit per 32 bytes
   the iterator walks, including continuation bytes, on every call, including
   the call that finds the end. `utf8.len` and `utf8.offset` count one unit
-  per 64 bytes of the interval they walk. A plain `string.find` counts one
-  unit per 64 bytes each scan and each comparison examines, as the search
+  per 32 bytes of the interval they walk. A plain `string.find` counts one
+  unit per 32 bytes each scan and each comparison examines, as the search
   goes. `require` counts one unit per caller it walks.
-- `table.move`, `table.insert`, `table.remove`, `table.concat` and
-  `table.unpack` count one unit per element they move or visit. A range
+- `table.move`, `table.insert`, `table.remove`, `table.concat`,
+  `table.pack` and `table.unpack` count one unit per element they move or
+  visit. A range
   longer than the default memory cap could hold, one element per value the
   interpreter stores, is refused before the call loops. The message names
   the function, the number of elements and that limit. `table.sort` counts
   every comparison, including a comparison function written in C. Two
-  strings cost one unit per byte of the two lengths, and at least 128
-  units. Any other comparison costs 128 units. Within these limits the
-  calls return the same values and raise the same errors as Lua 5.4.9.
+  strings cost one unit per byte of the two lengths, and at least 2 units.
+  Any other comparison costs 2 units, about the time of one or two
+  instructions. Within these limits the calls return the same values and
+  raise the same errors as Lua 5.4.9.
 - `next` counts 4096 units per call. `pairs` counts 4096 units for the walk
   that collects the keys, and each ordering of two keys costs the same as a
-  `table.sort` comparison. `tonumber` of a string counts one unit per 64
-  bytes of that text. `string.pack`, `string.packsize` and `string.unpack`
-  count one unit per byte of the format. `string.format` counts one unit
-  per format byte, 128 units per value, and one unit per byte of each
-  string value. `utf8.char` counts one unit per code point. `math.max` and
-  `math.min` count a comparison, as `table.sort` does, for each value after
-  the first. `warn` counts 128 units per argument.
+  `table.sort` comparison. `rawequal` of two strings counts one unit per 32
+  bytes of the two lengths. `tonumber` of a string counts one unit per 32
+  bytes of that text. `string.format` counts one unit per format byte, 2
+  units per value it converts, and one unit per byte of each text it copies
+  with `%s` or `%q`. `string.pack` counts one unit per format byte and one
+  per byte it writes, padding included. `string.packsize` counts one unit
+  per format byte, and `string.unpack` one per format byte and one per 32
+  bytes a `z` option scans. `utf8.char` counts one unit per code point.
+  `math.max` and `math.min` count a comparison, as `table.sort` does, for
+  each value after the first. `warn` counts 2 units per argument.
+- `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `string.format`,
+  `string.pack`, `string.packsize`, `string.unpack`, the charged `table` and
+  `utf8` calls and `utf8.char` are copies of Lua 5.4.9's with the count
+  inside. The script calls them directly, so an error names the function,
+  numbers the arguments of a method call such as `("%d"):format(x)` as Lua
+  does, and starts with the script's chunk and line.
 - No string may be longer than 65,536 bytes. Every string the interpreter
   creates passes the allocator, and Lua has no switch that stops a longer
   one, so the cap is applied there. The header in front of the bytes differs
@@ -214,13 +229,18 @@ the allowance stops with an instruction-budget error, including when the
 script catches that error itself, and that a long match which stays inside
 the allowance adds to `instructions_used`.
 
-`data-script-host-c-work` compares `string.byte`, the charged table calls
-and the charged `utf8` calls with Lua's own results, and checks that a loop
-or an impossible range in each one stops the phase. That includes a plain
-find, a direct `utf8.codes` call, `table.sort` of a C comparison and of
-long zero-filled strings, and an allocation loop caught with `pcall`. It
-also checks that `utf8.codes` returns one function, and runs a phase that
-reads several hundred small tables and rewrites their text.
+`data-script-host-c-work` compares every copied call with Lua's own
+results and error messages, chunk and line included, method calls among
+them, and checks that a loop or an impossible range in each one stops the
+phase. That includes a plain find, a direct `utf8.codes` call, `table.sort`
+of a C comparison and of long zero-filled strings, an allocation loop
+caught with `pcall`, `string.pack` and `string.format` copying long texts
+before an error the script catches, and `table.pack` of 300,000 values. It
+checks that a loop of short strings costs the same with an empty heap and
+with 20,000 live tables, and that walking, clamping, formatting and sorting
+the fields of 400 units stays a small part of the allowance. It also
+checks that `utf8.codes` returns one function, and runs a phase that reads
+several hundred small tables and rewrites their text.
 
 `data-script-host-string-length` checks that a string of 65,536 bytes is
 kept for each way of making one, and that each way of making a longer one
@@ -232,14 +252,20 @@ memory with shorter strings is still a memory error.
 
 Comparing two strings with `<` or `==` is one instruction of the
 interpreter, and the library charges above do not see it. Equality of two
-65,536-byte strings takes about 1.2 microseconds on the machine where this
-was measured. Ordering two such strings of ordinary bytes takes about 1.1
+65,536-byte strings takes about 1.3 microseconds on the machine where this
+was measured. Ordering two such strings of ordinary bytes takes about 3.3
 microseconds. Ordering two strings of that length filled with zero bytes
 takes about 480 microseconds, because each zero ends a segment that is
 ordered on its own. A phase cannot build a longer string. `table.sort` and
 `pairs` charge a comparison of two strings by their lengths, one unit per
 byte, so a sort of those zero-filled strings stops inside the default
-allowance. A bare `<` of two zero-filled strings does not. Text of numbers
+allowance. A bare `<` of two zero-filled strings does not. Other single
+steps of the interpreter are not charged either: a call or `select` with
+hundreds of thousands of values passed through `...`, a chain of thousands
+of `__index` tables, arithmetic on a long string of spaces (`s + 0`), and a
+table that grows and shrinks its parts again and again. `next` on a table
+emptied after millions of entries does more work than its 4096 units pay
+for. A limit on a phase's real time is still to come for those. Text of numbers
 that must come out the same on every platform is not part of this library
 yet. A `__gc` or `__mode` entry added to a metatable after `setmetatable`
 is not caught. `instructions_used` counts Lua instructions in steps of the

@@ -240,7 +240,9 @@ static void* allocate(void* user, void* pointer, size_t old_size, size_t new_siz
     // size is the header plus the bytes plus one. The header was measured
     // at open, so the length compared with the cap is the same on every build.
     // The charge is that length, not the block: the header differs by build,
-    // and a table's block differs from run to run.
+    // and a table's block differs from run to run. A string of at most
+    // short_string_limit bytes is shared, and arrives here only when no live
+    // copy exists, which depends on when the collector ran: it is not charged.
     bool charge_new_string = false;
     std::size_t new_string_length = 0;
     if (pointer == nullptr && old_size == LUA_TSTRING) {
@@ -258,7 +260,7 @@ static void* allocate(void* user, void* pointer, size_t old_size, size_t new_siz
                 record_string_limit(control, static_cast<uint64_t>(length), nullptr);
                 return nullptr;
             }
-            charge_new_string = length > 0;
+            charge_new_string = length > short_string_limit;
             new_string_length = length;
         }
     }

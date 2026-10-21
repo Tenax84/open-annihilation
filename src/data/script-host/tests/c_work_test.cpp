@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Charged library calls against Lua's own results, then the loops and ranges
-// that have to stop a phase. The clock is only in this test.
+// that have to stop a phase. The clocks are only in this test.
 
 #include "lua.hpp"
 #include "oa/data/script_host/script_host.hpp"
@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <optional>
 #include <string>
@@ -140,27 +141,6 @@ std::string script_for(const std::string& body) {
     return std::string(preamble) + body + postamble;
 }
 
-std::string message_body(std::string_view text) {
-    const auto colon = text.find(':');
-    if (colon == std::string_view::npos || colon == 0)
-        return std::string(text);
-    std::size_t index = colon + 1;
-    if (index >= text.size() || text[index] < '0' || text[index] > '9')
-        return std::string(text);
-    while (index < text.size() && text[index] >= '0' && text[index] <= '9')
-        ++index;
-    if (index + 1 < text.size() && text[index] == ':' && text[index + 1] == ' ')
-        return std::string(text.substr(index + 2));
-    return std::string(text);
-}
-
-std::string canonical(std::string text) {
-    constexpr std::string_view prefix = "error\t";
-    if (text.compare(0, prefix.size(), prefix.data(), prefix.size()) != 0)
-        return text;
-    return std::string(prefix) + message_body(std::string_view(text).substr(prefix.size()));
-}
-
 void add_case(std::vector<Case>& cases, std::string name, std::string body) {
     cases.push_back(Case{std::move(name), std::move(body)});
 }
@@ -282,6 +262,107 @@ void add_cases(std::vector<Case>& cases) {
     };
     for (const char* const* row : rows)
         add_case(cases, row[0], row[1]);
+
+    // The functions copied with a charge inside: each message names the
+    // function, counts a method call's arguments as Lua does, and starts
+    // with the script's chunk and line.
+    const char* messages[][2] = {
+        {"format-none", "return show(string.format())"},
+        {"format-number-expected", "return show(string.format(\"%d\", \"x\"))"},
+        {"format-method", "return show((\"%d\"):format(\"x\"))"},
+        {"format-pcall-name", "return show(pcall(string.format))"},
+        {"format-no-value", "return show(string.format(\"%d %d\", 1))"},
+        {"format-bad-conversion", "return show(string.format(\"%y\", 1))"},
+        {"format-bad-specification", "return show(string.format(\"%10.3c\", 65))"},
+        {"format-too-long", "return show(string.format(\"%0000000000000000000000000d\", 1))"},
+        {"format-q-modifier", "return show(string.format(\"%10q\", \"a\"))"},
+        {"format-q-table", "return show(string.format(\"%q\", {}))"},
+        {"format-a-modifier", "return show(string.format(\"%5a\", 1.5))"},
+        {"format-s-zeros", "return show(string.format(\"%5s\", \"a\\0b\"))"},
+        {"format-not-integer", "return show(string.format(\"%d\", 1.5))"},
+        {"format-mixed",
+         "return show(string.format(\"%5.2f|%-5d|%x|%X|%o|%c|%e|%G|%i|%u|%+3d|%#o|% d\", "
+         "3.14159, 42, 255, 255, 8, 65, 12345.678, 0.0001, -7, 3, 5, 8, 9))"},
+        {"format-q",
+         "return show(string.format(\"%q|%q|%q|%q|%q|%q|%q|%q\", \"a\\n\\0b\\\"\\\\\\1\\0019\", "
+         "1/0, -1/0, -9223372036854775807 - 1, 2^53, 0.1, 0/0, true))"},
+        {"format-a", "return show(string.format(\"%a|%A|%a|%a\", 1.5, -0.1, 0.0, 1e-310))"},
+        {"format-s",
+         "return show(string.format(\"%s|%s|%.3s|%10s|%-4s|%s\", nil, true, \"abcdef\", \"xy\", "
+         "\"z\", string.rep(\"w\", 120)))"},
+        {"format-s-meta",
+         "return show(string.format(\"%s\", setmetatable({}, {__tostring = function() return "
+         "\"T\" end})))"},
+        {"format-percent", "return show(string.format(\"100%% %s\", \"x\"))"},
+        {"format-f-wide", "return show(string.format(\"%99.99f\", -1e308))"},
+
+        {"tonumber-base-range", "return show(tonumber(\"10\", 99))"},
+        {"tonumber-none", "return show(tonumber())"},
+        {"tonumber-base-number", "return show(tonumber(10, 16))"},
+        {"tonumber-base-type", "return show(tonumber(\"10\", \"x\"))"},
+        {"tonumber-forms",
+         "return show(tonumber(\"0x10\"), tonumber(\" 12 \"), tonumber(\"1e2\"), tonumber(\"z\", "
+         "36), tonumber(\" -ff \", 16), tonumber(\"8\", 8), tonumber(\"1 2\"), tonumber({}), "
+         "tonumber(\"7\", 10.0), tonumber(\"\"))"},
+
+        {"next-none", "return show(next())"},
+        {"next-bad-key", "return show(next({}, \"nokey\"))"},
+        {"next-type", "return show(next(\"s\"))"},
+        {"next-values", "return show(next({}), next({5}, 1), next({5}))"},
+
+        {"rawequal-none", "return show(rawequal(1))"},
+        {"rawequal-values",
+         "local a = string.rep(\"x\", 100)\nreturn show(rawequal(a, string.rep(\"x\", 100)), "
+         "rawequal(\"a\", \"b\"), rawequal(1, 1.0), rawequal({}, {}))"},
+
+        {"warn-none", "return show(warn())"},
+        {"warn-table", "return show(warn(\"a\", {}))"},
+        {"warn-values", "return show(warn(\"@off\"), warn(\"a\", 1, 2.5))"},
+
+        {"pack-size-limit", "return show(string.pack(\"i17\", 1))"},
+        {"pack-option", "return show(string.pack(\"w\", 1))"},
+        {"pack-missing-size", "return show(string.pack(\"c\", \"x\"))"},
+        {"pack-x-next", "return show(string.pack(\"X\", 1))"},
+        {"pack-alignment", "return show(string.pack(\"!3i4\", 1))"},
+        {"pack-overflow", "return show(string.pack(\"i1\", 200))"},
+        {"pack-unsigned-overflow", "return show(string.pack(\"I1\", -1))"},
+        {"pack-long-text", "return show(string.pack(\"c2\", \"abc\"))"},
+        {"pack-zeros", "return show(string.pack(\"z\", \"a\\0\"))"},
+        {"pack-count-size", "return show(string.pack(\"s1\", string.rep(\"x\", 300)))"},
+        {"pack-method", "return show((\"i4\"):pack(\"x\"))"},
+        {"pack-no-value", "return show(string.pack(\"i4i4\", 1))"},
+        {"pack-values",
+         "return show(string.byte(string.pack(\"<i4>I2!8xXi8bzs1c3d\", -2, 513, 7, \"hi\", "
+         "\"abc\", \"de\", 1.5), 1, -1))"},
+        {"pack-numbers", "return show(string.byte(string.pack(\"fnj\", 0.5, -2, -3), 1, -1))"},
+
+        {"packsize-variable", "return show(string.packsize(\"s\"))"},
+        {"packsize-too-large",
+         "return show(string.packsize(\"c1000000000c1000000000c1000000000\"))"},
+        {"packsize-values",
+         "return show(string.packsize(\"i4i8!8xXi8bc3d\"), string.packsize(\"\"))"},
+
+        {"unpack-short", "return show(string.unpack(\"i4\", \"ab\"))"},
+        {"unpack-position", "return show(string.unpack(\"b\", \"ab\", 5))"},
+        {"unpack-unfinished", "return show(string.unpack(\"z\", \"abc\"))"},
+        {"unpack-wide-integer",
+         "return show(string.unpack(\"i9\", string.rep(\"\\255\", 8) .. \"\\1\"))"},
+        {"unpack-method", "return show((\"i4\"):unpack(\"ab\"))"},
+        {"unpack-values",
+         "return show(string.unpack(\"<i4zs1c2\", string.pack(\"<i4zs1c2\", -5, \"ab\", \"xyz\", "
+         "\"qq\")))"},
+        {"unpack-from-end", "return show(string.unpack(\"b\", \"abc\", -1))"},
+
+        {"char-range", "return show(utf8.char(-1))"},
+        {"char-type", "return show(utf8.char(\"x\"))"},
+        {"char-second", "return show(utf8.char(65, 2^31))"},
+        {"char-values", "return show(utf8.char(), utf8.char(72, 233, 8364, 0x10FFFF, 0x7FFFFFFF))"},
+
+        {"table-pack", "local t = table.pack(1, nil, \"x\")\nreturn show(t.n, t[1], t[2], t[3])"},
+        {"table-pack-empty", "local t = table.pack()\nreturn show(t.n, t[1])"},
+    };
+    for (const char* const* row : messages)
+        add_case(cases, row[0], row[1]);
 }
 
 lua_State* open_raw() {
@@ -300,9 +381,11 @@ lua_State* open_raw() {
     return state;
 }
 
+// The chunk has the sandbox's name for it, so an error's "chunk:line:" prefix
+// is compared too.
 std::string run_raw(lua_State* state, const std::string& source, bool* ran) {
     lua_settop(state, 0);
-    if (luaL_loadbufferx(state, source.data(), source.size(), "@case", "t") != LUA_OK) {
+    if (luaL_loadbufferx(state, source.data(), source.size(), "@mutator.lua", "t") != LUA_OK) {
         *ran = false;
         const char* text = lua_tostring(state, -1);
         std::string message = text != nullptr ? text : "load failed";
@@ -366,15 +449,15 @@ void compare_cases(const std::vector<Case>& cases) {
             continue;
         }
         const std::string sandbox_text(read.text.data(), read.length);
-        if (canonical(sandbox_text) != canonical(raw_text)) {
+        if (sandbox_text != raw_text) {
             std::fprintf(
                 stderr,
                 "case %s\n sandbox [%s]\n raw [%s]\n",
                 row.name.c_str(),
-                canonical(sandbox_text).c_str(),
-                canonical(raw_text).c_str()
+                sandbox_text.c_str(),
+                raw_text.c_str()
             );
-            OA_CHECK(canonical(sandbox_text) == canonical(raw_text));
+            OA_CHECK(sandbox_text == raw_text);
         }
     }
     lua_close(raw);
@@ -391,14 +474,30 @@ void expect_budget(const char* source) {
     if (!sandbox)
         return;
     put(package, "mutator.lua", source);
+    // The bound is on the processor time this test spends, so other programs
+    // sharing the machine do not stretch it. The wall time is printed too.
+    const std::clock_t processor_started = std::clock();
     const auto started = std::chrono::steady_clock::now();
     const bool ran = sandbox->run_file("mutator.lua", "tick", nullptr, error);
     const auto elapsed = std::chrono::steady_clock::now() - started;
+    const double processor_seconds =
+        static_cast<double>(std::clock() - processor_started) / CLOCKS_PER_SEC;
+    const auto milliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+    const std::string_view text(source);
+    const std::string_view first_line = text.substr(0, text.find('\n'));
+    std::printf(
+        "stopped in %lld ms (%.0f ms of processor time): %.*s\n",
+        static_cast<long long>(milliseconds),
+        processor_seconds * 1000.0,
+        static_cast<int>(first_line.size()),
+        first_line.data()
+    );
     OA_CHECK(!ran);
     OA_CHECK(error.kind == host::ErrorKind::instruction_budget);
     OA_CHECK(message_has(error, "50000000"));
     OA_CHECK(sandbox->instructions_used() >= host::default_instruction_budget);
-    OA_CHECK(elapsed < std::chrono::seconds(5));
+    OA_CHECK(processor_seconds < 5.0);
 }
 
 void expect_range(const char* source, const char* function, const char* count) {
@@ -515,6 +614,254 @@ void review_and_replaced_calls_stop() {
     );
 }
 
+// The copied base, string, utf8 and table calls, each in a loop that does a
+// lot of work per call.
+void copied_calls_stop() {
+    // string.pack copies 400 texts of 65,000 bytes, then fails on its last
+    // argument, which the script catches.
+    expect_budget(
+        "local big = string.rep(\"x\", 65000)\n"
+        "local args = {}\n"
+        "for i = 1, 400 do\n"
+        "  args[i] = big\n"
+        "end\n"
+        "args[401] = \"not a number\"\n"
+        "local format = string.rep(\"s4\", 400) .. \"i\"\n"
+        "while true do\n"
+        "  pcall(string.pack, format, table.unpack(args))\n"
+        "end\n"
+    );
+    // The same with fixed-size texts that pack fills with padding.
+    expect_budget(
+        "local args = {}\n"
+        "for i = 1, 100 do\n"
+        "  args[i] = \"\"\n"
+        "end\n"
+        "args[101] = \"x\"\n"
+        "local format = string.rep(\"c60000\", 100) .. \"i\"\n"
+        "while true do\n"
+        "  pcall(string.pack, format, table.unpack(args))\n"
+        "end\n"
+    );
+    expect_budget(
+        "local big = string.rep(\"x\", 65000)\n"
+        "local args = {}\n"
+        "for i = 1, 400 do\n"
+        "  args[i] = big\n"
+        "end\n"
+        "args[401] = \"not a number\"\n"
+        "local format = string.rep(\"%s\", 400) .. \"%d\"\n"
+        "while true do\n"
+        "  pcall(string.format, format, table.unpack(args))\n"
+        "end\n"
+    );
+    expect_budget(
+        "local t = {}\n"
+        "for i = 1, 300000 do\n"
+        "  t[i] = i\n"
+        "end\n"
+        "local function f(...)\n"
+        "  while true do\n"
+        "    local packed = table.pack(...)\n"
+        "  end\n"
+        "end\n"
+        "f(table.unpack(t))\n"
+    );
+    expect_budget(
+        "local s = string.rep(\"a\", 65000)\n"
+        "while true do\n"
+        "  pcall(string.unpack, \"z\", s)\n"
+        "end\n"
+    );
+    expect_budget(
+        "local a = string.rep(\"x\", 65536)\n"
+        "local b = string.rep(\"x\", 65536)\n"
+        "while true do\n"
+        "  rawequal(a, b)\n"
+        "end\n"
+    );
+    expect_budget(
+        "local t = {}\n"
+        "for i = 1, 300000 do\n"
+        "  t[i] = \"\"\n"
+        "end\n"
+        "local function f(...)\n"
+        "  while true do\n"
+        "    warn(...)\n"
+        "  end\n"
+        "end\n"
+        "f(table.unpack(t))\n"
+    );
+    expect_budget(
+        "local t = {}\n"
+        "for i = 1, 30000 do\n"
+        "  t[i] = \"\"\n"
+        "end\n"
+        "local format = string.rep(\"%s\", 30000)\n"
+        "local function f(...)\n"
+        "  while true do\n"
+        "    string.format(format, ...)\n"
+        "  end\n"
+        "end\n"
+        "f(table.unpack(t))\n"
+    );
+    expect_budget(
+        "local t = {}\n"
+        "for i = 1, 300000 do\n"
+        "  t[i] = i\n"
+        "end\n"
+        "local function f(...)\n"
+        "  while true do\n"
+        "    math.max(...)\n"
+        "  end\n"
+        "end\n"
+        "f(table.unpack(t))\n"
+    );
+    expect_budget(
+        "local t = {}\n"
+        "for i = 1, 300000 do\n"
+        "  t[i * 7 % 300007] = i\n"
+        "end\n"
+        "while true do\n"
+        "  for k in pairs(t) do\n"
+        "    break\n"
+        "  end\n"
+        "end\n"
+    );
+    expect_budget("local f = string.rep(\" \", 65536)\nwhile true do\n  string.pack(f)\nend\n");
+    expect_budget(
+        "local s = string.rep(\" \", 65000) .. \"1\"\nwhile true do\n  tonumber(s)\nend\n"
+    );
+}
+
+/// Runs `setup` and then `loop` as two phases of one sandbox, and returns the
+/// count the loop phase spent.
+uint64_t loop_charge(const char* setup, const char* loop) {
+    Package package;
+    host::ScriptError error;
+    auto sandbox = open_with(package, error, host::mutator_profile());
+    if (!sandbox)
+        return 0;
+    put(package, "setup.lua", setup);
+    put(package, "loop.lua", loop);
+    OA_CHECK(sandbox->run_file("setup.lua", "setup", nullptr, error));
+    OA_CHECK(sandbox->run_file("loop.lua", "loop", nullptr, error));
+    return sandbox->instructions_used();
+}
+
+// A string of at most 40 bytes is shared, so whether making one allocates
+// depends on when the collector last ran. Those strings are not charged, so
+// the same loop costs the same with an empty heap and with many live tables.
+void short_strings_cost_the_same() {
+    const char* empty = "keep = {}\n";
+    const char* full = "keep = {}\nfor i = 1, 20000 do\n  keep[i] = {i}\nend\n";
+    const char* short_loop = "local made = 0\n"
+                             "for i = 1, 200000 do\n"
+                             "  local s = \"k\" .. (i % 500)\n"
+                             "  made = made + #s\n"
+                             "end\n"
+                             "return made\n";
+    const uint64_t short_empty = loop_charge(empty, short_loop);
+    const uint64_t short_full = loop_charge(full, short_loop);
+    std::printf(
+        "short strings: %llu units with an empty heap, %llu with 20000 tables\n",
+        static_cast<unsigned long long>(short_empty),
+        static_cast<unsigned long long>(short_full)
+    );
+    OA_CHECK(short_empty > 0);
+    OA_CHECK(short_empty == short_full);
+
+    // Strings past 40 bytes are always new, and are charged by length.
+    const char* long_loop = "local made = 0\n"
+                            "local p = string.rep(\"p\", 40)\n"
+                            "for i = 1, 200000 do\n"
+                            "  local s = p .. (i % 500)\n"
+                            "  made = made + #s\n"
+                            "end\n"
+                            "return made\n";
+    const uint64_t long_empty = loop_charge(empty, long_loop);
+    const uint64_t long_full = loop_charge(full, long_loop);
+    OA_CHECK(long_empty == long_full);
+    OA_CHECK(long_empty >= short_empty + 200000);
+}
+
+/// Runs `source` at the mutator default and returns the count it spent.
+uint64_t workload_charge(const char* source) {
+    Package package;
+    host::ScriptError error;
+    auto sandbox = open_with(package, error, host::mutator_profile());
+    if (!sandbox)
+        return 0;
+    put(package, "mutator.lua", source);
+    OA_CHECK(sandbox->run_file("mutator.lua", "tick", nullptr, error));
+    return sandbox->instructions_used();
+}
+
+// What a mutator does to 400 units of 61 fields: walk each unit's fields with
+// pairs, clamp them with math.max and math.min, write them with
+// string.format, and sort names. Each stays a small part of the allowance.
+void unit_workloads_stay_cheap() {
+    const std::string units = "local units = {}\n"
+                              "local names = {}\n"
+                              "for f = 1, 60 do\n"
+                              "  names[f] = \"field\" .. string.format(\"%02d\", f)\n"
+                              "end\n"
+                              "for i = 1, 400 do\n"
+                              "  local u = {unitname = \"RIDGE\" .. i}\n"
+                              "  for f = 1, 60 do\n"
+                              "    u[names[f]] = i + f\n"
+                              "  end\n"
+                              "  units[i] = u\n"
+                              "end\n";
+    const uint64_t setup = workload_charge(units.c_str());
+    const std::string walk = units + "for i = 1, 400 do\n"
+                                     "  for k, v in pairs(units[i]) do\n"
+                                     "    if type(v) == \"number\" then\n"
+                                     "      units[i][k] = v * 2\n"
+                                     "    end\n"
+                                     "  end\n"
+                                     "end\n";
+    const std::string clamp = units + "for i = 1, 400 do\n"
+                                      "  for f = 1, 50 do\n"
+                                      "    local k = names[f]\n"
+                                      "    units[i][k] = math.max(0, math.min(units[i][k], 300))\n"
+                                      "  end\n"
+                                      "end\n";
+    const std::string format = units + "local out = 0\n"
+                                       "for i = 1, 400 do\n"
+                                       "  for f = 1, 20 do\n"
+                                       "    local text = string.format(\"%s=%d\", names[f], "
+                                       "units[i][names[f]])\n"
+                                       "    out = out + #text\n"
+                                       "  end\n"
+                                       "end\n";
+    const std::string sort = units + "local list = {}\n"
+                                     "for i = 1, 400 do\n"
+                                     "  list[i] = units[i].unitname\n"
+                                     "end\n"
+                                     "table.sort(list)\n"
+                                     "local numbers = {}\n"
+                                     "for i = 1, 5000 do\n"
+                                     "  numbers[i] = (i * 7919) % 5003\n"
+                                     "end\n"
+                                     "table.sort(numbers)\n";
+    const uint64_t walked = workload_charge(walk.c_str()) - setup;
+    const uint64_t clamped = workload_charge(clamp.c_str()) - setup;
+    const uint64_t formatted = workload_charge(format.c_str()) - setup;
+    const uint64_t sorted = workload_charge(sort.c_str()) - setup;
+    std::printf(
+        "unit workloads: pairs %llu, clamp %llu, format %llu, sort %llu units\n",
+        static_cast<unsigned long long>(walked),
+        static_cast<unsigned long long>(clamped),
+        static_cast<unsigned long long>(formatted),
+        static_cast<unsigned long long>(sorted)
+    );
+    OA_CHECK(walked < host::default_instruction_budget / 8);
+    OA_CHECK(clamped < host::default_instruction_budget / 100);
+    OA_CHECK(formatted < host::default_instruction_budget / 100);
+    OA_CHECK(sorted < host::default_instruction_budget / 100);
+}
+
 void utf8_codes_is_one_function() {
     Package package;
     host::ScriptError error;
@@ -587,6 +934,9 @@ int main() {
     add_cases(cases);
     compare_cases(cases);
     review_and_replaced_calls_stop();
+    copied_calls_stop();
+    short_strings_cost_the_same();
+    unit_workloads_stay_cheap();
     utf8_codes_is_one_function();
     a_mutator_rewrites_tables();
     return oa::test::check_exit_status();

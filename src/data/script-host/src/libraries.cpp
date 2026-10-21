@@ -5,18 +5,21 @@
 // the sandbox. `math` is the engine's library. `pairs` walks keys in a fixed
 // order.
 //
-// string.byte, the table functions move, insert, remove, concat, unpack and
-// sort, and utf8.len, utf8.codepoint, utf8.offset and utf8.codes follow
-// lstrlib.c, ltablib.c and lutf8lib.c of Lua 5.4.9.
+// next, rawequal, tonumber and warn, string.byte, the table functions move,
+// insert, remove, concat, pack, unpack and sort, and utf8.char, utf8.len,
+// utf8.codepoint, utf8.offset and utf8.codes follow lbaselib.c, lstrlib.c,
+// ltablib.c and lutf8lib.c of Lua 5.4.9.
 // Copyright (C) 1994-2026 Lua.org, PUC-Rio.
 // The licence is the MIT licence; the text is licenses/lua-LICENSE.txt.
 // Each copy counts its work against the phase allowance and refuses a table
-// range no table can hold. string.char stays Lua's own: the string cap
-// refuses a result that would pass it. utf8.char, string.format and the
-// pack calls stay Lua's own too, and are charged before that call.
+// range no table can hold. Being called from the script itself, each one
+// names itself and the script's line in its errors as Lua's own does.
+// string.char stays Lua's own: the string cap refuses a result that would
+// pass it.
 
 #include "internal.hpp"
 
+#include <cctype>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -31,14 +34,6 @@ namespace {
 using Control = HostDetail::Control;
 
 const char string_rep_key = 0;
-const char format_key = 0;
-const char pack_key = 0;
-const char packsize_key = 0;
-const char unpack_key = 0;
-const char utf8_char_key = 0;
-const char next_key = 0;
-const char tonumber_key = 0;
-const char warn_key = 0;
 const char setmetatable_key = 0;
 const char rawset_key = 0;
 const char xpcall_key = 0;
@@ -268,6 +263,43 @@ const char* utf8_decode(const char* text, unsigned* value, bool strict) {
     if (value != nullptr)
         *value = decoded;
     return text + 1;
+}
+
+// utf8.char's one code point, from lutf8lib.c.
+void push_utf8_char(lua_State* state, int argument) {
+    const auto code = static_cast<lua_Unsigned>(luaL_checkinteger(state, argument));
+    luaL_argcheck(state, code <= utf8_max_code, argument, "value out of range");
+    lua_pushfstring(state, "%U", static_cast<long>(code));
+}
+
+constexpr const char* space_characters = " \f\n\r\t\v";
+
+// tonumber's reading of an integer in `base`, from lbaselib.c. Returns where
+// the reading stopped, after trailing spaces, or null when the text is not a
+// numeral in that base.
+const char* text_to_integer(const char* text, int base, lua_Integer* value) {
+    lua_Unsigned number = 0;
+    bool negative = false;
+    text += std::strspn(text, space_characters);
+    if (*text == '-') {
+        ++text;
+        negative = true;
+    } else if (*text == '+') {
+        ++text;
+    }
+    if (!std::isalnum(static_cast<unsigned char>(*text)))
+        return nullptr;
+    do {
+        const auto byte = static_cast<unsigned char>(*text);
+        const int digit = std::isdigit(byte) ? *text - '0' : (std::toupper(byte) - 'A') + 10;
+        if (digit >= base)
+            return nullptr;
+        number = number * static_cast<lua_Unsigned>(base) + static_cast<lua_Unsigned>(digit);
+        ++text;
+    } while (std::isalnum(static_cast<unsigned char>(*text)));
+    text += std::strspn(text, space_characters);
+    *value = static_cast<lua_Integer>(negative ? (0u - number) : number);
+    return text;
 }
 
 // table.sort, from ltablib.c. The pivot salt starts at 0, so the first
@@ -903,84 +935,110 @@ static int host_utf8_codes(lua_State* state) {
     return 3;
 }
 
-static int call_saved(lua_State* state, const void* key) {
-    const int arguments = lua_gettop(state);
-    lua_rawgetp(state, LUA_REGISTRYINDEX, key);
-    lua_insert(state, 1);
-    lua_call(state, arguments, LUA_MULTRET);
-    return lua_gettop(state);
-}
-
+// next, from lbaselib.c. One walk can visit every slot an emptied table
+// still holds, so the call costs scan_call_charge.
 static int host_next(lua_State* state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
     charge(state, scan_call_charge);
-    return call_saved(state, &next_key);
+    lua_settop(state, 2);
+    if (lua_next(state, 1) != 0)
+        return 2;
+    lua_pushnil(state);
+    return 1;
 }
 
+// rawequal, from lbaselib.c. Two strings are charged one unit per
+// bytes_per_charge of their two lengths, which their comparison may read.
+static int host_rawequal(lua_State* state) {
+    luaL_checkany(state, 1);
+    luaL_checkany(state, 2);
+    if (lua_type(state, 1) == LUA_TSTRING && lua_type(state, 2) == LUA_TSTRING) {
+        std::size_t left_length = 0;
+        std::size_t right_length = 0;
+        lua_tolstring(state, 1, &left_length);
+        lua_tolstring(state, 2, &right_length);
+        charge(state, units_for_bytes(left_length + right_length));
+    }
+    lua_pushboolean(state, lua_rawequal(state, 1, 2));
+    return 1;
+}
+
+// tonumber, from lbaselib.c. Reading a string of digits is charged one unit
+// per bytes_per_charge of its length, and at least one unit.
 static int host_tonumber(lua_State* state) {
-    std::size_t length = 0;
+    std::size_t text_length = 0;
     if (lua_type(state, 1) == LUA_TSTRING)
-        lua_tolstring(state, 1, &length);
-    charge(state, length == 0 ? 1 : units_for_bytes(length));
-    return call_saved(state, &tonumber_key);
-}
-
-static int host_warn(lua_State* state) {
-    const int count = lua_gettop(state);
-    uint64_t units = comparison_unit;
-    if (count > 1)
-        units = comparison_unit * static_cast<uint64_t>(count);
-    charge(state, units);
-    return call_saved(state, &warn_key);
-}
-
-static uint64_t format_units(lua_State* state) {
-    std::size_t format_length = 0;
-    if (lua_type(state, 1) == LUA_TSTRING)
-        lua_tolstring(state, 1, &format_length);
-    uint64_t units = static_cast<uint64_t>(format_length);
-    const int count = lua_gettop(state);
-    for (int index = 2; index <= count; ++index) {
-        units += comparison_unit;
-        if (lua_type(state, index) == LUA_TSTRING) {
-            std::size_t argument_length = 0;
-            lua_tolstring(state, index, &argument_length);
-            units += static_cast<uint64_t>(argument_length);
+        lua_tolstring(state, 1, &text_length);
+    charge(state, text_length == 0 ? 1 : units_for_bytes(text_length));
+    if (lua_isnoneornil(state, 2)) {
+        if (lua_type(state, 1) == LUA_TNUMBER) {
+            lua_settop(state, 1);
+            return 1;
+        }
+        std::size_t length = 0;
+        const char* text = lua_tolstring(state, 1, &length);
+        if (text != nullptr && lua_stringtonumber(state, text) == length + 1)
+            return 1;
+        luaL_checkany(state, 1);
+    } else {
+        lua_Integer value = 0;
+        const lua_Integer base = luaL_checkinteger(state, 2);
+        luaL_checktype(state, 1, LUA_TSTRING);
+        std::size_t length = 0;
+        const char* text = lua_tolstring(state, 1, &length);
+        luaL_argcheck(state, 2 <= base && base <= 36, 2, "base out of range");
+        if (text_to_integer(text, static_cast<int>(base), &value) == text + length) {
+            lua_pushinteger(state, value);
+            return 1;
         }
     }
-    return units == 0 ? 1 : units;
+    luaL_pushfail(state);
+    return 1;
 }
 
-static int host_string_format(lua_State* state) {
-    charge(state, format_units(state));
-    return call_saved(state, &format_key);
+// warn, from lbaselib.c. Every argument is checked before any is passed on,
+// so an error cannot leave a warning unfinished.
+static int host_warn(lua_State* state) {
+    const int count = lua_gettop(state);
+    charge(state, argument_unit * static_cast<uint64_t>(count > 1 ? count : 1));
+    luaL_checkstring(state, 1);
+    for (int index = 2; index <= count; ++index)
+        luaL_checkstring(state, index);
+    for (int index = 1; index < count; ++index)
+        lua_warning(state, lua_tostring(state, index), 1);
+    lua_warning(state, lua_tostring(state, count), 0);
+    return 0;
 }
 
-// One unit per format byte. One per 64 bytes left a long format running
-// past five seconds at the default allowance.
-static int host_charged_format(lua_State* state, const void* key) {
-    std::size_t length = 0;
-    if (lua_type(state, 1) == LUA_TSTRING)
-        lua_tolstring(state, 1, &length);
-    charge(state, length == 0 ? 1 : static_cast<uint64_t>(length));
-    return call_saved(state, key);
-}
-
-static int host_string_pack(lua_State* state) {
-    return host_charged_format(state, &pack_key);
-}
-
-static int host_string_packsize(lua_State* state) {
-    return host_charged_format(state, &packsize_key);
-}
-
-static int host_string_unpack(lua_State* state) {
-    return host_charged_format(state, &unpack_key);
-}
-
+// utf8.char, from lutf8lib.c. One unit per code point.
 static int host_utf8_char(lua_State* state) {
     const int count = lua_gettop(state);
     charge(state, count <= 0 ? 1 : static_cast<uint64_t>(count));
-    return call_saved(state, &utf8_char_key);
+    if (count == 1) {
+        push_utf8_char(state, 1);
+        return 1;
+    }
+    luaL_Buffer buffer;
+    luaL_buffinit(state, &buffer);
+    for (int index = 1; index <= count; ++index) {
+        push_utf8_char(state, index);
+        luaL_addvalue(&buffer);
+    }
+    luaL_pushresult(&buffer);
+    return 1;
+}
+
+// table.pack, from ltablib.c. One unit per element.
+static int host_table_pack(lua_State* state) {
+    const int count = lua_gettop(state);
+    charge(state, static_cast<uint64_t>(count));
+    lua_createtable(state, count, 1);
+    lua_insert(state, 1);
+    for (int index = count; index >= 1; --index)
+        lua_seti(state, 1, index);
+    lua_pushinteger(state, count);
+    lua_setfield(state, 1, "n");
+    return 1;
 }
 } // extern "C"
 
@@ -997,6 +1055,8 @@ void install_c_work(lua_State* state) {
     lua_setfield(state, -2, "insert");
     lua_pushcfunction(state, host_table_move);
     lua_setfield(state, -2, "move");
+    lua_pushcfunction(state, host_table_pack);
+    lua_setfield(state, -2, "pack");
     lua_pushcfunction(state, host_table_remove);
     lua_setfield(state, -2, "remove");
     lua_pushcfunction(state, host_table_sort);
@@ -1006,8 +1066,6 @@ void install_c_work(lua_State* state) {
     lua_pop(state, 1);
 
     lua_getglobal(state, "utf8");
-    lua_getfield(state, -1, "char");
-    lua_rawsetp(state, LUA_REGISTRYINDEX, &utf8_char_key);
     lua_pushcfunction(state, host_utf8_char);
     lua_setfield(state, -2, "char");
     lua_pushcfunction(state, host_utf8_offset);
@@ -1021,18 +1079,9 @@ void install_c_work(lua_State* state) {
     lua_pop(state, 1);
 }
 
-void replace_global(lua_State* state, const char* name, const void* key, lua_CFunction host) {
-    lua_getglobal(state, name);
-    lua_rawsetp(state, LUA_REGISTRYINDEX, key);
+void replace_global(lua_State* state, const char* name, lua_CFunction host) {
     lua_pushcfunction(state, host);
     lua_setglobal(state, name);
-}
-
-void replace_field(lua_State* state, const char* name, const void* key, lua_CFunction host) {
-    lua_getfield(state, -1, name);
-    lua_rawsetp(state, LUA_REGISTRYINDEX, key);
-    lua_pushcfunction(state, host);
-    lua_setfield(state, -2, name);
 }
 
 } // namespace
@@ -1040,9 +1089,10 @@ void replace_field(lua_State* state, const char* name, const void* key, lua_CFun
 void open_libraries(lua_State* state) {
     luaL_requiref(state, "_G", luaopen_base, 1);
     lua_pop(state, 1);
-    replace_global(state, "next", &next_key, host_next);
-    replace_global(state, "tonumber", &tonumber_key, host_tonumber);
-    replace_global(state, "warn", &warn_key, host_warn);
+    replace_global(state, "next", host_next);
+    replace_global(state, "rawequal", host_rawequal);
+    replace_global(state, "tonumber", host_tonumber);
+    replace_global(state, "warn", host_warn);
     luaL_requiref(state, "string", luaopen_string, 1);
     lua_pop(state, 1);
     luaL_requiref(state, "table", luaopen_table, 1);
@@ -1064,11 +1114,9 @@ void open_libraries(lua_State* state) {
     lua_setfield(state, -2, "dump");
     lua_pushcfunction(state, host_string_rep);
     lua_setfield(state, -2, "rep");
-    replace_field(state, "format", &format_key, host_string_format);
-    replace_field(state, "pack", &pack_key, host_string_pack);
-    replace_field(state, "packsize", &packsize_key, host_string_packsize);
-    replace_field(state, "unpack", &unpack_key, host_string_unpack);
-    // The string metatable's __index is this table, so ("x"):find uses these.
+    // The string metatable's __index is this table, so ("x"):find and
+    // ("%d"):format use these.
+    install_format_and_pack(state);
     install_patterns(state);
     lua_pop(state, 1);
 

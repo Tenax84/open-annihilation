@@ -23,14 +23,31 @@ inline constexpr std::size_t scratch_buffer_bytes = 3072;
 inline constexpr std::size_t budget_message_bytes = 160;
 
 /// Bytes of a string's length, or of a scan, that count as one instruction.
-inline constexpr std::size_t bytes_per_charge = 64;
-
-/// Units for one comparison that is not two long strings.
 ///
-/// Sorting hundreds of thousands of numbers is work in proportion to the
-/// comparisons. 128 units each spends the default allowance before that
-/// sort runs for long.
-inline constexpr uint64_t comparison_unit = 128;
+/// Making or walking a string byte by byte, as `upper` or `utf8.len` does,
+/// takes about as long per 32 bytes as a few instructions of the interpreter.
+inline constexpr std::size_t bytes_per_charge = 32;
+
+/// Longest string the interpreter keeps one shared copy of (Lua 5.4.9's
+/// short-string limit, the same on every build).
+///
+/// Making a string this short allocates only when no live copy exists, and
+/// whether one does depends on when the collector last ran. Such strings are
+/// not charged, so a script's count does not depend on the collector.
+inline constexpr std::size_t short_string_limit = 40;
+
+/// Units for one comparison that is not two strings, and the least two
+/// strings cost.
+///
+/// One comparison in `table.sort`, `pairs` or `math.max` takes about as long
+/// as one or two instructions of the interpreter.
+inline constexpr uint64_t comparison_unit = 2;
+
+/// Units for one value `string.format` converts or `warn` passes on.
+///
+/// One conversion takes about as long as one or two instructions of the
+/// interpreter.
+inline constexpr uint64_t argument_unit = 2;
 
 /// Units for one `next` call, or one walk that collects keys for `pairs`.
 ///
@@ -236,6 +253,16 @@ void open_libraries(lua_State* state);
 /// @param state the sandbox state, with the `string` table on top
 void install_patterns(lua_State* state);
 
+/// Replaces `string.format`, `pack`, `packsize` and `unpack` in the table on
+/// top of the stack with the counted copies of Lua 5.4.9's.
+///
+/// They take the same arguments and give the same results and messages as
+/// Lua's own. Past the allowance they raise the budget message and mark the
+/// allowance spent.
+///
+/// @param state the sandbox state, with the `string` table on top
+void install_format_and_pack(lua_State* state);
+
 /// Opens the math library. May raise.
 ///
 /// @param state the state being opened
@@ -298,9 +325,9 @@ inline void add_charge(HostDetail::Control* control, uint64_t units) {
 ///
 /// Two strings cost one unit per byte of the two lengths, and at least
 /// `comparison_unit`. Ordering a string full of zero bytes walks a segment
-/// per byte, so one unit per 64 bytes would let that sort run for too long.
-/// Any other pair costs `comparison_unit`. Reading the lengths does not
-/// allocate.
+/// per byte, so one unit per `bytes_per_charge` would let that sort run for
+/// too long. Any other pair costs `comparison_unit`. Reading the lengths does
+/// not allocate.
 ///
 /// @param state the sandbox state
 /// @param left stack index of the first value
