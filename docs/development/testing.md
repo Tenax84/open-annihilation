@@ -1162,7 +1162,8 @@ package paths. It plays a match with no mutator, one that changes the
 commanders, the same match again with none, and one mutator that does not
 apply. `native-mutators-command-line` runs headless skirmishes with
 `--mutator`: none, one package, a number option, two packages in each
-order, a missing mutator, an unknown option and a mutator whose script stops.
+order, a missing mutator, an unknown option, a list the manifests refuse
+and a mutator whose script stops.
 
 ## Writing a test
 

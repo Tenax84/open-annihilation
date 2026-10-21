@@ -3773,7 +3773,9 @@ line's `--mutator` values are that choice, in the order given. A run that
 names none applies nothing, mounts nothing and logs nothing. The pipeline
 leaves its layer mounted for the match. The log names each mutator that
 applied, how many files were added, hidden or rewritten, each conflict,
-and each mutator that did not apply.
+and each mutator that did not apply. A list the manifests refuse logs one
+`mutators: refused:` line and nothing about each mutator. The applied line
+is written only when a mutator applied.
 
 A mutator that does not apply, or a list the pipeline refuses, stops the
 start. The message names that mutator, by the name in its manifest and by

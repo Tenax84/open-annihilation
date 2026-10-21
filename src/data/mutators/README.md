@@ -29,6 +29,9 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   and returns each mutator's outcome, the layer it left mounted, the
   `Journal` of the changes kept and the `ConflictReport`. See
   [Pipeline](#pipeline).
+- `list_refusal` is that list's check: more than `max_mutators`, an id
+  twice, a requirement an earlier mutator does not meet, or two that
+  conflict. Empty when the list may run.
 - `Journal::entries_of` returns one mutator's changes, and `describe` writes
   one conflict as a single English line.
 - `parse_choice` reads one `--mutator` value, `format_choice` writes it
@@ -38,10 +41,12 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 ## Choice text
 
 An id holds no `/` and no `\`. Anything else is a path to a package folder.
-Options follow the last `:` whose remainder is `name=value` pairs joined by
-`,`, so a Windows drive letter stays in the path. The text is not trimmed.
-An empty text, an empty name or value, a repeated option and a `,` or `=`
-inside a value are refused.
+A target that holds `:` is a path only when it names an existing folder or
+file; otherwise the text is refused. Options follow the first `:` that is
+followed by a name and `=`, and every name is an option id and every value
+an identifier, so a Windows drive letter such as `C:` stays in the path.
+The text is not trimmed. An empty text, an empty name or value, a repeated
+option and a `,` or `=` inside a value are refused.
 
 `resolve_choice` looks an id up in the installed listing. A path is the
 package folder itself, and `oamut.yaml` is matched without ASCII case. A
@@ -52,7 +57,9 @@ refused in words that quote the player's text.
 
 ## State
 
-None kept. `parse_choice` and `format_choice` read nothing. `resolve_choice`
+None kept. `parse_choice` asks whether a target that holds `:` names an
+existing folder or file, and keeps nothing. `format_choice` reads nothing.
+`resolve_choice`
 reads one package's `oamut.yaml`, or the installed listing of the Mutators
 folder it is given, and keeps nothing after it returns. The two checks are
 pure: they do not read files, the asset store or the preferences. A null
