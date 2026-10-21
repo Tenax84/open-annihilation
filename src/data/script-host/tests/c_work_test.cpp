@@ -28,6 +28,10 @@ namespace {
 
 // The address sanitizer makes every call several times slower, so its builds
 // get the suite's timeout scale on the time bounds.
+//
+// A loop the budget stops spends at most `budget_stop_seconds` of processor
+// time. Before the libraries were charged these loops ran for hours; a slow
+// Windows machine needs about 7 seconds for the heaviest now.
 #if defined(__SANITIZE_ADDRESS__)
 constexpr int time_scale = 6;
 #elif defined(__has_feature)
@@ -39,6 +43,8 @@ constexpr int time_scale = 1;
 #else
 constexpr int time_scale = 1;
 #endif
+
+constexpr double budget_stop_seconds = 20.0;
 
 struct Case {
     std::string name;
@@ -108,6 +114,10 @@ open_with(Package& package, host::ScriptError& error, host::Profile profile) {
     host::OpenOptions options;
     options.package_id = "sample";
     options.profile = profile;
+    // These cases are about the instruction budget; the real-time limit has
+    // its own test, and a busy machine must not turn a budget stop into a
+    // time stop here.
+    options.time_limit = std::chrono::minutes(10);
     options.sources.context = &package;
     options.sources.read = read_package;
     auto sandbox = host::Sandbox::open(options, error);
@@ -477,7 +487,7 @@ void expect_budget(const char* source) {
     OA_CHECK(error.kind == host::ErrorKind::instruction_budget);
     OA_CHECK(message_has(error, "50000000"));
     OA_CHECK(sandbox->instructions_used() >= host::default_instruction_budget);
-    OA_CHECK(processor_seconds < 5.0 * time_scale);
+    OA_CHECK(processor_seconds < budget_stop_seconds * time_scale);
 }
 
 void expect_range(const char* source, const char* function, const char* count) {
