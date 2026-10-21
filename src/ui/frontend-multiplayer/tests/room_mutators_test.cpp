@@ -1443,32 +1443,86 @@ void test_classic_stays_and_leaves() {
     }
 }
 
-/// A guest names a 3.1c joiner and does not refuse it.
+/// Hands a guest the host's rejection of a player.
+///
+/// @param guest the guest's room
+/// @param id the player rejected
+/// @param reason the reason
+/// @return true when the record applied
+bool host_reject_to(Room& guest, uint32_t id, uint8_t reason) {
+    ng::RejectRecord record{};
+    record.player_id = id;
+    record.reason = reason;
+    mp::LobbyEvent event{};
+    event.kind = mp::LobbyEventKind::record;
+    event.player_id = 0x100;
+    std::size_t written = 0;
+    if (ng::encode_record(record, event.data, sizeof event.data, &written) != ng::WireError::ok)
+        return false;
+    event.size = static_cast<uint16_t>(written);
+    return mp::lobby_apply_event(guest.lobby, event);
+}
+
+/// A guest names a 3.1c joiner when the host refuses it, and refuses no one.
 void test_guest_posts_the_refusal() {
     const std::string join =
         "*** Bo plays Total Annihilation 3.1c and cannot join a game with mutators.";
-    Room guest(false);
-    expect(
-        host_record_to(guest, encode_field(host_ready(), false, 0, ng::presence_record_max_bytes)),
-        "the guest keeps the host's mutators"
-    );
-    guest.seat(2, 0x300, false, false);
-    guest.lobby.presence_records.block_player[2] = 0;
-    std::snprintf(
-        mp::slot_player(guest.lobby, 2).name, sizeof mp::slot_player(guest.lobby, 2).name, "Bo"
-    );
-    expect(apply_block(guest, 0x300, false, false), "the guest applies the joiner's first block");
-    const auto once = room_lines(guest.lobby);
-    expect(
-        parts_fit(once) && joined_lines(once) == join, "the guest posts the line about the joiner"
-    );
-    expect(!sent_reject(guest, 0x300, 8), "a guest sends no refusal");
-    expect(
-        mp::slot_player(guest.lobby, 2).status == mp::kSlotRemote,
-        "the guest leaves the joiner seated"
-    );
-    expect(apply_block(guest, 0x300, false, false), "the guest applies a later block");
-    expect(room_lines(guest.lobby).size() == once.size(), "a later block posts nothing");
+    const auto listed = encode_field(host_ready(), false, 0, ng::presence_record_max_bytes);
+    {
+        Room guest(false);
+        expect(host_record_to(guest, listed), "the guest keeps the host's mutators");
+        guest.seat(2, 0x300, false, false);
+        guest.lobby.presence_records.block_player[2] = 0;
+        std::snprintf(
+            mp::slot_player(guest.lobby, 2).name, sizeof mp::slot_player(guest.lobby, 2).name, "Bo"
+        );
+        expect(apply_block(guest, 0x300, false, false), "the guest applies the joiner's block");
+        expect(room_lines(guest.lobby).empty(), "a block alone posts nothing on a guest");
+        expect(!sent_reject(guest, 0x300, 8), "a guest refuses no one");
+        expect(
+            mp::slot_player(guest.lobby, 2).status == mp::kSlotRemote,
+            "the guest leaves the joiner seated until the host refuses it"
+        );
+        expect(host_reject_to(guest, 0x300, 8), "the host's refusal reaches the guest");
+        const auto once = room_lines(guest.lobby);
+        expect(parts_fit(once) && joined_lines(once) == join, "the guest names the refused joiner");
+        expect(
+            mp::slot_player(guest.lobby, 2).status == mp::kSlotOpen,
+            "the refused joiner leaves the guest's room"
+        );
+        expect(!host_reject_to(guest, 0x300, 8), "a passed-on copy of the refusal is not applied");
+        expect(room_lines(guest.lobby).size() == once.size(), "the guest names the joiner once");
+    }
+    {
+        // A new guest can hear the host's list before the greeting of a 3.1c
+        // player seated before the list went on. That player is not refused.
+        Room guest(false);
+        expect(host_record_to(guest, listed), "the new guest keeps the host's mutators");
+        guest.seat(2, 0x300, false, false);
+        guest.lobby.presence_records.block_player[2] = 0;
+        expect(apply_block(guest, 0x300, false, false), "the seated player's greeting applies");
+        expect(
+            !lines_contain(room_lines(guest.lobby), "cannot join"),
+            "a seated 3.1c player is not said to be unable to join"
+        );
+    }
+    {
+        Room guest(false);
+        guest.seat(2, 0x300, false, false);
+        guest.lobby.presence_records.block_player[2] = 0;
+        expect(apply_block(guest, 0x300, false, false), "a 3.1c block applies without a list");
+        expect(host_reject_to(guest, 0x300, 8), "a refusal applies without a list");
+        expect(room_lines(guest.lobby).empty(), "a room without mutators posts no line");
+    }
+    {
+        Room guest(false);
+        expect(host_record_to(guest, listed), "the guest keeps the host's mutators");
+        guest.seat(2, 0x300, false, false);
+        guest.lobby.presence_records.block_player[2] = 0;
+        expect(apply_block(guest, 0x300, false, false), "a 3.1c block applies");
+        expect(host_reject_to(guest, 0x300, 1), "another reason applies");
+        expect(room_lines(guest.lobby).empty(), "only the mutator refusal posts the line");
+    }
 }
 
 /// A long name and the German sentence are posted whole, in parts.

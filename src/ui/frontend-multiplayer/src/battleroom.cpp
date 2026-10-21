@@ -4469,6 +4469,27 @@ bool assign_machine_group(
     return true;
 }
 
+/// The line a room with mutators posts about a 3.1c player it refuses.
+constexpr const char* kClassicRefusedLine =
+    "*** {player} plays Total Annihilation 3.1c and cannot join a game with mutators.";
+
+/// Tells whether a remote player's block lacks the engine signature while
+/// the host's record carries mutators.
+///
+/// @param lobby Lobby state.
+/// @param slot Player slot of a remote player.
+/// @return True when the room's mutators cannot take that player.
+bool classic_in_mutator_room(Lobby& lobby, int32_t slot) noexcept {
+    const auto host = lobby_host_slot(lobby);
+    if (host == kNoSlot || !occupied_by(slot_player(lobby, slot), kSlotRemote))
+        return false;
+    const auto host_record = lobby_presence_record(lobby, static_cast<int32_t>(host));
+    const auto* info = slot_info(lobby, slot);
+    return netgame::presence_mutators_state(host_record.data(), host_record.size()).has_value() &&
+           info != nullptr &&
+           !netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(info));
+}
+
 } // namespace
 
 int32_t slot_for_player_id(Lobby& lobby, uint32_t player_id) noexcept {
@@ -4639,30 +4660,15 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
         lobby.presence_records.block_player[slot] = record.player_id;
         // A 3.1c joiner cannot play a mutator room. Reason 8 is the text
         // that machine already shows. The line stays on this machine.
-        // A later block (ready, side, colour) is not an arrival. A guest
-        // posts the line and leaves the player seated; only the host refuses.
-        if (arriving) {
-            const auto host = lobby_host_slot(lobby);
-            const auto host_record = host == kNoSlot
-                                         ? std::span<const uint8_t>{}
-                                         : lobby_presence_record(lobby, static_cast<int32_t>(host));
-            const auto* arrived = slot_info(lobby, slot);
-            if (host != kNoSlot &&
-                netgame::presence_mutators_state(host_record.data(), host_record.size()) &&
-                arrived != nullptr &&
-                !netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(arrived))) {
-                lobby_post_classic_line(
-                    lobby,
-                    "*** {player} plays Total Annihilation 3.1c and cannot join a game with "
-                    "mutators.",
-                    slot
-                );
-                if (host_is_local(lobby)) {
-                    lobby_reject(lobby, record.player_id, kRejectVersion);
-                    flush(lobby);
-                    return true;
-                }
-            }
+        // A later block (ready, side, colour) is not an arrival. Only the
+        // host judges: a guest's first block from a player may be the
+        // greeting of one seated before the list, so a guest names the
+        // joiner when the host's refusal comes (the reject case below).
+        if (arriving && host_is_local(lobby) && classic_in_mutator_room(lobby, slot)) {
+            lobby_post_classic_line(lobby, kClassicRefusedLine, slot);
+            lobby_reject(lobby, record.player_id, kRejectVersion);
+            flush(lobby);
+            return true;
         }
         if (const auto* echoed = slot_info(lobby, slot)) {
             note_computer_command_echo(lobby, record.player_id, kComputerEditSide, echoed->side);
@@ -4766,8 +4772,16 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
         netgame::RejectRecord record{};
         if (netgame::decode_record(event.data, event.size, &record) != netgame::WireError::ok)
             return false;
-        if (slot_for_player_id(lobby, record.player_id) < 0)
+        const auto slot = slot_for_player_id(lobby, record.player_id);
+        if (slot < 0)
             return false;
+        // The host refused a 3.1c joiner from its room with mutators: a
+        // guest names it too, once, from the joiner's own block. A guest
+        // never refuses anyone itself.
+        if (record.reason == kRejectVersion && !host_is_local(lobby) &&
+            lobby.presence_records.block_player[slot] == record.player_id &&
+            classic_in_mutator_room(lobby, slot))
+            lobby_post_classic_line(lobby, kClassicRefusedLine, slot);
         // Passed on once, as for a rejection made here.
         lobby_reject(lobby, record.player_id, record.reason);
         flush(lobby);
