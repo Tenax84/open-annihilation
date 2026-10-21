@@ -157,7 +157,7 @@ struct SpeedScript final : sim::visibility_state::SpeedHost {
             fault.note("SetSpeed has no script");
             return;
         }
-        script->call("SetSpeed", std::span(&value, 1), false);
+        script->call(ScriptFunction::set_speed, std::span(&value, 1), false);
     }
 };
 
@@ -717,7 +717,7 @@ void Match::target_cleared(oa::Unit& unit, uint8_t slot) {
     auto* object = instance(unit.id);
     if (object && object->script()) {
         const int32_t argument = slot;
-        object->script()->call("TargetCleared", std::span(&argument, 1), false);
+        object->script()->call(ScriptFunction::target_cleared, std::span(&argument, 1), false);
     }
 }
 
