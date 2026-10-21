@@ -133,8 +133,8 @@ The limits every package meets, a mutator included, are
 the archive's size, the spare path length, and the name, link, encryption
 and compression rules.
 
-A mutator also meets these limits. The installer applies them to every
-`.lua` file, including one under `files/`:
+A mutator also meets these limits. The Lua limit applies to every `.lua`
+file in the package, including one under `files/`:
 
 | Limit | Value |
 | --- | --- |
@@ -270,8 +270,8 @@ this text. The files a `files` layer may add are
 ### 3.4 Options
 
 `options` is a mapping of at most 16 entries. The key is the option id: a
-Lua name, `[a-z][a-z0-9_]*`, of 1 to 32 bytes. The reader accepts the id
-even when it is a Lua keyword, such as `end`. Each option is a mapping.
+Lua name, `[a-z][a-z0-9_]*`, of 1 to 32 bytes. The reader refuses an id
+that is a Lua keyword, such as `end`. Each option is a mapping.
 The keys any option may hold
 are `type`, `label`, `default`, `values`, `labels`, `min`, `max` and
 `step`. A key its type does not use is refused.
@@ -546,9 +546,7 @@ written two ways: a Lua block, and a `.sm` file. The two spellings compare
 equal when they are the same rules. Mutators apply one after another, in
 list order. Each one is applied to the data the mutators above it left.
 Within one mutator, its rules apply in file order. How one mutator's
-result meets the next is outside this text: the design's Stacking section
-is the account of that order, and the detailed rules are written when R06
-and V12 land, in O01.
+result meets the next is outside this text.
 
 A plan's rules list is a sequence of finished blocks and `sm` paths.
 Consecutive blocks become one source. Each `sm` path is its own source.
@@ -1101,10 +1099,9 @@ squaring. A larger integer exponent is `exp(y · log x)`, and a negative
 base keeps the sign an odd integer calls for. `sqrt`, `floor`, `ceil`,
 `fmod` and the four basic operations are the IEEE results.
 
-`math.random` is Lua 5.4's generator. It starts from
-`OpenOptions::random_seed`, which defaults to 0. Nothing opens a mutator
-sandbox with the game's seed. `math.randomseed()` with no argument
-returns to `OpenOptions::random_seed`. It does not read a clock. Zero is
+`math.random` is Lua 5.4's generator. It starts from the seed 0.
+`math.randomseed()` with no argument returns to that seed. It does not
+read a clock. Zero is
 a defined sequence. A call with one integer, or two, sets a new seed
 from those integers.
 
