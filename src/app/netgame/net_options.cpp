@@ -10,6 +10,7 @@
 #include "oa/base/text.hpp"
 #include "oa/core/game_state.h"
 #include "oa/data/content_bundles/content_choice.hpp"
+#include "oa/data/mutators/choice.hpp"
 #include "oa/netgame/dplay.hpp"
 #include "oa/platform/log_files.hpp"
 
@@ -828,6 +829,22 @@ void adopt_launch_run(Options& options) {
     if (!net.launch_content.mod.empty() && options.mod_file.empty() && options.mod_dir.empty() &&
         !options.base_game)
         net.launch_mod_pending = true;
+    // The first --mutator replaces the file's whole list. A headless run
+    // takes the list here too: adopt_launch_run runs before the match.
+    if (net.launch_content.mutators_named && options.mutators.empty()) {
+        options.mutators.reserve(net.launch_content.mutators.size());
+        options.mutator_fields.reserve(net.launch_content.mutators.size());
+        options.mutator_versions.reserve(net.launch_content.mutators.size());
+        for (std::size_t index = 0; index < net.launch_content.mutators.size(); ++index) {
+            const netgame::LaunchMutator& one = net.launch_content.mutators[index];
+            oa::data::mutators::MutatorChoice choice;
+            choice.target = one.id;
+            choice.options = one.options;
+            options.mutators.push_back(oa::data::mutators::format_choice(choice));
+            options.mutator_fields.push_back("content.mutators[" + std::to_string(index + 1) + "]");
+            options.mutator_versions.push_back(one.version);
+        }
+    }
 }
 
 void put_launch_in_place(NetgameContext& netgame, LaunchPlan plan) {

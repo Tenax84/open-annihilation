@@ -765,50 +765,6 @@ bool prerequisite_met(const Inputs& inputs, const Prerequisite& need) {
     return false;
 }
 
-/// Writes a mutator version range in the engine's comparison words.
-///
-/// An empty range, or one that does not parse, is returned as written.
-///
-/// @param range_text the range as the manifest writes it
-/// @param text how texts are looked up
-/// @return the words, such as "4.0 or later"
-std::string mutator_range_words(std::string_view range_text, const TextHooks& text) {
-    if (range_text.empty())
-        return {};
-    const std::optional<formats::oamut::VersionRange> range =
-        formats::oamut::parse_version_range(range_text);
-    if (!range)
-        return std::string(range_text);
-    std::string joined;
-    for (const auto& [comparison, version] : range->terms) {
-        if (!joined.empty()) {
-            joined += shown(text, words::list_separator);
-            joined.push_back(' ');
-        }
-        std::string_view pattern = words::engine_at_least;
-        switch (comparison) {
-        case formats::oamod::EngineComparison::at_least:
-            pattern = words::engine_at_least;
-            break;
-        case formats::oamod::EngineComparison::above:
-            pattern = words::engine_above;
-            break;
-        case formats::oamod::EngineComparison::at_most:
-            pattern = words::engine_at_most;
-            break;
-        case formats::oamod::EngineComparison::below:
-            pattern = words::engine_below;
-            break;
-        case formats::oamod::EngineComparison::exactly:
-            pattern = words::engine_exactly;
-            break;
-        }
-        const std::string number = formats::oamut::version_text(version);
-        joined += filled(text, pattern, {{"version", number}});
-    }
-    return joined;
-}
-
 /// The name a Checked fact fills for the mod being played.
 ///
 /// @param inputs the Library's inputs
@@ -939,7 +895,7 @@ void append_mutator_facts(const Library& library, const Entry& entry, std::vecto
         const std::string name = need.name.empty() ? need.id : need.name;
         if (name.empty())
             continue;
-        const std::string range = mutator_range_words(need.range, text);
+        const std::string range = range_words(need.range, text);
         const bool met = prerequisite_met(library.inputs, need);
         // An empty range would leave a blank in "{name} {range}". The met
         // line reuses the row's "{name} ✓".

@@ -335,6 +335,26 @@ namespace content {
 class Service;
 } // namespace content
 
+/// Resolves one mutator named for this run.
+///
+/// `version` empty is not checked against the installed package. On failure
+/// `*error` is the reason, without a file or an option in front of it, and
+/// `*resolved` is left untouched.
+///
+/// @param text the choice, as `--mutator` writes it
+/// @param version the version a launch required; empty when it named none
+/// @param folder the player's Mutators folder
+/// @param[out] resolved the package, when it can be used
+/// @param[out] error the reason, when it cannot; may be null
+/// @return true when the mutator can be used
+[[nodiscard]] bool resolve_run_mutator(
+    std::string_view text,
+    std::string_view version,
+    const std::filesystem::path& folder,
+    oa::data::mutators::ResolvedMutator* resolved,
+    std::string* error
+);
+
 class Runtime final : public menu::Host,
                       public entry::SinglePlayerHost,
                       public frontend::Host,
@@ -4304,6 +4324,41 @@ class Runtime final : public menu::Host,
     ///
     /// @return the digest, or nothing when this match applied none
     [[nodiscard]] std::optional<oa::base::sha256::Digest> match_mutator_digest() const noexcept;
+
+    /// The refusal a launch's mutator list would get, or empty when it can play.
+    ///
+    /// The run's list is left as it is. The line names `source` and the field.
+    ///
+    /// @param source the file's name
+    /// @param texts the choices, as `--mutator` writes them
+    /// @param versions the version each entry required; empty when unnamed
+    /// @param fields the field of each entry, such as content.mutators[1]
+    /// @return the refusal, or empty when every entry can be used
+    [[nodiscard]] std::string launch_mutator_refusal(
+        std::string_view source,
+        const std::vector<std::string>& texts,
+        const std::vector<std::string>& versions,
+        const std::vector<std::string>& fields
+    ) const;
+
+    /// Replaces the mutators the next matches apply with a launch file's list.
+    ///
+    /// Each text is one `--mutator` value, and `versions` and `fields` line
+    /// up with it. Returns the refusal, naming `source` and the field, when
+    /// one cannot be used, and leaves the run's list as it was. An empty
+    /// list clears it. A launch that names no mutators does not call this.
+    ///
+    /// @param source the file's name
+    /// @param texts the choices, as `--mutator` writes them
+    /// @param versions the version each entry required; empty when unnamed
+    /// @param fields the field of each entry, such as content.mutators[1]
+    /// @return the refusal, or empty when the list was taken
+    [[nodiscard]] std::string take_launch_mutators(
+        std::string_view source,
+        std::vector<std::string> texts,
+        std::vector<std::string> versions,
+        std::vector<std::string> fields
+    );
 
   private:
 

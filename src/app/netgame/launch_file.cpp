@@ -10,6 +10,7 @@
 #include "oa/core/game_state.h"
 #include "oa/core/player_setup.h"
 #include "oa/formats/oamod.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/netgame/dplay.hpp"
 #include "oa/netgame/session.hpp"
 #include "oa/ui/frontend_multiplayer/lobby_net.hpp"
@@ -859,6 +860,142 @@ void store_mod(LaunchPlan& plan, const LaunchValue& value, const LaunchPlace& pl
     plan.content.named = true;
 }
 
+/// Writes a number the way an option value is stored.
+///
+/// @param number the file's number
+/// @return its text
+std::string option_number_text(const oamod::Number& number) {
+    int64_t whole = 0;
+    if (oamod::integer_value(number, whole))
+        return std::to_string(whole);
+    return oamod::canonical_number_text(number);
+}
+
+/// Reads one option value: text, a number, or on, off, true or false.
+///
+/// @param item the value
+/// @param place where a refusal points
+/// @return the value as stored, with on and true as true and off and false as false
+std::string read_option_value(const oamod::Node& item, const LaunchPlace& place) {
+    if (item.kind == oamod::NodeKind::boolean)
+        return item.boolean ? "true" : "false";
+    if (item.kind == oamod::NodeKind::number)
+        return option_number_text(item.number);
+    if (item.kind != oamod::NodeKind::string)
+        refuse(place, "expected text, a number, on or off");
+    if (item.text == "on" || item.text == "true")
+        return "true";
+    if (item.text == "off" || item.text == "false")
+        return "false";
+    // A value is pasted into id:name=value with no escaping, so it has to be
+    // an identifier the choice grammar already accepts.
+    if (!oa::formats::oamut::choice_value_text(item.text))
+        refuse(place, "expected a value of letters, digits, _, - or .");
+    return item.text;
+}
+
+/// Reads one mutator group: id, and a version and options when they are named.
+///
+/// @param item the group
+/// @param place the item, such as content.mutators[2]
+/// @return the mutator
+LaunchMutator read_mutator_group(const oamod::Node& item, const LaunchPlace& place) {
+    const oamod::Node* id = nullptr;
+    const oamod::Node* version = nullptr;
+    const oamod::Node* options = nullptr;
+    for (const oamod::Node& child : item.children) {
+        if (child.key.kind != oamod::KeyKind::string)
+            refuse(place, "a key is not text");
+        std::string name(place.name);
+        name += '.';
+        name += child.key.text;
+        const LaunchPlace at{place.source, name};
+        if (child.key.text == "id")
+            id = &child;
+        else if (child.key.text == "version")
+            version = &child;
+        else if (child.key.text == "options")
+            options = &child;
+        else
+            refuse(at, "is not a mutator setting");
+    }
+    if (id == nullptr)
+        refuse(place, "expected an id");
+    if (id->kind != oamod::NodeKind::string || !oa::formats::oamut::mutator_id(id->text))
+        refuse(LaunchPlace{place.source, std::string(place.name) + ".id"}, "expected a mutator id");
+    LaunchMutator mutator;
+    mutator.id = id->text;
+    if (version != nullptr) {
+        if (version->kind != oamod::NodeKind::string)
+            refuse(
+                LaunchPlace{place.source, std::string(place.name) + ".version"}, "expected text"
+            );
+        if (!oa::formats::oamut::parse_version(version->text))
+            refuse(
+                LaunchPlace{place.source, std::string(place.name) + ".version"},
+                "expected a version"
+            );
+        mutator.version = version->text;
+    }
+    if (options != nullptr) {
+        if (options->kind != oamod::NodeKind::mapping)
+            refuse(
+                LaunchPlace{place.source, std::string(place.name) + ".options"},
+                "expected a group of options"
+            );
+        for (const oamod::Node& option : options->children) {
+            if (option.key.kind != oamod::KeyKind::string)
+                refuse(
+                    LaunchPlace{place.source, std::string(place.name) + ".options"},
+                    "a key is not text"
+                );
+            std::string name(place.name);
+            name += ".options.";
+            name += option.key.text;
+            const LaunchPlace at{place.source, name};
+            if (!oa::formats::oamut::option_id(option.key.text))
+                refuse(at, "expected an option id");
+            mutator.options.emplace_back(option.key.text, read_option_value(option, at));
+        }
+    }
+    return mutator;
+}
+
+/// Stores content.mutators. It does not set content.named.
+///
+/// @param[in,out] plan the plan
+/// @param value the value
+/// @param place where a refusal points
+void store_mutators(LaunchPlan& plan, const LaunchValue& value, const LaunchPlace& place) {
+    if (value.node == nullptr || value.node->kind != oamod::NodeKind::sequence)
+        refuse(place, "expected a list");
+    plan.content.mutators.clear();
+    plan.content.mutators_named = true;
+    int32_t number = 0;
+    for (const oamod::Node& item : value.node->children) {
+        ++number;
+        const std::string name = std::string(place.name) + "[" + std::to_string(number) + "]";
+        const LaunchPlace at{place.source, name};
+        if (static_cast<std::size_t>(number) > kLaunchMutatorLimit)
+            refuse(at, "expected at most " + std::to_string(kLaunchMutatorLimit) + " mutators");
+        LaunchMutator mutator;
+        if (item.kind == oamod::NodeKind::string) {
+            if (!oa::formats::oamut::mutator_id(item.text))
+                refuse(at, "expected a mutator id");
+            mutator.id = item.text;
+        } else if (item.kind == oamod::NodeKind::mapping) {
+            mutator = read_mutator_group(item, at);
+        } else {
+            refuse(at, "expected a mutator id or a group");
+        }
+        for (const LaunchMutator& earlier : plan.content.mutators) {
+            if (earlier.id == mutator.id)
+                refuse(at, "\"" + mutator.id + "\" is named twice");
+        }
+        plan.content.mutators.push_back(std::move(mutator));
+    }
+}
+
 /// Stores status.standard-output.
 ///
 /// @param[in,out] plan the plan
@@ -1083,6 +1220,13 @@ constexpr LaunchField kFields[] = {
      "profile or its folder.",
      Reader::engine,
      store_mod},
+    {"content.mutators",
+     "--mutator PATH|ID[:OPTION=VALUE,...]",
+     "The mutators this run plays, applied top to bottom, at most 32: each an installed mutator's "
+     "id, or a group of its `id`, the `version` it must be and the `options` it plays with. Give "
+     "the option once for each.",
+     Reader::engine,
+     store_mutators},
     {"status.standard-output",
      "--status-stdout",
      "Writes the status stream on standard output: `on` or `off`.",

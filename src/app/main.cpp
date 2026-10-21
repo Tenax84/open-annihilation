@@ -1592,35 +1592,53 @@ void refuse_unusable_mutators(const Options& options) {
     fs::path mutators_folder;
     if (player)
         mutators_folder = *player / std::string(oa::data::mutator_library::mutators_folder_name);
+    const std::string launch_source = netgame_context().options.launch_source;
     std::vector<oa::data::mutators::PipelineMutator> listed;
     std::vector<std::string> versions;
     listed.reserve(options.mutators.size());
     versions.reserve(options.mutators.size());
-    for (const std::string& value : options.mutators) {
+    for (std::size_t index = 0; index < options.mutators.size(); ++index) {
+        const std::string& value = options.mutators[index];
+        const bool from_file =
+            index < options.mutator_fields.size() && !options.mutator_fields[index].empty();
+        const std::string prefix = from_file
+                                       ? launch_source + ": " + options.mutator_fields[index] + ": "
+                                       : std::string("--mutator: ");
         std::string error;
         const std::optional<oa::data::mutators::MutatorChoice> choice =
             oa::data::mutators::parse_choice(value, &error);
-        if (!choice)
-            throw std::runtime_error("--mutator: " + error);
+        if (!choice) {
+            if (from_file)
+                throw netgame::LaunchRefusal(prefix + error);
+            throw std::runtime_error(prefix + error);
+        }
         if (!choice->by_path && !player) {
             throw netgame::LaunchRefusal(
-                "--mutator: no player folder can be worked out for \"" + choice->target + "\""
+                prefix + "no player folder can be worked out for \"" + choice->target + "\""
             );
         }
-        const std::optional<oa::data::mutators::ResolvedMutator> resolved =
-            oa::data::mutators::resolve_choice(*choice, mutators_folder, &error);
-        if (!resolved)
-            throw netgame::LaunchRefusal("--mutator: " + error);
+        const std::string version = index < options.mutator_versions.size()
+                                        ? options.mutator_versions[index]
+                                        : std::string{};
+        oa::data::mutators::ResolvedMutator resolved;
+        if (!resolve_run_mutator(value, version, mutators_folder, &resolved, &error))
+            throw netgame::LaunchRefusal(prefix + error);
         oa::data::mutators::PipelineMutator entry;
-        entry.package = resolved->package_folder;
-        entry.manifest = resolved->manifest;
-        entry.options = resolved->options;
-        versions.push_back(oa::formats::oamut::version_text(resolved->manifest.version));
+        entry.package = resolved.package_folder;
+        entry.manifest = resolved.manifest;
+        entry.options = resolved.options;
+        versions.push_back(oa::formats::oamut::version_text(resolved.manifest.version));
         listed.push_back(std::move(entry));
     }
     const std::string refusal = oa::data::mutators::list_refusal(listed, versions);
-    if (!refusal.empty())
-        throw netgame::LaunchRefusal("--mutator: " + refusal);
+    if (!refusal.empty()) {
+        const bool from_file =
+            !options.mutator_fields.empty() && !options.mutator_fields.front().empty();
+        throw netgame::LaunchRefusal(
+            (from_file ? launch_source + ": content.mutators: " : std::string("--mutator: ")) +
+            refusal
+        );
+    }
 }
 
 /// Runs the game once: finds the game folders and their profile, with the
