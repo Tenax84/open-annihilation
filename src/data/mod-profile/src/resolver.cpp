@@ -3,8 +3,9 @@
 
 // The resolver: a profile's tree checked block by block against the
 // registry, then each limit's and hack's parameters resolved in the
-// registry's order (baseline, default, preset, profile, settings, match), the
-// player's overrides of standard hacks laid over them, the effective profile
+// registry's order (baseline, default, preset, profile, settings), the
+// player's overrides of standard hacks, then the host's match choices, the
+// effective profile
 // assembled, and its canonical form and hashes made.
 
 #include "oa/data/mod_profile.hpp"
@@ -398,6 +399,48 @@ formats::oamod::EngineVersion this_build_version() {
         return formats::oamod::EngineVersion{};
     }();
     return version;
+}
+
+/// The entry and parameter a settings or match path names: ENTRY.PARAM,
+/// or an entry with a shorthand parameter.
+std::pair<const Entry*, int> bound_parameter(std::string_view path) {
+    if (const Entry* entry = registry::find_entry(path); entry != nullptr && entry->shorthand >= 0)
+        return {entry, entry->shorthand};
+    const size_t dot = path.rfind('.');
+    if (dot == std::string_view::npos)
+        return {nullptr, -1};
+    const Entry* entry = registry::find_entry(path.substr(0, dot));
+    if (entry == nullptr || (entry->kind != EntryKind::limit && entry->kind != EntryKind::hack))
+        return {nullptr, -1};
+    return {entry, registry::find_parameter(*entry, path.substr(dot + 1))};
+}
+
+/// The registry-only checks of a match option: a known parameter, adjustable
+/// per match, and a value of the right type inside its bounds.
+///
+/// @param entry the parameter's entry
+/// @param index the parameter within the entry
+/// @param raw the value, written as in a profile
+/// @param where the diagnostic path
+/// @param[out] normal the value's normal form when it fits
+/// @return the message a match option would be refused with, or none
+std::optional<std::string> registry_match_problem(
+    const Entry& entry, int index, std::string_view raw, const std::string& where, Value& normal
+) {
+    const Parameter& parameter = registry::parameters_of(entry)[static_cast<size_t>(index)];
+    if (parameter.adjustable != Adjustable::match) {
+        return std::string{"the parameter is "} +
+               (parameter.adjustable == Adjustable::fixed ? "fixed" : "install") + ", not match";
+    }
+    Node node{};
+    formats::oamod::ReadError read_error{};
+    const std::span<const uint8_t> bytes{reinterpret_cast<const uint8_t*>(raw.data()), raw.size()};
+    if (!formats::oamod::read_value(bytes, node, read_error))
+        return std::string{formats::oamod::rule_message(read_error.rule)};
+    if (const std::optional<registry::Problem> problem =
+            registry::check_value(parameter.value, value_from_node(node), where, normal))
+        return problem->message;
+    return std::nullopt;
 }
 
 /// A limit or hack being resolved.
@@ -1102,16 +1145,7 @@ class Resolver {
     /// The entry and parameter a settings or match path names: ENTRY.PARAM,
     /// or an entry with a shorthand parameter.
     static std::pair<const Entry*, int> binding_target(std::string_view path) {
-        if (const Entry* entry = registry::find_entry(path);
-            entry != nullptr && entry->shorthand >= 0)
-            return {entry, entry->shorthand};
-        const size_t dot = path.rfind('.');
-        if (dot == std::string_view::npos)
-            return {nullptr, -1};
-        const Entry* entry = registry::find_entry(path.substr(0, dot));
-        if (entry == nullptr || (entry->kind != EntryKind::limit && entry->kind != EntryKind::hack))
-            return {nullptr, -1};
-        return {entry, registry::find_parameter(*entry, path.substr(dot + 1))};
+        return bound_parameter(path);
     }
 
     void normalise_settings(const Node& root) {
@@ -1187,8 +1221,8 @@ class Resolver {
         apply_default_from();
         check_constraints("profile");
         apply_settings();
-        apply_match_options();
         apply_overrides();
+        apply_match_options();
         apply_default_from();
         apply_clamps();
         check_constraints("final");
@@ -1507,6 +1541,37 @@ class Resolver {
         }
     }
 
+    /// Puts an entry that was off at the registry's defaults and marks it present.
+    ///
+    /// A limit is already in the resolved list at its baseline; that row is
+    /// replaced, not duplicated. A hack that is off is not in the list yet.
+    void turn_entry_on(const Entry& entry) {
+        const auto parameters = registry::parameters_of(entry);
+        ResolvedEntry* existing = find_resolved(&entry);
+        if (existing == nullptr) {
+            const bool limit = entry.kind == EntryKind::limit;
+            std::string key = limit
+                                  ? std::string{entry.id.substr(std::string_view{"limits."}.size())}
+                                  : std::string{entry.id};
+            ResolvedEntry made{&entry, limit, std::move(key), {}, {}};
+            for (const Parameter& parameter : parameters) {
+                made.values.push_back(registry::literal_value(parameter.default_value));
+                made.sources.emplace_back("default");
+            }
+            resolved_.push_back(std::move(made));
+        } else {
+            existing->values.clear();
+            existing->sources.clear();
+            existing->values.reserve(parameters.size());
+            existing->sources.reserve(parameters.size());
+            for (const Parameter& parameter : parameters) {
+                existing->values.push_back(registry::literal_value(parameter.default_value));
+                existing->sources.emplace_back("default");
+            }
+        }
+        present_.insert(std::string{entry.id});
+    }
+
     void apply_match_options() {
         for (const MatchOption& option : options_.match) {
             const auto [entry, index] = binding_target(option.path);
@@ -1515,41 +1580,32 @@ class Resolver {
                 error({}, where, "unknown parameter");
                 continue;
             }
-            const Parameter& parameter =
-                registry::parameters_of(*entry)[static_cast<size_t>(index)];
-            if (parameter.adjustable != Adjustable::match) {
-                error(
-                    {},
-                    where,
-                    std::string{"the parameter is "} +
-                        (parameter.adjustable == Adjustable::fixed ? "fixed" : "install") +
-                        ", not match"
-                );
-                continue;
-            }
-            if (!present_.contains(std::string{entry->id})) {
-                error({}, where, std::string{entry->id} + " is not in the profile");
-                continue;
-            }
-            Node node{};
-            formats::oamod::ReadError read_error{};
-            const std::span<const uint8_t> bytes{
-                reinterpret_cast<const uint8_t*>(option.value.data()), option.value.size()
-            };
-            if (!formats::oamod::read_value(bytes, node, read_error)) {
-                error({}, where, formats::oamod::rule_message(read_error.rule));
+            if (option.turn_on && !entry->mutator) {
+                error({}, where, std::string{entry->id} + " is not marked mutator: true");
                 continue;
             }
             Value normal{};
-            if (auto problem =
-                    registry::check_value(parameter.value, value_from_node(node), where, normal)) {
-                error(*problem);
+            if (const std::optional<std::string> problem =
+                    registry_match_problem(*entry, index, option.value, where, normal)) {
+                error({}, where, *problem);
                 continue;
             }
+            const bool present = present_.contains(std::string{entry->id});
+            if (!present && !option.turn_on) {
+                error({}, where, std::string{entry->id} + " is not in the profile");
+                continue;
+            }
+            if (!present)
+                turn_entry_on(*entry);
             normal.position = {};
             ResolvedEntry* resolved = find_resolved(entry);
             resolved->values[static_cast<size_t>(index)] = normal;
-            resolved->sources[static_cast<size_t>(index)] = "match";
+            std::string provenance = "match";
+            if (!option.source.empty())
+                provenance += " " + option.source;
+            if (!present)
+                provenance += " (turned on)";
+            resolved->sources[static_cast<size_t>(index)] = std::move(provenance);
         }
     }
 
@@ -2074,6 +2130,25 @@ std::string format_diagnostic(const Diagnostic& diagnostic) {
     if (!diagnostic.path.empty())
         text += diagnostic.path + ": ";
     return text + diagnostic.message;
+}
+
+MatchOptionReading match_option_reading(const MatchOption& option) {
+    MatchOptionReading reading;
+    const auto [entry, index] = bound_parameter(option.path);
+    if (entry == nullptr || index < 0) {
+        reading.problem = std::string{"unknown parameter"};
+        return reading;
+    }
+    Value normal{};
+    reading.problem =
+        registry_match_problem(*entry, index, option.value, "match " + option.path, normal);
+    if (!reading.problem.has_value())
+        reading.normal = value_text(normal);
+    return reading;
+}
+
+std::optional<std::string> match_option_problem(const MatchOption& option) {
+    return match_option_reading(option).problem;
 }
 
 std::optional<MatchOption> parse_match_option(std::string_view text) {

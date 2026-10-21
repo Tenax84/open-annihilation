@@ -4020,6 +4020,14 @@ every Developer Mode override that changes the simulation, or the plain
 baseline when the game plays 3.1c. A running match keeps the hash it
 started with. It is not a hook, and no extension fills it.
 
+An extension calls `run_mutators` with that same runtime to read the
+mutators whose digest `simulation_hash` folds in: how many, their ids in
+order, and the simulation hash the run would have without them. That hash
+is 64 lower-case hexadecimal digits and equals `simulation_hash` when none
+play. Both calls read the profile and the mutator digest of that moment. A
+running match keeps them until it ends. It is not a hook, and no extension
+fills it.
+
 Version 15 adds the OA UI kit (`src/ui/kit`) to the contract, so that an
 extension's pages, screens, notices and prompts look, scale, focus and
 answer as OA's own do. `register_settings_pages`, called right after

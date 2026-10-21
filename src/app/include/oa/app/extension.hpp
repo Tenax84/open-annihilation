@@ -217,8 +217,11 @@
 /// them raises the version, while the kit is provisional too (it changes as
 /// the engine's screens need). ScreenServices::read_string also reads a whole
 /// preference key, as a Settings page's row binds one, when its section is
-/// null.
-#define OA_EXTENSION_API_VERSION 15
+/// null. Version 16 adds run_mutators, which reads how many mutators the run
+/// plays, their ids in order, and the simulation hash the run would have
+/// without them. It is not a hook: the engine does not call it, and no
+/// extension fills it.
+#define OA_EXTENSION_API_VERSION 16
 
 namespace oa {
 struct Game;
@@ -1598,5 +1601,31 @@ void set_extension_window_source(Runtime& runtime, void* context, ExtensionWindo
 /// @param runtime the running app
 /// @return the hash
 [[nodiscard]] std::string simulation_hash(const Runtime& runtime);
+
+/// The mutators whose digest simulation_hash folds in at this moment.
+///
+/// `count` is how many play, and `ids` names them in the order they play.
+/// `simulation_hash_without` is the simulation hash the run would have
+/// without them: 64 lower-case hexadecimal digits. When `count` is 0 it
+/// equals simulation_hash. A running match keeps the mutators it started
+/// with until it ends, as simulation_hash keeps that match's hash.
+struct RunMutators {
+    uint32_t count{};
+    std::vector<std::string> ids{};
+    std::string simulation_hash_without{};
+};
+
+/// Returns the mutators whose digest simulation_hash folds in now.
+///
+/// Choosing mutators, before the match builds them, leaves the count at 0
+/// and the hash the one simulation_hash reports. Both calls read the same
+/// profile and the same mutator digest, so they agree at this moment.
+///
+/// It is not a hook: the engine does not call it, and no extension fills it.
+/// A call may come from any hook.
+///
+/// @param runtime the running app
+/// @return the mutators and the hash without them
+[[nodiscard]] RunMutators run_mutators(const Runtime& runtime);
 
 } // namespace oa::app
