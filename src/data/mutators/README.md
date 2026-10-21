@@ -12,8 +12,9 @@ sentence chosen from the rule, which is not this module's to write.
 
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
-`oa/data/mutators/choice.hpp`, `oa/data/mutators/collections.hpp`,
-`oa/data/mutators/files_layer.hpp`, `oa/data/mutators/hacks.hpp`,
+`oa/data/mutators/choice.hpp`, `oa/data/mutators/clashes.hpp`,
+`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/hacks.hpp`,
 `oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
 `oa/data/mutators/maps.hpp`, `oa/data/mutators/menus.hpp`,
 `oa/data/mutators/pipeline.hpp`, `oa/data/mutators/rules_lua.hpp`,
@@ -36,6 +37,11 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   and returns each mutator's outcome, the layer it left mounted, the
   `Journal` of the changes kept and the `ConflictReport`. See
   [Pipeline](#pipeline).
+- `effective_clash` is the mode in force: the player's choice, else the
+  manifest's `clashes`, else the preference `mutators.clash-default`.
+  `clash_from_setting` reads that preference. `private_record_name` is
+  the private name an added record takes. `records_identical` says two
+  records can be shared.
 - `list_refusal` is that list's check: more than `max_mutators`, an id
   twice, a requirement an earlier mutator does not meet, or two that
   conflict. Empty when the list may run.
@@ -51,7 +57,9 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   free one.
 - `record_file_kind` says whether a path is a unit FBI, a weapon TDF, a
   download TDF, or a whole file. `build_files_layer` keeps every kept
-  mutator's copy of a record file in `FilesLayer::records`.
+  mutator's copy of a record file in `FilesLayer::records`, and each file
+  a later mutator's file replaced in `FilesLayer::displaced`, which
+  `displaced_bytes` reads.
 - A hook's `ctx.sides` is the side table and the build lists. `ctx.sides[1]`
   is the first side, `ctx.sides.ARM` finds a side by name, ignoring case,
   and `ctx.sides:each` walks the sides in that order. `canbuild`,
@@ -187,13 +195,30 @@ check refuses, with a units hook beside it, fails in the plan phase and
 leaves no hook change and no journal entry.
 It also runs two
 mutators that share `weapons/extra.tdf`, a unit file that replaces a unit,
-a weapon body that must not move a base id, download sections from two
-mutators, a rule that sees the unit its own file added, and a weapon table
+a weapon body that must not move a base id, download sections matched by
+builder and unit, a rule that sees the unit its own file added, and a weapon table
 with no id left. It also checks a rule and a hook that try to renumber a
 base weapon, a weapon that mutator brought whose rule sets its id, a
 request list that overflows in either order, a record file that brings a
 removed document back, and the journal entry and note when one record
-file replaces another's.
+file replaces another's. It also runs two mutators that bring one weapon
+name under Add and under Replace, an identical weapon that is shared, a
+renamed unit whose menu button, side list and clone follow the private
+name, two download entries that share a section name and name different
+units, and the clash mode taken from the player, the manifest and the
+setting, in that order. In Add mode a menus hook that names a builder or
+a unit its mutator renamed reaches the private record, in one call or
+two, beside the game's button for that unit, and its `remove` leaves the
+game's buttons; a renamed unit's own script leaves the asked path to the
+earlier mutator's patch there, and a renamed unit with no script takes an
+earlier patch or the game's file, never a later patch. A Replace clone
+serves the source's script and picture under the replaced name, and the
+replacement notes name the earlier mutator's clone or file, the game or
+the mod.
+
+`data-mutators-clashes` (`tests/clashes_test.cpp`) checks that order on
+`effective_clash`, the preference text, the private-name rule and that
+two weapon sections differing only in `ID` are the same weapon.
 
 `data-mutators-weapon-ids` (`tests/weapon_ids_test.cpp`) checks
 `assign_weapon_ids`: a requested id is kept when it is free, each mutator
@@ -275,21 +300,80 @@ the game so that it does.
 A clone does not copy a download entry, and it does not copy
 download-linked button art (`anims/<unit>_gadget.gaf`). A download-linked
 button for a clone draws with no picture. A weapon clone never takes slot
-0, which is the default weapon. Until the clash mode lands, a record whose
-name already exists replaces that record. A replaced base or mod weapon
-keeps the id it had. A rule or a hook that writes `id` on a weapon the
-game already numbered does not change it, and the note names the mutator.
-A write of `id` on a weapon that mutator brought is that weapon's request.
-Two mutators never share an id. Numbering takes each mutator in list
-order, its requests and then its other weapons, so an earlier mutator is
-not refused for a later mutator's requests. When no id from 1 to 255 is
-free, the mutator whose weapon could not be numbered is refused and
-named, and nothing of that mutator is served.
+0, which is the default weapon. A unit or weapon whose name already
+exists follows that mutator's clash mode. The player's choice wins, then
+the manifest's `clashes`, then the preference `mutators.clash-default`
+(`add` or `replace`; any other text, and a missing key, read as
+`replace`). `Runtime::apply_match_mutators` reads the preference and
+records the mode in force on the match loadout. A guest that resolves
+that loadout plays the recorded mode, not its own preference.
+Replace puts the new record in place of the old one, by a record file or
+by a clone onto that name. The clone keeps the existing file, takes the
+source's model, and serves the source's script, build picture, build
+pages and page art under that name in place of its own, so the script
+always matches the model. A replaced unit's own build pages past the
+source's last page are still served. Add shares a record only when
+it is the same after this mutator's weapon names have been rewritten, and
+stores a different one under a private name: the name, `_`, and the first
+free number from 2, shortened so the name stays within 31 characters and
+holds no `/`, `\`, `:` or `.`. A unit that names a weapon this mutator
+renamed is a different unit, so it is renamed too. The private name is
+not shown to the player, and the unit's display name (`Name`) is
+unchanged. In Add mode a mutator's own name for a record it renamed means
+its private record: `units.NAME` and `weapons.NAME`, a rule's `is("NAME")`
+on `unitname` or on a unit or weapon section, a clone's source, that
+mutator's own rule writes, a renamed builder's `UNITMENU`, and that
+builder's `canbuild` block. A later mutator's use of the original name is
+left alone. The renamed unit's own files are served under the private
+name, and the unit already in the game keeps its files, including an
+earlier mutator's patch of them. A later mutator's patch of them does
+not reach the private unit. The paths the
+engine looks up by the unit name are `scripts/<NAME>.COB`,
+`unitpics/<NAME>.PCX`, `objects3d/<NAME>.3DO` when the model is the unit
+name, `anims/<NAME><n>.GAF`, `anims/<NAME>_gadget.GAF` and
+`guis/<NAME><page>.GUI`. A replacement note names whose record it was.
+A record an earlier mutator brought, by a file or by a clone, is that
+mutator's: "ridge-b replaced ridge-a's RGBOT on units/rgbot.fbi". A
+record no mutator brought reads "ridge-a replaced RGBOT from the game on
+units/rgbot.fbi", or "from the mod" when the run plays a mod and the
+mod's folder serves the record's file: the first of the store's folders
+when it layers several, and the whole store when it has one. A run plays
+a mod when its mod id is neither the base game's nor its game id. A shared
+record is journaled, and the match log does not count it as a file added.
+A replaced base or mod weapon keeps the id it had. A rule or a hook
+that writes `id` on a weapon the game already numbered does not change
+it, and the note names the mutator. A write of `id` on a weapon that
+mutator brought is that weapon's request. Two mutators never share an
+id. Numbering takes each mutator in list order, its requests and then
+its other weapons, so an earlier mutator is not refused for a later
+mutator's requests. When no id from 1 to 255 is free, the mutator whose
+weapon could not be numbered is refused and named, and nothing of that
+mutator is served.
 
-A download entry is the section name in its file. Two mutators that write
-the same name, such as `MENUENTRY1`, replace each other. A later clash
-mode, and menus read as lists, should treat an entry as its builder and
-its unit, not as that section name.
+A download entry is its builder (`UNITMENU`) and its unit (`UNITNAME`),
+not its section name. Two mutators that add the same unit to one
+builder's menu replace that button, and the section name already stored
+stays. A new button takes a private section name only when the
+destination file already has that section. The same name in another
+download file is not a clash. The loader reads five sections of a file.
+A new button past that cap is written to a new download file. When the
+unit is not already downloadable, that file starts with a `PLACEHOLDER`
+section whose `UNITMENU` is empty. A file opened for that unit is reused
+while it still has fewer than five sections. The unit is the private name
+when this mutator renamed it, so the new button does not replace the
+original unit's button. The menus hook maps the builder and the unit a
+script names in `menus:add`, `move`, `remove`, `grey`, `hide` and
+`builds` through the calling mutator's renames, so in Add mode a name it
+renamed means its private record: `menus:add("RGLAB", "RGNEW")` adds to
+its `RGLAB_2`, `menus:add("RGLAB", "RGBOT")` gives its `RGBOT_2` a button
+even when `RGLAB` already offers the game's `RGBOT`, and
+`menus:remove("RGBOT")` takes away only `RGBOT_2`'s buttons. Names read
+from the documents are never mapped: `menus:builds("RGLAB")` still reports
+the game's `RGBOT` as `RGBOT`. These edits do not pass through the hook
+write list, so the retarget does not see them, and they keep the
+placeholder and the five-section cap. A mutator's renames last for its
+own turn. A later mutator's names, and every maps hook's, mean the
+records of those names.
 
 A text that does not parse is unread. A unit, weapon or download file
 that does not parse is left unread the same way: the path is warned once,
@@ -408,7 +492,11 @@ mutator replaced in the spec. A mask that hides the path drops those
 snapshots. A later folder of the same mutator replaces only its own
 snapshot. The pipeline does not mount those spec entries. It reads each
 mutator's snapshot into that mutator's step. Every other file stays one
-whole file, and the later mutator wins the path.
+whole file, and the later mutator wins the path. The file it replaced, of
+any kind, is kept in `displaced` with its mutator, in the order that
+happened, so the files that held one path read from the first to the one
+the spec serves. A mask that hides the path drops them, and a mutator
+whose later folder replaces its own file displaces nothing.
 
 The spec lists entries in mutator order and, within a mutator, in the order
 the paths were first added. Each folder's new paths are sorted by the folded
@@ -443,8 +531,8 @@ the same packages and the same list build the same paths, owners, kinds,
 archive order, masks and label. That is the table the loadout digest hashes.
 
 `data-mutators-files-layer` builds made-up packages in a scratch folder and
-checks the order, the notes, the failures and a spec mounted on an asset
-store. A link case is skipped where the system cannot make a link.
+checks the order, the notes, the failures, the displaced files, from a
+loose file and from an archive, and a spec mounted on an asset store. A link case is skipped where the system cannot make a link.
 
 Still protected:
 
@@ -481,9 +569,20 @@ sections share a name, the copy is the first in collection order (name,
 then path, then position), which may not be the lowest slot the game fires.
 A field named `ID` is refused. The journal records each clone and each
 served copy. A unit clone is refused, naming the path, when any path it
-would serve already exists. A clone's work (its name lookups, the bytes it
-reads and writes and, for a weapon, each section the id search visits) is
-charged in one step when the clone returns, so a refused clone pays too.
+would serve already exists. While clash mode is active, a clone onto a
+name that exists follows that mode. Replace puts the clone in place of
+the existing record and journals a replacement. The existing file stays,
+and the unit takes the source's model, script, build picture, build pages
+and page art, served under the existing name in place of its own as for a
+clone under a new name, and charged the same way. Add stores the clone
+under a private name, notes the rename, and charges every candidate
+lookup, including the path check, against the hook's allowance. While
+clash mode is not active, that clone is still refused with "the new name
+already exists". In Add mode, `units.NAME`, `weapons.NAME` and a clone's
+source name a record this mutator renamed as the private record. A
+clone's work (its name lookups, the bytes it reads and writes and, for a
+weapon, each section the id search visits) is charged in one step when
+the clone returns, so a refused clone pays too.
 
 `install_selection_forms` publishes `range`, `is`, `has`, `absent` and
 `not_`. `need_from_lua` reads one need: a number `n` is `range(n, n)`,
@@ -734,9 +833,14 @@ real-time limit.
 
 `loadout.hpp` is the record a game, a recording and a save name their
 mutators by, before a match start fills it. A `LoadoutEntry` names one
-mutator by id, version and package SHA-256. `folder` says the package was
-a folder named by path, and then the SHA-256 is that folder's digest
-rather than a package file's. `options` is every option of the manifest,
+mutator by id, version and package SHA-256. `clashes` is the mode in
+force, `add` or `replace`. `loadout_of` takes the preference's default
+and stores that mode: the player's choice, else the manifest, else the
+default. `resolve_loadout` copies it onto `ResolvedMutator::clashes`, so
+a guest plays the host's mode. The member is empty when the mutator was
+named with `--mutator` and the player did not choose. `folder` says the
+package was a folder named by path, and then the SHA-256 is that folder's
+digest rather than a package file's. `options` is every option of the manifest,
 defaults filled by `default_option`, in id byte order. A toggle's value is
 `toggle`. A choice keeps the manifest's `ChoiceValue` (a number or a
 string). A number option keeps its number and that number's canonical
@@ -744,7 +848,9 @@ text.
 
 `canonical_loadout` writes one text through the engine's canonical JSON:
 `{"mutators":[...],"oaloadout":1}`, entries in list order. Each entry's
-members are `folder`, `id`, `options`, `sha256` and `version`. `sha256` is
+members are `clashes`, `folder`, `id`, `options`, `sha256` and `version`.
+`clashes` is `add` or `replace`, the mode in force for that mutator.
+`sha256` is
 64 lower-case hex digits. Options are members of one object, so their
 order in the record does not change the text and none is left out. A
 toggle is a boolean, a number is a number, and a choice is a number or a
@@ -990,12 +1096,34 @@ mutator that does not fit is incompatible and left out. The rest go through
 passes. A pass plans every mutator by calling its `mutate(ctx)` in a
 sandbox of its own, builds the files layer and mounts it without the
 record files, parses every document the match will load from that store,
-then takes each mutator in list order. The mutator first applies the
-records in its own unit, weapon and download files. A unit is one FBI,
+then takes each mutator in list order. The mutator applies the weapons
+in its own files, then the units, then points those units' weapon fields
+at any weapon it renamed, then the download entries. A unit is one FBI,
 named by `UnitName` or by the file stem. Each section of a weapon TDF is
-a weapon, and each section of a download file is an entry in that file.
-A record whose name already exists replaces that record. A new record is
-added. Other files stay whole files, and the later mutator wins the path.
+a weapon. A download entry is the builder and unit it names. A unit or
+weapon whose name already exists follows that mutator's clash mode: the
+player's choice, else the manifest's `clashes`, else
+`PipelineInput::clash_default`. Replace writes over the existing record,
+including a clone onto a name that exists. Add shares a record that
+matches after this mutator's weapon names are rewritten, and stores a
+different one under a private name, leaving the existing record in place.
+A unit that names a renamed weapon is renamed too. A new record is
+added. The renamed unit's name-keyed files move with it:
+`scripts/<NAME>.COB`, `unitpics/<NAME>.PCX`, `objects3d/<NAME>.3DO` when
+the model is the unit name, `anims/<NAME><n>.GAF`,
+`anims/<NAME>_gadget.GAF` and `guis/<NAME><page>.GUI`. A file this
+mutator brought is served under the private name and leaves the asked
+path, so the unit already there keeps what it had: an earlier mutator's
+file at that path, which this mutator's had displaced, is served again,
+and the note that this mutator won the path is dropped. A file this
+mutator did not bring is copied as the path stood at its turn: the latest file a
+mutator above it brought, else the game's or the mod's, read beneath the
+layer. A later mutator's file at the asked path belongs to the unit
+already there and does not reach the private one. In Add mode
+this mutator's `units.NAME`, `weapons.NAME`, rule `is("NAME")` selectors,
+rule writes, clone sources, `UNITMENU` and `canbuild` builders mean the
+private record. A later mutator's use of the original name is left alone.
+Other files stay whole files, and the later mutator wins the path.
 The mutator then applies its rules and then its hooks, on the documents
 the mutators above it left. Its units hook runs, then its weapons hook,
 then its menus hook. When the caller names a map, each mutator's maps
@@ -1044,17 +1172,24 @@ The journal keeps every change of the last pass: each rule write, naming
 the mutator that made it, each hook write and removal, each file a mutator
 added, each record a file added or replaced, and each file of the mod a
 mask hides. A replaced record is `added`, and `old_text` names the record
-that was already there. It is sorted by the first mutator, then by phase,
-so one mutator's rules come before its hooks, then by path, record, block
-and field. The conflict report holds the stacking notes, and the paths a
+that was already there. A shared record is `added`, with `new_text`
+`shared`, and it does not take the record from the mutator that brought
+it. A renamed record is `added` under the private name, with `old_text`
+the name the mutator wrote. The journal is sorted by the first mutator,
+then by phase, so one mutator's rules come before its hooks, then by
+path, record, block and field. The conflict report holds the stacking notes, and the paths a
 parse left out, one warning each. A text that does not parse is unread. A
 record file that does not parse is unread the same way, and it is not
 served. Among the notes, `value_replaced` is a value a later mutator's
-rule replaced, and also a record a later mutator's file replaced when an
-earlier mutator had brought that record. One such note is kept for each
-field name and pair of mutators, and a record note is kept once for each
-collection and pair, so a stack that rewrites the same field or the same
-kind of record on many records does not flood the report. `field_locked`
+rule replaced, and also a record a later mutator replaced. A record the
+match already had, which no mutator brought, is one note naming that
+record and whether the game or the mod served it. A record an earlier
+mutator brought, by a file or by a clone, is one note for that collection
+and that pair of mutators. A clone in Replace mode onto a record its own
+mutator brought is not noted. One field note is kept for each
+field name and pair, so a stack that rewrites the same field does not
+flood the report. A clone that Add stores under a private name is a
+`record_renamed` note, as a renamed record file is. `field_locked`
 is a field an earlier mutator locked, so a later mutator's rule left it
 alone. A later hook that writes a field names the mutator who last wrote
 it, which may be a rule rather than an earlier hook, and then itself. One

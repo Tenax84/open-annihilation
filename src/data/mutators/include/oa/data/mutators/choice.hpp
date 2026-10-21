@@ -81,6 +81,11 @@ struct ResolvedMutator {
     /// True when the package is named by its folder digest: a path, or an
     /// installed folder whose origin record names no SHA-256.
     bool folder{false};
+    /// The player's clash choice. Empty when the player did not choose,
+    /// including a mutator named with `--mutator`. The picker's choice can
+    /// fill it later. `resolve_loadout` sets it from the loadout entry, so
+    /// a guest plays the mode the host recorded.
+    std::optional<oa::formats::oamut::ClashMode> clashes{};
 };
 
 /// Finds the package a choice names and types its options.

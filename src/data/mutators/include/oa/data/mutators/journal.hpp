@@ -69,7 +69,11 @@ enum class Change : uint8_t {
 /// `old_text`. A record a file replaces is `added` as well, and `old_text`
 /// names the record that was already there. When that record is one an
 /// earlier mutator brought, the report keeps one `value_replaced` note for
-/// the collection and that pair of mutators.
+/// the collection and that pair of mutators. A shared record is `added`
+/// with `old_text` naming the record and `new_text` `shared`, and it does
+/// not take the record from the mutator that brought it. A renamed record
+/// is `added` under its private name, with `old_text` the name the mutator
+/// wrote and `new_text` the private name.
 struct JournalEntry {
     /// Mutators that made the change, as indices into the input list.
     std::vector<uint16_t> mutators;
@@ -132,6 +136,8 @@ enum class ConflictKind : uint8_t {
     value_past_limit,    ///< a value was kept past its comfortable limit
     write_refused,       ///< a write was refused
     hack_note,           ///< a mutator hack overlaps Developer Mode or another mutator
+    record_shared,       ///< an added record matched one already there, so it was not written
+    record_renamed,      ///< an added record took a private name and the existing one stayed
 };
 
 /// One stacking situation, for the log and the dry run.
@@ -153,7 +159,8 @@ struct Conflict {
     std::string field;
     /// Document path, or the add folder when that folder is missing.
     std::string path;
-    /// The note's own sentence, when it had one.
+    /// The note's own sentence, when it had one. For a replaced record
+    /// that no mutator brought, where it came from: "the game" or "the mod".
     std::string detail;
 };
 
@@ -214,10 +221,17 @@ struct ConflictReport {
 /// An index `ids` does not hold is left out of the line. A hook that won a
 /// field reads as "ridge-tougher wins units/RGCOM.fbi maxdamage over
 /// ridge-tough". A replaced value reads as "ridge-tougher replaced
-/// ridge-tough's value on units/rgcom.fbi maxdamage", and a locked field as
+/// ridge-tough's value on units/rgcom.fbi maxdamage". A replaced record,
+/// which has no field, names the record: "ridge-bot-b replaced
+/// ridge-bot-a's RGBOT on units/rgbot.fbi". A record no mutator brought
+/// names where it came from, which `detail` holds: "ridge-bot-a replaced
+/// RGBOT from the game on units/rgbot.fbi", or "from the mod" when the
+/// mod in play served it. A locked field reads as
 /// "ridge-tough locked units/rgcom.fbi maxdamage, so ridge-tougher left it
-/// alone". A factor on an absent field reads as "ridge-swift found no value
-/// to scale on units/rglab.fbi maxdamage".
+/// alone". A shared record reads as "ridge-kit shares SPARK with ridge-pace",
+/// or "on <path>" when no earlier mutator brought it. A rename reads as
+/// "ridge-kit renamed RGBOT to RGBOT_2". A factor on an absent field reads
+/// as "ridge-swift found no value to scale on units/rglab.fbi maxdamage".
 ///
 /// @param conflict the conflict
 /// @param ids mutator ids, in the same order as the conflict's indices

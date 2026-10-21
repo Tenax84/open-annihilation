@@ -513,6 +513,63 @@ void later_mutator_replaces(const Scratch& scratch) {
         require(fold(layer.notes[0].path) == "units/ridgea.fbi", "replace: path");
     }
     require(layer.spec.label == "mutators ridge-models turbo-brains", "replace: label");
+    require(layer.displaced.size() == 1, "replace: one displaced file");
+    if (layer.displaced.size() == 1) {
+        const mutators::DisplacedFile& file = layer.displaced[0];
+        require(file.owner == "ridge-models", "replace: the earlier file is displaced");
+        require(fold(file.path) == "units/ridgea.fbi", "replace: displaced path");
+        require(file.kind == oa::MutatorSourceKind::loose, "replace: displaced loose file");
+        const std::shared_ptr<const std::vector<uint8_t>> bytes = mutators::displaced_bytes(file);
+        require(
+            bytes != nullptr && std::string(bytes->begin(), bytes->end()) == "earlier",
+            "replace: displaced bytes"
+        );
+    }
+}
+
+/// Each file a later mutator replaces is kept in order, from an archive as
+/// well as loose, and a mask that hides the path drops them.
+///
+/// @param scratch the scratch directory
+void displaced_files_follow_the_path(const Scratch& scratch) {
+    const fs::path first = scratch.dir("displaced/ridge-first");
+    const fs::path second = scratch.dir("displaced/ridge-second");
+    const fs::path third = scratch.dir("displaced/ridge-third");
+    const fs::path masking = scratch.dir("displaced/ridge-mask");
+    write_text(first / "files" / "scripts" / "RIDGEA.cob", "first");
+    write_text(first / "files" / "scripts" / "RIDGEB.cob", "first-b");
+    write_archive(
+        second / "files" / "second.ufo",
+        {oa::HpiWriteFile{"scripts/RIDGEA.cob", bytes_of("second")}}
+    );
+    write_text(third / "files" / "scripts" / "RIDGEA.cob", "third");
+    write_text(third / "files" / "scripts" / "RIDGEB.cob", "third-b");
+    mutators::FilesPlan mask_plan;
+    mask_plan.mask.push_back("scripts/RIDGEB.cob");
+    const mutators::MutatorFiles listed[] = {
+        mutator("ridge-first", first, add_plan("files")),
+        mutator("ridge-second", second, add_plan("files")),
+        mutator("ridge-third", third, add_plan("files")),
+        mutator("ridge-mask", masking, std::move(mask_plan)),
+    };
+    const mutators::FilesLayer layer = mutators::build_files_layer(listed, kPlain);
+    require(layer.failures.empty(), "displaced: no failure");
+    require(layer.displaced.size() == 2, "displaced: two files held scripts/RIDGEA.cob first");
+    if (layer.displaced.size() != 2)
+        return;
+    require(layer.displaced[0].owner == "ridge-first", "displaced: the first file first");
+    require(layer.displaced[1].owner == "ridge-second", "displaced: the archive file second");
+    require(
+        layer.displaced[1].kind == oa::MutatorSourceKind::archive &&
+            layer.displaced[1].archive != nullptr,
+        "displaced: the archive is held"
+    );
+    const std::shared_ptr<const std::vector<uint8_t>> bytes =
+        mutators::displaced_bytes(layer.displaced[1]);
+    require(
+        bytes != nullptr && std::string(bytes->begin(), bytes->end()) == "second",
+        "displaced: the archive file's bytes"
+    );
 }
 
 /// A mask hides an earlier add, and a later add of a matching path is kept.
@@ -564,6 +621,7 @@ void second_folder_replaces_quietly(const Scratch& scratch) {
     const mutators::MutatorFiles listed[] = {mutator("ridge-models", package, std::move(plan))};
     const mutators::FilesLayer layer = mutators::build_files_layer(listed, kPlain);
     require(layer.failures.empty() && layer.notes.empty(), "second: no note and no failure");
+    require(layer.displaced.empty(), "second: a mutator displaces none of its own files");
     require(layer.spec.entries.size() == 1, "second: one file");
     if (!layer.spec.entries.empty())
         require(
@@ -871,6 +929,7 @@ int main() {
     underscore_archive_follows_ntfs_order(scratch);
     add_folder_ignores_letter_case(scratch);
     later_mutator_replaces(scratch);
+    displaced_files_follow_the_path(scratch);
     mask_hides_earlier_add(scratch);
     second_folder_replaces_quietly(scratch);
     missing_add_folder(scratch);

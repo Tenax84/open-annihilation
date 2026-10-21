@@ -13,6 +13,7 @@
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/mutation_rules/apply.hpp"
 #include "oa/data/mutation_rules/documents.hpp"
+#include "oa/data/mutators/clashes.hpp"
 #include "oa/formats/soft_mutator.hpp"
 
 #include <cstddef>
@@ -91,17 +92,24 @@ enum class HookNoteKind : uint8_t {
 
 /// One unit or weapon a hook cloned.
 ///
-/// `sentence` is the journal line: "added unit NEW (copy of SRC)" or
-/// "added weapon NEW (copy of SRC) at id N". `weapon_id` is that id, and 0
-/// for a unit.
+/// `sentence` is the journal line: "added unit NEW (copy of SRC)",
+/// "replaced unit NAME (copy of SRC)", or the same for a weapon with
+/// "at id N". `weapon_id` is that id, and 0 for a unit. `asked` is the
+/// name the script wrote when Add stored the clone under a private name.
 struct CloneRecord {
     std::string mutator;  ///< mutator whose hook cloned it
     bool weapon{};        ///< true for a weapon section, false for a unit
-    std::string name;     ///< the new record's name, as the script wrote it
+    std::string name;     ///< the stored name: the private name, or the name replaced
     std::string source;   ///< the record it was copied from, as the script wrote it
-    int weapon_id{};      ///< free weapon id, from 1 to 255; 0 for a unit
+    int weapon_id{};      ///< free weapon id, from 1 to 255; 0 for a unit or a replacement
     std::string path;     ///< document path the copy was written to
     std::string sentence; ///< the journal line for this clone
+    /// The name the script asked for when Add stored a different one. Empty
+    /// when the asked name was stored as written, and when Replace wrote
+    /// over the existing record.
+    std::string asked;
+    /// True when Replace put the clone in place of the record that was there.
+    bool replaced{};
 };
 
 /// One binary file a clone serves under the new name.
@@ -114,6 +122,9 @@ struct ServedCopy {
     std::string source_path;                           ///< path the bytes were read from
     std::string sentence;                              ///< the journal line for this copy
     std::shared_ptr<const std::vector<uint8_t>> bytes; ///< the served bytes
+    /// True when a Replace clone serves the copy in place of the replaced
+    /// unit's own file, so the path may already exist.
+    bool replaces{};
 };
 
 /// One note a hook produced, for the change journal.
@@ -324,6 +335,149 @@ class Collections {
     /// @return the copies
     [[nodiscard]] std::span<const ServedCopy> served_copies() const { return served_; }
 
+    /// Remembers one binary copy the pipeline will serve under a new path.
+    ///
+    /// The served index is updated, so a later clone sees the path as taken.
+    ///
+    /// @param copy the copy, including its bytes
+    void add_served_copy(ServedCopy copy);
+
+    /// Sets the clash mode the clone methods honour.
+    ///
+    /// While `set_clash_active` is set, Add gives a clone whose new name
+    /// already exists a private name, and Replace puts that clone in place
+    /// of the existing record. A collections object that has not been
+    /// activated keeps the refusal "the new name already exists".
+    ///
+    /// @param mode the mode for this mutator
+    void set_clash_mode(oa::formats::oamut::ClashMode mode) noexcept { clash_mode_ = mode; }
+
+    /// Turns clash handling for clones on or off.
+    ///
+    /// The pipeline sets this for the mutator it is applying. A caller that
+    /// never does leaves clones refusing an existing name.
+    ///
+    /// @param active true when this mutator's clash mode applies to clones
+    void set_clash_active(bool active) noexcept { clash_active_ = active; }
+
+    /// The clash mode last set. The default is replace.
+    ///
+    /// @return the mode
+    [[nodiscard]] oa::formats::oamut::ClashMode clash_mode() const noexcept { return clash_mode_; }
+
+    /// Reports whether clone clashes follow the mode last set.
+    ///
+    /// @return true when a clone may rename or replace an existing name
+    [[nodiscard]] bool clash_active() const noexcept { return clash_active_; }
+
+    /// Forgets the renames noted for the mutator that just ran.
+    ///
+    /// The pipeline calls it when each mutator's turn ends, so a name in the
+    /// maps phase, or in a later mutator's turn, means the record of that name.
+    void clear_renames() noexcept { renames_.clear(); }
+
+    /// How many renames this mutator has noted. A name lookup walks them.
+    ///
+    /// @return the number of renames since the last `clear_renames`
+    [[nodiscard]] std::size_t rename_count() const noexcept { return renames_.size(); }
+
+    /// Remembers that this mutator stored `from` as `to`.
+    ///
+    /// @param weapon true for a weapon section, false for a unit
+    /// @param from the name the mutator wrote
+    /// @param to the private name
+    void note_rename(bool weapon, std::string from, std::string to);
+
+    /// The private name this mutator gave `name`, or empty when it kept it.
+    ///
+    /// The latest note wins when the same name was noted twice. A unit name
+    /// does not see a weapon's rename.
+    ///
+    /// @param weapon true to look among weapon renames
+    /// @param name the name the mutator wrote
+    /// @return the private name, or an empty string
+    [[nodiscard]] std::string private_name_of(bool weapon, std::string_view name) const;
+
+    /// The private name this mutator stored `name` under, or null when it kept it.
+    ///
+    /// The pointer addresses this object's rename list and is invalidated by
+    /// the next `note_rename` or `clear_renames`. The latest note wins. A
+    /// unit name does not see a weapon's rename. The call allocates nothing,
+    /// so it is safe to use before a lookup that can raise.
+    ///
+    /// @param weapon true to look among weapon renames
+    /// @param name the name the mutator wrote
+    /// @return the private name, or null
+    [[nodiscard]] const std::string* renamed_to(bool weapon, std::string_view name) const noexcept;
+
+    /// Points reference writes in `writes` at the names this mutator renamed.
+    ///
+    /// A write whose new text is a unit or weapon this mutator renamed, and
+    /// whose field is a weapon reference, a side or AI list, or `unitname`,
+    /// is written again with the private name. The journal text is updated
+    /// to match. Other fields, and writes that do not name `mutator`, stay.
+    ///
+    /// @param writes the writes to retarget; a rule step's writes or the hooks'
+    /// @param mutator the mutator, as `begin_mutator` spelled it
+    /// @param[out] error the editor's message when a value cannot be written
+    /// @return false when a value could not be written
+    [[nodiscard]] bool retarget_renamed_references(
+        std::span<oa::data::mutation_rules::FieldWrite> writes,
+        std::string_view mutator,
+        std::string& error
+    );
+
+    /// One unit Add stored under a private name, so its name-keyed files follow.
+    ///
+    /// Cleared only when the collections object is destroyed. `clear_renames`
+    /// does not drop it: the files are copied after every mutator has run.
+    struct UnitFileShift {
+        uint16_t mutator{}; ///< slot of the mutator that renamed the unit
+        std::string asked;  ///< the name the mutator wrote
+        std::string stored; ///< the private name
+        bool move_model{};  ///< the effective model was the asked name
+    };
+
+    /// Remembers that Add renamed a unit, so the pipeline can move its files.
+    ///
+    /// @param shift the rename
+    void note_unit_file_shift(UnitFileShift shift);
+
+    /// The unit-file renames noted this pass, in note order.
+    ///
+    /// @return the shifts
+    [[nodiscard]] std::span<const UnitFileShift> unit_file_shifts() const { return unit_shifts_; }
+
+    /// A download file this run opened so a button past the fifth section
+    /// still has a file the loader reads.
+    struct MenuSpill {
+        std::string unit; ///< the unit the file was opened for
+        std::string path; ///< the download file
+    };
+
+    /// Remembers a download file opened for `unit` during this pass.
+    ///
+    /// @param unit the unit the file serves
+    /// @param path the download file
+    void note_menu_spill(std::string unit, std::string path);
+
+    /// The spill files noted this pass, in note order.
+    ///
+    /// @return the spills
+    [[nodiscard]] std::span<const MenuSpill> menu_spills() const { return menu_spills_; }
+
+    /// Points this mutator's reference writes at the names it renamed.
+    ///
+    /// A write whose new text is a unit or weapon this mutator renamed, and
+    /// whose field is a weapon reference, a side or AI list, or `unitname`,
+    /// is written again with the private name. The journal text is updated
+    /// to match. Other fields, and other mutators' writes, stay as they are.
+    ///
+    /// @param mutator the mutator, as `begin_mutator` spelled it
+    /// @param[out] error the editor's message when a value cannot be written
+    /// @return false when a value could not be written
+    [[nodiscard]] bool retarget_renamed_references(std::string_view mutator, std::string& error);
+
   private:
 
     friend struct CollectionsAccess;
@@ -399,6 +553,16 @@ class Collections {
     std::vector<ServedCopy> served_;  ///< binary copies those clones serve
     /// Folded weapon section names whose ids stay as the game assigned them.
     std::vector<std::string> kept_weapon_ids_;
+    /// Clash mode the clone methods honour. Replace until a caller sets it.
+    oa::formats::oamut::ClashMode clash_mode_{oa::formats::oamut::ClashMode::replace};
+    /// True when an Add-mode clone may take a private name.
+    bool clash_active_{};
+    /// Renames this mutator has made. Cleared at the start of the next one.
+    std::vector<ClashRename> renames_;
+    /// Units Add renamed. Not cleared with `renames_`.
+    std::vector<UnitFileShift> unit_shifts_;
+    /// Download files opened so a sixth button is still loaded. Not cleared with `renames_`.
+    std::vector<MenuSpill> menu_spills_;
     /// Folded served path to its index in `served_`. A page lookup does not scan the list.
     std::unordered_map<std::string, std::size_t> served_index_;
     SideScratch side_scratch_{};

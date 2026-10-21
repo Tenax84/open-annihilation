@@ -3325,8 +3325,9 @@ endforeach()
         # number option, two packages in each order, a missing id, an
         # unknown option and a mutator whose script stops. Also
         # --no-mutators, a match that leaves no crash record and no
-        # remembered set, a planted crash record, and a campaign start
-        # the mutators refuse.
+        # remembered set, a planted crash record, a campaign start the
+        # mutators refuse, and the clash mode the preferences' default
+        # gives a mutator whose manifest names none.
         add_test(NAME native-mutators-command-line COMMAND ${Python3_EXECUTABLE}
           "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_native_mutators.py"
           --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"

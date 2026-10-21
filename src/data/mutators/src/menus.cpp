@@ -87,6 +87,14 @@ struct MenusAccess {
         return self.indexed_unit(sought, builder);
     }
 
+    /// The private name the calling mutator gave the unit `written`, or null.
+    static const std::string* renamed(const Collections& self, std::string_view written) noexcept {
+        return self.renamed_to(false, written);
+    }
+
+    /// How many renames the calling mutator has noted.
+    static std::size_t renames(const Collections& self) noexcept { return self.rename_count(); }
+
     static std::size_t writes(const Collections& self) noexcept { return self.writes_.size(); }
 
     static std::vector<RecordRemoval>& removals(Collections& self) noexcept {
@@ -1920,16 +1928,23 @@ bool take_name(
 }
 
 /// Finds a name in the units index as it stands, and keeps it or the error.
+///
+/// A unit or builder this mutator renamed is looked up by its private name,
+/// as `lookup` finds it, and the walk of the rename list is charged. A
+/// name that is not found is reported as the script wrote it.
 bool take_indexed(MenusState& m, const char* text, std::size_t length, bool builder) noexcept {
-    const std::string_view sought{text, length};
-    bill_lookup(m, length);
+    const std::string_view written{text, length};
+    bill_visits(m, MenusAccess::renames(*m.collections));
+    const std::string* renamed = MenusAccess::renamed(*m.collections, written);
+    const std::string_view sought = renamed != nullptr ? std::string_view{*renamed} : written;
+    bill_lookup(m, sought.size());
     bool is_builder = false;
     const std::string* canonical =
         MenusAccess::indexed(*m.collections, sought, builder ? &is_builder : nullptr);
     try {
         if (canonical == nullptr) {
             m.error = builder ? "unknown builder " : "unknown unit ";
-            m.error.append(sought);
+            m.error.append(written);
             m.failed = true;
             return false;
         }
@@ -1956,6 +1971,8 @@ bool take_indexed(MenusState& m, const char* text, std::size_t length, bool buil
 /// The index is brought up to date, which charges and may raise, only when
 /// the document set grew or a new mutator's turn began since the last time.
 /// Otherwise it is searched as it stands: a removal updates it in place.
+/// Either way a name the calling mutator renamed in Add mode means its
+/// private record. Names read from the documents are never mapped.
 bool resolve(lua_State* state, MenusState& m, const char* text, std::size_t length, bool builder) {
     const std::size_t documents = documents_of(m).size();
     if (m.indexed_documents == documents && m.indexed_turn == m.turn)
