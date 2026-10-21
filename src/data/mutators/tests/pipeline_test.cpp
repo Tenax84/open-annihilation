@@ -250,6 +250,26 @@ bool lists_name(
     return false;
 }
 
+/// Counts the paths in `paths` that end with `tail`, ignoring ASCII case.
+std::size_t count_paths(const std::vector<std::string>& paths, std::string_view tail) {
+    std::size_t found = 0;
+    for (const std::string& path : paths) {
+        if (path.size() < tail.size())
+            continue;
+        bool same = true;
+        for (std::size_t offset = 0; offset < tail.size(); ++offset) {
+            const char left = path[path.size() - tail.size() + offset];
+            const char lower =
+                left >= 'A' && left <= 'Z' ? static_cast<char>(left - 'A' + 'a') : left;
+            if (lower != tail[offset])
+                same = false;
+        }
+        if (same)
+            ++found;
+    }
+    return found;
+}
+
 const mutators::Conflict*
 conflict_of(const mutators::PipelineResult& result, mutators::ConflictKind kind) {
     for (const mutators::Conflict& conflict : result.report.conflicts) {
@@ -663,6 +683,22 @@ void test_string_cap_is_its_own_cause() {
     release(store);
 }
 
+void test_unread_document_warned_once() {
+    const fs::path scratch = oa::test::make_scratch_directory("V01-unread");
+    const fs::path copy = scratch / "ridge";
+    fs::copy(k_data / "ridge", copy, fs::copy_options::recursive);
+    write_bytes(copy / "units" / "RGBAD.fbi", "[UNITINFO]\n{\nUnitName=RGBAD;\n");
+    {
+        oa::AssetStore store(copy);
+        const mutators::PipelineResult result =
+            mutators::run_pipeline(store, input_of({"ridge-swift"}));
+        OA_CHECK(result.playable());
+        OA_CHECK(count_paths(result.report.unread, "units/rgbad.fbi") == 1);
+        release(store);
+    }
+    fs::remove_all(scratch);
+}
+
 void test_player_option() {
     mutators::PipelineMutator swift = load_id("ridge-swift");
     for (const oamut::Option& option : swift.manifest.options) {
@@ -700,6 +736,7 @@ int main() {
     test_list_rules();
     test_compatibility_and_repeat();
     test_string_cap_is_its_own_cause();
+    test_unread_document_warned_once();
     test_player_option();
     return oa::test::check_exit_status();
 }

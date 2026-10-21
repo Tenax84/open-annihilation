@@ -1021,7 +1021,8 @@ std::vector<std::string> unit_stems(const oa::AssetStore& store, const defs::Dat
     return stems;
 }
 
-/// Parses one document. A text that does not parse is a warning, not a failure.
+/// Parses one document. A text that does not parse is a warning, not a
+/// failure, and the warning names its path once however often it is listed.
 void consider_document(
     rules::DocumentSet& documents,
     std::vector<std::string>& originals,
@@ -1031,6 +1032,10 @@ void consider_document(
 ) {
     if (documents.find(path) != nullptr)
         return;
+    for (const std::string& unread : report.unread) {
+        if (same_path(unread, path))
+            return;
+    }
     try {
         const oa::AssetData data = store.read(path);
         std::string text(data.bytes.begin(), data.bytes.end());
