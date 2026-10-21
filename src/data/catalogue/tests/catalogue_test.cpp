@@ -1285,6 +1285,15 @@ void test_mutator() {
         bare(
             "oamut",
             "steady-hands",
+            "\"options\":[{\"id\":\"grip\",\"label\":\"Grip, firm.\",\"type\":\"choice\","
+            "\"values\":[\"a b\",\"firm\"]}]"
+        ),
+        "options[0].values[0] is not a number or 1 to 32 letters, digits, _, - or ."
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
             "\"options\":[{\"id\":\"sway\",\"label\":\"Sway\",\"type\":\"number\","
             "\"min\":1,\"max\":1,\"step\":1}]"
         ),

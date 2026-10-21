@@ -161,8 +161,9 @@ The layer names are `files`, `units`, `weapons`, `features`, `sides`,
 
 An option names `id` (an option id), `label` (1 to 64 bytes) and `type`.
 `type` is `toggle`, `choice` or `number`. A choice names `values`, 2 to 16
-numbers or 2 to 16 strings of 1 to 64 bytes, all of one kind, and may name
-`labels`, one string of 1 to 64 bytes for each value. A number names `min`,
+numbers or 2 to 16 identifiers, all of one kind, and may name `labels`, one
+string of 1 to 64 bytes for each value. An identifier is 1 to 32 bytes of
+ASCII letters, digits, `_`, `-` and `.`. A number names `min`,
 `max` and `step`: numbers, with `min` below `max` and `step` above zero. A
 toggle names nothing more. `default` is optional: `true` or `false` for a
 toggle, one of the values for a choice, or a number on a step from `min` to
