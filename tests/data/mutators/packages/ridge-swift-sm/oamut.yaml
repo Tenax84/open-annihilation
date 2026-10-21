@@ -1,0 +1,9 @@
+oamut: 1
+id: ridge-swift-sm
+name: "Ridge Swift Script"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+tags: ["gameplay"]
+works-with: ["*"]
+layers: ["units"]

@@ -1,0 +1,11 @@
+oamut: 1
+id: ridge-needs-swift
+name: "Ridge Needs Swift"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+tags: ["gameplay"]
+works-with: ["*"]
+requires:
+  mutators: ["ridge-swift >= 1.0"]
+layers: ["files"]

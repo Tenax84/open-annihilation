@@ -1,0 +1,5 @@
+[UNITINFO]
+{
+UnitName=RGNEW;
+MaxDamage=1000;
+}

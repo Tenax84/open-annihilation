@@ -1,0 +1,6 @@
+[UNITINFO]
+{
+UnitName=RGCOM;
+Commander=1;
+MaxDamage=3000;
+}

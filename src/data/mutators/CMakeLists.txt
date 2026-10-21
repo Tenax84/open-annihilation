@@ -51,4 +51,22 @@ if(BUILD_TESTING)
     PRIVATE "OA_MUTATORS_RULES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/rules_lua\""
   )
   add_test(NAME data-mutators-rules-lua COMMAND oa-data-mutators-rules-lua-test)
+
+  add_executable(oa-data-mutators-journal-test tests/journal_test.cpp)
+  target_link_libraries(oa-data-mutators-journal-test PRIVATE oa-data-mutators oa-test-support)
+  target_compile_definitions(
+    oa-data-mutators-journal-test
+    PRIVATE "OA_MUTATORS_TEST_DATA=\"${CMAKE_SOURCE_DIR}/tests/data/mutators\""
+  )
+  add_test(NAME data-mutators-journal COMMAND oa-data-mutators-journal-test)
+  set_tests_properties(data-mutators-journal PROPERTIES TIMEOUT 60)
+
+  add_executable(oa-data-mutators-pipeline-test tests/pipeline_test.cpp)
+  target_link_libraries(oa-data-mutators-pipeline-test PRIVATE oa-data-mutators oa-test-support)
+  target_compile_definitions(
+    oa-data-mutators-pipeline-test
+    PRIVATE "OA_MUTATORS_TEST_DATA=\"${CMAKE_SOURCE_DIR}/tests/data/mutators\""
+  )
+  add_test(NAME data-mutators-pipeline COMMAND oa-data-mutators-pipeline-test)
+  set_tests_properties(data-mutators-pipeline PROPERTIES TIMEOUT 60)
 endif()

@@ -1,0 +1,9 @@
+oamut: 1
+id: ridge-elsewhere
+name: "Ridge Elsewhere"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+tags: ["gameplay"]
+works-with: ["some-other-mod"]
+layers: ["files"]

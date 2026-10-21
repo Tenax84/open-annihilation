@@ -1,0 +1,11 @@
+[*group*]
+{
+[Needs]
+{
+MaxVelocity=0.01,100;
+}
+[Changes]
+{
+MaxVelocity=*1.5;
+}
+}

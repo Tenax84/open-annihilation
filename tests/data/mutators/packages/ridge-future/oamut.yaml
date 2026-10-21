@@ -1,0 +1,11 @@
+oamut: 1
+id: ridge-future
+name: "Ridge Future"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+tags: ["gameplay"]
+works-with: ["*"]
+requires:
+  engine: ">= 99.0.0"
+layers: ["files"]
