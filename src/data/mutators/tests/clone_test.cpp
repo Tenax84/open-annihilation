@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -601,18 +602,42 @@ void test_weapon_id_field(const fs::path& scratch) {
     release(store);
 }
 
+/// Real time each phase of a budget case may run. These cases are about the
+/// instruction allowance; the real-time limit has its own test, and a busy
+/// machine must not turn a budget stop into a time stop here.
+constexpr std::chrono::minutes k_budget_time_limit{10};
+
+/// Most processor time a loop the allowance stops may spend. The heaviest,
+/// the refused weapon loop, takes about 0.2 s on a fast machine and ran past
+/// 10 s on a slow one. A loop the allowance does not stop fails the cause
+/// check when the real-time limit stops it.
+constexpr double k_budget_stop_seconds = 60.0;
+
 /// The allowance is large enough that the loop's own Lua instructions do not
-/// spend it, and small enough that the charged clone work does, inside the
-/// ten-second clock.
+/// spend it, and small enough that the charged clone work does, well before
+/// the long real-time limit the case runs under.
 void expect_budget_stop(const fs::path& game, const fs::path& package, std::string_view label) {
     oa::AssetStore store(game);
     mutators::PipelineInput input = make_input({load_package(package)});
     input.budget.instructions = 1000000;
+    input.time_limit = k_budget_time_limit;
+    // The bound is on the processor time this test spends, so other programs
+    // sharing the machine do not stretch it. The real time is printed too.
+    const std::clock_t processor_started = std::clock();
     const auto started = std::chrono::steady_clock::now();
     const mutators::PipelineResult result = mutators::run_pipeline(store, input);
     const auto elapsed = std::chrono::steady_clock::now() - started;
+    const double processor_seconds =
+        static_cast<double>(std::clock() - processor_started) / CLOCKS_PER_SEC;
     const auto milliseconds =
         std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+    std::printf(
+        "%.*s stopped in %lld ms (%.0f ms of processor time)\n",
+        static_cast<int>(label.size()),
+        label.data(),
+        static_cast<long long>(milliseconds),
+        processor_seconds * 1000.0
+    );
     expect(!result.playable(), std::string(label) + " applied");
     expect(!result.mutators.empty(), std::string(label) + " result");
     if (!result.mutators.empty()) {
@@ -628,7 +653,8 @@ void expect_budget_stop(const fs::path& game, const fs::path& package, std::stri
         expect(result.mutators[0].phase == mutators::Phase::hooks, std::string(label) + " phase");
     }
     expect(
-        milliseconds < 5000, std::string(label) + " took " + std::to_string(milliseconds) + " ms"
+        processor_seconds < k_budget_stop_seconds,
+        std::string(label) + " took " + std::to_string(processor_seconds) + " s of processor time"
     );
     expect(result.layer.entries.empty(), std::string(label) + " served a file");
     expect(!store.mutator_layer_mounted(), std::string(label) + " left a layer mounted");

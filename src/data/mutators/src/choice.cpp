@@ -99,7 +99,26 @@ bool read_options(std::string_view options_text, MutatorChoice& choice, std::str
     return true;
 }
 
-/// The first colon whose remainder begins with an option name and `=`.
+/// Bytes of a drive letter and its colon, as `C:` in `C:/Mods/pack`.
+constexpr std::size_t drive_bytes = 2;
+
+/// Tells whether a choice starts with a drive letter, a colon and a slash or
+/// a backslash, as `C:/Mods/pack` does.
+///
+/// That colon is part of the path on every platform.
+///
+/// @param text the whole choice
+/// @return true when the text starts with a drive
+bool starts_with_drive(std::string_view text) {
+    if (text.size() <= drive_bytes)
+        return false;
+    const char letter = text[0];
+    const bool is_letter = (letter >= 'A' && letter <= 'Z') || (letter >= 'a' && letter <= 'z');
+    return is_letter && text[1] == ':' && (text[2] == '\\' || text[2] == '/');
+}
+
+/// The first colon after any drive whose remainder begins with an option
+/// name and `=`.
 ///
 /// An empty name still counts, so `:=4` is an options clause and not part of
 /// the target. A name that is not an option id does not, so a path may hold
@@ -108,7 +127,8 @@ bool read_options(std::string_view options_text, MutatorChoice& choice, std::str
 /// @param text the whole choice
 /// @return the colon's index, or `npos` when the text names no options
 std::size_t options_colon(std::string_view text) {
-    for (std::size_t index = 0; index < text.size(); ++index) {
+    const std::size_t first = starts_with_drive(text) ? drive_bytes : 0;
+    for (std::size_t index = first; index < text.size(); ++index) {
         if (text[index] != ':')
             continue;
         const std::string_view remainder = text.substr(index + 1);
@@ -571,7 +591,10 @@ std::optional<MutatorChoice> parse_choice(std::string_view text, std::string* er
     }
     if (target.empty())
         return refuse_choice(error, "a mutator needs an id or a path");
-    const bool colon_in_target = target.find(':') != std::string_view::npos;
+    // A drive's colon is part of the path, so only a later one needs the
+    // entry to be there.
+    const std::size_t after_drive = starts_with_drive(target) ? drive_bytes : 0;
+    const bool colon_in_target = target.find(':', after_drive) != std::string_view::npos;
     if (colon_in_target && !existing_entry(target))
         return refuse_choice(error, in_quotes(target) + " is not an id or a path");
     MutatorChoice choice;

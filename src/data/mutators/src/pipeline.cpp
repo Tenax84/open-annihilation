@@ -17,6 +17,7 @@
 #include "oa/data/mutators/allow_list.hpp"
 #include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/maps.hpp"
+#include "oa/data/mutators/menus.hpp"
 #include "oa/data/mutators/rules_lua.hpp"
 #include "oa/data/mutators/weapon_ids.hpp"
 #include "oa/data/mutation_rules/documents.hpp"
@@ -79,7 +80,7 @@ static_assert(
 );
 
 /// How a supported plan key is read. D04, D06, D07 and D08 add rows here.
-enum class KeyJob : uint8_t { files, hacks, maps, rules, units_hook, weapons_hook };
+enum class KeyJob : uint8_t { files, hacks, maps, rules, units_hook, weapons_hook, menus_hook };
 
 struct PlanKeyRow {
     const char* name{};
@@ -91,6 +92,7 @@ constexpr PlanKeyRow k_plan_keys[] = {
     {"files", KeyJob::files, oamut::Layer::files},
     {"hacks", KeyJob::hacks, oamut::Layer::hacks},
     {"maps", KeyJob::maps, oamut::Layer::maps},
+    {"menus", KeyJob::menus_hook, oamut::Layer::menus},
     {"rules", KeyJob::rules, oamut::Layer::tables},
     {"units", KeyJob::units_hook, oamut::Layer::units},
     {"weapons", KeyJob::weapons_hook, oamut::Layer::weapons},
@@ -126,6 +128,7 @@ struct Plan {
     int maps_ref{LUA_NOREF};
     int units_hook{LUA_NOREF};
     int weapons_hook{LUA_NOREF};
+    int menus_hook{LUA_NOREF};
 };
 
 /// Why reading a plan stopped, when it did.
@@ -182,6 +185,9 @@ struct PlanShape {
     bool has_weapons{false};
     PartFault weapons_fault{PartFault::none};
     int weapons_hook{LUA_NOREF};
+    bool has_menus{false};
+    PartFault menus_fault{PartFault::none};
+    int menus_hook{LUA_NOREF};
 };
 
 /// Pointers a Lua callback may use. The callback holds none of its own.
@@ -199,11 +205,15 @@ struct MutateBox {
     int missing{0};
 };
 
+/// Which collection a hook receives as its first argument.
+enum class HookWhich : uint8_t { units, weapons, menus };
+
 /// What one hook call needs. The callback holds none of its own objects.
 struct HookBox {
     Collections* collections{};
+    Menus* menus{};
     int function_ref{LUA_NOREF};
-    int units{0};
+    HookWhich which{HookWhich::units};
     const ContextView* context{};
     const oa::AssetStore* store{};
     const defs::DataLayout* layout{};
@@ -602,13 +612,17 @@ void install_forms(void*, lua_State* state) {
 int push_hook(void* context, lua_State* state) {
     auto* box = static_cast<HookBox*>(context);
     lua_rawgeti(state, LUA_REGISTRYINDEX, box->function_ref);
-    if (box->units != 0)
+    if (box->which == HookWhich::units)
         box->collections->push_units(state);
-    else
+    else if (box->which == HookWhich::weapons)
         box->collections->push_weapons(state);
+    else
+        box->menus->push(state);
     push_context(state, box->context);
     const int ctx = lua_gettop(state);
     box->collections->set_context_collections(state, ctx);
+    if (box->menus != nullptr)
+        box->menus->set_context(state, ctx);
     if (box->store != nullptr && box->layout != nullptr && box->variant != nullptr)
         set_context_sides(state, ctx, *box->collections, *box->store, *box->layout, *box->variant);
     return 2;
@@ -838,9 +852,13 @@ void read_plan_shape(lua_State* state, int index, PlanShape* shape) {
             read_hook_shape(
                 state, value, &shape->has_units, &shape->units_fault, &shape->units_hook
             );
-        } else {
+        } else if (row->job == KeyJob::weapons_hook) {
             read_hook_shape(
                 state, value, &shape->has_weapons, &shape->weapons_fault, &shape->weapons_hook
+            );
+        } else if (row->job == KeyJob::menus_hook) {
+            read_hook_shape(
+                state, value, &shape->has_menus, &shape->menus_fault, &shape->menus_hook
             );
         }
         lua_settop(state, key);
@@ -1072,8 +1090,8 @@ PlanFault read_hook_part(
 
 /// Turns the plan the phase read into a `Plan`, or refuses it.
 ///
-/// The checks run in the order the keys sort in: files, hacks, maps, rules,
-/// units, then weapons, and the first refusal is the one reported.
+/// The checks run in the order the keys sort in: files, hacks, maps, menus,
+/// rules, units, then weapons, and the first refusal is the one reported.
 PlanFault read_returned_plan(
     lua_State* state,
     const PlanShape& shape,
@@ -1109,6 +1127,18 @@ PlanFault read_returned_plan(
     }
     if (shape.has_maps) {
         fault = read_maps_part(state, shape, manifest, plan);
+        if (fault.failed)
+            return fault;
+    }
+    if (shape.has_menus) {
+        fault = read_hook_part(
+            shape.menus_fault,
+            shape.menus_hook,
+            "menus",
+            oamut::Layer::menus,
+            manifest,
+            plan.menus_hook
+        );
         if (fault.failed)
             return fault;
     }
@@ -1656,8 +1686,9 @@ struct FirstFailure {
 bool call_hook(
     host::Sandbox& sandbox,
     Collections& collections,
+    Menus& menus,
     int function_ref,
-    bool units,
+    HookWhich which,
     const ContextView& context,
     const oa::AssetStore& store,
     const defs::DataLayout& layout,
@@ -1667,8 +1698,9 @@ bool call_hook(
 ) {
     HookBox box;
     box.collections = &collections;
+    box.menus = &menus;
     box.function_ref = function_ref;
-    box.units = units ? 1 : 0;
+    box.which = which;
     box.context = &context;
     box.store = &store;
     box.layout = &layout;
@@ -1812,6 +1844,7 @@ void plan_mutator(
     options_for_open.sources.context = &listing;
     options_for_open.sources.read = source_read;
     options_for_open.random_seed = mutator_seed(input.seed, result.id);
+    options_for_open.time_limit = input.time_limit;
     host::ScriptError error;
     std::optional<host::Sandbox> opened;
     try {
@@ -2904,11 +2937,13 @@ bool run_pass(
     MountGuard& guard
 ) {
     const std::size_t count = input.mutators.size();
-    // Destroyed in reverse order: every sandbox closes before the collections
-    // that were pushed into it, the collections go before the documents, and
-    // the listings the sandboxes read from go last.
+    // Destroyed in reverse order: every sandbox closes before the menus and
+    // the collections that were pushed into it. The menus go before the
+    // collections, the collections go before the documents, and the listings
+    // the sandboxes read from are released with the sandboxes.
     rules::DocumentSet documents;
     std::optional<Collections> collections;
+    std::optional<Menus> build_menus;
     std::vector<Listing> listings(count);
     std::vector<std::vector<LoadoutOption>> options(count);
     std::vector<std::optional<host::Sandbox>> sandboxes(count);
@@ -3057,15 +3092,16 @@ bool run_pass(
     std::set<ReplacedField> hook_replaced;
 
     // Each mutator applies the records in its own files, then its rules,
-    // then its units hook and its weapons hook, on the documents the
-    // mutators above it left. The maps entries run after every one of
-    // those, once the pass's other hooks have succeeded and its weapons are
-    // numbered. The first hook that fails ends the pass: no later mutator's
-    // records, rules or hooks run on what it left. A mutator below a failure
-    // the files layer found does not run either.
+    // then its units hook, its weapons hook and its menus hook, on the
+    // documents the mutators above it left. The maps entries run after every
+    // one of those, once the pass's other hooks have succeeded and its
+    // weapons are numbered. The first hook that fails ends the pass: no later
+    // mutator's records, rules or hooks run on what it left. A mutator below
+    // a failure the files layer found does not run either.
     collections.emplace(documents, &layout);
     collections->bind_store(&store);
     collections->keep_weapon_ids(kept_weapons);
+    build_menus.emplace(*collections, store, &layout);
     std::vector<BroughtWeapon> brought;
     std::vector<RecordTouch> touches;
     bool steps_done = true;
@@ -3097,7 +3133,8 @@ bool run_pass(
             for (const rules::RuleNote& note : step.notes)
                 append_rule_note(report, note, ids, replaced_fields);
         }
-        if (plans[slot].units_hook == LUA_NOREF && plans[slot].weapons_hook == LUA_NOREF)
+        if (plans[slot].units_hook == LUA_NOREF && plans[slot].weapons_hook == LUA_NOREF &&
+            plans[slot].menus_hook == LUA_NOREF)
             continue;
         if (!sandboxes[slot].has_value())
             continue;
@@ -3110,6 +3147,7 @@ bool run_pass(
         grant.sides = declares(input.mutators[slot].manifest, oamut::Layer::sides);
         grant.tables = declares(input.mutators[slot].manifest, oamut::Layer::tables);
         collections->begin_mutator(ids[slot], grant);
+        build_menus->begin_mutator(declares(input.mutators[slot].manifest, oamut::Layer::menus));
         ContextView context;
         context.mod = &input.mod;
         context.engine = &input.engine_version;
@@ -3119,8 +3157,9 @@ bool run_pass(
             hook_ok = call_hook(
                 *sandboxes[slot],
                 *collections,
+                *build_menus,
                 plans[slot].units_hook,
-                true,
+                HookWhich::units,
                 context,
                 store,
                 layout,
@@ -3133,8 +3172,24 @@ bool run_pass(
             hook_ok = call_hook(
                 *sandboxes[slot],
                 *collections,
+                *build_menus,
                 plans[slot].weapons_hook,
-                false,
+                HookWhich::weapons,
+                context,
+                store,
+                layout,
+                input.variant,
+                slot,
+                first
+            );
+        }
+        if (hook_ok && plans[slot].menus_hook != LUA_NOREF) {
+            hook_ok = call_hook(
+                *sandboxes[slot],
+                *collections,
+                *build_menus,
+                plans[slot].menus_hook,
+                HookWhich::menus,
                 context,
                 store,
                 layout,
@@ -3147,6 +3202,12 @@ bool run_pass(
             steps_done = false;
             break;
         }
+        std::string menu_error;
+        if (!build_menus->end_mutator(menu_error)) {
+            first.offer(slot, Phase::hooks, Cause::engine_error, std::move(menu_error));
+            steps_done = false;
+            break;
+        }
         collections->end_mutator();
         record_hook_turn(
             *collections, apply_state, report, ids, slot, notes_before, writes_before, hook_replaced
@@ -3154,6 +3215,7 @@ bool run_pass(
     }
     if (!steps_done) {
         sandboxes.clear();
+        build_menus.reset();
         collections.reset();
         guard.release();
         fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
@@ -3240,6 +3302,7 @@ bool run_pass(
         }
         if (!maps_done) {
             sandboxes.clear();
+            build_menus.reset();
             collections.reset();
             guard.release();
             fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
@@ -3339,6 +3402,12 @@ bool run_pass(
             );
         }
         journal.entries.push_back(std::move(entry));
+    }
+    // A download file the build menus created is a file the requesting mutator added.
+    for (const MenuFile& file : build_menus->added_files()) {
+        const std::optional<uint16_t> mutator = index_of(ids, file.mutator);
+        if (mutator.has_value())
+            journal.entries.push_back(file_entry(*mutator, file.path, Change::added, Phase::hooks));
     }
     journal_record_touches(journal, report, touches, documents, writers, menus);
     for (JournalEntry& entry : map_journal)
@@ -3493,6 +3562,7 @@ bool run_pass(
             spec.entries.push_back(std::move(served));
     }
     sandboxes.clear();
+    build_menus.reset();
     collections.reset();
     if (served_ota != nullptr && input.map.has_value()) {
         oa::MutatorLayerEntry served;
