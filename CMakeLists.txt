@@ -1206,7 +1206,8 @@ set(oa_game_libraries oa-formats-hpi oa-formats-json oa-app-game-options oa-app-
   oa-data-mutator-library
   oa-ui-pad-controls oa-ui-folder-chooser oa-platform-game-installs oa-platform-file-types
   oa-data-content-bundles
-  oa-ui-frontend-multiplayer oa-ui-library oa-ui-map-browser oa-ui-first-run
+  oa-ui-frontend-multiplayer oa-ui-library oa-ui-map-browser oa-ui-mutator-picker
+  oa-ui-first-run
   oa-data-saves)
 # The table that combines the extensions' tables of oa-game
 # (extension_list.hpp); the extensions themselves are registered with
@@ -3630,6 +3631,8 @@ add_subdirectory(src/ui/frontend-multiplayer)
 add_subdirectory(src/ui/map-previews)
 # The map browser: MORE MAPS… over the map lists opens it on the OA layer.
 add_subdirectory(src/ui/map-browser)
+# The mutator picker. This module is its model: order, prerequisites and options.
+add_subdirectory(src/ui/mutator-picker)
 add_subdirectory(src/netgame)
 # Catalogues are fetched with the HTTP client src/netgame adds, so this
 # library follows that directory. oa-game is linked earlier in this file,
