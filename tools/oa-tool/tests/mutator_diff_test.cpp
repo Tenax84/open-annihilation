@@ -188,6 +188,8 @@ fs::path write_package(
 }
 
 /// The stand-in game. rev31.gp3 holds three units, a menu, a GUI and one map.
+/// The GUI repeats [GADGET1], as 3.1c's build pages repeat their gadgets:
+/// BRAVO's build button, then an order button.
 fs::path write_game(const Scratch& scratch, const std::string& copyright) {
     const std::vector<oa::HpiWriteFile> files = {
         {"units/ALPHA.fbi",
@@ -214,6 +216,8 @@ fs::path write_game(const Scratch& scratch, const std::string& copyright) {
              "[GADGET0]\n{\n[COMMON]\n{\nid=0;\nname=ALPHA1;\nactive=1;\n}\n}\n"
              "[GADGET1]\n{\n[COMMON]\n{\nid=1;\nname=BRAVO;\nactive=1;\ncommonattribs=4;\n}\n"
              "grayedout=0;\n}\n"
+             "[GADGET1]\n{\n[COMMON]\n{\nid=1;\nname=ALPHAMOVE;\nactive=1;\n"
+             "commonattribs=0;\n}\ngrayedout=0;\n}\n"
          ),
          0},
         {"gamedata/sidedata.tdf", bytes_of("[SIDE0]\n{\nname=Arm;\n}\n"), 0},
@@ -524,7 +528,9 @@ void fixture_cases() {
         package_arg(no_flyers),
     });
     expect_status(flyers_alone, oa::tool::exit_done);
-    expect_has(flyers_alone, "field guis/alpha1.gui [gadget1] grayedout: 0 -> 1");
+    expect_has(flyers_alone, "field guis/alpha1.gui [gadget1] grayedout: 0 -> 1\n");
+    expect_has(flyers_alone, "field guis/alpha1.gui [gadget1][common] commonattribs: 4 -> 0\n");
+    expect_has_not(flyers_alone, "[gadget1@2]");
 
     const Captured flyers_name = run({
         "mutator",
@@ -583,6 +589,19 @@ void fixture_cases() {
     expect_has(mapped, "# map: isle");
     expect_has(mapped, "aiprofile:");
     expect_has(mapped, "TURBO");
+
+    const Captured shouted = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--map",
+        "ISLE",
+        "--mutator",
+        package_arg(turbo),
+    });
+    expect_status(shouted, oa::tool::exit_done);
+    OA_CHECK(shouted.out == mapped.out);
 
     const Captured unmapped = run({
         "mutator",
@@ -713,6 +732,20 @@ void fixture_cases() {
     });
     expect_status(speed, oa::tool::exit_usage);
     expect_err(speed, "speed");
+
+    const fs::path refused_dump = scratch.path / "refused.txt";
+    const Captured refused = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        boost_arg + ":speed=1",
+        "--dump",
+        refused_dump.string(),
+    });
+    expect_status(refused, oa::tool::exit_usage);
+    OA_CHECK(!fs::exists(refused_dump));
 
     const Captured positional = run({
         "mutator",
@@ -1184,6 +1217,45 @@ void installed_case() {
     });
     expect_status(metal, oa::tool::exit_done);
     expect_has(metal, "mutator diff: 0 differences, 0 allowed, 0 unused allowances");
+
+    // The wind generators' build buttons sit in gadgets a build page repeats.
+    const fs::path wind_hook = write_package(
+        scratch,
+        "drop-wind",
+        "[\"units\"]",
+        "function mutate(ctx)\n"
+        "  return {\n"
+        "    units = function(units, ctx)\n"
+        "      units:where { windgenerator = range(1, 1000) }:remove()\n"
+        "    end\n"
+        "  }\n"
+        "end\n"
+    );
+    const fs::path wind_sm = write_package(
+        scratch,
+        "drop-wind-sm",
+        "[\"units\"]",
+        "function mutate(ctx)\n"
+        "  return { rules = { sm \"rules/drop.sm\" } }\n"
+        "end\n"
+    );
+    write_text(
+        wind_sm / "rules" / "drop.sm",
+        "[*group*]\n{\n[Needs]\n{\nwindgenerator=1,1000;\n}\n[Changes]\n{\nCopyright=\"\";\n"
+        "Version=4;\n}\n}\n"
+    );
+    const Captured wind = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game.string(),
+        "--mutator",
+        wind_hook.string(),
+        "--versus",
+        wind_sm.string(),
+    });
+    expect_status(wind, oa::tool::exit_done);
+    expect_has(wind, "mutator diff: 0 differences, 0 allowed, 0 unused allowances");
 }
 
 } // namespace
