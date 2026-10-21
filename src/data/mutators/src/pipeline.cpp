@@ -387,6 +387,17 @@ bool declares(const oamut::Manifest& manifest, oamut::Layer layer) {
     return false;
 }
 
+/// The layers one mutator may write during its turn.
+WriteGrant grant_for(const oamut::Manifest& manifest) {
+    WriteGrant grant;
+    grant.units = declares(manifest, oamut::Layer::units);
+    grant.weapons = declares(manifest, oamut::Layer::weapons);
+    grant.features = declares(manifest, oamut::Layer::features);
+    grant.sides = declares(manifest, oamut::Layer::sides);
+    grant.tables = declares(manifest, oamut::Layer::tables);
+    return grant;
+}
+
 /// Finds a plan key, or null when this engine does not support it.
 const PlanKeyRow* plan_key(std::string_view name) {
     for (const PlanKeyRow& row : k_plan_keys) {
@@ -4654,13 +4665,7 @@ bool run_pass(
         }
         const std::size_t notes_before = collections->notes().size();
         const std::size_t writes_before = collections->writes().size();
-        WriteGrant grant;
-        grant.units = declares(input.mutators[slot].manifest, oamut::Layer::units);
-        grant.weapons = declares(input.mutators[slot].manifest, oamut::Layer::weapons);
-        grant.features = declares(input.mutators[slot].manifest, oamut::Layer::features);
-        grant.sides = declares(input.mutators[slot].manifest, oamut::Layer::sides);
-        grant.tables = declares(input.mutators[slot].manifest, oamut::Layer::tables);
-        collections->begin_mutator(ids[slot], grant);
+        collections->begin_mutator(ids[slot], grant_for(input.mutators[slot].manifest));
         build_menus->begin_mutator(declares(input.mutators[slot].manifest, oamut::Layer::menus));
         ContextView context;
         context.mod = &input.mod;
@@ -4711,6 +4716,13 @@ bool run_pass(
                 slot,
                 first
             );
+        }
+        if (hook_ok && collections->write_limit_failed()) {
+            // The script caught the error and returned. The limit still fails it.
+            first.offer(
+                slot, Phase::hooks, Cause::script_error, "this mutator has changed too many fields"
+            );
+            hook_ok = false;
         }
         if (!hook_ok) {
             steps_done = false;
@@ -4814,6 +4826,8 @@ bool run_pass(
             context.mod_game = input.mod.game;
             context.engine_version = input.engine_version;
             context.options = &options[slot];
+            // Selects this mutator's tally; no record write is granted here.
+            collections->begin_mutator(ids[slot], WriteGrant{});
             MapsTurn turn = apply_maps(
                 *sandboxes[slot],
                 plans[slot].maps_function,
@@ -4826,9 +4840,21 @@ bool run_pass(
                 context,
                 static_cast<uint16_t>(slot)
             );
+            const bool over_writes = collections->write_limit_failed();
+            collections->end_mutator();
             if (!turn.ok) {
                 const Cause cause = turn.from_script ? cause_of(turn.kind) : Cause::engine_error;
                 first.offer(slot, Phase::hooks, cause, std::move(turn.message));
+                maps_done = false;
+                break;
+            }
+            if (over_writes) {
+                first.offer(
+                    slot,
+                    Phase::hooks,
+                    Cause::script_error,
+                    "this mutator has changed too many fields"
+                );
                 maps_done = false;
                 break;
             }

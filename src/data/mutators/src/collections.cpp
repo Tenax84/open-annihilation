@@ -123,6 +123,8 @@ struct CollectionsState {
         std::string mutator;
         uint32_t writes = 0;
         uint32_t notes = 0;
+        /// Set when a write passed the limit. It stays set if the script catches the error.
+        bool over_writes = false;
     };
 
     std::vector<Tally> tallies;
@@ -1053,8 +1055,10 @@ std::size_t tally_index(Collections& self) {
 
 /// Refuses a write or a note that would pass the per-mutator limit.
 bool room_for(Collections& self, uint32_t more_writes, uint32_t more_notes, std::string& reason) {
-    const CollectionsState::Tally& tally = working(self).tallies[tally_index(self)];
-    if (more_writes > 0 && tally.writes > mutator_write_limit - more_writes) {
+    CollectionsState::Tally& tally = working(self).tallies[tally_index(self)];
+    if (tally.over_writes ||
+        (more_writes > 0 && tally.writes > mutator_write_limit - more_writes)) {
+        tally.over_writes = true;
         reason = "this mutator has changed too many fields";
         return false;
     }
@@ -3243,6 +3247,45 @@ void Collections::begin_mutator(std::string mutator, WriteGrant grant) {
     grant_ = grant;
     active_ = true;
     side_scratch_ = SideScratch{};
+    // The row outlives the turn, so a later phase keeps the same count.
+    (void)tally_index(*this);
+}
+
+bool Collections::write_limit_failed() const noexcept {
+    if (mutator_.empty() || state_ == nullptr)
+        return false;
+    for (const CollectionsState::Tally& tally : state_->tallies) {
+        if (tally.mutator == mutator_)
+            return tally.over_writes;
+    }
+    return false;
+}
+
+bool Collections::allow_field_write() noexcept {
+    if (mutator_.empty() || state_ == nullptr)
+        return false;
+    for (CollectionsState::Tally& tally : state_->tallies) {
+        if (tally.mutator != mutator_)
+            continue;
+        if (tally.over_writes || tally.writes > mutator_write_limit - 1) {
+            tally.over_writes = true;
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+void Collections::count_field_write() noexcept {
+    if (mutator_.empty() || state_ == nullptr)
+        return;
+    for (CollectionsState::Tally& tally : state_->tallies) {
+        if (tally.mutator != mutator_)
+            continue;
+        if (tally.writes < mutator_write_limit)
+            ++tally.writes;
+        return;
+    }
 }
 
 Collections::SideScratch& Collections::side_scratch() noexcept {

@@ -1562,6 +1562,214 @@ end
     OA_CHECK(loaded >= 1);
 }
 
+/// One tally for the mutator. A caught write past the limit fails it, and
+/// unit writes and map writes add up. A count under the limit is kept.
+void test_shared_write_limit(
+    oa::AssetStore& store, const fs::path& scratch, const mutators::ChosenMap& valley
+) {
+    const char* caught_units = R"(function mutate(ctx)
+  return { units = function(units, ctx)
+    local commander = units.RGCOM
+    for i = 1, 70000 do
+      pcall(function() commander.maxdamage = (i % 2) + 1 end)
+    end
+  end }
+end
+)";
+    const mutators::PipelineResult caught =
+        run_one(store, scratch, "ridge-caught-units", "[\"units\"]", caught_units, valley);
+    expect_refused(caught, "this mutator has changed too many fields");
+
+    const char* both = R"(function mutate(ctx)
+  return {
+    units = function(units, ctx)
+      local commander = units.RGCOM
+      for i = 1, 40000 do
+        commander.maxdamage = (i % 2) + 1
+      end
+    end,
+    maps = function(map, ctx)
+      for i = 1, 30000 do
+        pcall(function() map.header.gravity = i % 2 end)
+      end
+    end
+  }
+end
+)";
+    const mutators::PipelineResult crossed =
+        run_one(store, scratch, "ridge-units-and-maps", "[\"units\", \"maps\"]", both, valley);
+    expect_refused(crossed, "this mutator has changed too many fields");
+
+    const char* within = R"(function mutate(ctx)
+  return { units = function(units, ctx)
+    local commander = units.RGCOM
+    for i = 1, 60000 do
+      commander.maxdamage = (i % 2) + 1
+    end
+  end }
+end
+)";
+    const mutators::PipelineResult kept =
+        run_one(store, scratch, "ridge-within-limit", "[\"units\"]", within, valley);
+    OA_CHECK(kept.playable());
+    std::size_t rows = 0;
+    for (const mutators::JournalEntry& entry : kept.journal.entries) {
+        if (entry.field == "maxdamage")
+            ++rows;
+    }
+    OA_CHECK(rows == 60000);
+}
+
+/// Counts the journal rows whose field name starts with `prefix`.
+std::size_t rows_of(const mutators::PipelineResult& result, std::string_view prefix) {
+    std::size_t rows = 0;
+    for (const mutators::JournalEntry& entry : result.journal.entries) {
+        if (entry.field.rfind(prefix, 0) == 0)
+            ++rows;
+    }
+    return rows;
+}
+
+/// A clone's fields count on the mutator's tally, and the copy itself does
+/// not. A clone refused at the limit fails the mutator with the limit's
+/// message, even when the script catches the error.
+void test_clone_write_tally(
+    oa::AssetStore& store, const fs::path& scratch, const mutators::ChosenMap& valley
+) {
+    // 100 clones of 40 fields are 4,000 writes, so the 61,537th unit write passes the limit.
+    const char* clones_first = R"(function mutate(ctx)
+  return { units = function(units, ctx)
+    local fields = {}
+    for k = 1, 40 do fields["extra" .. k] = k end
+    for i = 1, 100 do units:clone("RGCOM", "RGC" .. i, fields) end
+    local commander = units.RGCOM
+    for i = 1, 62000 do
+      commander.maxdamage = (i % 2) + 1
+    end
+  end }
+end
+)";
+    const mutators::PipelineResult crossed =
+        run_one(store, scratch, "ridge-clones-then-writes", "[\"units\"]", clones_first, valley);
+    expect_refused(crossed, "this mutator has changed too many fields");
+
+    const char* exact = R"(function mutate(ctx)
+  return { units = function(units, ctx)
+    local fields = {}
+    for k = 1, 40 do fields["extra" .. k] = k end
+    for i = 1, 100 do units:clone("RGCOM", "RGC" .. i, fields) end
+    local commander = units.RGCOM
+    for i = 1, 61536 do
+      commander.maxdamage = (i % 2) + 1
+    end
+  end }
+end
+)";
+    const mutators::PipelineResult kept =
+        run_one(store, scratch, "ridge-clones-at-limit", "[\"units\"]", exact, valley);
+    OA_CHECK(kept.playable());
+    OA_CHECK(rows_of(kept, "extra") == 4000);
+    OA_CHECK(rows_of(kept, "maxdamage") == 61536);
+
+    const char* clones_caught = R"(function mutate(ctx)
+  return { units = function(units, ctx)
+    local commander = units.RGCOM
+    for i = 1, 65500 do
+      commander.maxdamage = (i % 2) + 1
+    end
+    local fields = {}
+    for k = 1, 40 do fields["extra" .. k] = k end
+    for i = 1, 20 do
+      pcall(function() units:clone("RGCOM", "RGC" .. i, fields) end)
+    end
+  end }
+end
+)";
+    const mutators::PipelineResult caught =
+        run_one(store, scratch, "ridge-caught-clones", "[\"units\"]", clones_caught, valley);
+    expect_refused(caught, "this mutator has changed too many fields");
+}
+
+/// True when the layer serves a file that holds `text`.
+bool layer_holds(const mutators::PipelineResult& result, std::string_view text) {
+    for (const oa::MutatorLayerEntry& entry : result.layer.entries) {
+        if (entry.contents == nullptr)
+            continue;
+        const std::string_view bytes(
+            reinterpret_cast<const char*>(entry.contents->data()), entry.contents->size()
+        );
+        if (bytes.find(text) != std::string_view::npos)
+            return true;
+    }
+    return false;
+}
+
+/// A collection a script kept from its units hook writes nothing from its
+/// maps hook. The maps phase counts on the mutator's tally but grants no
+/// record write.
+void test_kept_collections_in_maps(
+    oa::AssetStore& store, const fs::path& scratch, const mutators::ChosenMap& valley
+) {
+    const char* kept_unit = R"(local kept
+function mutate(ctx)
+  return {
+    units = function(units, ctx)
+      kept = units.RGCOM
+    end,
+    maps = function(map, ctx)
+      kept.maxdamage = 4242
+      map.header.gravity = 7
+    end
+  }
+end
+)";
+    const mutators::PipelineResult refused =
+        run_one(store, scratch, "ridge-kept-unit", "[\"units\", \"maps\"]", kept_unit, valley);
+    expect_refused(refused, "does not declare the units layer");
+    OA_CHECK(refused.journal.entries.empty());
+    OA_CHECK(!layer_holds(refused, "4242"));
+
+    const char* kept_caught = R"(local kept
+function mutate(ctx)
+  return {
+    units = function(units, ctx)
+      kept = units.RGCOM
+    end,
+    maps = function(map, ctx)
+      pcall(function() kept.maxdamage = 4242 end)
+      map.header.gravity = 7
+    end
+  }
+end
+)";
+    const mutators::PipelineResult caught =
+        run_one(store, scratch, "ridge-kept-caught", "[\"units\", \"maps\"]", kept_caught, valley);
+    OA_CHECK(caught.playable());
+    OA_CHECK(served_entry(caught, valley.ota_path) != nullptr);
+    OA_CHECK(!layer_holds(caught, "4242"));
+    OA_CHECK(rows_of(caught, "maxdamage") == 0);
+    OA_CHECK(rows_of(caught, "gravity") == 1);
+
+    const char* kept_menus = R"(local kept
+function mutate(ctx)
+  return {
+    units = function(units, ctx)
+      kept = ctx.menus
+    end,
+    maps = function(map, ctx)
+      kept:remove("RGBOT")
+      map.header.gravity = 7
+    end
+  }
+end
+)";
+    const mutators::PipelineResult menus = run_one(
+        store, scratch, "ridge-kept-menus", "[\"units\", \"menus\", \"maps\"]", kept_menus, valley
+    );
+    expect_refused(menus, "does not declare the menus layer");
+    OA_CHECK(menus.journal.entries.empty());
+}
+
 void synthetic_tests() {
     const Scratch scratch("D07-maps");
     write_store(scratch.path / "store");
@@ -1575,6 +1783,9 @@ void synthetic_tests() {
     test_table(store, scratch.path);
     test_refusal_loops(store, scratch.path, valley);
     test_budgets(store, scratch.path, valley);
+    test_shared_write_limit(store, scratch.path, valley);
+    test_clone_write_tally(store, scratch.path, valley);
+    test_kept_collections_in_maps(store, scratch.path, valley);
     test_hook_changed_names(store, scratch.path, valley);
     test_order_and_failure(store, scratch.path, valley);
     test_output(store, scratch.path, valley);

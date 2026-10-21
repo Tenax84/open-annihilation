@@ -40,15 +40,18 @@ struct CollectionsAccess;
 /// Working storage for one collections object. Defined with the implementation.
 struct CollectionsState;
 
-/// The most field writes one mutator may journal on one collections object.
+/// The most field writes one mutator may journal on one turn.
 ///
-/// A further write fails that mutator with
-/// "this mutator has changed too many fields" and is not stored.
+/// The collections and the maps phase share one tally. A further write is
+/// not stored, and it fails that mutator with
+/// "this mutator has changed too many fields", even when the script catches
+/// the error.
 inline constexpr uint32_t mutator_write_limit = 65536;
 
 /// The most notes one mutator may add on one collections object.
 ///
-/// A further note fails that mutator with "this mutator has made too many notes".
+/// A further note is refused with "this mutator has made too many notes"; a
+/// script that catches the error goes on.
 inline constexpr uint32_t mutator_note_limit = 65536;
 
 /// Which of these collections a mutator may change.
@@ -202,7 +205,26 @@ class Collections {
     void begin_mutator(std::string mutator, WriteGrant grant);
 
     /// Ends the mutator's turn. Later writes are refused until the next begin.
+    ///
+    /// The write tally stays, so a later phase of the same mutator counts
+    /// against the same limit.
     void end_mutator();
+
+    /// True when this turn has passed `mutator_write_limit`.
+    ///
+    /// The write that crossed the limit sets the mark, and it stays for this
+    /// mutator on this object. The pipeline fails the mutator after its hooks
+    /// return, even when the script caught the error and returned normally.
+    [[nodiscard]] bool write_limit_failed() const noexcept;
+
+    /// True when this turn may journal one more field write.
+    ///
+    /// A refusal marks the mutator failed. A clone's fields and the maps
+    /// phase ask here, so their rows share the collections' tally.
+    [[nodiscard]] bool allow_field_write() noexcept;
+
+    /// Counts one field write this turn has journaled.
+    void count_field_write() noexcept;
 
     /// Names and paths the side and table bindings compute before they push.
     ///
