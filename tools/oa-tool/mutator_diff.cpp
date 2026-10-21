@@ -227,34 +227,40 @@ resolve_specs(const std::vector<std::string>& specs, std::string& problem) {
     return listed;
 }
 
-/// The map the maps phase reads. A missing OTA is reported through `problem`.
+/// The OTA file name the game's map list shows for `name`, ASCII case
+/// ignored, without `.ota`; `name` itself when no listed OTA matches.
+std::string listed_map_name(const oa::AssetStore& store, std::string_view name) {
+    constexpr std::string_view extension = ".ota";
+    const std::string folded = lower_ascii(name);
+    for (const oa::FoundEntry& entry : store.find("maps\\*.ota")) {
+        if (entry.directory)
+            continue;
+        const auto slash = entry.name.find_last_of("/\\");
+        const std::string_view file = slash == std::string::npos
+                                          ? std::string_view{entry.name}
+                                          : std::string_view{entry.name}.substr(slash + 1);
+        if (file.size() <= extension.size() ||
+            lower_ascii(file.substr(file.size() - extension.size())) != extension)
+            continue;
+        const std::string_view stem = file.substr(0, file.size() - extension.size());
+        if (lower_ascii(stem) == folded)
+            return std::string(stem);
+    }
+    return std::string(name);
+}
+
+/// The map the maps phase reads, named as the game's map list spells it, so
+/// `--map` in any case gives the same `# map:` line. A missing OTA is
+/// reported through `problem`.
 std::optional<mutators::ChosenMap>
 chosen_map(const oa::AssetStore& store, std::string_view name, std::string& problem) {
     mutators::ChosenMap chosen;
-    chosen.key = std::string(name);
+    chosen.key = listed_map_name(store, name);
     chosen.ota_path = "maps/" + chosen.key + ".ota";
     const std::size_t mark = chosen.key.rfind('@');
     if (mark != std::string::npos && mark + 1 < chosen.key.size())
         chosen.pack = chosen.key.substr(mark + 1);
     std::optional<std::vector<uint8_t>> bytes = store.load_file_contents(chosen.ota_path);
-    if (!bytes || bytes->empty()) {
-        const std::string folded = lower_ascii(name);
-        for (const std::string& listed : store.list_effective("maps", ".ota")) {
-            const auto slash = listed.rfind('/');
-            const std::string_view file = slash == std::string::npos
-                                              ? std::string_view{listed}
-                                              : std::string_view{listed}.substr(slash + 1);
-            if (!file.ends_with(".ota"))
-                continue;
-            const std::string_view stem = file.substr(0, file.size() - 4);
-            if (lower_ascii(stem) != folded)
-                continue;
-            chosen.key = std::string(stem);
-            chosen.ota_path = "maps/" + chosen.key + ".ota";
-            bytes = store.load_file_contents(chosen.ota_path);
-            break;
-        }
-    }
     if (!bytes || bytes->empty()) {
         problem = "map " + std::string(name) + " is not in this game";
         return std::nullopt;
@@ -463,14 +469,6 @@ int run_mutator_diff(std::span<const std::string> arguments, Output& output) {
         allowed = std::move(*read);
     }
 
-    std::ofstream dumped;
-    const std::string* const dump_path = parsed->value("dump");
-    if (dump_path != nullptr) {
-        dumped.open(utf8_path(*dump_path), std::ios::out | std::ios::binary);
-        if (!dumped)
-            return usage(output, *dump_path + ": cannot be written");
-    }
-
     const std::vector<std::string> specs = repeated(*parsed, "mutator");
     const std::optional<std::vector<mutators::ResolvedMutator>> listed =
         resolve_specs(specs, problem);
@@ -480,6 +478,15 @@ int run_mutator_diff(std::span<const std::string> arguments, Output& output) {
         resolve_specs(versus, problem);
     if (!other)
         return usage(output, problem);
+
+    // Opened after the SPECs resolve, so a refused SPEC leaves no empty file.
+    std::ofstream dumped;
+    const std::string* const dump_path = parsed->value("dump");
+    if (dump_path != nullptr) {
+        dumped.open(utf8_path(*dump_path), std::ios::out | std::ios::binary);
+        if (!dumped)
+            return usage(output, *dump_path + ": cannot be written");
+    }
 
     const fs::path game = utf8_path(*game_dir);
     const std::string* const mod_text = parsed->value("mod-dir");

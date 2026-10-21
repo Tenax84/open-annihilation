@@ -205,6 +205,8 @@ class Failure : public std::runtime_error {
 /// may remain, and it needs `--versus`. `--map` names the map whose maps
 /// hooks run. `--seed` is the match seed, and it is 0 when left out.
 /// `--dump` writes the mutated file list and does not change the report.
+/// A map the game does not have, and a `--dump` file that cannot be
+/// created, are usage errors.
 ///
 /// @param arguments the options
 /// @param[in,out] output receives the report or the comparison, and a usage
@@ -213,7 +215,8 @@ class Failure : public std::runtime_error {
 ///         remaining difference and no unused allowance; exit_failed when a
 ///         mutator fails, the folder is not a usable game, or a comparison
 ///         does not match; exit_usage when the arguments are not the command's
-/// @throws Failure when a mutator fails or the folder is not a usable game
+/// @throws Failure when a mutator fails, the folder is not a usable game,
+///         or the dump cannot be written
 [[nodiscard]] int run_mutator_diff(std::span<const std::string> arguments, Output& output);
 
 // The catalogue commands, defined in catalogue.cpp.
