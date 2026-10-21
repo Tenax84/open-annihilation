@@ -163,6 +163,7 @@ struct Listing;
 } // namespace oa::data::mutator_library
 
 namespace oa::data::mutators {
+struct Loadout;
 struct PipelineResult;
 struct ResolvedMutator;
 } // namespace oa::data::mutators
@@ -2040,6 +2041,16 @@ class Runtime final : public menu::Host,
     /// @param runtime the running app
     /// @return the hash, 64 lower-case hexadecimal digits
     friend std::string simulation_hash(const Runtime& runtime);
+    /// Returns the simulation hash the run plays under, as a digest
+    /// (simulation_hash in extension.hpp).
+    ///
+    /// The digest is the one `simulation_hash` used to report as text, folded
+    /// with `match_mutator_digest` when a match has applied mutators. With no
+    /// mutator digest it is that hash unchanged.
+    ///
+    /// @param runtime the running app
+    /// @return the hash
+    friend oa::base::sha256::Digest played_sim_hash(const Runtime& runtime);
     /// Reads what this machine is playing (presence_facts in
     /// presence_facts.hpp): Developer Mode, the simulation hash, whether the
     /// rules differ from 3.1c, the mod and which standard hacks are on.
@@ -4274,6 +4285,26 @@ class Runtime final : public menu::Host,
     /// @return the result, or null when this match applied none
     [[nodiscard]] const oa::data::mutators::PipelineResult* match_mutators() const noexcept;
 
+    /// Returns the loadout the running match applied.
+    ///
+    /// The pointer is into the match's mutator state. It is null when this
+    /// match applied no mutator, and it is cleared when the match releases
+    /// its mutators.
+    ///
+    /// @return the loadout, or null when this match applied none
+    [[nodiscard]] const oa::data::mutators::Loadout* match_loadout() const noexcept;
+
+    /// Returns the mutator digest of the running match.
+    ///
+    /// The digest covers the applied loadout and every path the layer adds,
+    /// hides or rewrites, with the bytes the layer serves. It is set only
+    /// after a playable build that applied at least one mutator, and it is
+    /// cleared when the match releases its mutators. A list that is chosen
+    /// and not yet built has none.
+    ///
+    /// @return the digest, or nothing when this match applied none
+    [[nodiscard]] std::optional<oa::base::sha256::Digest> match_mutator_digest() const noexcept;
+
   private:
 
     /// The mutators chosen for the next matches, and the running match's result.
@@ -4301,11 +4332,13 @@ class Runtime final : public menu::Host,
     /// status 1.
     void take_command_line_mutators();
 
-    /// Unmounts the match's mutator layer and forgets its result.
+    /// Unmounts the match's mutator layer and forgets its result, its loadout
+    /// and its mutator digest.
     ///
     /// Logs one line when a layer was unmounted or a result was held.
     /// A quiet no-op when neither is true. When a mounted layer cannot be
-    /// dropped, the result is kept so a later call can try again.
+    /// dropped, the result, the loadout and the digest are kept so a later
+    /// call can try again.
     void release_match_mutators() noexcept;
 
     /// The name an installed pack gives a map, for a campaign load.

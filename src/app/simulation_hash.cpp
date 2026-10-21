@@ -8,12 +8,15 @@
 
 #include "engine_settings_state.hpp"
 
+#include "oa/base/sha256.hpp"
 #include "oa/data/mod_profile.hpp"
 #include "oa/data/mod_profile/overrides.hpp"
 #include "oa/data/mod_profile/value.hpp"
+#include "oa/data/mutators/loadout.hpp"
 
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -57,14 +60,28 @@ const std::string& baseline_hash() {
 
 } // namespace
 
+oa::base::sha256::Digest played_sim_hash(const Runtime& runtime) {
+    // The hash simulation_hash chose before mutators. This function is the
+    // friend, so the profile fields stay here.
+    oa::base::sha256::Digest profile{};
+    if (const auto* mod = runtime.mod_profile()) {
+        profile = mod->sim_hash;
+    } else if (runtime.engine_settings_ && runtime.engine_settings_->layered) {
+        profile = runtime.engine_settings_->base_sim_hash;
+    } else if (runtime.options_.mod_profile) {
+        profile = runtime.options_.mod_profile->sim_hash;
+    } else {
+        const std::optional<oa::base::sha256::Digest> parsed =
+            oa::base::sha256::parse_hex(baseline_hash());
+        if (!parsed)
+            throw std::runtime_error("the plain baseline does not resolve");
+        profile = *parsed;
+    }
+    return oa::data::mutators::fold_sim_hash(profile, runtime.match_mutator_digest());
+}
+
 std::string simulation_hash(const Runtime& runtime) {
-    if (const auto* profile = runtime.mod_profile())
-        return profiles::digest_text(profile->sim_hash);
-    if (runtime.engine_settings_ && runtime.engine_settings_->layered)
-        return profiles::digest_text(runtime.engine_settings_->base_sim_hash);
-    if (runtime.options_.mod_profile)
-        return profiles::digest_text(runtime.options_.mod_profile->sim_hash);
-    return baseline_hash();
+    return profiles::digest_text(played_sim_hash(runtime));
 }
 
 void Runtime::check_simulation_hash() {
