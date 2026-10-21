@@ -12,7 +12,8 @@ sentence chosen from the rule, which is not this module's to write.
 
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
-`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/choice.hpp`, `oa/data/mutators/collections.hpp`,
+`oa/data/mutators/files_layer.hpp`,
 `oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
 `oa/data/mutators/pipeline.hpp`, `oa/data/mutators/rules_lua.hpp` and
 `oa/data/mutators/verdicts.hpp`.
@@ -28,6 +29,9 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   and returns each mutator's outcome, the layer it left mounted, the
   `Journal` of the changes kept and the `ConflictReport`. See
   [Pipeline](#pipeline).
+- `list_refusal` is that list's check: more than `max_mutators`, an id
+  twice, a requirement an earlier mutator does not meet, or two that
+  conflict. Empty when the list may run.
 - `Journal::entries_of` returns one mutator's changes, and `describe` writes
   one conflict as a single English line.
 - `units:clone(source, name, fields)` and `weapons:clone(source, name, fields)`
@@ -46,12 +50,37 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   `ctx.tables["gamedata/los.tdf"]` are the same table. `sections` lists
   section names in file order. Walks of sides and of these tables are
   charged against the hook's instruction allowance.
+- `parse_choice` reads one `--mutator` value, `format_choice` writes it
+  back, and `resolve_choice` finds the package and types its options. See
+  [Choice text](#choice-text).
+
+## Choice text
+
+An id holds no `/` and no `\`. Anything else is a path to a package folder.
+A target that holds `:` is a path only when it names an existing folder or
+file; otherwise the text is refused. Options follow the first `:` that is
+followed by a name and `=`, and every name is an option id and every value
+an identifier, so a Windows drive letter such as `C:` stays in the path.
+The text is not trimmed. An empty text, an empty name or value, a repeated
+option and a `,` or `=` inside a value are refused.
+
+`resolve_choice` looks an id up in the installed listing. A path is the
+package folder itself, and `oamut.yaml` is matched without ASCII case. A
+symbolic link is not followed. Defaults are filled, and the named options
+are written over them. A missing mutator, an option the manifest does not
+have and a value of the wrong kind or outside the option's choices are
+refused in words that quote the player's text.
 
 ## State
 
-None kept. The two checks are pure: they do not read files, the asset store
-or the preferences. A null `PathContext::layout` means `data_layout()`. An
-empty `is_unit_name` knows no unit. `build_files_layer` reads the package
+None kept. `parse_choice` asks whether a target that holds `:` names an
+existing folder or file, and keeps nothing. `format_choice` reads nothing.
+`resolve_choice`
+reads one package's `oamut.yaml`, or the installed listing of the Mutators
+folder it is given, and keeps nothing after it returns. The two checks are
+pure: they do not read files, the asset store or the preferences. A null
+`PathContext::layout` means `data_layout()`. An empty `is_unit_name` knows
+no unit. `build_files_layer` reads the package
 folders it is given while it builds the layer, and it keeps nothing after
 it returns. `folder_digest` reads one folder and does not write. The other
 loadout functions read nothing. `run_pipeline` keeps nothing between calls:
@@ -104,6 +133,11 @@ clone that a later error rolls back. A loop of clones, a loop of clones
 whose source script is 1 MiB, and a `pcall` loop of weapon clones that are
 refused, each stop on the work budget inside the real-time limit. A clone whose build page collides with an existing screen
 is refused and the layer serves nothing.
+
+`data-mutators-choice` (`tests/choice_test.cpp`) checks the choice text,
+including a Windows drive path, the round trip of `format_choice`, and
+`resolve_choice` for each option kind, against an installed mutator and
+against a package folder.
 
 `data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
 Ridge packages under `tests/data/mutators` through `run_pipeline`: rules in

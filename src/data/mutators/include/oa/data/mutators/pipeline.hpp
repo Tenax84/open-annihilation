@@ -135,6 +135,18 @@ struct PipelineResult {
     [[nodiscard]] bool playable() const noexcept;
 };
 
+/// The first reason a loadout list cannot run, or an empty string when it can.
+///
+/// More than `max_mutators`, the same id twice, a requirement no earlier
+/// mutator meets, or two mutators that conflict. `run_pipeline` checks the
+/// same list again, so a launch file and a remembered set still meet it.
+///
+/// @param listed the mutators, top first
+/// @param versions each mutator's version text, in the same order
+/// @return the refusal, or an empty string
+[[nodiscard]] std::string
+list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::string>& versions);
+
 /// Runs the mutators in `input` against `store`.
 ///
 /// The list is checked first. More than `max_mutators`, an id twice, a

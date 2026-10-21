@@ -268,6 +268,7 @@ void Runtime::teardown_match() {
     offline_services_.set_on_screen_test(nullptr, nullptr);
     effect_boundary_.clock = nullptr;
     match_.reset();
+    release_match_mutators();
     // The menus keep the sides the game started with.
     restore_run_side_table();
     release_unsaved_unit_limit();
