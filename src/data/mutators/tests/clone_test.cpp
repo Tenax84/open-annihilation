@@ -303,12 +303,13 @@ void test_units(const fs::path& scratch) {
         }
     };
     expect_bytes("unitpics/PLAIN2.PCX", "pic-bytes");
-    expect_bytes("guis/PLAIN0.GUI", "gui-page-0");
-    expect_bytes("guis/PLAIN1.GUI", "gui-page-1");
-    expect_bytes("guis/PLAIN2.GUI", "gui-page-2");
-    expect_bytes("anims/PLAIN0.GAF", "gaf-page-0");
-    expect_bytes("anims/PLAIN1.GAF", "gaf-page-1");
-    expect_bytes("anims/PLAIN2.GAF", "gaf-page-2");
+    // Page n of PLAIN2 is guis/PLAIN2<n>.GUI, the name the game probes.
+    expect_bytes("guis/PLAIN20.GUI", "gui-page-0");
+    expect_bytes("guis/PLAIN21.GUI", "gui-page-1");
+    expect_bytes("guis/PLAIN22.GUI", "gui-page-2");
+    expect_bytes("anims/PLAIN20.GAF", "gaf-page-0");
+    expect_bytes("anims/PLAIN21.GAF", "gaf-page-1");
+    expect_bytes("anims/PLAIN22.GAF", "gaf-page-2");
     expect_bytes("unitpics/PLAIN3.PCX", "pic-bytes");
     expect(find_entry(once.layer, "download/PLAIN2.tdf") == nullptr, "download entry was copied");
     expect(find_entry(once.layer, "anims/PLAIN2_gadget.gaf") == nullptr, "gadget art was copied");
@@ -316,7 +317,7 @@ void test_units(const fs::path& scratch) {
         find_entry(once.layer, "objects3d/PLAIN2.3DO") == nullptr,
         "model was copied under a new name"
     );
-    expect(find_entry(once.layer, "guis/PLAIN3.GUI") == nullptr, "a missing page was served");
+    expect(find_entry(once.layer, "guis/PLAIN23.GUI") == nullptr, "a missing page was served");
 
     expect(has_sentence(once.journal, "added unit HULL2 (copy of HULL)"), "unit journal");
     expect(has_sentence(once.journal, "added unit BARE2 (copy of BARE)"), "bare journal");
@@ -325,11 +326,11 @@ void test_units(const fs::path& scratch) {
         "script journal"
     );
     expect(
-        has_sentence(once.journal, "added path guis/PLAIN2.GUI, copy of guis/PLAIN2.GUI"),
+        has_sentence(once.journal, "added path guis/PLAIN22.GUI, copy of guis/PLAIN2.GUI"),
         "page journal"
     );
     expect(
-        has_sentence(once.journal, "added path anims/PLAIN0.GAF, copy of anims/PLAIN0.GAF"),
+        has_sentence(once.journal, "added path anims/PLAIN20.GAF, copy of anims/PLAIN0.GAF"),
         "gaf journal"
     );
 

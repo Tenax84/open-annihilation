@@ -2478,24 +2478,30 @@ static int collection_call_clone(lua_State* state) {
     const ViewBox* collection = view_at(state, 1, kCollectionMeta);
     if (collection == nullptr || collection->owner == nullptr)
         return luaL_error(state, "expected a collection");
-    std::string error;
     int result = -1;
     bool failed = false;
-    try {
-        result =
-            clone_collection(state, *collection->owner, collection->kind == Kind::weapons, error);
-    } catch (const std::bad_alloc&) {
-        pending_of(*collection->owner) = "out of memory";
-        failed = true;
+    {
+        // Destroyed before ensure_index, which may raise through charge_work.
+        std::string error;
+        try {
+            result = clone_collection(
+                state, *collection->owner, collection->kind == Kind::weapons, error
+            );
+        } catch (const std::bad_alloc&) {
+            pending_of(*collection->owner) = "out of memory";
+            failed = true;
+        }
+        if (failed)
+            return raise_pending(state, *collection->owner);
+        if (result < 0) {
+            pending_of(*collection->owner) = std::move(error);
+            return raise_pending(state, *collection->owner);
+        }
     }
-    if (failed)
-        return raise_pending(state, *collection->owner);
-    if (result < 0) {
-        pending_of(*collection->owner) = std::move(error);
-        return raise_pending(state, *collection->owner);
-    }
+    // The new document is already in the set. Index the sections it added and
+    // charge them as an add. A ready index is not cleared, so this is not a rebuild.
     try {
-        mark_dirty(*collection->owner, collection->kind);
+        ensure_index(*collection->owner, collection->kind, state);
     } catch (const std::bad_alloc&) {
         pending_of(*collection->owner) = "out of memory";
         return raise_pending(state, *collection->owner);
