@@ -295,6 +295,9 @@ struct Options {
     fs::path mod_dir;
     // Plays the game folder without the remembered mod folder (--base-game).
     bool base_game = false;
+    // Mutators for this run (--mutator PATH|ID[:OPTION=VALUE,...]), each
+    // value as written, in the order given. Empty applies none.
+    std::vector<std::string> mutators;
     /// The base game and expansions for this run (--content
     /// GAME[:EXPANSION,...]). Empty when the run uses the remembered choice.
     /// It is not written to the preferences, and the mounted files change
@@ -441,6 +444,10 @@ struct Options {
     // presenter, in two skirmishes one after the other, and checks the
     // select and order lines it says.
     bool check_unit_speech = false;
+    // Plays skirmishes with the mutators the command line named and checks
+    // the commanders' health, and that a mutator which does not apply
+    // leaves no layer.
+    bool check_mutator_layer = false;
     // Plays skirmishes over a --mod-dir folder and checks each match reads
     // side data again when gamedata/sidedata.tdf has changed.
     bool check_side_data_per_match = false;

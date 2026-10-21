@@ -1601,51 +1601,6 @@ void exclude_blocked(
     }
 }
 
-/// The first list problem, or an empty string when the list may run.
-std::string
-list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::string>& versions) {
-    if (listed.size() > max_mutators) {
-        return "a loadout lists " + std::to_string(listed.size()) + " mutators, and " +
-               std::to_string(max_mutators) + " is the most";
-    }
-    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
-        for (std::size_t earlier = 0; earlier < slot; ++earlier) {
-            if (listed[slot].manifest.id == listed[earlier].manifest.id)
-                return listed[slot].manifest.id + " is listed twice";
-        }
-    }
-    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
-        for (const oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
-            bool met = false;
-            for (std::size_t earlier = 0; earlier < slot; ++earlier) {
-                if (oamut::condition_met(condition, listed[earlier].manifest.id, versions[earlier]))
-                    met = true;
-            }
-            if (!met) {
-                std::string message = listed[slot].manifest.id + " needs " + condition.id;
-                if (!condition.range_text.empty()) {
-                    message += " ";
-                    message += condition.range_text;
-                }
-                message += " above it";
-                return message;
-            }
-        }
-    }
-    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
-        for (const oamut::Condition& condition : listed[slot].manifest.conflicts_with) {
-            for (std::size_t other = 0; other < listed.size(); ++other) {
-                if (other == slot)
-                    continue;
-                if (oamut::condition_met(condition, listed[other].manifest.id, versions[other]))
-                    return listed[slot].manifest.id + " conflicts with " +
-                           listed[other].manifest.id;
-            }
-        }
-    }
-    return {};
-}
-
 /// Refuses the whole list. Nothing is mounted and no script runs.
 void refuse_list(PipelineResult& result, std::string refusal) {
     result.refusal = std::move(refusal);
@@ -3267,6 +3222,50 @@ PipelineResult run_checked(oa::AssetStore& store, const PipelineInput& input) {
 }
 
 } // namespace
+
+std::string
+list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::string>& versions) {
+    if (listed.size() > max_mutators) {
+        return "a loadout lists " + std::to_string(listed.size()) + " mutators, and " +
+               std::to_string(max_mutators) + " is the most";
+    }
+    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
+        for (std::size_t earlier = 0; earlier < slot; ++earlier) {
+            if (listed[slot].manifest.id == listed[earlier].manifest.id)
+                return listed[slot].manifest.id + " is listed twice";
+        }
+    }
+    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
+        for (const oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
+            bool met = false;
+            for (std::size_t earlier = 0; earlier < slot; ++earlier) {
+                if (oamut::condition_met(condition, listed[earlier].manifest.id, versions[earlier]))
+                    met = true;
+            }
+            if (!met) {
+                std::string message = listed[slot].manifest.id + " needs " + condition.id;
+                if (!condition.range_text.empty()) {
+                    message += " ";
+                    message += condition.range_text;
+                }
+                message += " above it";
+                return message;
+            }
+        }
+    }
+    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
+        for (const oamut::Condition& condition : listed[slot].manifest.conflicts_with) {
+            for (std::size_t other = 0; other < listed.size(); ++other) {
+                if (other == slot)
+                    continue;
+                if (oamut::condition_met(condition, listed[other].manifest.id, versions[other]))
+                    return listed[slot].manifest.id + " conflicts with " +
+                           listed[other].manifest.id;
+            }
+        }
+    }
+    return {};
+}
 
 bool PipelineResult::playable() const noexcept {
     if (!refusal.empty())

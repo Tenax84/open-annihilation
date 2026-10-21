@@ -13,7 +13,7 @@ desktop. `open-annihilation --help` lists the same options.
 - [Starting the program](#starting-the-program): where the program is, and
   how it reads its options and 3.1c's switches
 - [Every option](#every-option), by group: information; game data, folders
-  and files; mods; display and sound; network play; launch; status;
+  and files; mods; mutators; display and sound; network play; launch; status;
   recordings and video; checks; tools
 - [Ways to launch a game](#ways-to-launch-a-game), and
   [examples](#examples) to copy
@@ -176,6 +176,23 @@ line, and exits. It needs `--mod FILE`, `--mod-dir PATH` or `--game-dir PATH`.
 The profile comes first, so a program that reads the profile's JSON still
 finds it at the start of the output. The version line is the last line.
 
+### Mutators
+
+| Option | What it does |
+|---|---|
+| `--mutator PATH\|ID[:OPTION=VALUE,...]` | Applies one mutator to every match this run starts. Repeat it for several, in the order given, each acting on the game as the ones before it left it. `PATH` is a package folder, one that holds `oamut.yaml`. `ID` is a mutator installed in the Mutators folder. Options follow the first `:` that is followed by a name and `=`, as `name=value` pairs joined by `,`. A toggle is `true` or `false`, a choice one of its values, and a number a step inside its range. |
+
+`--mutator packages/ridge-swift:factor=4` plays the package at that path
+with `factor` set to 4. `--mutator ridge-swift --mutator ridge-tough`
+plays two installed mutators, ridge-swift first.
+
+A value that is not that form, including an id followed by `:` and no
+option, is refused with status 1. A mutator that is not installed, an
+option it does not have, a value outside its choices, or a list the
+manifests refuse (one id twice, a prerequisite that is not above it, or
+two that conflict) is refused with status 2, before the game starts. An
+id is refused the same way when no player folder can be worked out.
+
 ### Display and sound
 
 | Option | What it does |
@@ -329,6 +346,7 @@ Network play's own checks, the last rows, are in every build.
 | `--check-gadget-art-per-match` | Plays three skirmishes and checks a download button's picture appears only in the match whose mod folder holds it. |
 | `--check-factory-orders` | Gives a Kbot Lab a move and checks the unit it builds carries it out. |
 | `--check-unit-speech` | Selects and orders the commander and checks what it says. |
+| `--check-mutator-layer` | Plays skirmishes with the mutators `--mutator` named and checks the commanders, and that a mutator which does not apply leaves no layer. |
 | `--check-download-builds` | Builds a unit from a download page. |
 | `--check-stockpile-builds` | Queues and builds rounds for every unit that stockpiles, through a save and a load. |
 | `--check-unit-page-memory` | Checks each unit keeps its order page through reselection, a save and a load. |
@@ -1246,7 +1264,7 @@ the -c file in src/app/netgame/launch_file.cpp, word for word. -->
 |---|---|
 | 0 | The player left the game. `--version`, `--help`, `-r`, `--list-content --json` and a `--print-profile` of a usable profile end with 0 too, and so does a check that passed. With `--quit-after-game`, the game ended. |
 | 1 | An option or a value was refused, an error stopped the game, such as game data it cannot read, or a check failed. A `--print-profile` of a profile with errors ends with 1. |
-| 2 | A launch the game cannot use: a launch file it cannot read, or that is neither kind; a field or an option out of range, or one that needs another; a map, a base game, an expansion or a mod that is not installed. |
+| 2 | A launch the game cannot use: a launch file it cannot read, or that is neither kind; a field or an option out of range, or one that needs another; a map, a base game, an expansion, a mod or a mutator that is not installed, or a mutator option it lacks or a value outside that option's choices, or a mutator list the manifests refuse. |
 | 3 | The game ran out of memory, and said so in a box and in `ErrorLog.txt` beside the program. With `--quit-after-game`, the player left the game or lost the connection. |
 | 77 | A check that cannot run on this machine. |
 
