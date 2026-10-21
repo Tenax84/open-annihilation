@@ -4639,8 +4639,9 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
         lobby.presence_records.block_player[slot] = record.player_id;
         // A 3.1c joiner cannot play a mutator room. Reason 8 is the text
         // that machine already shows. The line stays on this machine.
-        // A later block (ready, side, colour) is not an arrival.
-        if (arriving && host_is_local(lobby)) {
+        // A later block (ready, side, colour) is not an arrival. A guest
+        // posts the line and leaves the player seated; only the host refuses.
+        if (arriving) {
             const auto host = lobby_host_slot(lobby);
             const auto host_record = host == kNoSlot
                                          ? std::span<const uint8_t>{}
@@ -4656,9 +4657,11 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
                     "mutators.",
                     slot
                 );
-                lobby_reject(lobby, record.player_id, kRejectVersion);
-                flush(lobby);
-                return true;
+                if (host_is_local(lobby)) {
+                    lobby_reject(lobby, record.player_id, kRejectVersion);
+                    flush(lobby);
+                    return true;
+                }
             }
         }
         if (const auto* echoed = slot_info(lobby, slot)) {

@@ -1443,6 +1443,34 @@ void test_classic_stays_and_leaves() {
     }
 }
 
+/// A guest names a 3.1c joiner and does not refuse it.
+void test_guest_posts_the_refusal() {
+    const std::string join =
+        "*** Bo plays Total Annihilation 3.1c and cannot join a game with mutators.";
+    Room guest(false);
+    expect(
+        host_record_to(guest, encode_field(host_ready(), false, 0, ng::presence_record_max_bytes)),
+        "the guest keeps the host's mutators"
+    );
+    guest.seat(2, 0x300, false, false);
+    guest.lobby.presence_records.block_player[2] = 0;
+    std::snprintf(
+        mp::slot_player(guest.lobby, 2).name, sizeof mp::slot_player(guest.lobby, 2).name, "Bo"
+    );
+    expect(apply_block(guest, 0x300, false, false), "the guest applies the joiner's first block");
+    const auto once = room_lines(guest.lobby);
+    expect(
+        parts_fit(once) && joined_lines(once) == join, "the guest posts the line about the joiner"
+    );
+    expect(!sent_reject(guest, 0x300, 8), "a guest sends no refusal");
+    expect(
+        mp::slot_player(guest.lobby, 2).status == mp::kSlotRemote,
+        "the guest leaves the joiner seated"
+    );
+    expect(apply_block(guest, 0x300, false, false), "the guest applies a later block");
+    expect(room_lines(guest.lobby).size() == once.size(), "a later block posts nothing");
+}
+
 /// A long name and the German sentence are posted whole, in parts.
 void test_classic_lines_whole() {
     const char* long_name = "ABCDEFGHIJ0123456789";
@@ -1583,6 +1611,7 @@ int main() {
     test_classic_seated();
     test_classic_stays_and_leaves();
     test_classic_lines_whole();
+    test_guest_posts_the_refusal();
     if (g_failures != 0)
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;
