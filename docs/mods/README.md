@@ -464,6 +464,10 @@ Developer Mode is turned on or off there, so every player sees whether
 Open Annihilation and its Developer Mode are in use. 3.1c says nothing
 there; the engine differs on purpose.
 
+Developer Mode is the baseline under mutators. A mutator's value for the
+same parameter plays in the games that mutator runs, and the picker flags
+the overlap.
+
 ## For contributors
 
 The registry,

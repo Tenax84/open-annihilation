@@ -152,7 +152,7 @@ With one extension the combined table behaves as that extension's own.
 ## The version
 
 `OA_EXTENSION_API_VERSION` numbers the table's contract, and
-`oa::app::extension_api_version` is its typed copy. The version is 15. It
+`oa::app::extension_api_version` is its typed copy. The version is 16. It
 rises by one with each change to the contract: a hook added, removed or
 renamed; a hook's parameters, its return value or the meaning of leaving it
 null; when or in which order the engine calls it; what it may keep or must
@@ -168,6 +168,13 @@ and test extensions follow it in the same change; from 0.8.0 on, any change
 to a kit header raises the version. The kit stays provisional all the same
 ([ui-kit.md](ui-kit.md#provisional-until-it-is-stable)).
 
+Version 16 adds [`run_mutators`][ext]. It tells an extension how many
+mutators the run plays, their ids in order, and the simulation hash the run
+would have without them. That hash is 64 lower-case hexadecimal digits and
+equals [`simulation_hash`][ext] when none play. The two read the same
+profile and the same mutator digest, so they agree at the moment of the
+call. A running match keeps both until it ends. It is not a hook.
+
 An extension states the version it follows, so that a build against a
 table of another version stops until its author has read the change. The
 automation endpoint's fixture window
@@ -178,7 +185,7 @@ so:
 // The version of the engine's extension table these hooks follow. A build
 // against a table of another version stops here until the engine's change
 // has been read and the hooks follow it.
-constexpr uint32_t kExtensionApiVersionFollowed = 15;
+constexpr uint32_t kExtensionApiVersionFollowed = 16;
 static_assert(
     oa::app::extension_api_version == kExtensionApiVersionFollowed,
     "the engine's extension table changed: follow its change, then raise "
@@ -363,8 +370,8 @@ text calls ([`modern_text_chain`][ext], [`modern_text_layout`][ext],
 [`modern_text_pixels`][ext], [`message_log_text_size`][ext],
 [`game_text_preferences_of`][ext], [`game_text_preferences`][ext],
 [`set_focused_text_field`][ext]), [`read_game_file`][ext],
-[`set_extension_window_source`][ext], [`extension_clock`][ext] and
-[`simulation_hash`][ext].
+[`set_extension_window_source`][ext], [`extension_clock`][ext],
+[`simulation_hash`][ext] and, from version 16, [`run_mutators`][ext].
 
 ## The automation endpoint for an extension's windows
 
@@ -459,3 +466,5 @@ One line per version; the paragraphs of
 - 15: the OA UI kit
   ([src/app/README.md](../../src/app/README.md#extensions),
   [ui-kit.md](ui-kit.md)).
+- 16: `run_mutators`
+  ([extension.hpp][ext]).

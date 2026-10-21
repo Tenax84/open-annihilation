@@ -417,6 +417,8 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
         line += " matched nothing";
         return line;
     }
+    if (conflict.kind == ConflictKind::hack_note)
+        return conflict.detail;
     if (conflict.kind == ConflictKind::value_past_limit) {
         std::string line = names;
         line += " kept";

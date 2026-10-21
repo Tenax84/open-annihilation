@@ -9,11 +9,11 @@
 // winning: the 3.1c baseline while the entry is absent or false; the
 // registry default once it is on; a named preset; the profile's own value;
 // the player's settings, for install and match parameters the profile binds;
-// the host's choice for one game, for match parameters; then the player's
-// own overrides of standard hacks (Developer Mode), each checked as a
-// profile's hack is and left out with a warning when it does not fit. (A
-// per-unit or per-weapon data key, the last step, applies to that unit or
-// weapon only, when its files are read.)
+// the player's own overrides of standard hacks (Developer Mode), each checked
+// as a profile's hack is and left out with a warning when it does not fit;
+// then the host's choice for one game, for match parameters, which therefore
+// wins over an override. (A per-unit or per-weapon data key, the last step,
+// applies to that unit or weapon only, when its files are read.)
 //
 // The profile is validated as it is read. A missing author or packaging
 // block, an unknown key, hack, script
@@ -147,6 +147,12 @@ struct Settings {
 struct MatchOption {
     std::string path{};  ///< ENTRY.PARAM, or an entry with a shorthand parameter
     std::string value{}; ///< the value, written as in a profile
+    /// Names who chose the value. Provenance reads "match <source>" when this
+    /// is set, and "match" when it is empty.
+    std::string source{};
+    /// Turn the entry on when the profile or an override leaves it off; only
+    /// for entries the registry marks mutator: true.
+    bool turn_on{};
 };
 
 /// Reads "ENTRY.PARAM=VALUE".
@@ -154,6 +160,34 @@ struct MatchOption {
 /// @param text the option
 /// @return the option, or nullopt without an '='
 [[nodiscard]] std::optional<MatchOption> parse_match_option(std::string_view text);
+
+/// The registry-only problem with a match option, without a profile.
+///
+/// A known ENTRY.PARAM or shorthand, adjustable per match, and a value of
+/// the right type inside its bounds. It does not ask whether the entry is
+/// in a profile. The message is the one resolving the option would report.
+///
+/// @param option the choice
+/// @return that message, or none when the registry accepts the choice
+[[nodiscard]] std::optional<std::string> match_option_problem(const MatchOption& option);
+
+/// The registry's reading of one match option.
+struct MatchOptionReading {
+    /// The refusal, or none when the registry accepts the value.
+    std::optional<std::string> problem{};
+    /// The value's normal form when it is accepted. Empty when it is refused.
+    std::string normal{};
+};
+
+/// The registry-only reading of a match option, including its normal form.
+///
+/// The same checks as `match_option_problem`. When the value is accepted,
+/// `normal` is the text the registry stores, so a comment after a number
+/// is not part of the value.
+///
+/// @param option the choice
+/// @return the refusal, or the value's normal form
+[[nodiscard]] MatchOptionReading match_option_reading(const MatchOption& option);
 
 /// What resolution takes besides the profile.
 struct ResolveOptions {
@@ -163,8 +197,9 @@ struct ResolveOptions {
     /// for development; a player's run refuses them.
     bool accept_unimplemented_hacks{};
     /// The player's overrides of standard hacks, laid over the profile after
-    /// its own steps, the settings and the match options: each turns its hack
-    /// on or off and sets the parameters it names. Each is checked as a
+    /// its own steps and the settings, and before the host's match choices:
+    /// each turns its hack on or off and sets the parameters it names. Each
+    /// is checked as a
     /// profile's hack is (a known hack and parameters, every value fitting
     /// its parameter, the hack's constraints kept, the hack implemented to be
     /// turned on, and off only while no data key needs it); one that fails is
