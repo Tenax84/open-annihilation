@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 // SPDX-License-Identifier: GPL-3.0-only
 
-// Journal order, and the stacking notes of the files layer, the rules pass
-// and the hooks turned into conflicts. The sentences are the log lines.
+// Journal order, and the stacking notes of the files layer, each mutator's
+// rules and its hooks turned into conflicts. The sentences are the log lines.
 #include "oa/data/mutators/journal.hpp"
 
 #include <algorithm>
@@ -77,12 +77,12 @@ uint16_t first_mutator(const JournalEntry& entry) {
 /// @param right another entry
 /// @return true when `left` sorts first
 bool entry_before(const JournalEntry& left, const JournalEntry& right) {
-    if (left.phase != right.phase)
-        return static_cast<uint8_t>(left.phase) < static_cast<uint8_t>(right.phase);
     const uint16_t left_mutator = first_mutator(left);
     const uint16_t right_mutator = first_mutator(right);
     if (left_mutator != right_mutator)
         return left_mutator < right_mutator;
+    if (left.phase != right.phase)
+        return static_cast<uint8_t>(left.phase) < static_cast<uint8_t>(right.phase);
     if (left.path != right.path && less_text(left.path, right.path))
         return true;
     if (left.path != right.path && less_text(right.path, left.path))
@@ -282,13 +282,14 @@ Conflict conflict_from_rule(const rules::RuleNote& note, std::span<const std::st
         conflict.severity = Severity::note;
         conflict.kind = ConflictKind::matched_nothing;
         break;
-    case rules::NoteKind::clamp_widened:
-        conflict.severity = Severity::warning;
-        conflict.kind = ConflictKind::clamp_widened;
+    case rules::NoteKind::value_replaced:
+        conflict.severity = Severity::note;
+        conflict.kind = ConflictKind::value_replaced;
         break;
-    case rules::NoteKind::text_assignments_cancel:
-    case rules::NoteKind::text_cancelled_by_number:
-    case rules::NoteKind::text_assignment_lost_to_append:
+    case rules::NoteKind::field_locked:
+        conflict.severity = Severity::note;
+        conflict.kind = ConflictKind::field_locked;
+        break;
     case rules::NoteKind::factor_on_absent_field:
     case rules::NoteKind::not_a_number:
         conflict.severity = Severity::note;
@@ -370,15 +371,40 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
         }
         return line;
     }
-    if (conflict.kind == ConflictKind::clamp_widened) {
-        std::string line = names;
-        line += " widened a clamp";
+    if (conflict.kind == ConflictKind::value_replaced) {
+        const std::string earlier = earlier_names(conflict, ids);
+        std::string line = winner_name(conflict, ids);
+        line += " replaced ";
+        line += earlier.empty() ? std::string("an earlier mutator") : earlier;
+        line += "'s value";
         append_place(line, conflict);
+        return line;
+    }
+    if (conflict.kind == ConflictKind::field_locked) {
+        const std::string locker = earlier_names(conflict, ids);
+        std::string line = locker.empty() ? std::string("an earlier mutator") : locker;
+        line += " locked";
+        if (!conflict.path.empty()) {
+            line += " ";
+            line += conflict.path;
+        }
+        if (!conflict.field.empty()) {
+            line += " ";
+            line += conflict.field;
+        }
+        line += ", so ";
+        line += winner_name(conflict, ids);
+        line += " left it alone";
         return line;
     }
     if (conflict.kind == ConflictKind::text_change_dropped) {
         std::string line = names;
-        line += " dropped a text change";
+        // A factor on an absent field shares this kind with a dropped text
+        // change. The rules note's own sentence is what tells them apart.
+        if (conflict.detail.find("a factor") != std::string::npos)
+            line += " found no value to scale";
+        else
+            line += " dropped a text change";
         append_place(line, conflict);
         return line;
     }

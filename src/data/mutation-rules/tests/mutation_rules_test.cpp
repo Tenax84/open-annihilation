@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 // SPDX-License-Identifier: GPL-3.0-only
 
-// The combination algebra: stacked factors, meta values, clamps, text,
-// needs on fields a record leaves out, and the folders a target names.
-// Expected numbers are written out. The stacked-factor order check is the
-// exception: it multiplies the parsed factors in the same bit order as the pass.
+// Rules applied as steps. Each mutator reads the documents the mutator before
+// it left, and each change is written before the next is read. Expected
+// numbers are written out. One check multiplies three scales in file order
+// and in bit order, and the step must follow the file.
 
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/mutation_rules/apply.hpp"
@@ -33,62 +33,11 @@ namespace tdf = oa::formats::tdf;
 namespace sm = oa::formats::soft_mutator;
 namespace defs = oa::data::defs;
 
-constexpr std::string_view k_ridgecom = R"([UNITINFO]
-{
-UnitName=RIDGECOM;
-Commander=1;
-BMcode=1;
-Builder=1;
-EnergyMake=25;
-MetalMake=1;
-BuildDistance=60;
-WorkerTime=300;
-}
-)";
-
 constexpr std::string_view k_ridgetank = R"([UNITINFO]
 {
 UnitName=RIDGETANK;
 MaxDamage=15000;
 MaxVelocity=2;
-}
-)";
-
-constexpr std::string_view k_bounty = R"([*Group*]
-{
-[Needs]
-{
-Commander=1,1;
-BMcode=1,1;
-}
-[Changes]
-{
-EnergyMake=^1000;
-EnergyStorage=^3000;
-MetalMake=^50;
-MetalStorage=^1000;
-BuildDistance=*1.5;
-WorkerTime=*2;
-}
-}
-)";
-
-constexpr std::string_view k_bounty_deluxe = R"([*Group*]
-{
-[Needs]
-{
-Commander=1,1;
-BMcode=1,1;
-}
-[Changes]
-{
-EnergyMake=^4000;
-EnergyStorage=^12000;
-MetalMake=^200;
-MetalStorage=^4000;
-BuildDistance=*2;
-WorkerTime=*3;
-}
 }
 )";
 
@@ -326,6 +275,43 @@ bool mutators_are(const std::vector<std::string>& got, std::initializer_list<con
     return true;
 }
 
+/// Applies mutators one step at a time, keeping lock marks between steps.
+///
+/// @param list mutators in list order
+/// @param docs documents to edit
+/// @param options layout and field check
+/// @return the writes and notes of every step, in step order
+rules::ApplyResult apply_list(
+    const std::vector<rules::MutatorRules>& list,
+    rules::DocumentSet& docs,
+    const rules::ApplyOptions& options
+) {
+    rules::ApplyState state;
+    rules::ApplyResult all;
+    for (const rules::MutatorRules& one : list) {
+        rules::ApplyResult step = rules::apply_step(one, docs, state, options);
+        for (rules::FieldWrite& write : step.writes)
+            all.writes.push_back(std::move(write));
+        for (rules::RuleNote& note : step.notes)
+            all.notes.push_back(std::move(note));
+    }
+    return all;
+}
+
+const rules::FieldWrite* last_write(
+    const rules::ApplyResult& result,
+    std::string_view path,
+    std::string_view block,
+    std::string_view key
+) {
+    const rules::FieldWrite* found = nullptr;
+    for (const rules::FieldWrite& write : result.writes) {
+        if (write.path == path && write.block == block && write.key == key)
+            found = &write;
+    }
+    return found;
+}
+
 void document_set() {
     rules::DocumentSet docs;
     std::string error;
@@ -374,7 +360,7 @@ void stacking_factors() {
         OA_CHECK(add_text(
             docs,
             "units/RIDGEFAB.fbi",
-            "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nBuilder=1;\nWorkerTime=30;\n}\n"
+            "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nBuilder=1;\nWorkerTime=300;\n}\n"
         ));
         OA_CHECK(add_text(
             docs, "units/RIDGEIDLE.fbi", "[UNITINFO]\n{\nUnitName=RIDGEIDLE;\nWorkerTime=10;\n}\n"
@@ -387,309 +373,351 @@ void stacking_factors() {
             list.push_back(rules_of("swift-hands-4x", k_swift_4));
             list.push_back(rules_of("swift-hands-2x", k_swift_2));
         }
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "240");
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "2400");
         expect_unit(docs, "units/RIDGEIDLE.fbi", "WorkerTime", "10");
         OA_CHECK(edited(docs, "units/RIDGEFAB.fbi"));
         OA_CHECK(!edited(docs, "units/RIDGEIDLE.fbi"));
-        OA_CHECK(result.writes.size() == 1);
-        const rules::FieldWrite* write = find_write(result, "units/RIDGEFAB.fbi", "", "WorkerTime");
+        OA_CHECK(result.writes.size() == 2);
+        const rules::FieldWrite* write = last_write(result, "units/RIDGEFAB.fbi", "", "WorkerTime");
         OA_CHECK(write != nullptr);
         if (write == nullptr)
             return;
         OA_CHECK(write->record == "RIDGEFAB");
-        OA_CHECK(write->old_text.has_value() && *write->old_text == "30");
-        OA_CHECK(write->new_text.has_value() && *write->new_text == "240");
+        OA_CHECK(write->new_text.has_value() && *write->new_text == "2400");
         if (!swapped)
-            OA_CHECK(mutators_are(write->mutators, {"swift-hands-2x", "swift-hands-4x"}));
+            OA_CHECK(mutators_are(write->mutators, {"swift-hands-4x"}));
         else
-            OA_CHECK(mutators_are(write->mutators, {"swift-hands-4x", "swift-hands-2x"}));
+            OA_CHECK(mutators_are(write->mutators, {"swift-hands-2x"}));
     };
     run(false);
     run(true);
 }
 
-/// One scale as the pass orders it: exact bits, then the rule text.
-struct OrderedFactor {
-    double value{};
-    uint64_t bits{};
-    std::string rule_text;
-};
-
-/// The tie text `apply` stores for one scale.
+/// Three scales in one mutator multiply in file order.
 ///
-/// @param source the rule source name
-/// @param line the line of the scale
-/// @return source, a colon, and the line
-std::string factor_tie(std::string_view source, uint32_t line) {
-    std::string text(source);
-    text.push_back(':');
-    text += std::to_string(line);
-    return text;
-}
-
-/// A group block whose one change scales WorkerTime, for a builder.
-///
-/// @param factor the scale, decimal digits only (no exponent mark)
-/// @return the rule file
-std::string worker_scale(std::string_view factor) {
-    std::string text = "[*Group*]\n{\n[Needs]\n{\nBuilder=1,1;\n}\n[Changes]\n{\nWorkerTime=*";
-    text += factor;
-    text += ";\n}\n}\n";
-    return text;
-}
-
-/// Orders factors the way the pass multiplies them.
-///
-/// @param left a factor
-/// @param right another factor
-/// @return true when `left` multiplies first
-bool factor_first(const OrderedFactor& left, const OrderedFactor& right) {
-    if (left.bits != right.bits)
-        return left.bits < right.bits;
-    return left.rule_text < right.rule_text;
-}
-
-/// The TDF spelling of a field's factors multiplied in bit order from 1.
-///
-/// @param factors scales, one per mutator, with the tie text the pass uses
-/// @return the spelling, or an empty string when it cannot be written
-std::string spelled_product(std::vector<OrderedFactor> factors) {
-    std::stable_sort(factors.begin(), factors.end(), factor_first);
-    double product = 1;
-    for (const OrderedFactor& factor : factors)
-        product *= factor.value;
-    const std::optional<std::string> spelled = tdf::format_number(product);
-    if (!spelled.has_value())
-        return {};
-    return *spelled;
-}
-
-/// Twenty-four factors in several list orders, and three scales in one mutator.
-///
-/// The stacked product is not the same double in every list order. Every order
-/// must spell the bit-sorted product. One mutator's three scales stay in file
-/// order: sorting those three by their bits spells a different number.
-void factor_product_order() {
-    constexpr const char* k_factors[] = {
-        "0.13",  "83.7",  "0.152", "91.1",  "0.174", "98.5",  "0.196", "105.9",
-        "0.218", "113.3", "0.24",  "120.7", "0.262", "128.1", "0.284", "135.5",
-        "0.306", "142.9", "0.328", "150.3", "0.35",  "157.7", "0.372", "165.1",
-    };
-    constexpr int k_count = 24;
-    constexpr int k_orders[][k_count] = {
-        {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23},
-        {23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
-        {7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6},
-        {12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
-        {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22},
-        {22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 0, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1},
-    };
-    constexpr std::string_view k_source = "rules/legacy.sm";
-    std::vector<OrderedFactor> canonical;
-    canonical.reserve(k_count);
-    for (const char* factor : k_factors) {
-        const std::string text = worker_scale(factor);
-        const sm::ParseResult parsed = parse_sm(text);
-        OA_CHECK(!parsed.has_errors());
-        OA_CHECK(parsed.rules.blocks.size() == 1);
-        OA_CHECK(parsed.rules.blocks[0].changes.size() == 1);
-        if (parsed.has_errors() || parsed.rules.blocks.size() != 1 ||
-            parsed.rules.blocks[0].changes.empty())
-            return;
-        const sm::Change& change = parsed.rules.blocks[0].changes[0];
-        OrderedFactor term;
-        term.value = change.value;
-        term.bits = std::bit_cast<uint64_t>(change.value);
-        term.rule_text = factor_tie(k_source, change.line);
-        canonical.push_back(std::move(term));
-    }
-    const std::string want = spelled_product(canonical);
-    OA_CHECK(!want.empty());
-    std::string first_bytes;
-    for (const auto& order : k_orders) {
-        rules::DocumentSet docs;
-        OA_CHECK(add_text(
-            docs,
-            "units/RIDGEFAB.fbi",
-            "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nBuilder=1;\nWorkerTime=1;\n}\n"
-        ));
-        std::vector<rules::MutatorRules> list;
-        for (int place = 0; place < k_count; ++place) {
-            const int factor_index = order[place];
-            std::string name = "pile-";
-            if (factor_index < 10)
-                name.push_back('0');
-            name += std::to_string(factor_index);
-            list.push_back(rules_of(std::move(name), worker_scale(k_factors[factor_index])));
-        }
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", want);
-        const rules::FieldWrite* write = find_write(result, "units/RIDGEFAB.fbi", "", "WorkerTime");
-        OA_CHECK(write != nullptr && write->new_text.has_value());
-        if (write == nullptr || !write->new_text.has_value())
-            return;
-        if (first_bytes.empty())
-            first_bytes = *write->new_text;
-        OA_CHECK(*write->new_text == first_bytes);
-        OA_CHECK(*write->new_text == want);
-    }
-    {
-        rules::DocumentSet docs;
-        OA_CHECK(add_text(
-            docs,
-            "units/RIDGEFAB.fbi",
-            "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nBuilder=1;\nWorkerTime=1;\n}\n"
-        ));
-        const std::string text = "[*Group*]\n{\n[Needs]\n{\nBuilder=1,1;\n}\n[Changes]\n{\n"
-                                 "WorkerTime=*0.000000000001;\nWorkerTime=*1000000000000;\n"
-                                 "WorkerTime=*100000000000;\n}\n}\n";
-        const sm::ParseResult parsed = parse_sm(text);
-        OA_CHECK(!parsed.has_errors());
-        OA_CHECK(parsed.rules.blocks.size() == 1);
-        if (parsed.has_errors() || parsed.rules.blocks.size() != 1)
-            return;
-        double file_order = 1;
-        std::vector<OrderedFactor> by_bits;
-        for (const sm::Change& change : parsed.rules.blocks[0].changes) {
-            file_order *= change.value;
-            OrderedFactor term;
-            term.value = change.value;
-            term.bits = std::bit_cast<uint64_t>(change.value);
-            term.rule_text = factor_tie(k_source, change.line);
-            by_bits.push_back(std::move(term));
-        }
-        const std::optional<std::string> file_spelled = tdf::format_number(file_order);
-        const std::string bit_spelled = spelled_product(by_bits);
-        OA_CHECK(file_spelled.has_value());
-        OA_CHECK(file_spelled.has_value() && *file_spelled != bit_spelled);
-        std::vector<rules::MutatorRules> list;
-        list.push_back(rules_of("wide-steps", text));
-        static_cast<void>(rules::apply_rules(list, docs, {}));
-        if (file_spelled.has_value())
-            expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", *file_spelled);
-    }
-}
-
-void expect_bounty(rules::DocumentSet& docs, const rules::ApplyResult& result, bool with_swift) {
-    expect_unit(docs, "units/RIDGECOM.fbi", "EnergyMake", "2500");
-    expect_unit(docs, "units/RIDGECOM.fbi", "EnergyStorage", "7500");
-    expect_unit(docs, "units/RIDGECOM.fbi", "MetalMake", "125");
-    expect_unit(docs, "units/RIDGECOM.fbi", "MetalStorage", "2500");
-    expect_unit(docs, "units/RIDGECOM.fbi", "BuildDistance", "180");
-    expect_unit(docs, "units/RIDGECOM.fbi", "WorkerTime", with_swift ? "14400" : "1800");
-    const rules::FieldWrite* energy = find_write(result, "units/RIDGECOM.fbi", "", "EnergyMake");
-    const rules::FieldWrite* store = find_write(result, "units/RIDGECOM.fbi", "", "EnergyStorage");
-    const rules::FieldWrite* metal = find_write(result, "units/RIDGECOM.fbi", "", "MetalMake");
-    const rules::FieldWrite* metal_store =
-        find_write(result, "units/RIDGECOM.fbi", "", "MetalStorage");
-    const rules::FieldWrite* distance =
-        find_write(result, "units/RIDGECOM.fbi", "", "BuildDistance");
-    const rules::FieldWrite* worker = find_write(result, "units/RIDGECOM.fbi", "", "WorkerTime");
-    OA_CHECK(energy != nullptr && store != nullptr && metal != nullptr && metal_store != nullptr);
-    OA_CHECK(distance != nullptr && worker != nullptr);
-    if (energy == nullptr || store == nullptr || worker == nullptr)
+/// The product is the value each scale writes, read back, then scaled again.
+/// Sorting the same factors by their bits is a different number, and the step
+/// does not use that order.
+void scales_in_file_order() {
+    const std::string text = "[*Group*]\n{\n[Needs]\n{\nBuilder=1,1;\n}\n[Changes]\n{\n"
+                             "WorkerTime=*0.000000000001;\nWorkerTime=*1000000000000;\n"
+                             "WorkerTime=*100000000000;\n}\n}\n";
+    const sm::ParseResult parsed = parse_sm(text);
+    OA_CHECK(!parsed.has_errors());
+    OA_CHECK(parsed.rules.blocks.size() == 1);
+    if (parsed.has_errors() || parsed.rules.blocks.size() != 1 ||
+        parsed.rules.blocks[0].changes.size() != 3)
         return;
-    OA_CHECK(mutators_are(energy->mutators, {"command-bounty", "command-bounty-deluxe"}));
-    OA_CHECK(!store->old_text.has_value());
-    OA_CHECK(store->new_text.has_value() && *store->new_text == "7500");
-    OA_CHECK(metal_store != nullptr && !metal_store->old_text.has_value());
-    OA_CHECK(
-        metal_store != nullptr && metal_store->new_text.has_value() &&
-        *metal_store->new_text == "2500"
-    );
-    if (with_swift) {
-        OA_CHECK(mutators_are(
-            worker->mutators,
-            {"command-bounty", "command-bounty-deluxe", "swift-hands-2x", "swift-hands-4x"}
-        ));
-    } else {
-        OA_CHECK(mutators_are(worker->mutators, {"command-bounty", "command-bounty-deluxe"}));
+    std::string stepped = "1";
+    std::vector<double> by_bits;
+    for (const sm::Change& change : parsed.rules.blocks[0].changes) {
+        const double value = tdf::parse_double(stepped.c_str()) * change.value;
+        const std::optional<std::string> spelled = tdf::format_number(value);
+        OA_CHECK(spelled.has_value());
+        if (!spelled.has_value())
+            return;
+        stepped = *spelled;
+        by_bits.push_back(change.value);
     }
+    std::stable_sort(by_bits.begin(), by_bits.end(), [](double left, double right) {
+        return std::bit_cast<uint64_t>(left) < std::bit_cast<uint64_t>(right);
+    });
+    double bits_product = 1;
+    for (const double factor : by_bits)
+        bits_product *= factor;
+    const std::optional<std::string> bits_spelled = tdf::format_number(bits_product);
+    OA_CHECK(bits_spelled.has_value() && *bits_spelled != stepped);
+    rules::DocumentSet docs;
+    OA_CHECK(add_text(
+        docs,
+        "units/RIDGEFAB.fbi",
+        "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nBuilder=1;\nWorkerTime=1;\n}\n"
+    ));
+    std::vector<rules::MutatorRules> list;
+    list.push_back(rules_of("wide-steps", text));
+    static_cast<void>(apply_list(list, docs, {}));
+    expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", stepped);
 }
 
-void command_bounty() {
-    {
-        rules::DocumentSet docs;
-        OA_CHECK(add_text(docs, "units/RIDGECOM.fbi", k_ridgecom));
-        std::vector<rules::MutatorRules> list;
-        list.push_back(rules_of("command-bounty", k_bounty));
-        list.push_back(rules_of("command-bounty-deluxe", k_bounty_deluxe));
-        list.push_back(rules_of("plain-income", "[*All*]\n{\nEnergyMake=5;\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_bounty(docs, result, false);
-        OA_CHECK(result.writes.size() == 6);
-    }
-    {
-        rules::DocumentSet docs;
-        OA_CHECK(add_text(docs, "units/RIDGECOM.fbi", k_ridgecom));
-        std::vector<rules::MutatorRules> list;
-        list.push_back(rules_of("command-bounty-deluxe", k_bounty_deluxe));
-        list.push_back(rules_of("command-bounty", k_bounty));
-        list.push_back(rules_of("plain-income", "[*All*]\n{\nEnergyMake=*10;\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGECOM.fbi", "EnergyMake", "2500");
-        expect_unit(docs, "units/RIDGECOM.fbi", "WorkerTime", "1800");
-        const rules::FieldWrite* energy =
-            find_write(result, "units/RIDGECOM.fbi", "", "EnergyMake");
-        OA_CHECK(energy != nullptr);
-        if (energy != nullptr)
-            OA_CHECK(mutators_are(energy->mutators, {"command-bounty-deluxe", "command-bounty"}));
-    }
-    {
-        rules::DocumentSet docs;
-        OA_CHECK(add_text(docs, "units/RIDGECOM.fbi", k_ridgecom));
-        std::vector<rules::MutatorRules> list;
-        list.push_back(rules_of("command-bounty", k_bounty));
-        list.push_back(rules_of("command-bounty-deluxe", k_bounty_deluxe));
-        list.push_back(rules_of("swift-hands-2x", k_swift_2));
-        list.push_back(rules_of("swift-hands-4x", k_swift_4));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_bounty(docs, result, true);
-    }
-}
-
-void widened_clamp() {
+void storage_factors() {
     auto run = [](bool swapped) {
         rules::DocumentSet docs;
-        OA_CHECK(add_text(docs, "units/RIDGETANK.fbi", k_ridgetank));
-        rules::MutatorRules skin = rules_of("iron-skin", "[*All*]\n{\nMaxDamage=*2(1,29900);\n}\n");
-        rules::MutatorRules arms =
-            rules_of("long-arms", "[*All*]\n{\nMaxDamage=*1.5(1,60000);\n}\n");
+        OA_CHECK(add_text(
+            docs,
+            "units/RIDGECOM.fbi",
+            "[UNITINFO]\n{\nUnitName=RIDGECOM;\nEnergyStorage=1000;\nMetalStorage=250;\n}\n"
+        ));
+        rules::MutatorRules two =
+            rules_of("wide-hold-2x", "[*All*]\n{\nEnergyStorage=*2;\nMetalStorage=*2;\n}\n");
+        rules::MutatorRules four =
+            rules_of("wide-hold-4x", "[*All*]\n{\nEnergyStorage=*4;\nMetalStorage=*4;\n}\n");
         std::vector<rules::MutatorRules> list;
         if (!swapped) {
-            list.push_back(std::move(skin));
-            list.push_back(std::move(arms));
+            list.push_back(std::move(two));
+            list.push_back(std::move(four));
         } else {
-            list.push_back(std::move(arms));
-            list.push_back(std::move(skin));
+            list.push_back(std::move(four));
+            list.push_back(std::move(two));
         }
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGETANK.fbi", "MaxDamage", "45000");
-        OA_CHECK(count_kind(result, rules::NoteKind::clamp_widened) == 1);
-        const rules::RuleNote* note = find_note(result, rules::NoteKind::clamp_widened);
-        OA_CHECK(note != nullptr);
-        if (note != nullptr) {
-            OA_CHECK(mutators_are(note->mutators, {"iron-skin"}));
-            OA_CHECK(note->message.find("iron-skin") != std::string::npos);
-            OA_CHECK(note->message.find("45000") != std::string::npos);
-            OA_CHECK(note->message.find("29900") != std::string::npos);
-            OA_CHECK(note->message.find("60000") != std::string::npos);
-        }
-        const rules::FieldWrite* write = find_write(result, "units/RIDGETANK.fbi", "", "MaxDamage");
-        OA_CHECK(write != nullptr && write->new_text.has_value() && *write->new_text == "45000");
+        static_cast<void>(apply_list(list, docs, {}));
+        expect_unit(docs, "units/RIDGECOM.fbi", "EnergyStorage", "8000");
+        expect_unit(docs, "units/RIDGECOM.fbi", "MetalStorage", "2000");
     };
     run(false);
     run(true);
+}
+
+std::string gate_text(const char* name) {
+    const char* value = "800";
+    if (std::string(name) == "ridge-frugal")
+        value = "200";
+    else if (std::string(name) == "ridge-moderate")
+        value = "400";
+    std::string text = "[*All*]\n{\nEnergyMake=";
+    text += value;
+    text += ";\n}\n";
+    return text;
+}
+
+void gate_incomes() {
+    auto pair = [](const char* first, const char* second, const char* want) {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs, "units/RIDGEGATE.fbi", "[UNITINFO]\n{\nUnitName=RIDGEGATE;\nEnergyMake=100;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of(first, gate_text(first)));
+        list.push_back(rules_of(second, gate_text(second)));
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGEGATE.fbi", "EnergyMake", want);
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 1);
+        const rules::RuleNote* note = find_note(result, rules::NoteKind::value_replaced);
+        OA_CHECK(note != nullptr && mutators_are(note->mutators, {first, second}));
+    };
+    pair("ridge-frugal", "ridge-moderate", "400");
+    pair("ridge-moderate", "ridge-frugal", "200");
+    {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs, "units/RIDGEGATE.fbi", "[UNITINFO]\n{\nUnitName=RIDGEGATE;\nEnergyMake=100;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of("ridge-frugal", gate_text("ridge-frugal")));
+        list.push_back(rules_of("ridge-moderate", gate_text("ridge-moderate")));
+        list.push_back(rules_of("ridge-grand", gate_text("ridge-grand")));
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGEGATE.fbi", "EnergyMake", "800");
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 2);
+        const rules::FieldWrite* write =
+            last_write(result, "units/RIDGEGATE.fbi", "", "EnergyMake");
+        OA_CHECK(write != nullptr && mutators_are(write->mutators, {"ridge-grand"}));
+    }
+}
+
+void stacked_removals() {
+    auto run = [](bool swapped) {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs,
+            "units/RIDGEPLANE.fbi",
+            "[UNITINFO]\n{\nUnitName=RIDGEPLANE;\nCopyright=Ridge;\n}\n"
+        ));
+        rules::MutatorRules sky = rules_of("clear-sky", "[*All*]\n{\nCopyright=\"\";\n}\n");
+        rules::MutatorRules ground = rules_of("close-ground", "[*All*]\n{\nCopyright=\"\";\n}\n");
+        std::vector<rules::MutatorRules> list;
+        if (!swapped) {
+            list.push_back(std::move(sky));
+            list.push_back(std::move(ground));
+        } else {
+            list.push_back(std::move(ground));
+            list.push_back(std::move(sky));
+        }
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_absent_unit(docs, "units/RIDGEPLANE.fbi", "Copyright");
+        OA_CHECK(edited(docs, "units/RIDGEPLANE.fbi"));
+        OA_CHECK(result.writes.size() == 1);
+        const rules::FieldWrite* write =
+            find_write(result, "units/RIDGEPLANE.fbi", "", "Copyright");
+        OA_CHECK(write != nullptr && !write->new_text.has_value());
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 0);
+    };
+    run(false);
+    run(true);
+}
+
+void weapon_text() {
+    auto run = [](bool hot_last, const char* want) {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs, "units/RIDGEFAST.fbi", "[UNITINFO]\n{\nUnitName=RIDGEFAST;\nWeapon1=NONE;\n}\n"
+        ));
+        rules::MutatorRules zip = rules_of("ridge-zip", "[*All*]\n{\nWeapon1=\"RIDGE_ZIP\";\n}\n");
+        rules::MutatorRules hot = rules_of("ridge-hot", "[*All*]\n{\nWeapon1=\"RIDGE_HOT\";\n}\n");
+        std::vector<rules::MutatorRules> list;
+        if (hot_last) {
+            list.push_back(std::move(zip));
+            list.push_back(std::move(hot));
+        } else {
+            list.push_back(std::move(hot));
+            list.push_back(std::move(zip));
+        }
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGEFAST.fbi", "Weapon1", want);
+        const rules::RuleNote* note = find_note(result, rules::NoteKind::value_replaced);
+        OA_CHECK(note != nullptr);
+        if (note == nullptr)
+            return;
+        if (hot_last)
+            OA_CHECK(mutators_are(note->mutators, {"ridge-zip", "ridge-hot"}));
+        else
+            OA_CHECK(mutators_are(note->mutators, {"ridge-hot", "ridge-zip"}));
+    };
+    run(true, "RIDGE_HOT");
+    run(false, "RIDGE_ZIP");
+}
+
+void later_band() {
+    rules::DocumentSet docs;
+    OA_CHECK(add_text(
+        docs,
+        "units/RIDGECOM.fbi",
+        "[UNITINFO]\n{\nUnitName=RIDGECOM;\nBuildCostEnergy=34125;\nBuildCostMetal=29854;\n"
+        "CloakCost=1;\nCloakCostMoving=2;\n}\n"
+    ));
+    std::vector<rules::MutatorRules> list;
+    list.push_back(rules_of(
+        "ridge-cloak",
+        "[*Group*]\n{\n[Needs]\n{\nBuildCostEnergy=30000,40000;\n}\n[Changes]\n{\n"
+        "CloakCost=4;\nCloakCostMoving=8;\n}\n}\n"
+        "[*Group*]\n{\n[Needs]\n{\nBuildCostMetal=20000,40000;\n}\n[Changes]\n{\n"
+        "CloakCost=5;\nCloakCostMoving=10;\n}\n}\n"
+    ));
+    static_cast<void>(apply_list(list, docs, {}));
+    expect_unit(docs, "units/RIDGECOM.fbi", "CloakCost", "5");
+    expect_unit(docs, "units/RIDGECOM.fbi", "CloakCostMoving", "10");
+}
+
+void clamp_bounds_its_own_scale() {
+    auto run = [](bool clamp_first, const char* want) {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs,
+            "units/RIDGECOM.fbi",
+            "[UNITINFO]\n{\nUnitName=RIDGECOM;\nBuildCostEnergy=100;\n}\n"
+        ));
+        rules::MutatorRules bounded =
+            rules_of("ridge-near", "[*All*]\n{\nBuildCostEnergy=*10(1,150);\n}\n");
+        rules::MutatorRules open = rules_of("ridge-far", "[*All*]\n{\nBuildCostEnergy=*2;\n}\n");
+        std::vector<rules::MutatorRules> list;
+        if (clamp_first) {
+            list.push_back(std::move(bounded));
+            list.push_back(std::move(open));
+        } else {
+            list.push_back(std::move(open));
+            list.push_back(std::move(bounded));
+        }
+        static_cast<void>(apply_list(list, docs, {}));
+        expect_unit(docs, "units/RIDGECOM.fbi", "BuildCostEnergy", want);
+    };
+    run(true, "300");
+    run(false, "150");
     {
         rules::DocumentSet docs;
         OA_CHECK(add_text(docs, "units/RIDGETANK.fbi", k_ridgetank));
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("iron-skin", "[*All*]\n{\nMaxDamage=*2(1,29900);\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        static_cast<void>(apply_list(list, docs, {}));
         expect_unit(docs, "units/RIDGETANK.fbi", "MaxDamage", "29900");
-        OA_CHECK(count_kind(result, rules::NoteKind::clamp_widened) == 0);
     }
+}
+
+void lock_holds() {
+    {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs,
+            "units/RIDGECOM.fbi",
+            "[UNITINFO]\n{\nUnitName=RIDGECOM;\nEnergyMake=25;\nWorkerTime=300;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of("ridge-lock", "[*All*]\n{\nEnergyMake=^80;\n}\n"));
+        list.push_back(
+            rules_of("ridge-push", "[*All*]\n{\nEnergyMake=*2;\nEnergyMake=5;\nWorkerTime=*4;\n}\n")
+        );
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGECOM.fbi", "EnergyMake", "80");
+        expect_unit(docs, "units/RIDGECOM.fbi", "WorkerTime", "1200");
+        OA_CHECK(count_kind(result, rules::NoteKind::field_locked) == 2);
+        for (const rules::RuleNote& note : result.notes) {
+            if (note.kind != rules::NoteKind::field_locked)
+                continue;
+            OA_CHECK(mutators_are(note.mutators, {"ridge-lock", "ridge-push"}));
+            OA_CHECK(note.key == "EnergyMake");
+            OA_CHECK(note.message.find("ridge-lock") != std::string::npos);
+            OA_CHECK(note.message.find("ridge-push") != std::string::npos);
+        }
+    }
+    {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs, "units/RIDGECOM.fbi", "[UNITINFO]\n{\nUnitName=RIDGECOM;\nEnergyMake=25;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of("ridge-push", "[*All*]\n{\nEnergyMake=5;\n}\n"));
+        list.push_back(rules_of("ridge-lock", "[*All*]\n{\nEnergyMake=^80;\n}\n"));
+        list.push_back(rules_of("ridge-after", "[*All*]\n{\nEnergyMake=*2;\n}\n"));
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGECOM.fbi", "EnergyMake", "80");
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 1);
+        OA_CHECK(count_kind(result, rules::NoteKind::field_locked) == 1);
+        const rules::RuleNote* replaced = find_note(result, rules::NoteKind::value_replaced);
+        const rules::RuleNote* locked = find_note(result, rules::NoteKind::field_locked);
+        OA_CHECK(
+            replaced != nullptr && mutators_are(replaced->mutators, {"ridge-push", "ridge-lock"})
+        );
+        OA_CHECK(
+            locked != nullptr && mutators_are(locked->mutators, {"ridge-lock", "ridge-after"})
+        );
+    }
+    {
+        // A lock of the value the field already holds still marks it.
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs, "units/RIDGECOM.fbi", "[UNITINFO]\n{\nUnitName=RIDGECOM;\nEnergyMake=80;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of("ridge-lock", "[*All*]\n{\nEnergyMake=^80;\n}\n"));
+        list.push_back(rules_of("ridge-push", "[*All*]\n{\nEnergyMake=*2;\n}\n"));
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGECOM.fbi", "EnergyMake", "80");
+        OA_CHECK(result.writes.empty());
+        OA_CHECK(!edited(docs, "units/RIDGECOM.fbi"));
+        OA_CHECK(count_kind(result, rules::NoteKind::field_locked) == 1);
+        const rules::RuleNote* locked = find_note(result, rules::NoteKind::field_locked);
+        OA_CHECK(locked != nullptr && mutators_are(locked->mutators, {"ridge-lock", "ridge-push"}));
+    }
+}
+
+void clamps_do_not_join() {
+    auto value_of = [](std::vector<rules::MutatorRules> list) {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs, "units/RIDGETANK.fbi", "[UNITINFO]\n{\nUnitName=RIDGETANK;\nMaxDamage=40;\n}\n"
+        ));
+        static_cast<void>(apply_list(list, docs, {}));
+        const char* got = unit_value(docs, "units/RIDGETANK.fbi", "MaxDamage");
+        return got != nullptr ? std::string(got) : std::string();
+    };
+    std::vector<rules::MutatorRules> together;
+    together.push_back(
+        rules_of("ridge-plates", "[*All*]\n{\nMaxDamage=*2(1,50);\nMaxDamage=*3(1,1000);\n}\n")
+    );
+    std::vector<rules::MutatorRules> split;
+    split.push_back(rules_of("ridge-plates-a", "[*All*]\n{\nMaxDamage=*2(1,50);\n}\n"));
+    split.push_back(rules_of("ridge-plates-b", "[*All*]\n{\nMaxDamage=*3(1,1000);\n}\n"));
+    OA_CHECK(value_of(std::move(together)) == "150");
+    OA_CHECK(value_of(std::move(split)) == "150");
 }
 
 void text_rules() {
@@ -700,40 +728,45 @@ void text_rules() {
         ));
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("stretch", "[*All*]\n{\nMaxVelocity=*1.5;\n}\n"));
-        static_cast<void>(rules::apply_rules(list, docs, {}));
+        static_cast<void>(apply_list(list, docs, {}));
         expect_unit(docs, "units/RIDGEFAB.fbi", "MaxVelocity", "2.4");
         const tdf::Block* section = unit_section(docs, "units/RIDGEFAB.fbi");
         OA_CHECK(section != nullptr);
         if (section != nullptr)
             OA_CHECK(tdf::get_fixed(section, "MaxVelocity", 0) == 157286);
     }
-    auto average = [](bool swapped) {
+    auto later_number = [](bool swapped) {
         rules::DocumentSet docs;
         OA_CHECK(add_text(
             docs, "units/RIDGEFAB.fbi", "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nSightDistance=1;\n}\n"
         ));
+        rules::MutatorRules low = rules_of("low", "[*All*]\n{\nSightDistance=10;\n}\n");
+        rules::MutatorRules high = rules_of("high", "[*All*]\n{\nSightDistance=20;\n}\n");
         std::vector<rules::MutatorRules> list;
+        const char* first = "low";
+        const char* second = "high";
+        const char* want = "20";
         if (!swapped) {
-            list.push_back(rules_of("low", "[*All*]\n{\nSightDistance=10;\n}\n"));
-            list.push_back(rules_of("high", "[*All*]\n{\nSightDistance=20;\n}\n"));
+            list.push_back(std::move(low));
+            list.push_back(std::move(high));
         } else {
-            list.push_back(rules_of("high", "[*All*]\n{\nSightDistance=20;\n}\n"));
-            list.push_back(rules_of("low", "[*All*]\n{\nSightDistance=10;\n}\n"));
+            list.push_back(std::move(high));
+            list.push_back(std::move(low));
+            first = "high";
+            second = "low";
+            want = "10";
         }
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGEFAB.fbi", "SightDistance", "15");
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGEFAB.fbi", "SightDistance", want);
         const rules::FieldWrite* write =
-            find_write(result, "units/RIDGEFAB.fbi", "", "SightDistance");
-        OA_CHECK(write != nullptr);
-        if (write == nullptr)
-            return;
-        if (!swapped)
-            OA_CHECK(mutators_are(write->mutators, {"low", "high"}));
-        else
-            OA_CHECK(mutators_are(write->mutators, {"high", "low"}));
+            last_write(result, "units/RIDGEFAB.fbi", "", "SightDistance");
+        OA_CHECK(write != nullptr && mutators_are(write->mutators, {second}));
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 1);
+        const rules::RuleNote* note = find_note(result, rules::NoteKind::value_replaced);
+        OA_CHECK(note != nullptr && mutators_are(note->mutators, {first, second}));
     };
-    average(false);
-    average(true);
+    later_number(false);
+    later_number(true);
     {
         rules::DocumentSet docs;
         OA_CHECK(add_text(
@@ -741,51 +774,23 @@ void text_rules() {
         ));
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("armoury", "[*All*]\n{\nWeapon1=\"A\";\n}\n"));
-        static_cast<void>(rules::apply_rules(list, docs, {}));
+        static_cast<void>(apply_list(list, docs, {}));
         expect_unit(docs, "units/RIDGETANK.fbi", "Weapon1", "A");
     }
     {
         rules::DocumentSet docs;
         OA_CHECK(add_text(
-            docs, "units/RIDGETANK.fbi", "[UNITINFO]\n{\nUnitName=RIDGETANK;\nWeapon1=NONE;\n}\n"
-        ));
-        std::vector<rules::MutatorRules> list;
-        list.push_back(rules_of("armoury", "[*All*]\n{\nWeapon1=\"A\";\n}\n"));
-        list.push_back(rules_of("other-armoury", "[*All*]\n{\nWeapon1=\"B\";\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGETANK.fbi", "Weapon1", "NONE");
-        OA_CHECK(result.writes.empty());
-        OA_CHECK(!edited(docs, "units/RIDGETANK.fbi"));
-        OA_CHECK(count_kind(result, rules::NoteKind::text_assignments_cancel) == 1);
-    }
-    {
-        rules::DocumentSet docs;
-        OA_CHECK(add_text(
             docs, "units/RIDGETANK.fbi", "[UNITINFO]\n{\nUnitName=RIDGETANK;\nCopyright=Ridge;\n}\n"
         ));
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("one-clear", "[*All*]\n{\nCopyright=\"\";\n}\n"));
-        list.push_back(rules_of("other-clear", "[*All*]\n{\nCopyright=\"\";\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGETANK.fbi", "Copyright", "Ridge");
-        OA_CHECK(result.writes.empty());
-        OA_CHECK(!edited(docs, "units/RIDGETANK.fbi"));
-        OA_CHECK(count_kind(result, rules::NoteKind::text_assignments_cancel) == 1);
-    }
-    {
-        rules::DocumentSet docs;
-        OA_CHECK(add_text(
-            docs, "units/RIDGETANK.fbi", "[UNITINFO]\n{\nUnitName=RIDGETANK;\nCopyright=Ridge;\n}\n"
-        ));
-        std::vector<rules::MutatorRules> list;
-        list.push_back(rules_of("one-clear", "[*All*]\n{\nCopyright=\"\";\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        const rules::ApplyResult result = apply_list(list, docs, {});
         expect_absent_unit(docs, "units/RIDGETANK.fbi", "Copyright");
         const rules::FieldWrite* write = find_write(result, "units/RIDGETANK.fbi", "", "Copyright");
         OA_CHECK(write != nullptr && !write->new_text.has_value());
         OA_CHECK(write != nullptr && write->old_text.has_value() && *write->old_text == "Ridge");
     }
-    auto append = [](bool swapped, std::string_view want) {
+    auto append = [](bool swapped, std::string_view want, std::string_view middle) {
         rules::DocumentSet docs;
         OA_CHECK(add_text(
             docs, "units/RIDGETANK.fbi", "[UNITINFO]\n{\nUnitName=RIDGETANK;\nDescription=R;\n}\n"
@@ -793,27 +798,31 @@ void text_rules() {
         rules::MutatorRules idge = rules_of("idge", "[*All*]\n{\nDescription=\"idge\"+;\n}\n");
         rules::MutatorRules com = rules_of("com", "[*All*]\n{\nDescription=\"com\"+;\n}\n");
         std::vector<rules::MutatorRules> list;
+        const char* second = "com";
         if (!swapped) {
             list.push_back(std::move(idge));
             list.push_back(std::move(com));
         } else {
             list.push_back(std::move(com));
             list.push_back(std::move(idge));
+            second = "idge";
         }
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        const rules::ApplyResult result = apply_list(list, docs, {});
         expect_unit(docs, "units/RIDGETANK.fbi", "Description", want);
-        const rules::FieldWrite* write =
+        OA_CHECK(result.writes.size() == 2);
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 0);
+        const rules::FieldWrite* first_write =
             find_write(result, "units/RIDGETANK.fbi", "", "Description");
-        OA_CHECK(write != nullptr);
-        if (write == nullptr)
-            return;
-        if (!swapped)
-            OA_CHECK(mutators_are(write->mutators, {"idge", "com"}));
-        else
-            OA_CHECK(mutators_are(write->mutators, {"com", "idge"}));
+        const rules::FieldWrite* write =
+            last_write(result, "units/RIDGETANK.fbi", "", "Description");
+        OA_CHECK(
+            first_write != nullptr && first_write->new_text.has_value() &&
+            *first_write->new_text == middle
+        );
+        OA_CHECK(write != nullptr && mutators_are(write->mutators, {second}));
     };
-    append(false, "Ridgecom");
-    append(true, "Rcomidge");
+    append(false, "Ridgecom", "Ridge");
+    append(true, "Rcomidge", "Rcom");
     {
         rules::DocumentSet docs;
         OA_CHECK(add_text(
@@ -822,11 +831,13 @@ void text_rules() {
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("assigner", "[*All*]\n{\nWeapon1=\"A\";\n}\n"));
         list.push_back(rules_of("appender", "[*All*]\n{\nWeapon1=\"Z\"+;\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGETANK.fbi", "Weapon1", "QZ");
-        OA_CHECK(count_kind(result, rules::NoteKind::text_assignment_lost_to_append) == 1);
-        const rules::FieldWrite* write = find_write(result, "units/RIDGETANK.fbi", "", "Weapon1");
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGETANK.fbi", "Weapon1", "AZ");
+        OA_CHECK(result.writes.size() == 2);
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 0);
+        const rules::FieldWrite* write = last_write(result, "units/RIDGETANK.fbi", "", "Weapon1");
         OA_CHECK(write != nullptr && mutators_are(write->mutators, {"appender"}));
+        OA_CHECK(write != nullptr && write->new_text.has_value() && *write->new_text == "AZ");
     }
     {
         rules::DocumentSet docs;
@@ -836,11 +847,13 @@ void text_rules() {
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("scaler", "[*All*]\n{\nMaxDamage=*2;\n}\n"));
         list.push_back(rules_of("quoter", "[*All*]\n{\nMaxDamage=\"850\";\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGETANK.fbi", "MaxDamage", "200");
-        OA_CHECK(count_kind(result, rules::NoteKind::text_cancelled_by_number) == 1);
-        const rules::FieldWrite* write = find_write(result, "units/RIDGETANK.fbi", "", "MaxDamage");
-        OA_CHECK(write != nullptr && mutators_are(write->mutators, {"scaler"}));
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGETANK.fbi", "MaxDamage", "850");
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 1);
+        const rules::RuleNote* note = find_note(result, rules::NoteKind::value_replaced);
+        OA_CHECK(note != nullptr && mutators_are(note->mutators, {"scaler", "quoter"}));
+        const rules::FieldWrite* write = last_write(result, "units/RIDGETANK.fbi", "", "MaxDamage");
+        OA_CHECK(write != nullptr && mutators_are(write->mutators, {"quoter"}));
     }
     {
         rules::DocumentSet docs;
@@ -850,9 +863,12 @@ void text_rules() {
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("meta", "[*All*]\n{\nEnergyMake=^1000;\n}\n"));
         list.push_back(rules_of("quoter", "[*All*]\n{\nEnergyMake=\"nope\";\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        const rules::ApplyResult result = apply_list(list, docs, {});
         expect_unit(docs, "units/RIDGECOM.fbi", "EnergyMake", "1000");
-        OA_CHECK(count_kind(result, rules::NoteKind::text_cancelled_by_number) == 1);
+        OA_CHECK(count_kind(result, rules::NoteKind::field_locked) == 1);
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 0);
+        const rules::RuleNote* note = find_note(result, rules::NoteKind::field_locked);
+        OA_CHECK(note != nullptr && mutators_are(note->mutators, {"meta", "quoter"}));
         const rules::FieldWrite* write = find_write(result, "units/RIDGECOM.fbi", "", "EnergyMake");
         OA_CHECK(write != nullptr && mutators_are(write->mutators, {"meta"}));
     }
@@ -863,7 +879,7 @@ void text_rules() {
         ));
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("quoter", "[*All*]\n{\nMaxDamage=\"850\";\n}\n"));
-        static_cast<void>(rules::apply_rules(list, docs, {}));
+        static_cast<void>(apply_list(list, docs, {}));
         expect_unit(docs, "units/RIDGETANK.fbi", "MaxDamage", "850");
     }
 }
@@ -891,35 +907,67 @@ void within_mutator() {
         "[*Group*]\n{\n[Needs]\n{\nDescription=\"fast\";\n}\n[Changes]\n{\nSightDistance=*0.83333;"
         "\n}\n}\n"
     ));
-    static_cast<void>(rules::apply_rules(list, docs, {}));
+    static_cast<void>(apply_list(list, docs, {}));
     expect_unit(docs, "units/RIDGESLOW.fbi", "WorkerTime", "10");
     expect_unit(docs, "units/RIDGEFAST.fbi", "WorkerTime", "10");
     expect_unit(docs, "units/RIDGESLOW.fbi", "BuildDistance", "5");
     expect_unit(docs, "units/RIDGEFAST.fbi", "BuildDistance", "5");
     expect_unit(docs, "units/RIDGESLOW.fbi", "CloakCost", "9");
     expect_unit(docs, "units/RIDGEFAST.fbi", "CloakCost", "9");
-    expect_unit(docs, "units/RIDGESLOW.fbi", "EnergyMake", "7");
-    expect_unit(docs, "units/RIDGEFAST.fbi", "EnergyMake", "7");
+    // A lock sets the value, and a later change of the same mutator still applies.
+    expect_unit(docs, "units/RIDGESLOW.fbi", "EnergyMake", "14");
+    expect_unit(docs, "units/RIDGEFAST.fbi", "EnergyMake", "14");
     expect_unit(docs, "units/RIDGESLOW.fbi", "SightDistance", "120");
     expect_unit(docs, "units/RIDGEFAST.fbi", "SightDistance", "99.9996");
 }
 
-void needs_before_writes() {
-    rules::DocumentSet docs;
-    OA_CHECK(add_text(
-        docs, "units/RIDGETANK.fbi", "[UNITINFO]\n{\nUnitName=RIDGETANK;\nSightDistance=10;\n}\n"
-    ));
-    std::vector<rules::MutatorRules> list;
-    list.push_back(rules_of("lifter", "[*All*]\n{\nCanFly=1;\n}\n"));
-    list.push_back(rules_of(
-        "spotter",
-        "[*Group*]\n{\n[Needs]\n{\nCanFly=1,1;\n}\n[Changes]\n{\nSightDistance=50;\n}\n}\n"
-    ));
-    const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-    expect_unit(docs, "units/RIDGETANK.fbi", "CanFly", "1");
-    expect_unit(docs, "units/RIDGETANK.fbi", "SightDistance", "10");
-    OA_CHECK(find_write(result, "units/RIDGETANK.fbi", "", "SightDistance") == nullptr);
-    OA_CHECK(count_kind(result, rules::NoteKind::matched_nothing) == 1);
+void needs_see_earlier_writes() {
+    auto same = [](bool reversed) {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs,
+            "units/RIDGETANK.fbi",
+            "[UNITINFO]\n{\nUnitName=RIDGETANK;\nSightDistance=10;\n}\n"
+        ));
+        const std::string lift = "[*All*]\n{\nCanFly=1;\n}\n";
+        const std::string spot =
+            "[*Group*]\n{\n[Needs]\n{\nCanFly=1,1;\n}\n[Changes]\n{\nSightDistance=50;\n}\n}\n";
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of("ridge-lift", reversed ? spot + lift : lift + spot));
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGETANK.fbi", "CanFly", "1");
+        if (!reversed) {
+            expect_unit(docs, "units/RIDGETANK.fbi", "SightDistance", "50");
+            OA_CHECK(count_kind(result, rules::NoteKind::matched_nothing) == 0);
+        } else {
+            expect_unit(docs, "units/RIDGETANK.fbi", "SightDistance", "10");
+            OA_CHECK(find_write(result, "units/RIDGETANK.fbi", "", "SightDistance") == nullptr);
+            OA_CHECK(count_kind(result, rules::NoteKind::matched_nothing) == 1);
+        }
+    };
+    same(false);
+    same(true);
+    {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs,
+            "units/RIDGETANK.fbi",
+            "[UNITINFO]\n{\nUnitName=RIDGETANK;\nSightDistance=10;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of("ridge-lift", "[*All*]\n{\nCanFly=1;\n}\n"));
+        list.push_back(rules_of(
+            "ridge-spot",
+            "[*Group*]\n{\n[Needs]\n{\nCanFly=1,1;\n}\n[Changes]\n{\nSightDistance=50;\n}\n}\n"
+        ));
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGETANK.fbi", "CanFly", "1");
+        expect_unit(docs, "units/RIDGETANK.fbi", "SightDistance", "50");
+        OA_CHECK(count_kind(result, rules::NoteKind::matched_nothing) == 0);
+        const rules::FieldWrite* write =
+            find_write(result, "units/RIDGETANK.fbi", "", "SightDistance");
+        OA_CHECK(write != nullptr && mutators_are(write->mutators, {"ridge-spot"}));
+    }
 }
 
 void fields_left_out() {
@@ -949,7 +997,7 @@ void fields_left_out() {
         "[*Group*]\n{\n[Needs]\n{\nBankScale=\"\"*;\n}\n[Changes]\n{\nHideDamage=1;\n}\n}\n"
         "[*Group*]\n{\n[Needs]\n{\nBankScale=!\"\"*;\n}\n[Changes]\n{\nAmphibious=1;\n}\n}\n"
     ));
-    const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+    const rules::ApplyResult result = apply_list(list, docs, {});
     expect_unit(docs, "units/RIDGETANK.fbi", "EnergyStorage", "9");
     expect_absent_unit(docs, "units/RIDGETANK.fbi", "DamageModifier");
     OA_CHECK(note_on(result, rules::NoteKind::factor_on_absent_field, "DamageModifier") != nullptr);
@@ -984,7 +1032,7 @@ void fields_left_out() {
         "[*Group*]\n{\n[Needs]\n{\nBankScale=\"\"*;\n}\n[Changes]\n{\nHideDamage=1;\n}\n}\n"
         "[*Group*]\n{\n[Needs]\n{\nBankScale=!\"\"*;\n}\n[Changes]\n{\nAmphibious=1;\n}\n}\n"
     ));
-    static_cast<void>(rules::apply_rules(presence, present, {}));
+    static_cast<void>(apply_list(presence, present, {}));
     expect_unit(present, "units/RIDGEHAS.fbi", "HideDamage", "1");
     expect_absent_unit(present, "units/RIDGEHAS.fbi", "Amphibious");
 
@@ -994,7 +1042,7 @@ void fields_left_out() {
     ));
     std::vector<rules::MutatorRules> factor;
     factor.push_back(rules_of("absent-factor", "[*All*]\n{\nWorkerTime=*2;\n}\n"));
-    const rules::ApplyResult factor_result = rules::apply_rules(factor, only_factor, {});
+    const rules::ApplyResult factor_result = apply_list(factor, only_factor, {});
     expect_absent_unit(only_factor, "units/RIDGEFAB.fbi", "WorkerTime");
     OA_CHECK(count_kind(factor_result, rules::NoteKind::factor_on_absent_field) == 1);
     OA_CHECK(factor_result.writes.empty());
@@ -1019,7 +1067,7 @@ void weapons() {
         "[*Group*]\n{\n[Needs]\n{\nrange=32767,32767;\n}\n[Changes]\n{\nburst=3;\n}\n}\n"
         "[*Group*]\n{\n[Needs]\n{\nid=-1,-1;\n}\n[Changes]\n{\naccuracy=7;\n}\n}\n"
     ));
-    const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+    const rules::ApplyResult result = apply_list(list, docs, {});
     expect_child(docs, "weapons/ridge.tdf", "RIDGE_LASER", "DAMAGE", "default", "50");
     expect_child(docs, "weapons/ridge.tdf", "RIDGE_LASER", "DAMAGE", "RIDGECOM", "20");
     expect_child(docs, "weapons/ridge.tdf", "RIDGE_BOLT", "DAMAGE", "default", "40");
@@ -1053,7 +1101,7 @@ void features_and_moveinfo() {
         "[*Group*]\n{\n[Needs]\n{\nmaxslope=255,255;\n}\n[Changes]\n{\nreclaimtime=9;\n}\n}\n"
         "[*Group*]\n{\n[Needs]\n{\nmaxslope=0,0;\n}\n[Changes]\n{\nresurrect=4;\n}\n}\n"
     ));
-    const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+    const rules::ApplyResult result = apply_list(list, docs, {});
     expect_section(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "metal", "7");
     expect_section(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "damage", "1");
     expect_section(docs, "features/corpses/ridge.tdf", "RIDGE_WRECK", "energy", "1");
@@ -1075,7 +1123,7 @@ void features_and_moveinfo() {
         "folder=gamedata;\nextension=tdf;\n"
         "[*Group*]\n{\n[Needs]\n{\nmaxslope=255,255;\n}\n[Changes]\n{\ncrushstrength=1;\n}\n}\n"
     ));
-    static_cast<void>(rules::apply_rules(move_rules, move, {}));
+    static_cast<void>(apply_list(move_rules, move, {}));
     expect_section(move, "gamedata/moveinfo.tdf", "RIDGE_MOVE", "crushstrength", "1");
 }
 
@@ -1089,7 +1137,7 @@ void sidedata_and_names() {
         "side-name",
         "folder=gamedata;\nextension=sidedata.tdf;\n[SIDE0]\n{\ncommander=\"RIDGECOM\";\n}\n"
     ));
-    static_cast<void>(rules::apply_rules(side_rules, sides, {}));
+    static_cast<void>(apply_list(side_rules, sides, {}));
     expect_section(sides, "gamedata/sidedata.tdf", "SIDE0", "commander", "RIDGECOM");
 
     rules::DocumentSet docs;
@@ -1100,7 +1148,7 @@ void sidedata_and_names() {
     list.push_back(
         rules_of("by-name", "[RIDGECOM]\n{\nWorkerTime=*3;\n}\n[UNITINFO]\n{\nWorkerTime=99;\n}\n")
     );
-    const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+    const rules::ApplyResult result = apply_list(list, docs, {});
     expect_unit(docs, "units/RIDGECOM.fbi", "WorkerTime", "30");
     const rules::FieldWrite* write = find_write(result, "units/RIDGECOM.fbi", "", "WorkerTime");
     OA_CHECK(write != nullptr && write->record == "ridgecom");
@@ -1121,7 +1169,7 @@ void layout_rename() {
     ));
     std::vector<rules::MutatorRules> list;
     list.push_back(rules_of("renamed", "[*All*]\n{\nWorkerTime=*2;\n}\n"));
-    static_cast<void>(rules::apply_rules(list, docs, {}));
+    static_cast<void>(apply_list(list, docs, {}));
     expect_unit(docs, "machines/RIDGEFAB.fbi", "WorkerTime", "60");
     expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "30");
     OA_CHECK(edited(docs, "machines/RIDGEFAB.fbi"));
@@ -1129,31 +1177,85 @@ void layout_rename() {
 }
 
 void created_spelling() {
-    auto run = [](bool swapped) {
+    auto run = [](bool upper_first) {
         rules::DocumentSet docs;
         OA_CHECK(add_text(docs, "units/RIDGECOM.fbi", "[UNITINFO]\n{\nUnitName=RIDGECOM;\n}\n"));
-        rules::MutatorRules lower = rules_of("lower", "[*All*]\n{\nenergystorage=^10;\n}\n");
-        rules::MutatorRules upper = rules_of("upper", "[*All*]\n{\nEnergyStorage=^30;\n}\n");
+        rules::MutatorRules lower = rules_of("lower", "[*All*]\n{\nenergystorage=10;\n}\n");
+        rules::MutatorRules upper = rules_of("upper", "[*All*]\n{\nEnergyStorage=30;\n}\n");
         std::vector<rules::MutatorRules> list;
-        if (!swapped) {
+        const char* spelling = "energystorage";
+        const char* want = "30";
+        const char* first = "lower";
+        const char* second = "upper";
+        if (!upper_first) {
             list.push_back(std::move(lower));
             list.push_back(std::move(upper));
         } else {
             list.push_back(std::move(upper));
             list.push_back(std::move(lower));
+            spelling = "EnergyStorage";
+            want = "10";
+            first = "upper";
+            second = "lower";
         }
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
-        expect_unit(docs, "units/RIDGECOM.fbi", "EnergyStorage", "20");
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGECOM.fbi", "EnergyStorage", want);
         const tdf::Block* section = unit_section(docs, "units/RIDGECOM.fbi");
-        OA_CHECK(has_exact_key(section, "EnergyStorage"));
-        OA_CHECK(!has_exact_key(section, "energystorage"));
-        const rules::FieldWrite* write =
-            find_write(result, "units/RIDGECOM.fbi", "", "EnergyStorage");
-        OA_CHECK(write != nullptr && write->key == "EnergyStorage");
-        OA_CHECK(write != nullptr && write->new_text.has_value() && *write->new_text == "20");
+        OA_CHECK(has_exact_key(section, spelling));
+        OA_CHECK(!has_exact_key(section, upper_first ? "energystorage" : "EnergyStorage"));
+        const rules::FieldWrite* write = last_write(result, "units/RIDGECOM.fbi", "", spelling);
+        OA_CHECK(write != nullptr && write->key == spelling);
+        OA_CHECK(write != nullptr && write->new_text.has_value() && *write->new_text == want);
+        OA_CHECK(count_kind(result, rules::NoteKind::value_replaced) == 1);
+        const rules::RuleNote* note = find_note(result, rules::NoteKind::value_replaced);
+        OA_CHECK(note != nullptr && mutators_are(note->mutators, {first, second}));
     };
     run(false);
     run(true);
+}
+
+/// Writes of one field are listed in the order they were applied, even when a
+/// later change creates the field again under another spelling.
+void writes_in_applied_order() {
+    rules::DocumentSet docs;
+    OA_CHECK(add_text(
+        docs, "units/RIDGEFAB.fbi", "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nworkertime=5;\n}\n"
+    ));
+    OA_CHECK(add_text(
+        docs, "units/RIDGEAAA.fbi", "[UNITINFO]\n{\nUnitName=RIDGEAAA;\nWORKERTIME=1;\n}\n"
+    ));
+    std::vector<rules::MutatorRules> list;
+    list.push_back(
+        rules_of("ridge-reset", "[*All*]\n{\nworkertime=\"\";\nWorkerTime=7;\nWORKERTIME=*2;\n}\n")
+    );
+    const rules::ApplyResult result = apply_list(list, docs, {});
+    expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "14");
+    OA_CHECK(has_exact_key(unit_section(docs, "units/RIDGEFAB.fbi"), "WorkerTime"));
+    std::vector<const rules::FieldWrite*> chain;
+    for (const rules::FieldWrite& write : result.writes) {
+        if (write.path == "units/RIDGEFAB.fbi")
+            chain.push_back(&write);
+    }
+    OA_CHECK(chain.size() == 3);
+    if (chain.size() != 3)
+        return;
+    // The removal, then the creation under the new spelling, then the factor.
+    OA_CHECK(chain[0]->key == "workertime");
+    OA_CHECK(chain[0]->old_text.has_value() && *chain[0]->old_text == "5");
+    OA_CHECK(!chain[0]->new_text.has_value());
+    OA_CHECK(chain[1]->key == "WorkerTime");
+    OA_CHECK(!chain[1]->old_text.has_value());
+    OA_CHECK(chain[1]->new_text.has_value() && *chain[1]->new_text == "7");
+    OA_CHECK(chain[2]->key == "WorkerTime");
+    OA_CHECK(chain[2]->old_text.has_value() && *chain[2]->old_text == "7");
+    OA_CHECK(chain[2]->new_text.has_value() && *chain[2]->new_text == "14");
+    // The other unit's writes sort before RIDGEFAB's, all of them together.
+    OA_CHECK(result.writes.size() == 6);
+    if (result.writes.size() == 6) {
+        OA_CHECK(result.writes[0].path == "units/RIDGEAAA.fbi");
+        OA_CHECK(result.writes[2].path == "units/RIDGEAAA.fbi");
+        OA_CHECK(result.writes[3].path == "units/RIDGEFAB.fbi");
+    }
 }
 
 void depth_case() {
@@ -1167,7 +1269,7 @@ void depth_case() {
     list.push_back(
         rules_of("halver", "folder=weapons;\nextension=tdf;\n[*All*]\n{\n<AllDepth2>=*0.5;\n}\n")
     );
-    const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+    const rules::ApplyResult result = apply_list(list, docs, {});
     expect_child(docs, "weapons/ridge.tdf", "RIDGE_LASER", "DAMAGE", "DEFAULT", "30");
     OA_CHECK(result.writes.size() == 1);
     const rules::FieldWrite* write = find_write(result, "weapons/ridge.tdf", "DAMAGE", "DEFAULT");
@@ -1216,7 +1318,7 @@ void notes() {
             "folder=units;\n"
             "[*Group*]\n{\n[Needs]\n{\nBuilder=1,1;\n}\n[Changes]\n{\nWorkerTime=*2;\n}\n}\n"
         ));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        const rules::ApplyResult result = apply_list(list, docs, {});
         expect_unit(docs, "units/RIDGETANK.fbi", "WorkerTime", "30");
         OA_CHECK(!edited(docs, "units/RIDGETANK.fbi"));
         const rules::RuleNote* note = find_note(result, rules::NoteKind::matched_nothing);
@@ -1235,7 +1337,7 @@ void notes() {
         ));
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("scaler", "[*All*]\n{\nWorkerTime=*2;\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        const rules::ApplyResult result = apply_list(list, docs, {});
         expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "fast");
         OA_CHECK(result.writes.empty());
         OA_CHECK(!edited(docs, "units/RIDGEFAB.fbi"));
@@ -1254,7 +1356,24 @@ void notes() {
         ));
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("overflow", text));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        const rules::ApplyResult result = apply_list(list, docs, {});
+        expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "10");
+        OA_CHECK(result.writes.empty());
+        OA_CHECK(!edited(docs, "units/RIDGEFAB.fbi"));
+        OA_CHECK(count_kind(result, rules::NoteKind::not_finite) == 2);
+    }
+    {
+        // A clamp is not allowed to pull a non-finite product back into range.
+        std::string digits(309, '0');
+        digits[0] = '1';
+        const std::string text = "[*All*]\n{\nWorkerTime=*" + digits + "(0,5);\n}\n";
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs, "units/RIDGEFAB.fbi", "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nWorkerTime=10;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of("overflow-clamp", text));
+        const rules::ApplyResult result = apply_list(list, docs, {});
         expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "10");
         OA_CHECK(result.writes.empty());
         OA_CHECK(!edited(docs, "units/RIDGEFAB.fbi"));
@@ -1285,7 +1404,7 @@ void notes() {
         };
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("checker", "[*All*]\n{\nMaxDamage=9;\nWorkerTime=9;\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, options);
+        const rules::ApplyResult result = apply_list(list, docs, options);
         expect_unit(docs, "units/RIDGETANK.fbi", "MaxDamage", "15000");
         expect_unit(docs, "units/RIDGETANK.fbi", "WorkerTime", "9");
         OA_CHECK(find_write(result, "units/RIDGETANK.fbi", "", "MaxDamage") == nullptr);
@@ -1306,7 +1425,7 @@ void notes() {
         ));
         std::vector<rules::MutatorRules> list;
         list.push_back(rules_of("broken", "[*All*]\n{\nWeapon1=\"a;b\";\n}\n"));
-        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        const rules::ApplyResult result = apply_list(list, docs, {});
         expect_unit(docs, "units/RIDGETANK.fbi", "Weapon1", "LASER");
         OA_CHECK(result.writes.empty());
         OA_CHECK(!edited(docs, "units/RIDGETANK.fbi"));
@@ -1323,18 +1442,25 @@ int main() {
     document_set();
     targets();
     stacking_factors();
-    factor_product_order();
-    command_bounty();
-    widened_clamp();
+    scales_in_file_order();
+    storage_factors();
+    gate_incomes();
+    stacked_removals();
+    weapon_text();
+    later_band();
+    clamp_bounds_its_own_scale();
+    lock_holds();
+    clamps_do_not_join();
     text_rules();
     within_mutator();
-    needs_before_writes();
+    needs_see_earlier_writes();
     fields_left_out();
     weapons();
     features_and_moveinfo();
     sidedata_and_names();
     layout_rename();
     created_spelling();
+    writes_in_applied_order();
     depth_case();
     schema_kinds();
     notes();

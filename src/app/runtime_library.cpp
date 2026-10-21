@@ -59,6 +59,7 @@
 #include "oa/ui/library/game_icon.hpp"
 #include "oa/ui/library/library.hpp"
 #include "oa/ui/library/mod_questions.hpp"
+#include "oa/ui/library/prerequisites.hpp"
 #include "oa/ui/library/screen.hpp"
 #include "oa/ui/library/text.hpp"
 
@@ -2752,6 +2753,77 @@ struct Runtime::LibraryScreen final : LayerScreen {
         }
     }
 
+    /// Asks GET WITH, then queues every step of the plan, prerequisites first.
+    ///
+    /// CANCEL queues nothing. GET BOTH or GET ALL stops at the first refusal
+    /// and leaves that reason on the question; the steps already queued stay
+    /// queued. Nothing is queued before the player answers.
+    ///
+    /// @param host the host
+    /// @param entry the mutator
+    void get_with(LibraryHost& host, const library::Entry& entry) {
+        const library::GetPlan plan = library::get_plan(host.model, entry);
+        if (!plan.blocked.empty() || plan.steps.size() < 2)
+            return;
+        oa::ui::kit::Question asked = library::get_with_question(host.model, entry);
+        const std::string go_id(
+            plan.steps.size() == 2 ? library::get_with_both_id : library::get_with_all_id
+        );
+        int32_t go = -1;
+        for (std::size_t place = 0; place < asked.buttons.size(); ++place) {
+            if (asked.buttons[place].id == go_id)
+                go = static_cast<int32_t>(place);
+        }
+
+        struct Step {
+            std::string registry;
+            std::string key;
+        };
+
+        std::vector<Step> steps;
+        steps.reserve(plan.steps.size());
+        for (const library::GetStep& step : plan.steps)
+            steps.push_back(Step{step.id.registry, step.id.key});
+        QuestionScreen::Host answers;
+        answers.answer = [this, steps, go](int32_t button) {
+            if (button != go)
+                return true;
+            LibraryHost& feed_host = runtime_.library_host();
+            auto* raw = dynamic_cast<QuestionScreen*>(runtime_.oa_layer().top());
+            for (const Step& step : steps) {
+                std::string why;
+                if (feed_host.feed.enqueue == nullptr || step.registry.empty()) {
+                    if (raw != nullptr) {
+                        raw->question().failure = why;
+                        raw->changed();
+                    }
+                    return false;
+                }
+                forget_note(library::EntryId{step.registry, library::Kind::mutator, step.key});
+                const std::optional<uint64_t> item = feed_host.feed.enqueue(
+                    feed_host.feed.context,
+                    step.registry,
+                    step.key,
+                    content::DownloadReason::install,
+                    &why
+                );
+                if (!item) {
+                    if (raw != nullptr) {
+                        raw->question().failure = why;
+                        raw->changed();
+                    }
+                    return false;
+                }
+            }
+            return true;
+        };
+        answers.tick = [this] { return runtime_.screen_ != Screen::main_menu; };
+        OaLayer& layer = runtime_.oa_layer();
+        layer.push(
+            std::make_unique<QuestionScreen>(layer, Screen::main_menu, std::move(asked), answers)
+        );
+    }
+
     /// Opens Settings over the Library, or, where Settings is under it, goes
     /// back to Settings: the layer never holds two of either.
     void open_settings() {
@@ -2853,6 +2925,10 @@ struct Runtime::LibraryScreen final : LayerScreen {
         case library::Action::get:
             if (entry != nullptr)
                 get(host, *entry);
+            return false;
+        case library::Action::get_with:
+            if (entry != nullptr)
+                get_with(host, *entry);
             return false;
         case library::Action::cancel:
             if (entry != nullptr) {

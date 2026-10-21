@@ -304,6 +304,15 @@ conflict_of(const mutators::PipelineResult& result, mutators::ConflictKind kind)
     return nullptr;
 }
 
+std::size_t count_kind(const mutators::PipelineResult& result, mutators::ConflictKind kind) {
+    std::size_t count = 0;
+    for (const mutators::Conflict& conflict : result.report.conflicts) {
+        if (conflict.kind == kind)
+            ++count;
+    }
+    return count;
+}
+
 void test_swift_writes_one_file() {
     oa::AssetStore store = open_ridge();
     const mutators::PipelineResult result =
@@ -707,7 +716,8 @@ void test_compatibility_and_repeat() {
 }
 
 void test_failure_ends_the_pass() {
-    // A failing hook's own rules never reach the hooks below it.
+    // A hook that fails ends the pass before any mutator below it runs.
+    // The retry is that lower mutator on its own.
     oa::AssetStore rule_store = open_ridge();
     oa::AssetStore picky_store = open_ridge();
     const mutators::PipelineResult rule_boom =
@@ -882,6 +892,204 @@ void test_unread_document_warned_once() {
     fs::remove_all(scratch);
 }
 
+/// Two assignments of one field. The later mutator wins, in either order,
+/// and the report names that pair once even though every unit was written.
+void test_later_assignment_wins() {
+    oa::AssetStore forward_store = open_ridge();
+    oa::AssetStore backward_store = open_ridge();
+    const mutators::PipelineResult forward =
+        mutators::run_pipeline(forward_store, input_of({"ridge-mark-low", "ridge-mark-high"}));
+    const mutators::PipelineResult backward =
+        mutators::run_pipeline(backward_store, input_of({"ridge-mark-high", "ridge-mark-low"}));
+    OA_CHECK(forward.playable() && backward.playable());
+    for (const char* path : {"units/RGCOM.fbi", "units/RGBOT.fbi", "units/RGLAB.fbi"}) {
+        const std::string high = text_of(forward_store.read(path).bytes);
+        const std::string low = text_of(backward_store.read(path).bytes);
+        OA_CHECK(high.find("2500") != std::string::npos);
+        OA_CHECK(high.find("1500") == std::string::npos);
+        OA_CHECK(low.find("1500") != std::string::npos);
+        OA_CHECK(low.find("2500") == std::string::npos);
+    }
+    OA_CHECK(count_kind(forward, mutators::ConflictKind::value_replaced) == 1);
+    OA_CHECK(count_kind(backward, mutators::ConflictKind::value_replaced) == 1);
+    const mutators::Conflict* replaced =
+        conflict_of(forward, mutators::ConflictKind::value_replaced);
+    OA_CHECK(replaced != nullptr);
+    if (replaced != nullptr) {
+        const std::vector<std::string> ids{"ridge-mark-low", "ridge-mark-high"};
+        OA_CHECK(replaced->field == "maxdamage");
+        OA_CHECK(replaced->mutators.size() == 2 && replaced->mutators[0] == 0);
+        OA_CHECK(replaced->mutators.size() == 2 && replaced->mutators[1] == 1);
+        OA_CHECK(
+            mutators::describe(*replaced, ids) ==
+            "ridge-mark-high replaced ridge-mark-low's value on " + replaced->path + " maxdamage"
+        );
+    }
+    release(forward_store);
+    release(backward_store);
+}
+
+/// A rule below a hook reads the value that hook wrote. Rules of every
+/// mutator first would scale before the hook, and the bot would stay at 1000.
+void test_rule_sees_the_hook_above() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult stepped =
+        mutators::run_pipeline(store, input_of({"ridge-stamp", "ridge-double-stamp"}));
+    OA_CHECK(stepped.playable());
+    const std::string bot = text_of(store.read("units/RGBOT.fbi").bytes);
+    const std::string commander = text_of(store.read("units/RGCOM.fbi").bytes);
+    OA_CHECK(bot.find("2000") != std::string::npos);
+    OA_CHECK(bot.find("1000") == std::string::npos);
+    OA_CHECK(commander.find("6000") != std::string::npos);
+    release(store);
+
+    oa::AssetStore reversed_store = open_ridge();
+    const mutators::PipelineResult rules_first =
+        mutators::run_pipeline(reversed_store, input_of({"ridge-double-stamp", "ridge-stamp"}));
+    OA_CHECK(rules_first.playable());
+    const std::string untouched = text_of(reversed_store.read("units/RGBOT.fbi").bytes);
+    OA_CHECK(untouched.find("1000") != std::string::npos);
+    OA_CHECK(untouched.find("2000") == std::string::npos);
+    release(reversed_store);
+}
+
+/// A hook that sets one field on every unit replaces the rule above it, and
+/// the report names that pair once.
+void test_hook_replaces_a_rule() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, input_of({"ridge-mark-low", "ridge-hook-mark"}));
+    OA_CHECK(result.playable());
+    for (const char* path : {"units/RGCOM.fbi", "units/RGBOT.fbi", "units/RGLAB.fbi"}) {
+        const std::string text = text_of(store.read(path).bytes);
+        OA_CHECK(text.find("4242") != std::string::npos);
+        OA_CHECK(text.find("1500") == std::string::npos);
+    }
+    OA_CHECK(count_kind(result, mutators::ConflictKind::same_field_hooked) == 1);
+    const mutators::Conflict* hooked =
+        conflict_of(result, mutators::ConflictKind::same_field_hooked);
+    OA_CHECK(hooked != nullptr);
+    if (hooked != nullptr) {
+        const std::vector<std::string> ids{"ridge-mark-low", "ridge-hook-mark"};
+        OA_CHECK(hooked->field == "maxdamage");
+        OA_CHECK(hooked->mutators.size() == 2 && hooked->mutators[0] == 0);
+        OA_CHECK(hooked->mutators.size() == 2 && hooked->mutators[1] == 1);
+        OA_CHECK(
+            mutators::describe(*hooked, ids) ==
+            "ridge-hook-mark wins " + hooked->path + " maxdamage over ridge-mark-low"
+        );
+    }
+    release(store);
+}
+
+/// Each step names the mutator who last wrote the field. A rule under a hook
+/// names that hook, and a hook under a later rule names that rule.
+void test_each_step_names_the_last_writer() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult stepped = mutators::run_pipeline(
+        store, input_of({"ridge-mark-low", "ridge-hook-mark", "ridge-mark-high"})
+    );
+    OA_CHECK(stepped.playable());
+    OA_CHECK(text_of(store.read("units/RGCOM.fbi").bytes).find("2500") != std::string::npos);
+    OA_CHECK(count_kind(stepped, mutators::ConflictKind::same_field_hooked) == 1);
+    OA_CHECK(count_kind(stepped, mutators::ConflictKind::value_replaced) == 1);
+    const std::vector<std::string> three{"ridge-mark-low", "ridge-hook-mark", "ridge-mark-high"};
+    const mutators::Conflict* hooked =
+        conflict_of(stepped, mutators::ConflictKind::same_field_hooked);
+    const mutators::Conflict* replaced =
+        conflict_of(stepped, mutators::ConflictKind::value_replaced);
+    OA_CHECK(hooked != nullptr && replaced != nullptr);
+    if (hooked != nullptr) {
+        OA_CHECK(hooked->mutators.size() == 2 && hooked->mutators[0] == 0);
+        OA_CHECK(hooked->mutators.size() == 2 && hooked->mutators[1] == 1);
+        OA_CHECK(
+            mutators::describe(*hooked, three) ==
+            "ridge-hook-mark wins " + hooked->path + " maxdamage over ridge-mark-low"
+        );
+    }
+    if (replaced != nullptr) {
+        OA_CHECK(replaced->mutators.size() == 2 && replaced->mutators[0] == 1);
+        OA_CHECK(replaced->mutators.size() == 2 && replaced->mutators[1] == 2);
+        OA_CHECK(
+            mutators::describe(*replaced, three) ==
+            "ridge-mark-high replaced ridge-hook-mark's value on " + replaced->path + " maxdamage"
+        );
+    }
+    release(store);
+
+    oa::AssetStore chain_store = open_ridge();
+    const mutators::PipelineResult chain = mutators::run_pipeline(
+        chain_store,
+        input_of({"ridge-mark-low", "ridge-hook-mark", "ridge-mark-high", "ridge-stamp"})
+    );
+    OA_CHECK(chain.playable());
+    const std::string bot = text_of(chain_store.read("units/RGBOT.fbi").bytes);
+    OA_CHECK(bot.find("1000") != std::string::npos);
+    OA_CHECK(bot.find("2500") == std::string::npos);
+    OA_CHECK(count_kind(chain, mutators::ConflictKind::same_field_hooked) == 2);
+    const std::vector<std::string> four{
+        "ridge-mark-low", "ridge-hook-mark", "ridge-mark-high", "ridge-stamp"
+    };
+    bool stamp_names_the_rule = false;
+    bool stamp_names_the_hook = false;
+    for (const mutators::Conflict& conflict : chain.report.conflicts) {
+        if (conflict.kind != mutators::ConflictKind::same_field_hooked)
+            continue;
+        const std::string line = mutators::describe(conflict, four);
+        if (line.find("ridge-stamp wins ") == std::string::npos)
+            continue;
+        if (line.find("over ridge-mark-high") != std::string::npos)
+            stamp_names_the_rule = true;
+        if (line.find("over ridge-hook-mark") != std::string::npos)
+            stamp_names_the_hook = true;
+    }
+    OA_CHECK(stamp_names_the_rule);
+    OA_CHECK(!stamp_names_the_hook);
+    release(chain_store);
+}
+
+/// A lock holds against a later mutator's rules and is noted. That mutator's
+/// hook still writes the field, and the report names both.
+void test_lock_holds_against_rules_not_hooks() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, input_of({"ridge-lock-com", "ridge-past-lock"}));
+    OA_CHECK(result.playable());
+    const std::string commander = text_of(store.read("units/RGCOM.fbi").bytes);
+    OA_CHECK(commander.find("7777") != std::string::npos);
+    OA_CHECK(commander.find("9999") == std::string::npos);
+    OA_CHECK(commander.find("1111") == std::string::npos);
+    OA_CHECK(count_kind(result, mutators::ConflictKind::field_locked) == 1);
+    OA_CHECK(count_kind(result, mutators::ConflictKind::same_field_hooked) == 1);
+    const std::vector<std::string> ids{"ridge-lock-com", "ridge-past-lock"};
+    const mutators::Conflict* locked = conflict_of(result, mutators::ConflictKind::field_locked);
+    OA_CHECK(locked != nullptr);
+    if (locked != nullptr) {
+        OA_CHECK(locked->field == "maxdamage");
+        OA_CHECK(
+            mutators::describe(*locked, ids) ==
+            "ridge-lock-com locked " + locked->path + " maxdamage, so ridge-past-lock left it alone"
+        );
+    }
+    const mutators::Conflict* hooked =
+        conflict_of(result, mutators::ConflictKind::same_field_hooked);
+    OA_CHECK(hooked != nullptr);
+    if (hooked != nullptr) {
+        OA_CHECK(hooked->field == "maxdamage");
+        OA_CHECK(
+            mutators::describe(*hooked, ids) ==
+            "ridge-past-lock wins " + hooked->path + " maxdamage over ridge-lock-com"
+        );
+    }
+    bool wrote_blocked_value = false;
+    for (const mutators::JournalEntry& entry : result.journal.entries) {
+        if (entry.new_text.has_value() && *entry.new_text == "9999")
+            wrote_blocked_value = true;
+    }
+    OA_CHECK(!wrote_blocked_value);
+    release(store);
+}
+
 void test_player_option() {
     mutators::PipelineMutator swift = load_id("ridge-swift");
     for (const oamut::Option& option : swift.manifest.options) {
@@ -910,6 +1118,11 @@ void test_player_option() {
 int main() {
     test_swift_writes_one_file();
     test_rules_are_order_independent();
+    test_later_assignment_wins();
+    test_rule_sees_the_hook_above();
+    test_hook_replaces_a_rule();
+    test_each_step_names_the_last_writer();
+    test_lock_holds_against_rules_not_hooks();
     test_hooks_follow_the_list();
     test_same_value_writes_nothing();
     test_failed_mutator_leaves_no_trace();

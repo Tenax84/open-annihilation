@@ -15,6 +15,7 @@
 #include "oa/data/mutation_rules/documents.hpp"
 #include "oa/formats/soft_mutator.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -57,6 +58,8 @@ struct WriteGrant {
     bool units{};    ///< unit records and the download entries a removal drops
     bool weapons{};  ///< weapon records, including a weapon's damage block
     bool features{}; ///< feature records
+    bool sides{};    ///< side data and the build lists
+    bool tables{};   ///< other game-data tables
 };
 
 /// What a removal took out of the document set.
@@ -188,6 +191,40 @@ class Collections {
     /// Ends the mutator's turn. Later writes are refused until the next begin.
     void end_mutator();
 
+    /// Names and paths the side and table bindings compute before they push.
+    ///
+    /// The object outlives the Lua callback. A callback fills it, returns,
+    /// and only then pushes, so a Lua error cannot skip a destructor.
+    struct SideScratch {
+        std::vector<std::string> names;
+        std::vector<std::string> raw_names;
+        std::string text;
+        std::string path;
+        std::string record;
+        std::string key;
+        std::string builder;
+        std::string side_path;
+        std::string list_path;
+        std::string side_error;
+        std::string list_error;
+        uint64_t visits = 0;
+        uint64_t text_units = 0;
+        uint64_t fields = 0;
+        uint64_t comparisons = 0;
+        bool scan = false;
+        bool found = false;
+        bool builder_unit = false;
+        bool present = false;
+        bool side_ready = false;
+        bool list_ready = false;
+        bool side_found = false;
+        bool list_found = false;
+        uint32_t count = 0;
+        uint32_t slot = 0;
+        std::size_t side_doc = 0;
+        std::size_t list_doc = 0;
+    };
+
     /// Pushes the units collection.
     ///
     /// @param state state to push into
@@ -255,6 +292,50 @@ class Collections {
 
     friend struct CollectionsAccess;
     friend struct CloneAccess;
+    /// The sides and tables collections journal through the same writes.
+    friend struct SideCollectionsAccess;
+
+    /// Keeps one field write, and an overwrite note when an earlier hook wrote it.
+    ///
+    /// @param write the write, naming this mutator
+    /// @param[out] reason the limit it crossed; unchanged on success
+    /// @return false when the mutator has journaled too much
+    bool accept_write(oa::data::mutation_rules::FieldWrite write, std::string& reason);
+
+    /// Keeps one hook note.
+    ///
+    /// @param note the note
+    /// @param[out] reason the limit it crossed; unchanged on success
+    /// @return false when the mutator has journaled too much
+    bool accept_note(HookNote note, std::string& reason);
+
+    /// Holds the next Lua error until `raise_held`.
+    ///
+    /// @param message the error
+    void hold_error(std::string message);
+
+    /// Raises the held error. Call it with no local objects still to destroy.
+    ///
+    /// @param state the state to raise in
+    /// @return does not return
+    int raise_held(lua_State* state);
+
+    /// The side bindings' working storage. It lives as long as the collections.
+    ///
+    /// @return the storage
+    SideScratch& side_scratch() noexcept;
+
+    /// Resolves one unit through the units index.
+    ///
+    /// Charges the index check and the matched section. Copies the canonical
+    /// name into `side_scratch().text` and the builder flag into
+    /// `side_scratch().builder_unit`. Call it with no local object still to
+    /// destroy: the charge can raise.
+    ///
+    /// @param state the state to charge, or null to build the index quietly
+    /// @param sought the unit name the script wrote
+    /// @return 1 when the unit is there, 0 when it is not, -1 on a held error
+    int lookup_unit(lua_State* state, std::string_view sought);
 
     oa::data::mutation_rules::DocumentSet* documents_;
     const oa::data::defs::DataLayout* layout_;
@@ -270,6 +351,7 @@ class Collections {
     std::vector<ServedCopy> served_;  ///< binary copies those clones serve
     /// Folded served path to its index in `served_`. A page lookup does not scan the list.
     std::unordered_map<std::string, std::size_t> served_index_;
+    SideScratch side_scratch_{};
 };
 
 } // namespace oa::data::mutators

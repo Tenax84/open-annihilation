@@ -347,7 +347,7 @@ void Runtime::library_uninstall(const library::EntryId& entry) {
         std::string(kind->root_folder) + "/" + path_to_utf8(folder.filename());
     const install::InstalledPackage expected = kind->read_installed(folder);
     oa::ui::kit::Question asked =
-        library::uninstall_question(*found, shown_folder, host.model.text);
+        library::uninstall_question(host.model, *found, shown_folder, host.model.text);
     int32_t uninstall_button = -1;
     for (std::size_t place = 0; place < asked.buttons.size(); ++place)
         if (asked.buttons[place].id == library::uninstall_button_id)
