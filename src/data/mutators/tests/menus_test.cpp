@@ -406,8 +406,8 @@ struct MemoryFiles {
 };
 
 struct NamedUnit {
-    const char* name;
-    bool builder;
+    const char* name{};
+    bool builder{false};
 };
 
 void set_unit_name(oa::UnitDef& unit, const char* name) {

@@ -123,15 +123,37 @@ class Menus {
 
     struct State;
     struct LuaBox;
+
+    /// Reads the menus pointer stored for this Lua state.
     static Menus* from_lua(lua_State* state, int index);
+
+    /// Refuses a read of an unknown field.
     static int lua_index(lua_State* state);
+
+    /// Refuses a write of a field.
     static int lua_newindex(lua_State* state);
+
+    /// Implements `menus:add`.
     static int lua_add(lua_State* state);
+
+    /// Implements `menus:move`.
     static int lua_move(lua_State* state);
+
+    /// Implements `menus:remove`.
+    ///
+    /// The C++ name is not `remove`, because that word is a macro.
     static int lua_drop(lua_State* state);
+
+    /// Implements `menus:grey`.
     static int lua_grey(lua_State* state);
+
+    /// Implements `menus:hide`.
     static int lua_hide(lua_State* state);
+
+    /// Implements `menus:builds`.
     static int lua_builds(lua_State* state);
+
+    /// Installs the menus metatable on this state once.
     static void ensure_meta(lua_State* state);
 
     std::unique_ptr<State> state_;
