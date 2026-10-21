@@ -63,6 +63,30 @@ std::vector<std::string> entries_on(const profiles::Resolution& resolution) {
     return on;
 }
 
+/// The text of the value a resolution plays for ENTRY.PARAM, or empty when
+/// it has none. A limit's entry sits under `limits` without that prefix, a
+/// hack's under `hacks` by its id.
+std::string played_value(const profiles::Resolution& resolution, std::string_view path) {
+    const std::string entry = entry_of(path);
+    if (entry.size() >= path.size())
+        return {};
+    constexpr std::string_view limits_prefix = "limits.";
+    const bool limit = entry.starts_with(limits_prefix);
+    const profiles::Value* block =
+        profiles::find_member(resolution.effective, limit ? "limits" : "hacks");
+    if (block == nullptr)
+        return {};
+    const std::string_view key =
+        limit ? std::string_view{entry}.substr(limits_prefix.size()) : std::string_view{entry};
+    const profiles::Value* values = profiles::find_member(*block, key);
+    if (values == nullptr)
+        return {};
+    const profiles::Value* value = profiles::find_member(*values, path.substr(entry.size() + 1));
+    if (value == nullptr)
+        return {};
+    return profiles::value_text(*value);
+}
+
 /// Records one hack note on the conflict report. It is not a journal entry,
 /// so the applied line does not count it as a rewritten file.
 void record_note(mutators::PipelineResult& result, const mutators::HackNote& note) {
@@ -262,15 +286,29 @@ void Runtime::play_mutator_hacks() {
     for (const mutators::HackNote& note : overlaps)
         record_note(result, note);
 
+    // A value the profile holds back, such as a unit cap past its
+    // clamp-between bounds, is named with the value the match plays, and the
+    // resolver's warning says why.
     std::string line = "open-annihilation: mutators: hacks ";
+    std::vector<std::string> reasons;
     for (std::size_t slot = 0; slot < merged.hacks.size(); ++slot) {
+        const mutators::MutatorHack& hack = merged.hacks[slot];
         if (slot != 0)
             line += ", ";
-        line += merged.hacks[slot].path;
+        line += hack.path;
         line += '=';
-        line += merged.hacks[slot].value;
+        line += hack.value;
+        const std::string plays = played_value(*resolved.resolution, hack.path);
+        if (!plays.empty() && plays != hack.value)
+            line += " (plays " + plays + ")";
+        for (const profiles::Diagnostic& warning : resolved.warnings) {
+            if (warning.path == hack.path || warning.path == "match " + hack.path)
+                reasons.push_back(hack.path + ": " + warning.message);
+        }
     }
     std::cerr << line << '\n';
+    for (const std::string& reason : reasons)
+        std::cerr << "open-annihilation: mutators: hacks: " << reason << '\n';
 }
 
 } // namespace oa::app
