@@ -269,6 +269,11 @@ void install_format(lua_State* state);
 /// @param state the state being opened
 void open_math_library(lua_State* state);
 
+/// Opens the fixed-point library. May raise.
+///
+/// @param state the state being opened
+void open_fixed_library(lua_State* state);
+
 /// Installs `pairs` for number, string and boolean keys, in a fixed order.
 /// May raise.
 ///
