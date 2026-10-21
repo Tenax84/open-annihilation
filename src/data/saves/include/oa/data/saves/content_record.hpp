@@ -3,7 +3,10 @@
 
 // The base game and the rule-changing expansions a save, a recording or a
 // film was made with. Music is not among them. A file from before this note
-// has none, and loads as it does today.
+// has none, and loads as it does today. After the mod line, the note lists
+// each mutator the game was played with: a `mutator` line of its SHA-256 and
+// id, then `mutator-version` and `mutator-name`. A note without those lines
+// reads and writes as it does today.
 #pragma once
 
 #include "oa/data/content_bundles/content_choice.hpp"
@@ -23,6 +26,18 @@ enum class ContentBlock : uint8_t {
     command_line, ///< this run's content was named for the run
 };
 
+/// One mutator a content note names.
+struct ContentMutator {
+    /// The package's SHA-256, as 64 lower-case hexadecimal digits.
+    std::string sha256;
+    /// The mutator's id, in lower-case kebab-case.
+    std::string id;
+    /// The mutator's version, as text.
+    std::string version;
+    /// The name the player saw.
+    std::string name;
+};
+
 /// What a save, a recording or a film notes about the content it was made with.
 struct ContentRecord {
     /// The note was present. A file from before this note leaves it false.
@@ -34,6 +49,9 @@ struct ContentRecord {
     std::vector<std::string> expansions{};
     /// The mod's name as the player saw it. Empty for no mod.
     std::string mod{};
+    /// Mutators the game was played with, in the player's order. A note keeps
+    /// at most 32; a reader skips the rest. Empty when the note lists none.
+    std::vector<ContentMutator> mutators{};
 };
 
 /// What loading a noted file asks, against the choice this run plays.
@@ -85,17 +103,25 @@ inline constexpr std::string_view pending_demo_key = "open-annihilation.pending-
     std::string_view base_game, std::span<const std::string> expansions, std::string_view mod
 );
 
-/// Writes the note as text: one `base-game` line, one `expansions` line and
-/// one `mod` line.
+/// Writes the note as text: one `base-game` line, one `expansions` line, one
+/// `mod` line, then, for each mutator, a `mutator` line, a `mutator-version`
+/// line and a `mutator-name` line.
+///
+/// A mutator value that holds a line break refuses the note.
 ///
 /// @param record the note
-/// @return the text, or empty when the note is not present
+/// @return the text, or empty when the note is not present or a value holds a line break
 [[nodiscard]] std::string content_record_text(const ContentRecord& record);
 
 /// Reads a note from the text a save, a recording or a film keeps beside it.
 ///
 /// Text with no `base-game` line, including empty text, is a file from before
-/// this note.
+/// this note. A `mutator` line whose SHA-256 is not 64 lower-case hexadecimal
+/// digits, or whose id is not lower-case kebab-case, is skipped together with
+/// the `mutator-version` and `mutator-name` lines that follow it until the
+/// next `mutator` line. Such a line with no `mutator` line before it is
+/// skipped. At most 32 mutators are kept and the rest are skipped. Any other
+/// unknown line is ignored.
 ///
 /// @param text the note's text
 /// @return the note
