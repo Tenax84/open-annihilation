@@ -341,11 +341,19 @@ unit is not already downloadable, that file starts with a `PLACEHOLDER`
 section whose `UNITMENU` is empty. A file opened for that unit is reused
 while it still has fewer than five sections. The unit is the private name
 when this mutator renamed it, so the new button does not replace the
-original unit's button. When build-menu edits land, they must map an
-Add-mode mutator's builder and unit arguments through that mutator's
-renames. Those edits do not pass through the hook write list, so the
-retarget will not see them, and they must keep the placeholder and the
-five-section cap.
+original unit's button. The menus hook maps the builder and the unit a
+script names in `menus:add`, `move`, `remove`, `grey`, `hide` and
+`builds` through the calling mutator's renames, so in Add mode a name it
+renamed means its private record: `menus:add("RGLAB", "RGNEW")` adds to
+its `RGLAB_2`, `menus:add("RGLAB", "RGBOT")` gives its `RGBOT_2` a button
+even when `RGLAB` already offers the game's `RGBOT`, and
+`menus:remove("RGBOT")` takes away only `RGBOT_2`'s buttons. Names read
+from the documents are never mapped: `menus:builds("RGLAB")` still reports
+the game's `RGBOT` as `RGBOT`. These edits do not pass through the hook
+write list, so the retarget does not see them, and they keep the
+placeholder and the five-section cap. A mutator's renames last for its
+own turn. A later mutator's names, and every maps hook's, mean the
+records of those names.
 
 A text that does not parse is unread. A unit, weapon or download file
 that does not parse is left unread the same way: the path is warned once,

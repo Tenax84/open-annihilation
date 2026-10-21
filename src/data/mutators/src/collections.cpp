@@ -850,15 +850,17 @@ const std::vector<Rec>& ensure_index(Collections& self, Kind kind, lua_State* st
 /// The first record of this name, in collection order, or null.
 ///
 /// A unit or weapon name this mutator renamed is looked up as the private
-/// name. The private name is a pointer into the rename list, taken before
-/// the index build, so nothing new is alive if that build raises. Features
-/// are not renamed.
+/// name, and the walk of the rename list is charged. The private name is a
+/// pointer into the rename list, taken before the index build, so nothing
+/// new is alive if that build raises. Features are not renamed.
 const Rec* find_named(Collections& self, Kind kind, std::string_view key, lua_State* state) {
     const std::string* renamed = nullptr;
     if (kind == Kind::units)
         renamed = self.renamed_to(false, key);
     else if (kind == Kind::weapons)
         renamed = self.renamed_to(true, key);
+    if (state != nullptr && kind != Kind::features && self.rename_count() > 0)
+        charge_visits(state, self.rename_count());
     const std::string_view sought = renamed != nullptr ? std::string_view{*renamed} : key;
     const std::vector<Rec>& records = ensure_index(self, kind, state);
     const auto found = std::lower_bound(
@@ -3333,7 +3335,7 @@ void Collections::note_rename(bool weapon, std::string from, std::string to) {
     renames_.push_back(std::move(rename));
 }
 
-const std::string* Collections::renamed_to(bool weapon, std::string_view name) const {
+const std::string* Collections::renamed_to(bool weapon, std::string_view name) const noexcept {
     const std::string* found = nullptr;
     for (const ClashRename& rename : renames_) {
         if (rename.weapon != weapon)

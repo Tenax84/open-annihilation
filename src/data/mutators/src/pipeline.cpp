@@ -4091,11 +4091,17 @@ bool run_pass(
                 break;
             }
         }
+        // A mutator's renames end with its turn: a later mutator's names, and
+        // the maps phase's, mean the records of those names.
         if (plans[slot].units_hook == LUA_NOREF && plans[slot].weapons_hook == LUA_NOREF &&
-            plans[slot].menus_hook == LUA_NOREF)
+            plans[slot].menus_hook == LUA_NOREF) {
+            collections->clear_renames();
             continue;
-        if (!sandboxes[slot].has_value())
+        }
+        if (!sandboxes[slot].has_value()) {
+            collections->clear_renames();
             continue;
+        }
         const std::size_t notes_before = collections->notes().size();
         const std::size_t writes_before = collections->writes().size();
         WriteGrant grant;
@@ -4173,6 +4179,7 @@ bool run_pass(
             break;
         }
         collections->end_mutator();
+        collections->clear_renames();
         record_hook_turn(
             *collections, apply_state, report, ids, slot, notes_before, writes_before, hook_replaced
         );

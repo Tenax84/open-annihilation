@@ -16,11 +16,13 @@
 #include "oa/test/check.hpp"
 #include "oa/test/scratch_directory.hpp"
 
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -2659,6 +2661,148 @@ void test_sixth_download_button_spills() {
     fs::remove_all(scratch);
 }
 
+/// True when a download file the layer serves holds a button for `unit` on `builder`.
+bool serves_button(
+    const oa::AssetStore& store,
+    const mutators::PipelineResult& result,
+    std::string_view builder,
+    std::string_view unit
+) {
+    for (const oa::MutatorLayerEntry& entry : result.layer.entries) {
+        if (entry.kind == oa::MutatorSourceKind::hidden || entry.path.size() < 9)
+            continue;
+        std::string folder = entry.path.substr(0, 9);
+        for (char& character : folder)
+            character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+        if (folder != "download/")
+            continue;
+        const std::string text = text_of(store.read(entry.path).bytes);
+        std::size_t start = text.find('[');
+        while (start != std::string::npos) {
+            const std::size_t end = text.find('[', start + 1);
+            const std::string_view section = std::string_view{text}.substr(
+                start, end == std::string::npos ? std::string_view::npos : end - start
+            );
+            if (has_assignment(section, "UNITMENU", builder) &&
+                has_assignment(section, "UNITNAME", unit))
+                return true;
+            start = end;
+        }
+    }
+    return false;
+}
+
+/// Runs one Add-mode mutator with a menus hook over the Ridge game.
+///
+/// The game's `download/rglab.tdf` must come through unchanged.
+///
+/// @param name the scratch folder and the mutator id
+/// @param files the mutator's files
+/// @param menus_body the menus hook's body
+/// @param check what the run must show, given the store and the result
+void run_menus_case(
+    std::string_view name,
+    const std::vector<std::pair<std::string, std::string>>& files,
+    std::string_view menus_body,
+    const std::function<void(const oa::AssetStore&, const mutators::PipelineResult&)>& check
+) {
+    const fs::path scratch = oa::test::make_scratch_directory(std::string{name});
+    std::string lua = "function mutate(ctx)\n"
+                      "  return {\n"
+                      "    files = { add = { \"files\" } },\n"
+                      "    menus = function(menus, ctx)\n";
+    lua.append(menus_body);
+    lua.append("\n    end\n  }\nend\n");
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(make_package(scratch, name, "add", "\"files\", \"menus\"", lua, files));
+    oa::AssetStore store = open_ridge();
+    const std::vector<uint8_t> menu_before = store.read("download/rglab.tdf").bytes;
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    OA_CHECK(store.file_size("download/rglab.tdf") > 0);
+    if (store.file_size("download/rglab.tdf") > 0)
+        OA_CHECK(store.read("download/rglab.tdf").bytes == menu_before);
+    check(store, result);
+    release(store);
+    fs::remove_all(scratch);
+}
+
+constexpr std::string_view k_other_bot =
+    "[UNITINFO]\n{\nUnitName=RGBOT;\nName=Ridge Bot;\nMaxDamage=999;\nWeapon1=RGGUN;\n}\n";
+constexpr std::string_view k_other_lab =
+    "[UNITINFO]\n{\nUnitName=RGLAB;\nBuilder=1;\nBMcode=0;\nWorkerTime=999;\n}\n";
+
+/// The same mutator's menus hook names the builder and the unit it renamed,
+/// and reaches its private records: a later call does not depend on the
+/// order of the calls, the game's lab keeps the game's bot, and a removal
+/// leaves the game's button alone.
+void test_menus_hook_reaches_the_private_records() {
+    // The game's RGLAB already offers the game's RGBOT: the renamed RGBOT
+    // still gets a button of its own, and `builds` reports document names.
+    std::vector<std::pair<std::string, std::string>> bot;
+    bot.emplace_back("units/RGBOT.fbi", std::string{k_other_bot});
+    run_menus_case(
+        "ridge-menus-bot",
+        bot,
+        "      menus:add(\"RGLAB\", \"RGBOT\")\n"
+        "      local list = menus:builds(\"RGLAB\")\n"
+        "      local game, own = false, false\n"
+        "      for i = 1, #list do\n"
+        "        if list[i] == \"RGBOT\" then game = true end\n"
+        "        if list[i] == \"RGBOT_2\" then own = true end\n"
+        "      end\n"
+        "      if not (game and own) then error(\"builds lists \" .. #list) end",
+        [](const oa::AssetStore& store, const mutators::PipelineResult& result) {
+            OA_CHECK(serves_button(store, result, "RGLAB", "RGBOT_2"));
+        }
+    );
+
+    // One call, and two calls, on a builder this mutator renamed.
+    std::vector<std::pair<std::string, std::string>> lab;
+    lab.emplace_back("units/RGLAB.fbi", std::string{k_other_lab});
+    lab.emplace_back("units/RGNEW2.fbi", "[UNITINFO]\n{\nUnitName=RGNEW2;\n}\n");
+    lab.emplace_back("units/RGNEW4.fbi", "[UNITINFO]\n{\nUnitName=RGNEW4;\n}\n");
+    run_menus_case(
+        "ridge-menus-lab",
+        lab,
+        "      menus:add(\"RGLAB\", \"RGNEW2\")",
+        [](const oa::AssetStore& store, const mutators::PipelineResult& result) {
+            OA_CHECK(serves_button(store, result, "RGLAB_2", "RGNEW2"));
+            OA_CHECK(!serves_button(store, result, "RGLAB", "RGNEW2"));
+        }
+    );
+    run_menus_case(
+        "ridge-menus-lab-twice",
+        lab,
+        "      menus:add(\"RGLAB\", \"RGNEW2\")\n"
+        "      menus:add(\"RGLAB\", \"RGNEW4\")",
+        [](const oa::AssetStore& store, const mutators::PipelineResult& result) {
+            OA_CHECK(serves_button(store, result, "RGLAB_2", "RGNEW2"));
+            OA_CHECK(serves_button(store, result, "RGLAB_2", "RGNEW4"));
+            OA_CHECK(!serves_button(store, result, "RGLAB", "RGNEW2"));
+            OA_CHECK(!serves_button(store, result, "RGLAB", "RGNEW4"));
+        }
+    );
+
+    // Removing the unit this mutator renamed removes nothing of the game's.
+    run_menus_case(
+        "ridge-menus-remove",
+        bot,
+        "      menus:remove(\"RGBOT\")",
+        [](const oa::AssetStore&, const mutators::PipelineResult& result) {
+            for (const mutators::JournalEntry& entry : result.journal.entries)
+                OA_CHECK(entry.collection != mutators::Collection::menus);
+        }
+    );
+}
+
 } // namespace
 
 int main() {
@@ -2716,5 +2860,6 @@ int main() {
     test_replace_clone_overwrites_the_existing_unit();
     test_download_section_name_is_per_file();
     test_sixth_download_button_spills();
+    test_menus_hook_reaches_the_private_records();
     return oa::test::check_exit_status();
 }

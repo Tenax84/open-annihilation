@@ -368,7 +368,15 @@ class Collections {
     [[nodiscard]] bool clash_active() const noexcept { return clash_active_; }
 
     /// Forgets the renames noted for the mutator that just ran.
+    ///
+    /// The pipeline calls it when each mutator's turn ends, so a name in the
+    /// maps phase, or in a later mutator's turn, means the record of that name.
     void clear_renames() noexcept { renames_.clear(); }
+
+    /// How many renames this mutator has noted. A name lookup walks them.
+    ///
+    /// @return the number of renames since the last `clear_renames`
+    [[nodiscard]] std::size_t rename_count() const noexcept { return renames_.size(); }
 
     /// Remembers that this mutator stored `from` as `to`.
     ///
@@ -397,7 +405,7 @@ class Collections {
     /// @param weapon true to look among weapon renames
     /// @param name the name the mutator wrote
     /// @return the private name, or null
-    [[nodiscard]] const std::string* renamed_to(bool weapon, std::string_view name) const;
+    [[nodiscard]] const std::string* renamed_to(bool weapon, std::string_view name) const noexcept;
 
     /// Points reference writes in `writes` at the names this mutator renamed.
     ///
