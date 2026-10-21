@@ -7,6 +7,7 @@ add_library(
   src/collections.cpp
   src/files_layer.cpp
   src/journal.cpp
+  src/pipeline.cpp
   src/rules_lua.cpp
 )
 add_library(oa::data::mutators ALIAS oa-data-mutators)
@@ -15,7 +16,9 @@ target_compile_features(oa-data-mutators PUBLIC cxx_std_20)
 target_link_libraries(
   oa-data-mutators
   PUBLIC oa-data-defs oa-data-mutation-rules oa-data-script-host oa-formats-hpi
-  PRIVATE oa-data-field-schema oa-formats-tdf oa-options
+         oa-formats-oamut
+  PRIVATE oa-base-sha256 oa-data-defs-assets oa-data-field-schema oa-formats-tdf
+          oa-options
 )
 if(BUILD_TESTING)
   add_executable(oa-data-mutators-allow-list-test tests/allow_list_test.cpp)
