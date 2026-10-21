@@ -1255,6 +1255,69 @@ void ten_players_watch_without_a_slot() {
     world_destroy(world);
 }
 
+// A recording with a loadout text writes that text as the mutators sector.
+// An empty text writes none, and the file matches a recording that never
+// carried one. A text one byte past one sector chunk is left out, and the
+// recording still parses.
+void recording_carries_loadout_text() {
+    const std::string text = "ridge-pace 1";
+    DemoRecording with_text;
+    recording_begin(&with_text, live_setup(2, false));
+    with_text.setup.loadout_text = text;
+    const auto written = recording_write(with_text);
+    CHECK(written.ok());
+    const auto parsed = formats::tad::parse(written.bytes);
+    CHECK(parsed.ok());
+    if (parsed.ok()) {
+        const auto* sector =
+            formats::tad::find_sector(*parsed.demo, formats::tad::SectorType::mutators);
+        CHECK(sector != nullptr);
+        if (sector != nullptr) {
+            const std::string back(
+                reinterpret_cast<const char*>(sector->data.data()), sector->data.size()
+            );
+            CHECK(back == text);
+            CHECK(formats::tad::sector_text(*sector) == text);
+        }
+    }
+
+    DemoRecording plain;
+    recording_begin(&plain, live_setup(2, false));
+    const auto plain_written = recording_write(plain);
+    CHECK(plain_written.ok());
+    const auto plain_parsed = formats::tad::parse(plain_written.bytes);
+    CHECK(plain_parsed.ok());
+    if (plain_parsed.ok() && parsed.ok()) {
+        CHECK(
+            formats::tad::find_sector(*plain_parsed.demo, formats::tad::SectorType::mutators) ==
+            nullptr
+        );
+        CHECK(plain_parsed.demo->sectors.size() + 1 == parsed.demo->sectors.size());
+    }
+    DemoRecording empty_text;
+    recording_begin(&empty_text, live_setup(2, false));
+    empty_text.setup.loadout_text.clear();
+    const auto empty_written = recording_write(empty_text);
+    CHECK(empty_written.ok() && empty_written.bytes == plain_written.bytes);
+
+    const std::size_t sector_room = formats::tad::limit::chunk_bytes -
+                                    formats::tad::layout::chunk_length_bytes -
+                                    formats::tad::layout::sector_type_bytes;
+    DemoRecording too_long;
+    recording_begin(&too_long, live_setup(2, false));
+    too_long.setup.loadout_text.assign(sector_room + 1, 'q');
+    const auto omitted = recording_write(too_long);
+    CHECK(omitted.ok() && omitted.bytes == plain_written.bytes);
+    const auto omitted_parsed = formats::tad::parse(omitted.bytes);
+    CHECK(omitted_parsed.ok());
+    if (omitted_parsed.ok()) {
+        CHECK(
+            formats::tad::find_sector(*omitted_parsed.demo, formats::tad::SectorType::mutators) ==
+            nullptr
+        );
+    }
+}
+
 // A chat record from a recorded player.
 std::vector<uint8_t> chat_payload(const char* text) {
     std::vector<uint8_t> payload{formats::tad::payload_marker};
@@ -1492,6 +1555,7 @@ int main() {
     live_recording_round_trips(false);
     live_recording_round_trips(true);
     ten_players_watch_without_a_slot();
+    recording_carries_loadout_text();
     slotless_viewer_watches_the_recording();
     recorded_unicode_chat_plays_back();
     recorded_alliance_line_reads_in_the_language_shown();
