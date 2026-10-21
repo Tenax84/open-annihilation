@@ -1472,6 +1472,8 @@ void test_memory_cap() {
     }
     host::Profile profile = host::mutator_profile();
     profile.budget.memory_bytes = std::size_t{8} << 20;
+    // Index and field charges spend the default allowance before 8 MiB is held.
+    profile.budget.instructions = uint64_t{1} << 40;
     if (!open_sandbox(world, profile)) {
         OA_CHECK(false);
         return;

@@ -23,9 +23,10 @@ inline constexpr std::size_t chunk_buffer_bytes = 160;
 inline constexpr std::size_t scratch_buffer_bytes = 3072;
 inline constexpr std::size_t budget_message_bytes = 160;
 
-// `bytes_per_charge`, `units_for_bytes`, `comparison_unit`, `scan_call_charge`
-// and `element_charge` are in the public header. The mutator collections and
-// rule forms charge through `charge_work` at those same rates.
+// `bytes_per_charge`, `units_for_bytes`, `comparison_unit`, `scan_call_charge`,
+// `element_charge` and `table_walk_charge` are in the public header. The
+// mutator collections and rule forms charge through `charge_work` at those
+// same rates.
 
 /// Longest string the interpreter keeps one shared copy of (Lua 5.4.9's
 /// short-string limit, the same on every build).

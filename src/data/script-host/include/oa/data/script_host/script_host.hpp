@@ -64,6 +64,16 @@ inline constexpr uint64_t scan_call_charge = 4096;
 /// move or visit. A host walk over records or keys uses the same rate.
 inline constexpr uint64_t element_charge = 1;
 
+/// Units for one `where` or `:change` table, before its entries.
+///
+/// The walk is capped at the statement limit plus one entry. An emptied
+/// table that makes `next` visit every former slot is stopped by the phase's
+/// real-time limit. This flat charge stays small so a plan with one block
+/// per record still fits the default allowance. Each entry costs
+/// `element_charge` as well, and each key's bytes cost `units_for_bytes`
+/// when every key is visited.
+inline constexpr uint64_t table_walk_charge = 64;
+
 /// Real time one phase may run before that phase stops.
 ///
 /// A steady clock is read when the phase starts. The count hook and the

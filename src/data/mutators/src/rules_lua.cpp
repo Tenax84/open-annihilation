@@ -280,29 +280,44 @@ void clear_value(lua_State* state, int rule, int value_slot) {
     lua_setiuservalue(state, rule, value_slot);
 }
 
-/// Charges one key-collecting walk and one unit per entry, up to `limit` plus one.
+/// Charges one `where` or `:change` table: a small flat cost, then one unit
+/// per entry, up to `limit` plus one.
 ///
-/// That is as far as a needs or changes check reads. May raise. No C++ object
-/// with a destructor is alive here.
+/// Key bytes are charged only when every key is visited. A table past the
+/// limit charges the entry count alone, so the count does not follow
+/// `lua_next`'s order. May raise. No C++ object with a destructor is alive.
 void charge_script_table(lua_State* state, int table, std::size_t limit) {
-    host::charge_work(state, host::scan_call_charge);
+    host::charge_work(state, host::table_walk_charge);
     table = lua_absindex(state, table);
     lua_pushnil(state);
     std::size_t visited = 0;
+    uint64_t key_units = 0;
+    bool past_limit = false;
     while (lua_next(state, table) != 0) {
-        host::charge_work(state, host::element_charge);
+        ++visited;
+        if (visited > limit) {
+            past_limit = true;
+            lua_pop(state, 1);
+            lua_pop(state, 1);
+            break;
+        }
         if (lua_type(state, -2) == LUA_TSTRING) {
             std::size_t length = 0;
             lua_tolstring(state, -2, &length);
-            host::charge_work(state, host::units_for_bytes(length));
+            const uint64_t units = host::units_for_bytes(length);
+            if (key_units > UINT64_MAX - units)
+                key_units = UINT64_MAX;
+            else
+                key_units += units;
         }
         lua_pop(state, 1);
-        ++visited;
-        if (visited > limit) {
-            lua_pop(state, 1);
-            return;
-        }
     }
+    if (host::element_charge != 0 && visited > UINT64_MAX / host::element_charge)
+        host::charge_work(state, UINT64_MAX);
+    else
+        host::charge_work(state, host::element_charge * static_cast<uint64_t>(visited));
+    if (!past_limit)
+        host::charge_work(state, key_units);
 }
 
 /// Pushes a new table holding every pair of the table at `from`, read raw.
@@ -313,21 +328,26 @@ void charge_script_table(lua_State* state, int table, std::size_t limit) {
 /// @param count number of pairs, used to size the table
 void push_raw_copy(lua_State* state, int from, uint32_t count) {
     from = lua_absindex(state, from);
-    host::charge_work(state, host::scan_call_charge);
     host::charge_work(state, host::element_charge * static_cast<uint64_t>(count));
     lua_createtable(state, 0, static_cast<int>(std::min<uint32_t>(count, sm::max_statements)));
     const int private_copy = lua_gettop(state);
     lua_pushnil(state);
+    uint64_t key_units = 0;
     while (lua_next(state, from) != 0) {
         if (lua_type(state, -2) == LUA_TSTRING) {
             std::size_t length = 0;
             lua_tolstring(state, -2, &length);
-            host::charge_work(state, host::units_for_bytes(length));
+            const uint64_t units = host::units_for_bytes(length);
+            if (key_units > UINT64_MAX - units)
+                key_units = UINT64_MAX;
+            else
+                key_units += units;
         }
         lua_pushvalue(state, -2);
         lua_insert(state, -2);
         lua_rawset(state, private_copy);
     }
+    host::charge_work(state, key_units);
 }
 
 /// Pushes `length` bytes of `text` with ASCII capitals lowered and `\` read as `/`.
