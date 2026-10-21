@@ -103,18 +103,15 @@ moves that state; the moved-from object has no state.
   bytes of the two lengths. `tonumber` of a string counts one unit per 32
   bytes of that text. `string.format` counts one unit per format byte, 2
   units per value it converts, and one unit per byte of each text it copies
-  with `%s` or `%q`. `string.pack` counts one unit per format byte and one
-  per byte it writes, padding included. `string.packsize` counts one unit
-  per format byte, and `string.unpack` one per format byte and one per 32
-  bytes a `z` option scans. `utf8.char` counts one unit per code point.
+  with `%s` or `%q`. `utf8.char` counts one unit per code point.
   `math.max` and `math.min` count a comparison, as `table.sort` does, for
   each value after the first. `warn` counts 2 units per argument.
 - `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `string.format`,
-  `string.pack`, `string.packsize`, `string.unpack`, the charged `table` and
-  `utf8` calls and `utf8.char` are copies of Lua 5.4.9's with the count
-  inside. The script calls them directly, so an error names the function,
-  numbers the arguments of a method call such as `("%d"):format(x)` as Lua
-  does, and starts with the script's chunk and line.
+  the charged `table` and `utf8` calls and `utf8.char` are copies of Lua
+  5.4.9's with the count inside. The script calls them directly, so an
+  error names the function, numbers the arguments of a method call such as
+  `("%d"):format(x)` as Lua does, and starts with the script's chunk and
+  line. `string.format` also holds the two refusals under Text.
 - No string may be longer than 65,536 bytes. Every string the interpreter
   creates passes the allocator, and Lua has no switch that stops a longer
   one, so the cap is applied there. The header in front of the bytes differs
@@ -137,6 +134,18 @@ moves that state; the moved-from object has no state.
   engine's floating-point options: no fused multiply-add and no
   value-changing optimisation, and Visual Studio's strict floating-point
   mode.
+- A sandbox opens only when the C library's collation locale is `C` or
+  `POSIX`. String comparison and `table.sort` on strings then follow byte
+  order on every machine. Any other collation is refused at open, with the
+  locale's name in the error.
+- `setmetatable` installs a copy of the metatable. The copy keeps every
+  field the caller's table had at that moment, including `__index`, so a
+  methods table that `__index` points at still sees fields added later.
+  A later write to the caller's own table does not change the copy, and the
+  copy refuses `__mode`. `rawset` of `__mode` is refused on every table.
+  No script can make a weak table. `getmetatable` returns the copy, or the
+  `__metatable` field when the caller set one. Making the copy counts 4096
+  units for the walk, as `pairs` does, and one unit per field copied.
 
 ## Maths
 
@@ -186,6 +195,29 @@ a tie by the raw bytes. `sort_names` uses that order and does not call Lua.
 first, outside any protected region. `push_sorted_keys` pushes one table's
 keys in the `pairs` order and raises as `pairs` does.
 
+## Text
+
+`tostring` of a float is the same characters on every machine. A NaN of
+either sign is `nan`, the infinities are `inf` and `-inf`, and every finite
+value is `%.14g`, with `.0` added to an integral value the way Lua does.
+Joining a float to a string uses that same text.
+
+A table, a function or any other value without `__tostring` prints as its
+kind, a colon and `hidden`, for example `table: hidden`. It does not print
+where the value sits. `__tostring` is used when the metatable has one, and
+`__name` is used as the kind when it has no `__tostring`.
+
+`string.format` is the charged copy of Lua's own format, with two
+refusals inside it, each raised at the script's line. `%p` is refused,
+because it would show where a value sits. `%a`, `%e`, `%f` and `%g`, in
+either case, are refused when the number is a NaN or an infinity; the
+script tests the number first, or uses `tostring`. A finite number, `%q`,
+`%s`, `%d`, `%i`, `%x` and `%c` are unchanged. `%q` of an infinity is
+`1e9999` or `-1e9999`, and `%q` of a NaN is `(0/0)`.
+
+`string.pack`, `string.unpack` and `string.packsize` are nil. Their sizes
+and alignment are not the same on every machine the engine builds for.
+
 ## Profiles
 
 A profile is a name, an instruction allowance, a memory cap and an optional
@@ -234,12 +266,13 @@ results and error messages, chunk and line included, method calls among
 them, and checks that a loop or an impossible range in each one stops the
 phase. That includes a plain find, a direct `utf8.codes` call, `table.sort`
 of a C comparison and of long zero-filled strings, an allocation loop
-caught with `pcall`, `string.pack` and `string.format` copying long texts
-before an error the script catches, and `table.pack` of 300,000 values. It
-checks that a loop of short strings costs the same with an empty heap and
-with 20,000 live tables, and that walking, clamping, formatting and sorting
-the fields of 400 units stays a small part of the allowance. It also
-checks that `utf8.codes` returns one function, and runs a phase that reads
+caught with `pcall`, `string.format` copying long texts before an error
+the script catches, `table.pack` of 300,000 values, and `setmetatable`
+with a metatable of 30,000 fields. It checks that a loop of short strings
+costs the same with an empty heap and with 20,000 live tables, and that
+walking, clamping, formatting and sorting the fields of 400 units stays a
+small part of the allowance. It also checks that `utf8.codes` returns one
+function, that the pack functions stay absent, and runs a phase that reads
 several hundred small tables and rewrites their text.
 
 `data-script-host-string-length` checks that a string of 65,536 bytes is
@@ -247,6 +280,10 @@ kept for each way of making one, and that each way of making a longer one
 stops with `string_length`, naming the place it happened. It also checks
 that catching the refusal does not let the phase continue, and that filling
 memory with shorter strings is still a memory error.
+
+`data-script-host-text` checks the float spellings, `hidden` in place of
+where a value sits, the `string.format` refusals, the absent pack functions,
+C collation, and that no route makes a weak table.
 
 ## Limitations
 
@@ -265,9 +302,8 @@ hundreds of thousands of values passed through `...`, a chain of thousands
 of `__index` tables, arithmetic on a long string of spaces (`s + 0`), and a
 table that grows and shrinks its parts again and again. `next` on a table
 emptied after millions of entries does more work than its 4096 units pay
-for. A limit on a phase's real time is still to come for those. Text of numbers
-that must come out the same on every platform is not part of this library
-yet. A `__gc` or `__mode` entry added to a metatable after `setmetatable`
-is not caught. `instructions_used` counts Lua instructions in steps of the
-check interval, so a short phase can report zero; pattern steps, string
-lengths, scans and table work are counted in the units above.
+for. A limit on a phase's real time is still to come for those. A `__gc`
+entry added to the installed metatable after `setmetatable` is not caught.
+`instructions_used` counts Lua instructions in steps of the check interval,
+so a short phase can report zero; pattern steps, string lengths, scans and
+table work are counted in the units above.

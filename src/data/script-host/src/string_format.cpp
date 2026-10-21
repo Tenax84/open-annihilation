@@ -1,25 +1,24 @@
 // SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 // SPDX-License-Identifier: GPL-3.0-only
 
-// string.format, string.pack, string.packsize and string.unpack, following
-// lstrlib.c of Lua 5.4.9.
+// string.format, following lstrlib.c of Lua 5.4.9.
 // Copyright (C) 1994-2026 Lua.org, PUC-Rio.
 // The licence is the MIT licence; the text is licenses/lua-LICENSE.txt.
-// The charges are the part this file adds. Each call counts one unit per
-// byte of its format. string.format also counts argument_unit per value it
+// The charges and two refusals are the parts this file adds. Each call
+// counts one unit per byte of its format, argument_unit per value it
 // converts and one unit per byte of each text it copies with %s or %q.
-// string.pack counts one unit per byte it writes, padding included.
-// string.unpack counts one unit per bytes_per_charge a z option scans. Past
-// the allowance the call raises the same budget message as an endless loop.
-// Hexadecimal floats are written by the interpreter's own code, as the
-// interpreter itself does on every platform.
+// Past the allowance the call raises the same budget message as an endless
+// loop. %p is refused, because it would show where a value sits, and %a,
+// %e, %f and %g of a NaN or an infinity are refused, because C libraries
+// spell those differently. Hexadecimal floats are written by the
+// interpreter's own code, as the interpreter itself does on every platform.
+// string.pack and its family are not copied: the sandbox removes them.
 //
 // The functions are C calls that Lua leaves by a long jump. No object with
 // a destructor is alive across any of those calls.
 
 #include "internal.hpp"
 
-#include <bit>
 #include <cctype>
 #include <cfloat>
 #include <climits>
@@ -277,299 +276,21 @@ void add_length_modifier(char* form, const char* modifier) {
     form[length + modifier_length] = '\0';
 }
 
-// string.pack and its family.
-
-/// Byte the format's padding and alignment write.
-constexpr char pack_padding = 0x00;
-
-/// Most bytes one packed integer may take.
-constexpr int max_integer_size = 16;
-
-/// Bits in one byte.
-constexpr int byte_bits = CHAR_BIT;
-
-/// One byte of ones.
-constexpr int byte_mask = (1 << byte_bits) - 1;
-
-/// Bytes in a Lua integer.
-constexpr int integer_size = static_cast<int>(sizeof(lua_Integer));
-
-/// Largest size a format may name, which fits both an int and a size_t.
-constexpr std::size_t max_pack_size = sizeof(std::size_t) < sizeof(int)
-                                          ? static_cast<std::size_t>(-1)
-                                          : static_cast<std::size_t>(INT_MAX);
-
-constexpr bool native_little = std::endian::native == std::endian::little;
-
-/// The strictest alignment the platform needs, which `!` without a number
-/// asks for.
-union MaxAlignValue {
-    LUAI_MAXALIGN;
-};
-
-struct MaxAlignProbe {
-    char lead{};
-    MaxAlignValue value;
-};
-
-constexpr int native_max_align = static_cast<int>(offsetof(MaxAlignProbe, value));
-
-/// What one format option reads or writes.
-enum class PackOption : uint8_t {
-    signed_integer,
-    unsigned_integer,
-    float_value,
-    lua_number,
-    double_value,
-    fixed_text,
-    counted_text,
-    zero_text,
-    padding,
-    align_padding,
-    none,
-};
-
-/// The state of one format as it is read.
-struct PackHeader {
-    lua_State* state{};
-    bool little{};
-    int max_align{};
-};
-
-/// Whether `value` is a decimal digit, whatever the locale.
-bool is_digit(int value) {
-    return '0' <= value && value <= '9';
-}
-
-/// Reads a decimal number from the format, or returns `fallback` when there
-/// is none.
+/// Raises when `value` is a NaN or an infinity, which C libraries write
+/// differently for `%a`, `%e`, `%f` and `%g`.
 ///
-/// @param[in,out] format the format, moved past the digits
-/// @param fallback the value when no digit follows
-/// @return the number
-int read_number(const char** format, int fallback) {
-    if (!is_digit(**format))
-        return fallback;
-    int number = 0;
-    do {
-        number = number * 10 + (*((*format)++) - '0');
-    } while (is_digit(**format) && number <= (static_cast<int>(max_pack_size) - 9) / 10);
-    return number;
-}
-
-/// Reads an integer size and raises when it is outside 1 to max_integer_size.
-///
-/// @param header the format being read
-/// @param[in,out] format the format, moved past the digits
-/// @param fallback the size when no digit follows
-/// @return the size
-int read_size(PackHeader* header, const char** format, int fallback) {
-    const int size = read_number(format, fallback);
-    if (size > max_integer_size || size <= 0)
-        return luaL_error(
-            header->state, "integral size (%d) out of limits [1,%d]", size, max_integer_size
+/// @param state the sandbox state
+/// @param conversion the conversion, named in the message
+/// @param value the number
+void refuse_special_number(lua_State* state, char conversion, lua_Number value) {
+    if (std::isnan(value) || std::isinf(value)) {
+        luaL_error(
+            state,
+            "string.format: cannot write nan or an infinity with %%%c; test the number first, "
+            "or use tostring",
+            conversion
         );
-    return size;
-}
-
-/// Starts reading a format: the platform's byte order, no alignment.
-void start_header(lua_State* state, PackHeader* header) {
-    header->state = state;
-    header->little = native_little;
-    header->max_align = 1;
-}
-
-/// Reads the next option and its size.
-///
-/// @param header the format being read
-/// @param[in,out] format the format, moved past the option
-/// @param[out] size the option's size in bytes
-/// @return the option
-PackOption read_option(PackHeader* header, const char** format, int* size) {
-    const int option = *((*format)++);
-    *size = 0;
-    switch (option) {
-    case 'b':
-        *size = static_cast<int>(sizeof(char));
-        return PackOption::signed_integer;
-    case 'B':
-        *size = static_cast<int>(sizeof(char));
-        return PackOption::unsigned_integer;
-    case 'h':
-        *size = static_cast<int>(sizeof(short));
-        return PackOption::signed_integer;
-    case 'H':
-        *size = static_cast<int>(sizeof(short));
-        return PackOption::unsigned_integer;
-    case 'l':
-        *size = static_cast<int>(sizeof(long));
-        return PackOption::signed_integer;
-    case 'L':
-        *size = static_cast<int>(sizeof(long));
-        return PackOption::unsigned_integer;
-    case 'j':
-        *size = static_cast<int>(sizeof(lua_Integer));
-        return PackOption::signed_integer;
-    case 'J':
-        *size = static_cast<int>(sizeof(lua_Integer));
-        return PackOption::unsigned_integer;
-    case 'T':
-        *size = static_cast<int>(sizeof(std::size_t));
-        return PackOption::unsigned_integer;
-    case 'f':
-        *size = static_cast<int>(sizeof(float));
-        return PackOption::float_value;
-    case 'n':
-        *size = static_cast<int>(sizeof(lua_Number));
-        return PackOption::lua_number;
-    case 'd':
-        *size = static_cast<int>(sizeof(double));
-        return PackOption::double_value;
-    case 'i':
-        *size = read_size(header, format, static_cast<int>(sizeof(int)));
-        return PackOption::signed_integer;
-    case 'I':
-        *size = read_size(header, format, static_cast<int>(sizeof(int)));
-        return PackOption::unsigned_integer;
-    case 's':
-        *size = read_size(header, format, static_cast<int>(sizeof(std::size_t)));
-        return PackOption::counted_text;
-    case 'c':
-        *size = read_number(format, -1);
-        if (*size == -1)
-            luaL_error(header->state, "missing size for format option 'c'");
-        return PackOption::fixed_text;
-    case 'z':
-        return PackOption::zero_text;
-    case 'x':
-        *size = 1;
-        return PackOption::padding;
-    case 'X':
-        return PackOption::align_padding;
-    case ' ':
-        break;
-    case '<':
-        header->little = true;
-        break;
-    case '>':
-        header->little = false;
-        break;
-    case '=':
-        header->little = native_little;
-        break;
-    case '!':
-        header->max_align = read_size(header, format, native_max_align);
-        break;
-    default:
-        luaL_error(header->state, "invalid format option '%c'", option);
     }
-    return PackOption::none;
-}
-
-/// Reads the next option, its size and the padding that aligns it.
-///
-/// `X` takes its alignment from the option after it. Alignment is limited by
-/// the format's maximum, and a fixed-length text needs none.
-///
-/// @param header the format being read
-/// @param total_size bytes the format has covered so far
-/// @param[in,out] format the format, moved past the option
-/// @param[out] size the option's size in bytes
-/// @param[out] align_bytes padding bytes before the option
-/// @return the option
-PackOption read_details(
-    PackHeader* header, std::size_t total_size, const char** format, int* size, int* align_bytes
-) {
-    const PackOption option = read_option(header, format, size);
-    int align = *size;
-    if (option == PackOption::align_padding) {
-        if (**format == '\0' || read_option(header, format, &align) == PackOption::fixed_text ||
-            align == 0)
-            luaL_argerror(header->state, 1, "invalid next option for option 'X'");
-    }
-    if (align <= 1 || option == PackOption::fixed_text) {
-        *align_bytes = 0;
-    } else {
-        if (align > header->max_align)
-            align = header->max_align;
-        if ((align & (align - 1)) != 0)
-            luaL_argerror(header->state, 1, "format asks for alignment not power of 2");
-        *align_bytes =
-            (align - static_cast<int>(total_size & static_cast<std::size_t>(align - 1))) &
-            (align - 1);
-    }
-    return option;
-}
-
-/// Appends `size` bytes of `value`, sign-extending past a Lua integer when
-/// `negative` is true.
-void pack_integer(luaL_Buffer* buffer, lua_Unsigned value, bool little, int size, bool negative) {
-    char* bytes = luaL_prepbuffsize(buffer, static_cast<std::size_t>(size));
-    bytes[little ? 0 : size - 1] = static_cast<char>(value & byte_mask);
-    for (int index = 1; index < size; ++index) {
-        value >>= byte_bits;
-        bytes[little ? index : size - 1 - index] = static_cast<char>(value & byte_mask);
-    }
-    if (negative && size > integer_size) {
-        for (int index = integer_size; index < size; ++index)
-            bytes[little ? index : size - 1 - index] = static_cast<char>(byte_mask);
-    }
-    luaL_addsize(buffer, static_cast<std::size_t>(size));
-}
-
-/// Copies `size` bytes, reversing them when `little` is not the platform's order.
-void copy_with_order(char* destination, const char* source, int size, bool little) {
-    if (little == native_little) {
-        std::memcpy(destination, source, static_cast<std::size_t>(size));
-        return;
-    }
-    destination += size - 1;
-    while (size-- != 0)
-        *(destination--) = *(source++);
-}
-
-/// Reads a `size`-byte integer, sign-extending it when `is_signed` is true.
-/// Raises when the bytes past a Lua integer do not fit in one.
-lua_Integer
-unpack_integer(lua_State* state, const char* text, bool little, int size, bool is_signed) {
-    lua_Unsigned result = 0;
-    const int limit = size <= integer_size ? size : integer_size;
-    for (int index = limit - 1; index >= 0; --index) {
-        result <<= byte_bits;
-        result |= static_cast<lua_Unsigned>(byte_of(text[little ? index : size - 1 - index]));
-    }
-    if (size < integer_size) {
-        if (is_signed) {
-            const lua_Unsigned mask = static_cast<lua_Unsigned>(1) << (size * byte_bits - 1);
-            result = ((result ^ mask) - mask);
-        }
-    } else if (size > integer_size) {
-        const int mask = (!is_signed || static_cast<lua_Integer>(result) >= 0) ? 0 : byte_mask;
-        for (int index = limit; index < size; ++index) {
-            if (byte_of(text[little ? index : size - 1 - index]) != mask)
-                luaL_error(state, "%d-byte integer does not fit into Lua Integer", size);
-        }
-    }
-    return static_cast<lua_Integer>(result);
-}
-
-/// Turns a position that may count from the end into one from the start.
-std::size_t relative_position(lua_Integer position, std::size_t length) {
-    if (position > 0)
-        return static_cast<std::size_t>(position);
-    if (position == 0)
-        return 1;
-    if (position < -static_cast<lua_Integer>(length))
-        return 1;
-    return length + static_cast<std::size_t>(position) + 1;
-}
-
-/// Charges one unit per byte of the format, and at least one.
-const char* charged_format(lua_State* state) {
-    std::size_t length = 0;
-    const char* format = luaL_checklstring(state, 1, &length);
-    charge(state, length == 0 ? 1 : static_cast<uint64_t>(length));
-    return format;
 }
 
 extern "C" {
@@ -632,6 +353,7 @@ static int host_string_format(lua_State* state) {
             check_format(state, form, flags_float, true);
             add_length_modifier(form, LUA_NUMBER_FRMLEN);
             const lua_Number value = luaL_checknumber(state, argument);
+            refuse_special_number(state, conversion, value);
             count = hex_float(state, item, item_size, form, value);
             break;
         }
@@ -646,22 +368,16 @@ static int host_string_format(lua_State* state) {
             }
             const lua_Number value = luaL_checknumber(state, argument);
             check_format(state, form, flags_float, true);
+            refuse_special_number(state, conversion, value);
             add_length_modifier(form, LUA_NUMBER_FRMLEN);
             count = std::snprintf(
                 item, static_cast<std::size_t>(item_size), form, static_cast<LUAI_UACNUMBER>(value)
             );
             break;
         }
-        case 'p': {
-            const void* pointer = lua_topointer(state, argument);
-            check_format(state, form, flags_text, false);
-            if (pointer == nullptr) {
-                pointer = "(null)";
-                form[std::strlen(form) - 1] = 's';
-            }
-            count = std::snprintf(item, static_cast<std::size_t>(item_size), form, pointer);
-            break;
-        }
+        case 'p':
+            // Where a value sits differs between machines and between runs.
+            return luaL_error(state, "string.format: %%p would show a memory address");
         case 'q': {
             if (form[2] != '\0')
                 return luaL_error(state, "specifier '%%q' cannot have modifiers");
@@ -701,288 +417,13 @@ static int host_string_format(lua_State* state) {
     luaL_pushresult(&buffer);
     return 1;
 }
-
-// string.pack.
-static int host_string_pack(lua_State* state) {
-    const char* format = charged_format(state);
-    int argument = 1;
-    std::size_t total_size = 0;
-    PackHeader header;
-    start_header(state, &header);
-    lua_pushnil(state);
-    luaL_Buffer buffer;
-    luaL_buffinit(state, &buffer);
-    while (*format != '\0') {
-        int size = 0;
-        int align_bytes = 0;
-        const PackOption option = read_details(&header, total_size, &format, &size, &align_bytes);
-        // Every byte this option writes, its padding and a fixed text's fill included.
-        charge(state, static_cast<uint64_t>(align_bytes) + static_cast<uint64_t>(size));
-        total_size += static_cast<std::size_t>(align_bytes) + static_cast<std::size_t>(size);
-        while (align_bytes-- > 0)
-            luaL_addchar(&buffer, pack_padding);
-        ++argument;
-        switch (option) {
-        case PackOption::signed_integer: {
-            const lua_Integer value = luaL_checkinteger(state, argument);
-            if (size < integer_size) {
-                const lua_Integer limit = static_cast<lua_Integer>(1) << ((size * byte_bits) - 1);
-                luaL_argcheck(
-                    state, -limit <= value && value < limit, argument, "integer overflow"
-                );
-            }
-            pack_integer(&buffer, static_cast<lua_Unsigned>(value), header.little, size, value < 0);
-            break;
-        }
-        case PackOption::unsigned_integer: {
-            const lua_Integer value = luaL_checkinteger(state, argument);
-            if (size < integer_size)
-                luaL_argcheck(
-                    state,
-                    static_cast<lua_Unsigned>(value) <
-                        (static_cast<lua_Unsigned>(1) << (size * byte_bits)),
-                    argument,
-                    "unsigned overflow"
-                );
-            pack_integer(&buffer, static_cast<lua_Unsigned>(value), header.little, size, false);
-            break;
-        }
-        case PackOption::float_value: {
-            const auto value = static_cast<float>(luaL_checknumber(state, argument));
-            char* bytes = luaL_prepbuffsize(&buffer, sizeof value);
-            copy_with_order(
-                bytes,
-                reinterpret_cast<const char*>(&value),
-                static_cast<int>(sizeof value),
-                header.little
-            );
-            luaL_addsize(&buffer, static_cast<std::size_t>(size));
-            break;
-        }
-        case PackOption::lua_number: {
-            const lua_Number value = luaL_checknumber(state, argument);
-            char* bytes = luaL_prepbuffsize(&buffer, sizeof value);
-            copy_with_order(
-                bytes,
-                reinterpret_cast<const char*>(&value),
-                static_cast<int>(sizeof value),
-                header.little
-            );
-            luaL_addsize(&buffer, static_cast<std::size_t>(size));
-            break;
-        }
-        case PackOption::double_value: {
-            const auto value = static_cast<double>(luaL_checknumber(state, argument));
-            char* bytes = luaL_prepbuffsize(&buffer, sizeof value);
-            copy_with_order(
-                bytes,
-                reinterpret_cast<const char*>(&value),
-                static_cast<int>(sizeof value),
-                header.little
-            );
-            luaL_addsize(&buffer, static_cast<std::size_t>(size));
-            break;
-        }
-        case PackOption::fixed_text: {
-            std::size_t length = 0;
-            const char* text = luaL_checklstring(state, argument, &length);
-            luaL_argcheck(
-                state,
-                length <= static_cast<std::size_t>(size),
-                argument,
-                "string longer than given size"
-            );
-            luaL_addlstring(&buffer, text, length);
-            while (length++ < static_cast<std::size_t>(size))
-                luaL_addchar(&buffer, pack_padding);
-            break;
-        }
-        case PackOption::counted_text: {
-            std::size_t length = 0;
-            const char* text = luaL_checklstring(state, argument, &length);
-            luaL_argcheck(
-                state,
-                size >= static_cast<int>(sizeof(std::size_t)) ||
-                    length < (static_cast<std::size_t>(1) << (size * byte_bits)),
-                argument,
-                "string length does not fit in given size"
-            );
-            charge(state, static_cast<uint64_t>(length));
-            pack_integer(&buffer, static_cast<lua_Unsigned>(length), header.little, size, false);
-            luaL_addlstring(&buffer, text, length);
-            total_size += length;
-            break;
-        }
-        case PackOption::zero_text: {
-            std::size_t length = 0;
-            const char* text = luaL_checklstring(state, argument, &length);
-            luaL_argcheck(state, std::strlen(text) == length, argument, "string contains zeros");
-            charge(state, static_cast<uint64_t>(length) + 1);
-            luaL_addlstring(&buffer, text, length);
-            luaL_addchar(&buffer, '\0');
-            total_size += length + 1;
-            break;
-        }
-        case PackOption::padding:
-            luaL_addchar(&buffer, pack_padding);
-            --argument;
-            break;
-        case PackOption::align_padding:
-        case PackOption::none:
-            --argument;
-            break;
-        }
-    }
-    luaL_pushresult(&buffer);
-    return 1;
-}
-
-// string.packsize.
-static int host_string_packsize(lua_State* state) {
-    const char* format = charged_format(state);
-    std::size_t total_size = 0;
-    PackHeader header;
-    start_header(state, &header);
-    while (*format != '\0') {
-        int size = 0;
-        int align_bytes = 0;
-        const PackOption option = read_details(&header, total_size, &format, &size, &align_bytes);
-        luaL_argcheck(
-            state,
-            option != PackOption::counted_text && option != PackOption::zero_text,
-            1,
-            "variable-length format"
-        );
-        size += align_bytes;
-        luaL_argcheck(
-            state,
-            total_size <= max_pack_size - static_cast<std::size_t>(size),
-            1,
-            "format result too large"
-        );
-        total_size += static_cast<std::size_t>(size);
-    }
-    lua_pushinteger(state, static_cast<lua_Integer>(total_size));
-    return 1;
-}
-
-// string.unpack.
-static int host_string_unpack(lua_State* state) {
-    const char* format = charged_format(state);
-    std::size_t data_length = 0;
-    const char* data = luaL_checklstring(state, 2, &data_length);
-    std::size_t position = relative_position(luaL_optinteger(state, 3, 1), data_length) - 1;
-    int results = 0;
-    luaL_argcheck(state, position <= data_length, 3, "initial position out of string");
-    PackHeader header;
-    start_header(state, &header);
-    while (*format != '\0') {
-        int size = 0;
-        int align_bytes = 0;
-        const PackOption option = read_details(&header, position, &format, &size, &align_bytes);
-        luaL_argcheck(
-            state,
-            static_cast<std::size_t>(align_bytes) + static_cast<std::size_t>(size) <=
-                data_length - position,
-            2,
-            "data string too short"
-        );
-        position += static_cast<std::size_t>(align_bytes);
-        luaL_checkstack(state, 2, "too many results");
-        ++results;
-        switch (option) {
-        case PackOption::signed_integer:
-        case PackOption::unsigned_integer: {
-            const lua_Integer value = unpack_integer(
-                state, data + position, header.little, size, option == PackOption::signed_integer
-            );
-            lua_pushinteger(state, value);
-            break;
-        }
-        case PackOption::float_value: {
-            float value = 0;
-            copy_with_order(
-                reinterpret_cast<char*>(&value),
-                data + position,
-                static_cast<int>(sizeof value),
-                header.little
-            );
-            lua_pushnumber(state, static_cast<lua_Number>(value));
-            break;
-        }
-        case PackOption::lua_number: {
-            lua_Number value = 0;
-            copy_with_order(
-                reinterpret_cast<char*>(&value),
-                data + position,
-                static_cast<int>(sizeof value),
-                header.little
-            );
-            lua_pushnumber(state, value);
-            break;
-        }
-        case PackOption::double_value: {
-            double value = 0;
-            copy_with_order(
-                reinterpret_cast<char*>(&value),
-                data + position,
-                static_cast<int>(sizeof value),
-                header.little
-            );
-            lua_pushnumber(state, static_cast<lua_Number>(value));
-            break;
-        }
-        case PackOption::fixed_text:
-            lua_pushlstring(state, data + position, static_cast<std::size_t>(size));
-            break;
-        case PackOption::counted_text: {
-            const auto length = static_cast<std::size_t>(
-                unpack_integer(state, data + position, header.little, size, false)
-            );
-            luaL_argcheck(
-                state,
-                length <= data_length - position - static_cast<std::size_t>(size),
-                2,
-                "data string too short"
-            );
-            lua_pushlstring(state, data + position + size, length);
-            position += length;
-            break;
-        }
-        case PackOption::zero_text: {
-            const std::size_t length = std::strlen(data + position);
-            charge(state, units_for_bytes(length + 1));
-            luaL_argcheck(
-                state, position + length < data_length, 2, "unfinished string for format 'z'"
-            );
-            lua_pushlstring(state, data + position, length);
-            position += length + 1;
-            break;
-        }
-        case PackOption::align_padding:
-        case PackOption::padding:
-        case PackOption::none:
-            --results;
-            break;
-        }
-        position += static_cast<std::size_t>(size);
-    }
-    lua_pushinteger(state, static_cast<lua_Integer>(position) + 1);
-    return results + 1;
-}
 } // extern "C"
 
 } // namespace
 
-void install_format_and_pack(lua_State* state) {
+void install_format(lua_State* state) {
     lua_pushcfunction(state, host_string_format);
     lua_setfield(state, -2, "format");
-    lua_pushcfunction(state, host_string_pack);
-    lua_setfield(state, -2, "pack");
-    lua_pushcfunction(state, host_string_packsize);
-    lua_setfield(state, -2, "packsize");
-    lua_pushcfunction(state, host_string_unpack);
-    lua_setfield(state, -2, "unpack");
 }
 
 } // namespace oa::data::script_host
