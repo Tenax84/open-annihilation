@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 add_library(
-  oa-data-mutators src/allow_list.cpp src/collections.cpp src/files_layer.cpp src/loadout.cpp src/rules_lua.cpp
+  oa-data-mutators src/allow_list.cpp src/collections.cpp src/files_layer.cpp src/loadout.cpp
+                   src/rules_lua.cpp src/verdicts.cpp
 )
 add_library(oa::data::mutators ALIAS oa-data-mutators)
 target_include_directories(oa-data-mutators PUBLIC include)
@@ -49,4 +50,9 @@ if(BUILD_TESTING)
     PRIVATE "OA_MUTATORS_RULES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/rules_lua\""
   )
   add_test(NAME data-mutators-rules-lua COMMAND oa-data-mutators-rules-lua-test)
+
+  add_executable(oa-data-mutators-verdicts-test tests/verdicts_test.cpp)
+  target_link_libraries(oa-data-mutators-verdicts-test PRIVATE oa-data-mutators oa-test-support)
+  add_test(NAME data-mutators-verdicts COMMAND oa-data-mutators-verdicts-test)
+  set_tests_properties(data-mutators-verdicts PROPERTIES TIMEOUT 30)
 endif()
