@@ -2,7 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 add_library(
-  oa-data-mutators src/allow_list.cpp src/collections.cpp src/files_layer.cpp src/rules_lua.cpp
+  oa-data-mutators
+  src/allow_list.cpp
+  src/collections.cpp
+  src/files_layer.cpp
+  src/journal.cpp
+  src/rules_lua.cpp
 )
 add_library(oa::data::mutators ALIAS oa-data-mutators)
 target_include_directories(oa-data-mutators PUBLIC include)
