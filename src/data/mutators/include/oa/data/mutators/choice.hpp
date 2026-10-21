@@ -19,10 +19,11 @@ namespace oa::data::mutators {
 
 /// One mutator a player named, before it is looked up.
 ///
-/// `target` is an id when it holds no `/` and no `\`, and otherwise a path
-/// to an unpacked package folder. `options` are the settings the player
-/// wrote, in the order written. An option the text leaves out takes the
-/// manifest's default when the choice is resolved.
+/// `target` is an id when it holds no `/` and no `\`. Anything else is a
+/// path to an unpacked package folder. A target that holds `:` is a path
+/// only when it names an existing folder or file. `options` are the
+/// settings the player wrote, in the order written. An option the text
+/// leaves out takes the manifest's default when the choice is resolved.
 struct MutatorChoice {
     /// The id, or the path, as the player wrote it.
     std::string target{};
@@ -35,11 +36,13 @@ struct MutatorChoice {
 /// Reads one mutator choice.
 ///
 /// An id holds no `/` and no `\`. Anything else is a path to a package
-/// folder. Options follow the last `:` whose remainder is
-/// `name=value[,name=value...]`, so `C:\pkg` and `C:\pkg:factor=4` both
-/// split on the options and a Windows drive letter stays in the path. An
-/// empty text, an empty name or value, a repeated option, and a `,` or `=`
-/// inside a value are refused. The text is not trimmed.
+/// folder. A target that holds `:` is a path only when it names an existing
+/// folder or file; otherwise the text is refused. Options follow the first
+/// `:` that is followed by a name and `=`, and every name is an option id
+/// and every value an identifier, so a Windows drive letter such as `C:`
+/// stays in the path. An empty text, an empty name or value, a repeated
+/// option, and a `,` or `=` inside a value are refused. The text is not
+/// trimmed.
 ///
 /// @param text the choice, as written
 /// @param[out] error what is wrong, when the text is not a choice; may be null

@@ -191,7 +191,21 @@ mutators::MutatorChoice parsed(std::string_view text) {
     return *choice;
 }
 
-void test_parse() {
+/// A folder whose name holds a colon, so a drive-shaped path can be told
+/// from a malformed id.
+///
+/// @param scratch the test's folder
+/// @param name the folder's own name
+/// @return the folder
+fs::path drive_folder(const Scratch& scratch, std::string_view name) {
+    const fs::path folder = scratch.path() / std::string(name);
+    std::error_code failure;
+    fs::create_directories(folder, failure);
+    OA_CHECK(!failure);
+    return folder;
+}
+
+void test_parse(const Scratch& scratch) {
     const mutators::MutatorChoice id = parsed("ridge-swift");
     OA_CHECK(same_choice(id, "ridge-swift", false, {}));
 
@@ -201,17 +215,22 @@ void test_parse() {
     const mutators::MutatorChoice absolute = parsed("/tmp/ridge-swift");
     OA_CHECK(same_choice(absolute, "/tmp/ridge-swift", true, {}));
 
-    const mutators::MutatorChoice drive = parsed("C:\\pkg");
-    OA_CHECK(same_choice(drive, "C:\\pkg", true, {}));
+    const std::string drive = drive_folder(scratch, "C:\\pkg").string();
+    const mutators::MutatorChoice drive_choice = parsed(drive);
+    OA_CHECK(same_choice(drive_choice, drive, true, {}));
 
-    const mutators::MutatorChoice drive_option = parsed("C:\\pkg:factor=4");
-    OA_CHECK(same_choice(drive_option, "C:\\pkg", true, {{"factor", "4"}}));
+    const mutators::MutatorChoice drive_option = parsed(drive + ":factor=4");
+    OA_CHECK(same_choice(drive_option, drive, true, {{"factor", "4"}}));
 
     const mutators::MutatorChoice several = parsed("ridge-swift:factor=4,health=2000");
     OA_CHECK(same_choice(several, "ridge-swift", false, {{"factor", "4"}, {"health", "2000"}}));
 
-    const mutators::MutatorChoice drive_several = parsed("C:\\pkg:factor=4,health=2000");
-    OA_CHECK(same_choice(drive_several, "C:\\pkg", true, {{"factor", "4"}, {"health", "2000"}}));
+    const mutators::MutatorChoice drive_several = parsed(drive + ":factor=4,health=2000");
+    OA_CHECK(same_choice(drive_several, drive, true, {{"factor", "4"}, {"health", "2000"}}));
+
+    const std::string equals_path = drive_folder(scratch, "C:\\a=b\\pkg").string();
+    const mutators::MutatorChoice equals_choice = parsed(equals_path);
+    OA_CHECK(same_choice(equals_choice, equals_path, true, {}));
 
     OA_CHECK(parse_error("") == "a mutator needs an id or a path");
     OA_CHECK(parse_error(":factor=4") == "a mutator needs an id or a path");
@@ -222,19 +241,25 @@ void test_parse() {
     OA_CHECK(parse_error("ridge-swift:factor=4,,health=2") == "an option is not name=value");
     OA_CHECK(parse_error("ridge-swift:a=b=c") == "an option is not name=value");
     OA_CHECK(parse_error("ridge-swift:factor=4,health") == "an option is not name=value");
+    OA_CHECK(parse_error("ridge-swift:factor=4 5") == "an option is not name=value");
+    OA_CHECK(parse_error("ridge-tough:") == "\"ridge-tough:\" is not an id or a path");
+    OA_CHECK(parse_error("C:\\pkg") == "\"C:\\pkg\" is not an id or a path");
+    OA_CHECK(parse_error("C:\\pkg:factor=4") == "\"C:\\pkg\" is not an id or a path");
+    OA_CHECK(parse_error("C:\\a=b\\pkg") == "\"C:\\a=b\\pkg\" is not an id or a path");
 }
 
-void test_round_trip() {
-    const std::string_view texts[] = {
+void test_round_trip(const Scratch& scratch) {
+    const std::string drive = drive_folder(scratch, "C:\\pkg").string();
+    const std::string texts[] = {
         "ridge-swift",
         "packages/ridge-tough",
         "/tmp/ridge-swift",
-        "C:\\pkg",
-        "C:\\pkg:factor=4",
-        "C:\\pkg:factor=4,health=2000",
+        drive,
+        drive + ":factor=4",
+        drive + ":factor=4,health=2000",
         "ridge-swift:ready=true,factor=2.0,pace=fast,health=2000",
     };
-    for (const std::string_view text : texts) {
+    for (const std::string& text : texts) {
         const mutators::MutatorChoice choice = parsed(text);
         const std::string written = mutators::format_choice(choice);
         std::string error;
@@ -417,9 +442,9 @@ void test_resolve(const Scratch& scratch) {
 } // namespace
 
 int main() {
-    test_parse();
-    test_round_trip();
     const Scratch scratch;
+    test_parse(scratch);
+    test_round_trip(scratch);
     test_resolve(scratch);
     return oa::test::check_exit_status();
 }

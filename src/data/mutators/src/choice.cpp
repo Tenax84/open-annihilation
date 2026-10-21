@@ -6,6 +6,7 @@
 
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/formats/oamod.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -82,6 +83,8 @@ bool read_options(std::string_view options_text, MutatorChoice& choice, std::str
             return refuse_choice(error, "an option needs a name").has_value();
         if (value.empty())
             return refuse_choice(error, "an option needs a value").has_value();
+        if (!oamut::option_id(name) || !oamut::choice_value_text(value))
+            return refuse_choice(error, "an option is not name=value").has_value();
         for (const auto& held : choice.options) {
             if (held.first == name)
                 return refuse_choice(error, "option " + std::string(name) + " is repeated")
@@ -93,6 +96,43 @@ bool read_options(std::string_view options_text, MutatorChoice& choice, std::str
         start = comma + 1;
     }
     return true;
+}
+
+/// The first colon whose remainder begins with an option name and `=`.
+///
+/// An empty name still counts, so `:=4` is an options clause and not part of
+/// the target. A name that is not an option id does not, so a path may hold
+/// `=` without being read as options.
+///
+/// @param text the whole choice
+/// @return the colon's index, or `npos` when the text names no options
+std::size_t options_colon(std::string_view text) {
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        if (text[index] != ':')
+            continue;
+        const std::string_view remainder = text.substr(index + 1);
+        const std::size_t equals = remainder.find('=');
+        if (equals == std::string_view::npos)
+            continue;
+        const std::size_t comma = remainder.find(',');
+        if (comma != std::string_view::npos && comma < equals)
+            continue;
+        const std::string_view name = remainder.substr(0, equals);
+        if (!name.empty() && !oamut::option_id(name))
+            continue;
+        return index;
+    }
+    return std::string_view::npos;
+}
+
+/// Tells whether a target names a folder or a file that is already there.
+///
+/// @param target the player's text
+/// @return true when that path is a directory or a regular file
+bool existing_entry(std::string_view target) {
+    std::error_code failure;
+    const fs::file_status found = fs::status(std::string(target), failure);
+    return !failure && (fs::is_directory(found) || fs::is_regular_file(found));
 }
 
 /// An unsigned decimal, most significant digit first, with no leading zero.
@@ -523,26 +563,21 @@ std::optional<MutatorChoice> parse_choice(std::string_view text, std::string* er
         return refuse_choice(error, "a mutator needs an id or a path");
     std::string_view target = text;
     std::string_view options_text;
-    for (std::size_t at = text.size(); at > 0;) {
-        const std::size_t colon = text.rfind(':', at - 1);
-        if (colon == std::string_view::npos)
-            break;
-        const std::string_view remainder = text.substr(colon + 1);
-        if (remainder.find('=') != std::string_view::npos) {
-            target = text.substr(0, colon);
-            options_text = remainder;
-            break;
-        }
-        if (colon == 0)
-            break;
-        at = colon;
+    const std::size_t colon = options_colon(text);
+    if (colon != std::string_view::npos) {
+        target = text.substr(0, colon);
+        options_text = text.substr(colon + 1);
     }
     if (target.empty())
         return refuse_choice(error, "a mutator needs an id or a path");
+    const bool colon_in_target = target.find(':') != std::string_view::npos;
+    if (colon_in_target && !existing_entry(target))
+        return refuse_choice(error, in_quotes(target) + " is not an id or a path");
     MutatorChoice choice;
     choice.target = std::string(target);
-    choice.by_path =
+    const bool slash =
         target.find('/') != std::string_view::npos || target.find('\\') != std::string_view::npos;
+    choice.by_path = slash || colon_in_target;
     if (!options_text.empty() && !read_options(options_text, choice, error))
         return std::nullopt;
     return choice;
