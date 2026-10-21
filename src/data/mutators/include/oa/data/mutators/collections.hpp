@@ -77,6 +77,7 @@ enum class HookNoteKind : uint8_t {
     hook_overwrote,               ///< a later hook replaced an earlier hook's value
     download_first_entry_changed, ///< removing the first download entry left a different unit first
     not_a_number,                 ///< a scale skipped a value that is not a number
+    menu_note,                    ///< a moved button, a missing picture or a full AI list
 };
 
 /// One note a hook produced, for the change journal.

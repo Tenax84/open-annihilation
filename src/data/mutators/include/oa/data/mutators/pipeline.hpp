@@ -143,7 +143,8 @@ struct PipelineResult {
 /// mounted and no script runs. Each remaining manifest is checked against
 /// the mod and the engine. The rest are planned, their files mounted, the
 /// documents parsed from that layer. Each mutator in list order then
-/// applies its rules and then its hooks. A plan that returns map hooks is
+/// applies its rules and then its hooks, units then weapons then menus. A
+/// plan that returns map hooks is
 /// refused, so none run. Each pass over the list is a transaction. A
 /// failure in a plan or a rule target is the mutator's own, and every one
 /// is kept. Any later failure can depend on the mutators above it, so the

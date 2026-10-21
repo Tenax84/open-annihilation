@@ -25,7 +25,7 @@ enum class Phase : uint8_t {
     plan,      ///< the plan returned by mutate
     files,     ///< the files layer
     rules,     ///< one mutator's rules
-    hooks,     ///< that mutator's units hook, then its weapons hook
+    hooks,     ///< that mutator's units hook, then its weapons hook, then its menus hook
     integrity, ///< reserved for the check that follows the last hook
 };
 

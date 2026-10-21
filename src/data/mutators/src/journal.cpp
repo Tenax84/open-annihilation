@@ -326,6 +326,7 @@ Conflict conflict_from_hook(const HookNote& note, std::span<const std::string> i
         break;
     case HookNoteKind::download_first_entry_changed:
     case HookNoteKind::not_a_number:
+    case HookNoteKind::menu_note:
         conflict.severity = Severity::note;
         conflict.kind = ConflictKind::text_change_dropped;
         break;
@@ -398,9 +399,14 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
         return line;
     }
     if (conflict.kind == ConflictKind::text_change_dropped) {
+        // A menu note keeps its own sentence. The other notes of this kind
+        // share one line, and a factor on an absent field is told apart by
+        // the words in the rules note.
+        if (conflict.detail.find("moved from page") != std::string::npos ||
+            conflict.detail.find("has no picture") != std::string::npos ||
+            conflict.detail.find("does not see") != std::string::npos)
+            return conflict.detail;
         std::string line = names;
-        // A factor on an absent field shares this kind with a dropped text
-        // change. The rules note's own sentence is what tells them apart.
         if (conflict.detail.find("a factor") != std::string::npos)
             line += " found no value to scale";
         else
