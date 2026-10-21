@@ -14,7 +14,7 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
 `oa/data/mutators/choice.hpp`, `oa/data/mutators/collections.hpp`,
 `oa/data/mutators/files_layer.hpp`,
-`oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
+`oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`, `oa/data/mutators/maps.hpp`,
 `oa/data/mutators/pipeline.hpp`, `oa/data/mutators/rules_lua.hpp` and
 `oa/data/mutators/verdicts.hpp`.
 
@@ -161,6 +161,14 @@ a failed mutator and the layer grants. `data-mutators-sides-data` is the
 same program with `--data`: it reads every side and every build list of
 the installed game and serves no game-data file.
 
+`data-mutators-maps` (`tests/maps_test.cpp`) runs maps hooks over a
+made-up Ridge scenario: header and schema writes and their refusals,
+placed units and features, `glob` and `pattern`, two mutators on one
+field, a write that then errors, and the session loader reading the
+served text. `data-mutators-maps-data` is the same program with `--data`:
+it reads every installed map and writes nothing, then points one map at
+another profile and reads that text back through the session loader.
+
 ## Limitations
 
 The checks do not look at a mutator's files and do not apply a verdict.
@@ -179,6 +187,13 @@ A clone does not copy a download entry, and it does not copy
 download-linked button art (`anims/<unit>_gadget.gaf`). A download-linked
 button for a clone draws with no picture. A weapon clone never takes slot
 0, which is the default weapon.
+
+A maps hook cannot add a placed unit or a placed feature, and it cannot
+move a start position or change how many there are. `type`, `missionname`,
+`planet` and `numplayers` stay as the map file wrote them. `glob` is `*`
+and `?` only, with no character classes and no full regular expressions.
+`pattern` is a Lua pattern. A placed unit's `xpos` and `zpos` are whole
+numbers from 0 to 32,767, and its `player` is a whole number from 1 to 255.
 
 A mutator cannot add or remove a side. Rectangle sub-sections of a side
 are neither shown nor changed. A build list keeps at most 1024 names. When
@@ -693,16 +708,18 @@ sandbox of its own, builds and mounts the files layer, parses every
 document the match will load from the layered store, then takes each
 mutator in list order and applies its rules and then its hooks, on the
 documents the mutators above it left. Its units hook runs, then its
-weapons hook. A plan that returns map hooks is refused, so none run. Only
-a document the pass changed is written back, whole, with the text writer,
-at the path the store listed it under. A document a hook removed is hidden.
+weapons hook. When the caller names a map, each mutator's maps entry then
+runs, in list order, as a transaction of its own. Only a document the pass
+changed is written back, whole, with the text writer, at the path the store
+listed it under. A document a hook removed is hidden. A scenario is served
+only when its bytes differ from the map the caller passed.
 
 The plan is read inside the plan phase, with the mutator's allowances and
 real-time limit in force, and by raw access only, so no metamethod of the
 script runs. The plan, its `files` table, the `mask` and `add` lists and the
 `rules` list must be plain tables. One with a metatable refuses the plan,
 because its raw contents need not be what the script meant. A plan key the
-engine does not support yet (`menus`, `sides`, `tables`, `maps` and
+engine does not support yet (`menus`, `sides`, `tables` and
 `hacks`) refuses the plan instead of being ignored.
 
 A pass is a transaction. A plan, or a rule aimed at a folder no mutator may
@@ -742,3 +759,52 @@ gives the same layer bytes, journal and report. The store must hold no
 mutator layer when the call starts. On return the final layer is mounted
 when it holds at least one entry or mask, and the caller unmounts it. No
 integrity check runs after the last hook yet.
+
+## Maps
+
+A mutator's `maps` entry is a function `maps(map, ctx)` or a list of
+`where { … }:change { … }` blocks. It runs only once a match has chosen a
+map, after every other hook, and only for that match. The setup screens
+keep the installed scenario. The rewritten text is served from the mutator
+layer at `maps/<key>.ota` when a mutator changed the bytes. The 3.1c map
+hash is unchanged: the hash is of the installed file, and this rewrite is
+not part of it.
+
+`map.name` is the scenario's `missionname`, or the map key when that key is
+absent. `map.file` is the key. `map.planet` is the header's planet.
+`map.pack` is the id after the last `@`, or nil for a base map. `map.header`
+reads every GlobalHeader key, ignoring case. These keys can be written:
+
+- `minwindspeed`, `maxwindspeed`, `gravity` and `waterdamage`: whole numbers
+  from 0 to 32,767;
+- `lavaworld`, `waterdoesdamage` and `nosealeveltrigger`: 0 or 1;
+- `tidalstrength`, `killmul` and `timemul`: finite numbers from 0 to 1,000.
+
+Any other header key is refused. `map.schemas` is the `[Schema N]` blocks
+from 0, with `:each`, `:where`, `:set` and `:scale`. A schema's `index` is
+N, and `type` and `players` (its start-position count) are read-only.
+`aiprofile` is 1 to 31 letters, digits, `_` or `-`, and `ai/<name>.txt`
+must already be in the layered store, including a file this mutator added.
+`humanmetal`, `humanenergy`, `computermetal` and `computerenergy` are whole
+numbers from 0 to 1,000,000. `surfacemetal` is a whole number from 0 to 255.
+`:scale` multiplies a stored number; it cannot scale `aiprofile`.
+
+`schema.units` and `schema.features` are the placed entries, in order. A
+unit's `unitname` may name a unit that is already in `units`. Its `xpos`
+and `zpos` are whole numbers from 0 to 32,767, and its `player` is a whole
+number from 1 to 255. A feature's `featurename` may name a feature that is
+already in `features`. `:remove()` drops that one entry. Nothing in the
+view adds a placed unit, a placed feature or a schema, and start positions
+are never shown or written.
+
+In the list form, `where` reads `name`, `file`, `planet`, `pack` and header
+keys. A header key in `change` writes the header. A schema key writes every
+schema. A key that is neither is refused when the plan is read, and so is
+a read-only header or schema key. `glob` matches `*` and `?` only, ASCII
+case ignored, at most 256 bytes, with `/` ordinary. `pattern` is a Lua
+pattern, matched with the sandbox's `string.find`, so its case matters.
+Both are refused in a units rule with "glob() and pattern() match maps
+only". The list is applied in order. A later mutator's write wins, and
+both writes stay in the journal. A mutator that writes and then errors
+leaves the scenario as the mutator above it left it, or unserved when it
+was the first to write.

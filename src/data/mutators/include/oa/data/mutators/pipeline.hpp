@@ -10,6 +10,7 @@
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/mutators/journal.hpp"
 #include "oa/data/mutators/loadout.hpp"
+#include "oa/data/mutators/maps.hpp"
 #include "oa/data/script_host/script_host.hpp"
 #include "oa/formats/hpi.hpp"
 #include "oa/formats/oamut/manifest.hpp"
@@ -17,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -108,6 +110,8 @@ struct PipelineInput {
     uint64_t seed{};
     /// Instruction and memory allowances. The default is the mutator profile's.
     oa::data::script_host::Budget budget{};
+    /// The map the match will play. None on a dry run, and then no maps hook runs.
+    std::optional<ChosenMap> map{};
 };
 
 /// What one run produced.
@@ -155,8 +159,10 @@ list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::
 /// mounted and no script runs. Each remaining manifest is checked against
 /// the mod and the engine. The rest are planned, their files mounted, the
 /// documents parsed from that layer. Each mutator in list order then
-/// applies its rules and then its hooks. A plan that returns map hooks is
-/// refused, so none run. Each pass over the list is a transaction. A
+/// applies its rules and then its hooks. When `input.map` names a map, each
+/// mutator's maps entry then runs, in list order, as a transaction of its
+/// own. A changed OTA is served at that map's path. No map, and the maps
+/// phase does nothing. Each pass over the list is a transaction. A
 /// failure in a plan or a rule target is the mutator's own, and every one
 /// is kept. Any later failure can depend on the mutators above it, so the
 /// pass keeps only the one nearest the top of the list, and stops at the

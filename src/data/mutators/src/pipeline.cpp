@@ -4,8 +4,9 @@
 // One ordered run of mutators. The list is checked, each plan is read in a
 // sandbox, the files layer is mounted and documents are parsed from that
 // layer. Each mutator then applies its rules and then its hooks, in list
-// order. A pass is a transaction: a failure ends it, drops that mutator and
-// anyone who requires it, and the run starts again from the store.
+// order. When the caller names a map, each maps entry then runs. A pass is a
+// transaction: a failure ends it, drops that mutator and anyone who requires
+// it, and the run starts again from the store.
 #include "oa/data/mutators/pipeline.hpp"
 
 #include "clone.hpp"
@@ -15,6 +16,7 @@
 #include "oa/data/field_schema.hpp"
 #include "oa/data/mutators/allow_list.hpp"
 #include "oa/data/mutators/loadout.hpp"
+#include "oa/data/mutators/maps.hpp"
 #include "oa/data/mutators/rules_lua.hpp"
 #include "oa/data/mutation_rules/documents.hpp"
 #include "oa/formats/hpi.hpp"
@@ -75,7 +77,7 @@ static_assert(
 );
 
 /// How a supported plan key is read. D04, D06, D07 and D08 add rows here.
-enum class KeyJob : uint8_t { files, rules, units_hook, weapons_hook };
+enum class KeyJob : uint8_t { files, maps, rules, units_hook, weapons_hook };
 
 struct PlanKeyRow {
     const char* name{};
@@ -85,6 +87,7 @@ struct PlanKeyRow {
 
 constexpr PlanKeyRow k_plan_keys[] = {
     {"files", KeyJob::files, oamut::Layer::files},
+    {"maps", KeyJob::maps, oamut::Layer::maps},
     {"rules", KeyJob::rules, oamut::Layer::tables},
     {"units", KeyJob::units_hook, oamut::Layer::units},
     {"weapons", KeyJob::weapons_hook, oamut::Layer::weapons},
@@ -114,6 +117,9 @@ struct Plan {
     bool has_files{false};
     rules::MutatorRules rules;
     bool has_rules{false};
+    bool has_maps{false};
+    bool maps_function{false};
+    int maps_ref{LUA_NOREF};
     int units_hook{LUA_NOREF};
     int weapons_hook{LUA_NOREF};
 };
@@ -159,6 +165,10 @@ struct PlanShape {
     bool has_rules{false};
     PartFault rules_fault{PartFault::none};
     int rules_list{LUA_NOREF};
+    bool has_maps{false};
+    PartFault maps_fault{PartFault::none};
+    bool maps_function{false};
+    int maps_ref{LUA_NOREF};
     bool has_units{false};
     PartFault units_fault{PartFault::none};
     int units_hook{LUA_NOREF};
@@ -775,6 +785,21 @@ void read_plan_shape(lua_State* state, int index, PlanShape* shape) {
             read_files_shape(state, value, shape);
         } else if (row->job == KeyJob::rules) {
             read_rules_shape(state, value, shape);
+        } else if (row->job == KeyJob::maps) {
+            shape->has_maps = true;
+            if (lua_isfunction(state, value)) {
+                shape->maps_function = true;
+                lua_pushvalue(state, value);
+                shape->maps_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+            } else if (!lua_istable(state, value)) {
+                shape->maps_fault = PartFault::wrong_type;
+            } else if (lua_getmetatable(state, value) != 0) {
+                lua_pop(state, 1);
+                shape->maps_fault = PartFault::metatable;
+            } else {
+                lua_pushvalue(state, value);
+                shape->maps_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+            }
         } else if (row->job == KeyJob::units_hook) {
             read_hook_shape(
                 state, value, &shape->has_units, &shape->units_fault, &shape->units_hook
@@ -929,6 +954,39 @@ PlanFault read_rules_part(
     return {};
 }
 
+/// Checks the maps entry and keeps its reference.
+///
+/// A function is kept as a hook. A table must be a list of finished
+/// `where():change()` blocks whose change keys the map view can write.
+PlanFault read_maps_part(
+    lua_State* state, const PlanShape& shape, const oamut::Manifest& manifest, Plan& plan
+) {
+    if (shape.maps_fault == PartFault::wrong_type)
+        return refuse_plan(
+            Cause::invalid_plan, "maps must be a function or a list of where():change()"
+        );
+    if (shape.maps_fault == PartFault::metatable)
+        return refuse_plan(
+            Cause::invalid_plan, "maps must be a plain table, not one with a metatable"
+        );
+    if (!shape.maps_function) {
+        lua_rawgeti(state, LUA_REGISTRYINDEX, shape.maps_ref);
+        const std::string problem = maps_list_problem(state, lua_gettop(state));
+        lua_pop(state, 1);
+        if (!problem.empty())
+            return refuse_plan(Cause::invalid_plan, problem);
+    }
+    if (!declares(manifest, oamut::Layer::maps))
+        return refuse_plan(
+            Cause::undeclared_layer,
+            "returns a maps hook but its manifest does not declare the maps layer"
+        );
+    plan.has_maps = true;
+    plan.maps_function = shape.maps_function;
+    plan.maps_ref = shape.maps_ref;
+    return {};
+}
+
 /// Checks one hook the plan phase found and keeps its reference.
 PlanFault read_hook_part(
     PartFault seen,
@@ -952,8 +1010,8 @@ PlanFault read_hook_part(
 
 /// Turns the plan the phase read into a `Plan`, or refuses it.
 ///
-/// The checks run in the order the keys sort in: files, rules, units, then
-/// weapons, and the first refusal is the one reported.
+/// The checks run in the order the keys sort in: files, maps, rules, units,
+/// then weapons, and the first refusal is the one reported.
 PlanFault read_returned_plan(
     lua_State* state,
     const PlanShape& shape,
@@ -979,6 +1037,11 @@ PlanFault read_returned_plan(
     PlanFault fault;
     if (shape.has_files) {
         fault = read_files_part(state, shape, manifest, plan);
+        if (fault.failed)
+            return fault;
+    }
+    if (shape.has_maps) {
+        fault = read_maps_part(state, shape, manifest, plan);
         if (fault.failed)
             return fault;
     }
@@ -2100,10 +2163,11 @@ bool run_pass(
     std::set<ReplacedField> hook_replaced;
 
     // Each mutator applies its rules, then its units hook and its weapons
-    // hook, on the documents the mutators above it left. A plan that returns
-    // map hooks is refused, so none run. The first hook that fails ends the
-    // pass: no later mutator's rules or hooks run on what it left. A mutator
-    // below a failure the files layer found does not run either.
+    // hook, on the documents the mutators above it left. The maps entries run
+    // after every one of those, once the pass's other hooks have succeeded.
+    // The first hook that fails ends the pass: no later mutator's rules or
+    // hooks run on what it left. A mutator below a failure the files layer
+    // found does not run either.
     collections.emplace(documents, &layout);
     collections->bind_store(&store);
     bool steps_done = true;
@@ -2181,6 +2245,75 @@ bool run_pass(
         return false;
     }
 
+    // One transaction per mutator that named maps. A turn that writes and
+    // then errors keeps none of its bytes. The served file, when the bytes
+    // differ from the map the caller passed, is published with the pass.
+    std::vector<JournalEntry> map_journal;
+    std::vector<Conflict> map_conflicts;
+    std::shared_ptr<const std::vector<uint8_t>> served_ota;
+    std::string served_owner;
+    if (input.map.has_value()) {
+        std::vector<uint8_t> working =
+            input.map->ota != nullptr ? *input.map->ota : std::vector<uint8_t>{};
+        const std::vector<uint8_t> original = working;
+        bool maps_done = true;
+        for (std::size_t slot = 0; slot < count && slot < first.slot; ++slot) {
+            if (active[slot] == 0 || !plans[slot].has_maps)
+                continue;
+            if (!sandboxes[slot].has_value()) {
+                first.offer(
+                    slot, Phase::hooks, Cause::engine_error, "the maps hook has no sandbox"
+                );
+                maps_done = false;
+                break;
+            }
+            MapScriptContext context;
+            context.mod_id = input.mod.id;
+            context.mod_version = input.mod.version;
+            context.mod_game = input.mod.game;
+            context.engine_version = input.engine_version;
+            context.options = &options[slot];
+            MapsTurn turn = apply_maps(
+                *sandboxes[slot],
+                plans[slot].maps_function,
+                plans[slot].maps_ref,
+                *input.map,
+                working,
+                store,
+                layout,
+                context,
+                static_cast<uint16_t>(slot),
+                map_journal
+            );
+            if (!turn.ok) {
+                const Cause cause = turn.from_script ? cause_of(turn.kind) : Cause::engine_error;
+                first.offer(slot, Phase::hooks, cause, std::move(turn.message));
+                maps_done = false;
+                break;
+            }
+            for (JournalEntry& entry : turn.entries)
+                map_journal.push_back(std::move(entry));
+            for (Conflict& conflict : turn.conflicts)
+                map_conflicts.push_back(std::move(conflict));
+            if (turn.changed && turn.bytes != nullptr) {
+                working.assign(turn.bytes->begin(), turn.bytes->end());
+                served_ota = std::move(turn.bytes);
+                served_owner = ids[slot];
+            }
+        }
+        if (!maps_done) {
+            sandboxes.clear();
+            collections.reset();
+            guard.release();
+            fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
+            return false;
+        }
+        if (served_ota != nullptr && *served_ota == original)
+            served_ota.reset();
+        if (working == original)
+            served_ota.reset();
+    }
+
     std::vector<std::vector<Writer>> writers(documents.size());
     std::vector<uint8_t> menus(documents.size(), 0);
     for (const rules::FieldWrite& write : rule_writes) {
@@ -2255,6 +2388,10 @@ bool run_pass(
         }
         journal.entries.push_back(std::move(entry));
     }
+    for (JournalEntry& entry : map_journal)
+        journal.entries.push_back(std::move(entry));
+    for (Conflict& conflict : map_conflicts)
+        report.conflicts.push_back(std::move(conflict));
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
         const std::optional<uint16_t> mutator = index_of(ids, entry.owner);
@@ -2401,6 +2538,23 @@ bool run_pass(
     }
     sandboxes.clear();
     collections.reset();
+    if (served_ota != nullptr && input.map.has_value()) {
+        oa::MutatorLayerEntry served;
+        served.path = input.map->ota_path;
+        served.owner = served_owner;
+        served.kind = oa::MutatorSourceKind::contents;
+        served.contents = served_ota;
+        bool replaced_ota = false;
+        for (std::size_t entry_index = 0; entry_index < spec.entries.size(); ++entry_index) {
+            if (!same_path(spec.entries[entry_index].path, served.path))
+                continue;
+            spec.entries[entry_index] = served;
+            replaced_ota = true;
+            break;
+        }
+        if (!replaced_ota)
+            spec.entries.push_back(std::move(served));
+    }
     if (first.found()) {
         guard.release();
         fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
