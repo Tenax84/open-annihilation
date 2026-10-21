@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+# SPDX-License-Identifier: GPL-3.0-only
+
+oamut: 1
+id: ridge-edit-new
+name: "Ridge Edit New"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+tags: ["gameplay"]
+works-with: ["*"]
+layers: ["units"]

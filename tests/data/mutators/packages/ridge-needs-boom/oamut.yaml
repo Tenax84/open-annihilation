@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+# SPDX-License-Identifier: GPL-3.0-only
+
+oamut: 1
+id: ridge-needs-boom
+name: "Ridge Needs Boom"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+tags: ["gameplay"]
+works-with: ["*"]
+requires:
+  mutators: ["ridge-boom"]
+layers: ["files"]

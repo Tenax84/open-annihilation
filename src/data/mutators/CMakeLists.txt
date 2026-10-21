@@ -2,8 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 add_library(
-  oa-data-mutators src/allow_list.cpp src/collections.cpp src/files_layer.cpp src/loadout.cpp
-                   src/rules_lua.cpp src/verdicts.cpp
+  oa-data-mutators
+  src/allow_list.cpp
+  src/collections.cpp
+  src/files_layer.cpp
+  src/journal.cpp
+  src/loadout.cpp
+  src/pipeline.cpp
+  src/rules_lua.cpp
+  src/verdicts.cpp
 )
 add_library(oa::data::mutators ALIAS oa-data-mutators)
 target_include_directories(oa-data-mutators PUBLIC include)
@@ -12,7 +19,8 @@ target_link_libraries(
   oa-data-mutators
   PUBLIC oa-base-sha256 oa-data-defs oa-data-mutation-rules oa-data-script-host oa-formats-hpi
          oa-formats-oamut
-  PRIVATE oa-data-field-schema oa-data-mod-profile oa-formats-json oa-formats-tdf oa-options
+  PRIVATE oa-data-defs-assets oa-data-field-schema oa-data-mod-profile oa-formats-json oa-formats-tdf
+          oa-options
 )
 if(BUILD_TESTING)
   add_executable(oa-data-mutators-allow-list-test tests/allow_list_test.cpp)
@@ -50,6 +58,24 @@ if(BUILD_TESTING)
     PRIVATE "OA_MUTATORS_RULES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/rules_lua\""
   )
   add_test(NAME data-mutators-rules-lua COMMAND oa-data-mutators-rules-lua-test)
+
+  add_executable(oa-data-mutators-journal-test tests/journal_test.cpp)
+  target_link_libraries(oa-data-mutators-journal-test PRIVATE oa-data-mutators oa-test-support)
+  target_compile_definitions(
+    oa-data-mutators-journal-test
+    PRIVATE "OA_MUTATORS_TEST_DATA=\"${CMAKE_SOURCE_DIR}/tests/data/mutators\""
+  )
+  add_test(NAME data-mutators-journal COMMAND oa-data-mutators-journal-test)
+  set_tests_properties(data-mutators-journal PROPERTIES TIMEOUT 60)
+
+  add_executable(oa-data-mutators-pipeline-test tests/pipeline_test.cpp)
+  target_link_libraries(oa-data-mutators-pipeline-test PRIVATE oa-data-mutators oa-test-support)
+  target_compile_definitions(
+    oa-data-mutators-pipeline-test
+    PRIVATE "OA_MUTATORS_TEST_DATA=\"${CMAKE_SOURCE_DIR}/tests/data/mutators\""
+  )
+  add_test(NAME data-mutators-pipeline COMMAND oa-data-mutators-pipeline-test)
+  set_tests_properties(data-mutators-pipeline PROPERTIES TIMEOUT 60)
 
   add_executable(oa-data-mutators-verdicts-test tests/verdicts_test.cpp)
   target_link_libraries(oa-data-mutators-verdicts-test PRIVATE oa-data-mutators oa-test-support)
