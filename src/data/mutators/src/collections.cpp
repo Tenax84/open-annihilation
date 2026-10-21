@@ -848,14 +848,25 @@ const std::vector<Rec>& ensure_index(Collections& self, Kind kind, lua_State* st
 }
 
 /// The first record of this name, in collection order, or null.
+///
+/// A unit or weapon name this mutator renamed is looked up as the private
+/// name. The private name is a pointer into the rename list, taken before
+/// the index build, so nothing new is alive if that build raises. Features
+/// are not renamed.
 const Rec* find_named(Collections& self, Kind kind, std::string_view key, lua_State* state) {
+    const std::string* renamed = nullptr;
+    if (kind == Kind::units)
+        renamed = self.renamed_to(false, key);
+    else if (kind == Kind::weapons)
+        renamed = self.renamed_to(true, key);
+    const std::string_view sought = renamed != nullptr ? std::string_view{*renamed} : key;
     const std::vector<Rec>& records = ensure_index(self, kind, state);
     const auto found = std::lower_bound(
-        records.begin(), records.end(), key, [](const Rec& rec, std::string_view sought) {
-            return compare_folded(rec.name, sought) < 0;
+        records.begin(), records.end(), sought, [](const Rec& rec, std::string_view needle) {
+            return compare_folded(rec.name, needle) < 0;
         }
     );
-    if (found == records.end() || !same_text(found->name, key))
+    if (found == records.end() || !same_text(found->name, sought))
         return nullptr;
     return &(*found);
 }
@@ -3312,6 +3323,170 @@ void Collections::end_mutator() {
     active_ = false;
     mutator_.clear();
     grant_ = {};
+}
+
+void Collections::note_rename(bool weapon, std::string from, std::string to) {
+    ClashRename rename;
+    rename.weapon = weapon;
+    rename.from = std::move(from);
+    rename.to = std::move(to);
+    renames_.push_back(std::move(rename));
+}
+
+const std::string* Collections::renamed_to(bool weapon, std::string_view name) const {
+    const std::string* found = nullptr;
+    for (const ClashRename& rename : renames_) {
+        if (rename.weapon != weapon)
+            continue;
+        if (!same_text(rename.from, name))
+            continue;
+        found = &rename.to;
+    }
+    return found;
+}
+
+std::string Collections::private_name_of(bool weapon, std::string_view name) const {
+    const std::string* found = renamed_to(weapon, name);
+    if (found == nullptr)
+        return {};
+    return *found;
+}
+
+void Collections::add_served_copy(ServedCopy copy) {
+    std::string key;
+    key.reserve(copy.path.size());
+    for (const char character : copy.path) {
+        unsigned char byte = static_cast<unsigned char>(character);
+        if (byte == '\\')
+            byte = '/';
+        key.push_back(static_cast<char>(fold_byte(byte)));
+    }
+    const std::size_t index = served_.size();
+    served_.push_back(std::move(copy));
+    served_index_[std::move(key)] = index;
+}
+
+void Collections::note_unit_file_shift(UnitFileShift shift) {
+    unit_shifts_.push_back(std::move(shift));
+}
+
+void Collections::note_menu_spill(std::string unit, std::string path) {
+    MenuSpill spill;
+    spill.unit = std::move(unit);
+    spill.path = std::move(path);
+    menu_spills_.push_back(std::move(spill));
+}
+
+namespace {
+
+/// True when `record` is `CANBUILD.` and a builder name.
+///
+/// @param record the journal record
+/// @param[out] builder the builder name
+/// @return true when the record names a build-list block
+bool canbuild_record(std::string_view record, std::string& builder) {
+    constexpr std::string_view prefix = "canbuild.";
+    if (record.size() < prefix.size())
+        return false;
+    for (std::size_t index = 0; index < prefix.size(); ++index) {
+        unsigned char byte = static_cast<unsigned char>(record[index]);
+        if (byte >= 'A' && byte <= 'Z')
+            byte = static_cast<unsigned char>(byte - 'A' + 'a');
+        if (byte != static_cast<unsigned char>(prefix[index]))
+            return false;
+    }
+    builder.assign(record.substr(prefix.size()));
+    return true;
+}
+
+/// The block a field write names, or null when it is gone.
+///
+/// @param loaded the document
+/// @param write the write
+/// @return the block
+oa::formats::tdf::Block*
+block_of_write(rules::LoadedDocument& loaded, const rules::FieldWrite& write) {
+    namespace tdf = oa::formats::tdf;
+    tdf::Block* root = tdf::editable_root(loaded.document.get());
+    if (root == nullptr)
+        return nullptr;
+    std::string builder;
+    if (canbuild_record(write.record, builder)) {
+        tdf::Block* section = tdf::editable_child(root, "CANBUILD");
+        tdf::Block* block =
+            section != nullptr ? tdf::editable_child(section, builder.c_str()) : nullptr;
+        if (block != nullptr && !write.block.empty())
+            block = tdf::editable_child(block, write.block.c_str());
+        return block;
+    }
+    tdf::Block* section = tdf::editable_child(root, write.record.c_str());
+    if (section == nullptr) {
+        const uint32_t children = tdf::child_count(root);
+        for (uint32_t child_index = 0; child_index < children; ++child_index) {
+            tdf::Block* child = tdf::editable_child(root, child_index);
+            if (child == nullptr || child->name == nullptr)
+                continue;
+            if (tdf::compare_nocase(child->name, "UNITINFO") != 0)
+                continue;
+            const char* unit_name = tdf::find_value(child, "UnitName");
+            if (unit_name != nullptr && tdf::compare_nocase(unit_name, write.record.c_str()) == 0) {
+                section = child;
+                break;
+            }
+        }
+    }
+    if (section != nullptr && !write.block.empty())
+        section = tdf::editable_child(section, write.block.c_str());
+    return section;
+}
+
+} // namespace
+
+bool Collections::retarget_renamed_references(std::string_view mutator, std::string& error) {
+    return retarget_renamed_references(writes_, mutator, error);
+}
+
+bool Collections::retarget_renamed_references(
+    std::span<rules::FieldWrite> writes, std::string_view mutator, std::string& error
+) {
+    namespace tdf = oa::formats::tdf;
+    if (renames_.empty() || documents_ == nullptr)
+        return true;
+    for (rules::FieldWrite& write : writes) {
+        bool owned = false;
+        for (const std::string& id : write.mutators) {
+            if (id == mutator)
+                owned = true;
+        }
+        if (!owned || !write.new_text.has_value())
+            continue;
+        const bool weapon_field = weapon_reference_key(write.key);
+        const bool unit_field =
+            unit_list_key(write.key) || tdf::compare_nocase(write.key.c_str(), "unitname") == 0;
+        if (weapon_field == unit_field)
+            continue;
+        const std::string mapped = private_name_of(weapon_field, *write.new_text);
+        if (mapped.empty() || tdf::compare_nocase(mapped.c_str(), write.new_text->c_str()) == 0)
+            continue;
+        rules::LoadedDocument* loaded = documents_->find(write.path);
+        if (loaded == nullptr) {
+            error = write.path + ": the document disappeared";
+            return false;
+        }
+        tdf::Block* block = block_of_write(*loaded, write);
+        if (block == nullptr) {
+            error = write.path + ": " + write.record + " disappeared";
+            return false;
+        }
+        const tdf::EditStatus status =
+            tdf::set_value(loaded->document.get(), block, write.key, mapped);
+        if (status != tdf::EditStatus::ok) {
+            error = tdf::edit_status_message(status);
+            return false;
+        }
+        write.new_text = mapped;
+    }
+    return true;
 }
 
 void Collections::keep_weapon_ids(std::span<const std::string> names) {

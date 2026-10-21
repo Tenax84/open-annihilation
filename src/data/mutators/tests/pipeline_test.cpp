@@ -1359,16 +1359,22 @@ void test_records_replace_and_base_weapon_id_stays() {
         ++replaced_records;
     }
     OA_CHECK(replaced_records == 2);
-    OA_CHECK(count_kind(replaced, mutators::ConflictKind::value_replaced) == 1);
+    OA_CHECK(count_kind(replaced, mutators::ConflictKind::value_replaced) == 2);
     const std::vector<std::string> bot_ids{"ridge-bot-a", "ridge-bot-b"};
-    const mutators::Conflict* bot_note =
-        conflict_of(replaced, mutators::ConflictKind::value_replaced);
-    OA_CHECK(bot_note != nullptr);
-    if (bot_note != nullptr) {
-        const std::string line = mutators::describe(*bot_note, bot_ids);
-        OA_CHECK(line.find("ridge-bot-a") != std::string::npos);
-        OA_CHECK(line.find("ridge-bot-b") != std::string::npos);
+    bool saw_game_bot = false;
+    bool saw_pair_bot = false;
+    for (const mutators::Conflict& conflict : replaced.report.conflicts) {
+        if (conflict.kind != mutators::ConflictKind::value_replaced)
+            continue;
+        const std::string line = mutators::describe(conflict, bot_ids);
+        const std::string game_owner = std::string("the ") + "game";
+        if (line == "ridge-bot-a replaced " + game_owner + "'s RGBOT on " + conflict.path)
+            saw_game_bot = true;
+        if (line == "ridge-bot-b replaced ridge-bot-a's RGBOT on " + conflict.path)
+            saw_pair_bot = true;
     }
+    OA_CHECK(saw_game_bot);
+    OA_CHECK(saw_pair_bot);
     OA_CHECK(weapon_slot(bots, "RGGUN") == 1);
     release(bots);
 
@@ -1391,9 +1397,11 @@ void test_download_sections_merge() {
         mutators::run_pipeline(store, input_of({"ridge-menu-a", "ridge-menu-b"}));
     OA_CHECK(result.playable());
     const std::string menu = text_of(store.read("download/rglab.tdf").bytes);
-    OA_CHECK(menu.find("MENU0") != std::string::npos);
-    OA_CHECK(menu.find("MENU1") != std::string::npos);
-    OA_CHECK(menu.find("MENU2") != std::string::npos);
+    OA_CHECK(menu.find("[MENU0]") != std::string::npos);
+    OA_CHECK(menu.find("[MENU1]") == std::string::npos);
+    OA_CHECK(menu.find("[MENU2]") != std::string::npos);
+    OA_CHECK(menu.find("UNITNAME=RGBOT") != std::string::npos);
+    OA_CHECK(menu.find("UNITNAME=RGCOM") != std::string::npos);
     release(store);
 }
 
@@ -1721,6 +1729,936 @@ void test_removed_weapon_file_comes_back() {
     release(store);
 }
 
+/// True when `key=value` occurs and the next character is not part of a name.
+bool has_assignment(std::string_view text, std::string_view key, std::string_view value) {
+    const std::string needle = std::string{key} + "=" + std::string{value};
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+        const std::size_t found = text.find(needle, offset);
+        if (found == std::string_view::npos)
+            return false;
+        const std::size_t after = found + needle.size();
+        if (after >= text.size())
+            return true;
+        const unsigned char next = static_cast<unsigned char>(text[after]);
+        const bool name = (next >= 'A' && next <= 'Z') || (next >= 'a' && next <= 'z') ||
+                          (next >= '0' && next <= '9') || next == '_';
+        if (!name)
+            return true;
+        offset = after;
+    }
+    return false;
+}
+
+/// Prints a failed mutator's message so a refusal names itself.
+void note_failures(const mutators::PipelineResult& result) {
+    if (!result.refusal.empty())
+        std::fprintf(stderr, "refusal: %s\n", result.refusal.c_str());
+    for (const mutators::MutatorResult& one : result.mutators) {
+        if (one.outcome == mutators::Outcome::applied || one.message.empty())
+            continue;
+        std::fprintf(stderr, "%s: %s\n", one.id.c_str(), one.message.c_str());
+    }
+}
+
+const mutators::JournalEntry* entry_named(
+    const mutators::PipelineResult& result, mutators::Collection collection, std::string_view record
+) {
+    for (const mutators::JournalEntry& entry : result.journal.entries) {
+        if (entry.collection == collection && entry.record == record)
+            return &entry;
+    }
+    return nullptr;
+}
+
+/// Writes one scratch package and loads it.
+///
+/// An empty `clashes` leaves the manifest's clashes unset. `layers` is the
+/// text between the brackets, quotes included.
+mutators::PipelineMutator make_package(
+    const fs::path& root,
+    std::string_view id,
+    std::string_view clashes,
+    std::string_view layers,
+    std::string_view lua,
+    const std::vector<std::pair<std::string, std::string>>& files
+) {
+    const fs::path package = root / std::string{id};
+    std::string yaml = "oamut: 1\nid: " + std::string{id} + "\nname: \"Ridge " + std::string{id} +
+                       "\"\nversion: \"1.0\"\nauthor:\n  name: \"Ridge Maker\"\n"
+                       "tags: [\"gameplay\"]\nworks-with: [\"*\"]\n";
+    if (!clashes.empty()) {
+        yaml += "clashes: \"";
+        yaml += clashes;
+        yaml += "\"\n";
+    }
+    yaml += "layers: [";
+    yaml += layers;
+    yaml += "]\n";
+    write_bytes(package / "oamut.yaml", yaml);
+    write_bytes(package / "mutator.lua", lua);
+    for (const std::pair<std::string, std::string>& file : files)
+        write_bytes(package / "files" / file.first, file.second);
+    return load_mutator(package);
+}
+
+constexpr std::string_view k_files_lua = "function mutate(ctx)\n"
+                                         "  return { files = { add = { \"files\" } } }\n"
+                                         "end\n";
+
+std::string spark_weapon(std::string_view range) {
+    std::string text = "[SPARK]\n{\nRange=";
+    text.append(range);
+    text.append(";\n}\n");
+    return text;
+}
+
+std::string spark_unit(std::string_view name) {
+    std::string text = "[UNITINFO]\n{\nUnitName=";
+    text.append(name);
+    text.append(";\nWeapon1=SPARK;\n}\n");
+    return text;
+}
+
+/// Add gives the later weapon a private name, and only that mutator's unit
+/// fires it. The earlier unit keeps the weapon it named.
+void test_add_gives_each_unit_its_own_weapon() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-spark-add");
+    std::vector<mutators::PipelineMutator> list;
+    for (const std::string_view id : {"ridge-spark-a", "ridge-spark-b"}) {
+        const bool first = id == "ridge-spark-a";
+        const std::string unit = first ? "SPARKA" : "SPARKB";
+        const std::string range = first ? "10" : "20";
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("weapons/spark.tdf", spark_weapon(range));
+        files.emplace_back("units/" + unit + ".fbi", spark_unit(unit));
+        list.push_back(make_package(scratch, id, "add", "\"files\"", k_files_lua, files));
+    }
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string weapons = text_of(store.read("weapons/spark.tdf").bytes);
+    const std::string first_unit = text_of(store.read("units/SPARKA.fbi").bytes);
+    const std::string second_unit = text_of(store.read("units/SPARKB.fbi").bytes);
+    const std::size_t spark = weapons.find("[SPARK]");
+    const std::size_t spark_two = weapons.find("[SPARK_2]");
+    OA_CHECK(spark != std::string::npos);
+    OA_CHECK(spark_two != std::string::npos);
+    OA_CHECK(spark < spark_two);
+    const std::size_t range_ten = weapons.find("Range=10");
+    const std::size_t range_twenty = weapons.find("Range=20");
+    OA_CHECK(range_ten != std::string::npos && range_ten < spark_two);
+    OA_CHECK(range_twenty != std::string::npos && range_twenty > spark_two);
+    OA_CHECK(has_assignment(first_unit, "Weapon1", "SPARK"));
+    OA_CHECK(first_unit.find("SPARK_2") == std::string::npos);
+    OA_CHECK(has_assignment(second_unit, "Weapon1", "SPARK_2"));
+    const int first_slot = weapon_slot(store, "SPARK");
+    const int second_slot = weapon_slot(store, "SPARK_2");
+    OA_CHECK(first_slot > 0);
+    OA_CHECK(second_slot > 0);
+    OA_CHECK(first_slot != second_slot);
+    const std::vector<std::string> ids{"ridge-spark-a", "ridge-spark-b"};
+    const mutators::Conflict* renamed = conflict_of(result, mutators::ConflictKind::record_renamed);
+    OA_CHECK(renamed != nullptr);
+    if (renamed != nullptr) {
+        OA_CHECK(mutators::describe(*renamed, ids) == "ridge-spark-b renamed SPARK to SPARK_2");
+    }
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// Replace writes the later weapon over the earlier one. Both units fire it.
+void test_replace_makes_both_units_fire_the_later_weapon() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-spark-replace");
+    std::vector<mutators::PipelineMutator> list;
+    for (const std::string_view id : {"ridge-spark-a", "ridge-spark-b"}) {
+        const bool first = id == "ridge-spark-a";
+        const std::string unit = first ? "SPARKA" : "SPARKB";
+        const std::string range = first ? "10" : "20";
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("weapons/spark.tdf", spark_weapon(range));
+        files.emplace_back("units/" + unit + ".fbi", spark_unit(unit));
+        list.push_back(make_package(scratch, id, "replace", "\"files\"", k_files_lua, files));
+    }
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string weapons = text_of(store.read("weapons/spark.tdf").bytes);
+    const std::string first_unit = text_of(store.read("units/SPARKA.fbi").bytes);
+    const std::string second_unit = text_of(store.read("units/SPARKB.fbi").bytes);
+    OA_CHECK(weapons.find("[SPARK]") != std::string::npos);
+    OA_CHECK(weapons.find("[SPARK_2]") == std::string::npos);
+    OA_CHECK(weapons.find("Range=20") != std::string::npos);
+    OA_CHECK(weapons.find("Range=10") == std::string::npos);
+    OA_CHECK(has_assignment(first_unit, "Weapon1", "SPARK"));
+    OA_CHECK(has_assignment(second_unit, "Weapon1", "SPARK"));
+    OA_CHECK(second_unit.find("SPARK_2") == std::string::npos);
+    OA_CHECK(weapon_slot(store, "SPARK") > 0);
+    OA_CHECK(weapon_slot(store, "SPARK_2") == -1);
+    OA_CHECK(count_kind(result, mutators::ConflictKind::value_replaced) == 1);
+    const std::vector<std::string> ids{"ridge-spark-a", "ridge-spark-b"};
+    const mutators::Conflict* note = conflict_of(result, mutators::ConflictKind::value_replaced);
+    OA_CHECK(note != nullptr);
+    if (note != nullptr) {
+        const std::string line = mutators::describe(*note, ids);
+        OA_CHECK(line == "ridge-spark-b replaced ridge-spark-a's SPARK on " + note->path);
+    }
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// Add shares a weapon that matches the one already there. Neither unit is
+/// pointed at a private name.
+void test_add_shares_an_identical_weapon() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-spark-share");
+    std::vector<mutators::PipelineMutator> list;
+    for (const std::string_view id : {"ridge-spark-a", "ridge-spark-b"}) {
+        const bool first = id == "ridge-spark-a";
+        const std::string unit = first ? "SPARKA" : "SPARKB";
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("weapons/spark.tdf", spark_weapon("10"));
+        files.emplace_back("units/" + unit + ".fbi", spark_unit(unit));
+        list.push_back(make_package(scratch, id, "add", "\"files\"", k_files_lua, files));
+    }
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string weapons = text_of(store.read("weapons/spark.tdf").bytes);
+    OA_CHECK(weapons.find("[SPARK]") != std::string::npos);
+    OA_CHECK(weapons.find("[SPARK_2]") == std::string::npos);
+    OA_CHECK(weapons.find("Range=10") != std::string::npos);
+    OA_CHECK(has_assignment(text_of(store.read("units/SPARKA.fbi").bytes), "Weapon1", "SPARK"));
+    OA_CHECK(has_assignment(text_of(store.read("units/SPARKB.fbi").bytes), "Weapon1", "SPARK"));
+    OA_CHECK(count_kind(result, mutators::ConflictKind::record_shared) == 1);
+    OA_CHECK(count_kind(result, mutators::ConflictKind::record_renamed) == 0);
+    const std::vector<std::string> ids{"ridge-spark-a", "ridge-spark-b"};
+    const mutators::Conflict* shared = conflict_of(result, mutators::ConflictKind::record_shared);
+    OA_CHECK(shared != nullptr);
+    if (shared != nullptr) {
+        OA_CHECK(
+            mutators::describe(*shared, ids) == "ridge-spark-b shares SPARK with ridge-spark-a"
+        );
+    }
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// Add stores a different RGBOT under a private name. Its display name stays,
+/// and the same mutator's menu button, build list and clone follow the
+/// private name. The unit already in the game is left as it was.
+void test_renamed_unit_keeps_menu_side_and_clone() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-link");
+    constexpr std::string_view lua = "function mutate(ctx)\n"
+                                     "  return {\n"
+                                     "    files = { add = { \"files\" } },\n"
+                                     "    units = function(units, ctx)\n"
+                                     "      ctx.sides:add_canbuild(\"RGLAB\", \"RGBOT\")\n"
+                                     "      units:clone(\"RGBOT\", \"RGCOPY\", {})\n"
+                                     "    end\n"
+                                     "  }\n"
+                                     "end\n";
+    std::vector<std::pair<std::string, std::string>> files;
+    files.emplace_back(
+        "units/RGBOT.fbi",
+        "[UNITINFO]\n{\nUnitName=RGBOT;\nName=Ridge Bot;\nMaxDamage=999;\nWeapon1=RGGUN;\n}\n"
+    );
+    files.emplace_back("download/rglab.tdf", "[MENU1]\n{\nUNITMENU=RGLAB;\nUNITNAME=RGBOT;\n}\n");
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(
+        make_package(scratch, "ridge-link", "add", "\"files\", \"units\", \"sides\"", lua, files)
+    );
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const mutators::JournalEntry* renamed =
+        entry_named(result, mutators::Collection::units, "RGBOT_2");
+    OA_CHECK(renamed != nullptr);
+    if (renamed != nullptr) {
+        const std::string body = text_of(store.read(renamed->path).bytes);
+        OA_CHECK(has_assignment(body, "UnitName", "RGBOT_2"));
+        OA_CHECK(body.find("Name=Ridge Bot") != std::string::npos);
+        OA_CHECK(body.find("999") != std::string::npos);
+    }
+    const std::string base = text_of(store.read("units/RGBOT.fbi").bytes);
+    OA_CHECK(has_assignment(base, "Weapon1", "RGGUN"));
+    OA_CHECK(base.find("Ridge Bot") == std::string::npos);
+    OA_CHECK(base.find("999") == std::string::npos);
+    const std::string menu = text_of(store.read("download/rglab.tdf").bytes);
+    OA_CHECK(menu.find("[MENU0]") != std::string::npos);
+    OA_CHECK(menu.find("[MENU1]") != std::string::npos);
+    OA_CHECK(has_assignment(menu, "UNITNAME", "RGBOT"));
+    OA_CHECK(has_assignment(menu, "UNITNAME", "RGBOT_2"));
+    const std::string sides = text_of(store.read("gamedata/sidedata.tdf").bytes);
+    OA_CHECK(has_assignment(sides, "canbuild1", "RGBOT_2"));
+    OA_CHECK(!has_assignment(sides, "canbuild1", "RGBOT"));
+    const mutators::JournalEntry* clone =
+        entry_named(result, mutators::Collection::units, "RGCOPY");
+    OA_CHECK(clone != nullptr);
+    if (clone != nullptr) {
+        const std::string body = text_of(store.read(clone->path).bytes);
+        OA_CHECK(body.find("999") != std::string::npos);
+        OA_CHECK(body.find("Name=Ridge Bot") != std::string::npos);
+        OA_CHECK(has_assignment(body, "UnitName", "RGCOPY"));
+        OA_CHECK(clone->new_text.has_value());
+        if (clone->new_text.has_value())
+            OA_CHECK(*clone->new_text == "added unit RGCOPY (copy of RGBOT)");
+    }
+    const std::vector<std::string> ids{"ridge-link"};
+    const mutators::Conflict* note = conflict_of(result, mutators::ConflictKind::record_renamed);
+    OA_CHECK(note != nullptr);
+    if (note != nullptr)
+        OA_CHECK(mutators::describe(*note, ids) == "ridge-link renamed RGBOT to RGBOT_2");
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// Two download entries can share a section name when they name different
+/// units. The later entry takes a private section name and both units stay.
+void test_download_entries_match_builder_and_unit() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-menus");
+    std::vector<mutators::PipelineMutator> list;
+    for (const std::string_view id : {"ridge-entry-a", "ridge-entry-b"}) {
+        const bool first = id == "ridge-entry-a";
+        const std::string unit = first ? "RGONE" : "RGTWO";
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("units/" + unit + ".fbi", "[UNITINFO]\n{\nUnitName=" + unit + ";\n}\n");
+        files.emplace_back(
+            "download/lab.tdf", "[MENUENTRY1]\n{\nUNITMENU=RGLAB;\nUNITNAME=" + unit + ";\n}\n"
+        );
+        list.push_back(make_package(scratch, id, "", "\"files\"", k_files_lua, files));
+    }
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string menu = text_of(store.read("download/lab.tdf").bytes);
+    OA_CHECK(menu.find("[MENUENTRY1]") != std::string::npos);
+    OA_CHECK(menu.find("[MENUENTRY1_2]") != std::string::npos);
+    OA_CHECK(has_assignment(menu, "UNITNAME", "RGONE"));
+    OA_CHECK(has_assignment(menu, "UNITNAME", "RGTWO"));
+    OA_CHECK(has_assignment(text_of(store.read("units/RGONE.fbi").bytes), "UnitName", "RGONE"));
+    OA_CHECK(has_assignment(text_of(store.read("units/RGTWO.fbi").bytes), "UnitName", "RGTWO"));
+    const std::vector<std::string> ids{"ridge-entry-a", "ridge-entry-b"};
+    const mutators::Conflict* renamed = conflict_of(result, mutators::ConflictKind::record_renamed);
+    OA_CHECK(renamed != nullptr);
+    if (renamed != nullptr) {
+        OA_CHECK(
+            mutators::describe(*renamed, ids) == "ridge-entry-b renamed MENUENTRY1 to MENUENTRY1_2"
+        );
+    }
+    release(store);
+    fs::remove_all(scratch);
+}
+
+bool bot_was_renamed(const mutators::PipelineResult& result) {
+    return entry_named(result, mutators::Collection::units, "RGBOT_2") != nullptr;
+}
+
+/// The player's choice wins, then the manifest, then the preference.
+void test_effective_mode_follows_player_manifest_setting() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-mode");
+    constexpr std::string_view bot =
+        "[UNITINFO]\n{\nUnitName=RGBOT;\nName=Ridge Bot;\nMaxDamage=999;\nWeapon1=RGGUN;\n}\n";
+
+    oa::AssetStore replaced = open_ridge();
+    {
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("units/RGBOT.fbi", std::string{bot});
+        mutators::PipelineMutator mutator =
+            make_package(scratch, "ridge-mode", "add", "\"files\"", k_files_lua, files);
+        mutator.clashes = oamut::ClashMode::replace;
+        std::vector<mutators::PipelineMutator> list;
+        list.push_back(std::move(mutator));
+        mutators::PipelineInput input = make_input(std::move(list));
+        input.clash_default = oamut::ClashMode::add;
+        const mutators::PipelineResult result = mutators::run_pipeline(replaced, std::move(input));
+        OA_CHECK(result.playable());
+        if (!result.playable())
+            note_failures(result);
+        OA_CHECK(!bot_was_renamed(result));
+        const std::string body = text_of(replaced.read("units/RGBOT.fbi").bytes);
+        OA_CHECK(body.find("999") != std::string::npos);
+        OA_CHECK(body.find("Name=Ridge Bot") != std::string::npos);
+        OA_CHECK(has_assignment(body, "UnitName", "RGBOT"));
+    }
+    release(replaced);
+
+    oa::AssetStore manifest = open_ridge();
+    {
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("units/RGBOT.fbi", std::string{bot});
+        std::vector<mutators::PipelineMutator> list;
+        list.push_back(make_package(scratch, "ridge-mode", "add", "\"files\"", k_files_lua, files));
+        mutators::PipelineInput input = make_input(std::move(list));
+        input.clash_default = oamut::ClashMode::replace;
+        const mutators::PipelineResult result = mutators::run_pipeline(manifest, std::move(input));
+        OA_CHECK(result.playable());
+        if (!result.playable())
+            note_failures(result);
+        OA_CHECK(bot_was_renamed(result));
+        const std::string base = text_of(manifest.read("units/RGBOT.fbi").bytes);
+        OA_CHECK(base.find("999") == std::string::npos);
+        const mutators::JournalEntry* renamed =
+            entry_named(result, mutators::Collection::units, "RGBOT_2");
+        OA_CHECK(renamed != nullptr);
+        if (renamed != nullptr) {
+            const std::string body = text_of(manifest.read(renamed->path).bytes);
+            OA_CHECK(body.find("999") != std::string::npos);
+            OA_CHECK(has_assignment(body, "UnitName", "RGBOT_2"));
+            OA_CHECK(body.find("Name=Ridge Bot") != std::string::npos);
+        }
+    }
+    release(manifest);
+
+    oa::AssetStore setting = open_ridge();
+    {
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("units/RGBOT.fbi", std::string{bot});
+        std::vector<mutators::PipelineMutator> list;
+        list.push_back(make_package(scratch, "ridge-mode", "", "\"files\"", k_files_lua, files));
+        mutators::PipelineInput input = make_input(std::move(list));
+        input.clash_default = oamut::ClashMode::add;
+        const mutators::PipelineResult result = mutators::run_pipeline(setting, std::move(input));
+        OA_CHECK(result.playable());
+        if (!result.playable())
+            note_failures(result);
+        OA_CHECK(bot_was_renamed(result));
+        const mutators::JournalEntry* renamed =
+            entry_named(result, mutators::Collection::units, "RGBOT_2");
+        OA_CHECK(renamed != nullptr);
+        if (renamed != nullptr) {
+            const std::string body = text_of(setting.read(renamed->path).bytes);
+            OA_CHECK(body.find("999") != std::string::npos);
+        }
+        const std::string base = text_of(setting.read("units/RGBOT.fbi").bytes);
+        OA_CHECK(base.find("999") == std::string::npos);
+    }
+    release(setting);
+    fs::remove_all(scratch);
+}
+
+/// Add serves a renamed unit's own script, picture and model under the
+/// private name, and leaves the unit already in the game with its own bytes.
+void test_renamed_unit_keeps_its_name_keyed_files() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-files");
+    std::vector<std::pair<std::string, std::string>> files;
+    files.emplace_back(
+        "units/RGBOT.fbi",
+        "[UNITINFO]\n{\nUnitName=RGBOT;\nName=Ridge Bot;\nMaxDamage=999;\nWeapon1=RGGUN;\n}\n"
+    );
+    files.emplace_back("scripts/RGBOT.cob", "COB");
+    files.emplace_back("unitpics/RGBOT.pcx", "PIC");
+    files.emplace_back("objects3d/RGBOT.3do", "MODEL");
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(make_package(scratch, "ridge-files", "add", "\"files\"", k_files_lua, files));
+    oa::AssetStore store = open_ridge();
+    const std::vector<uint8_t> bot_before = store.read("units/RGBOT.fbi").bytes;
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    OA_CHECK(store.read("units/RGBOT.fbi").bytes == bot_before);
+    OA_CHECK(store.file_size("scripts/RGBOT.cob") == 0);
+    OA_CHECK(store.file_size("unitpics/RGBOT.pcx") == 0);
+    OA_CHECK(store.file_size("objects3d/RGBOT.3do") == 0);
+    OA_CHECK(store.file_size("scripts/RGBOT_2.cob") > 0);
+    OA_CHECK(store.file_size("unitpics/RGBOT_2.pcx") > 0);
+    OA_CHECK(store.file_size("objects3d/RGBOT_2.3do") > 0);
+    if (store.file_size("scripts/RGBOT_2.cob") > 0)
+        OA_CHECK(text_of(store.read("scripts/RGBOT_2.cob").bytes) == "COB");
+    if (store.file_size("unitpics/RGBOT_2.pcx") > 0)
+        OA_CHECK(text_of(store.read("unitpics/RGBOT_2.pcx").bytes) == "PIC");
+    if (store.file_size("objects3d/RGBOT_2.3do") > 0)
+        OA_CHECK(text_of(store.read("objects3d/RGBOT_2.3do").bytes) == "MODEL");
+    const mutators::JournalEntry* renamed =
+        entry_named(result, mutators::Collection::units, "RGBOT_2");
+    OA_CHECK(renamed != nullptr);
+    if (renamed != nullptr) {
+        const std::string body = text_of(store.read(renamed->path).bytes);
+        OA_CHECK(has_assignment(body, "UnitName", "RGBOT_2"));
+        OA_CHECK(has_assignment(body, "Objectname", "RGBOT_2"));
+    }
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// A unit that only differs by a weapon this mutator renamed is renamed too.
+void test_unit_follows_its_renamed_weapon() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-follow");
+    std::vector<std::pair<std::string, std::string>> files;
+    files.emplace_back("weapons/ridge.tdf", "[RGGUN]\n{\nID=1;\nRange=4;\n}\n");
+    files.emplace_back(
+        "units/RGBOT.fbi",
+        "[UNITINFO]\n{\nUnitName=RGBOT;\nMaxVelocity=1.6;\nWeapon1=RGGUN;\n"
+        "Corpse=RGBOT_DEAD;\nMovementClass=RGKBOT;\n}\n"
+    );
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(make_package(scratch, "ridge-follow", "add", "\"files\"", k_files_lua, files));
+    oa::AssetStore store = open_ridge();
+    const std::vector<uint8_t> bot_before = store.read("units/RGBOT.fbi").bytes;
+    const std::vector<uint8_t> gun_before = store.read("weapons/ridge.tdf").bytes;
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    OA_CHECK(store.read("units/RGBOT.fbi").bytes == bot_before);
+    OA_CHECK(has_assignment(text_of(gun_before), "ID", "1"));
+    const std::string guns = text_of(store.read("weapons/ridge.tdf").bytes);
+    OA_CHECK(guns.find("[RGGUN_2]") != std::string::npos);
+    OA_CHECK(guns.find("Range=4") != std::string::npos);
+    const mutators::JournalEntry* renamed =
+        entry_named(result, mutators::Collection::units, "RGBOT_2");
+    OA_CHECK(renamed != nullptr);
+    if (renamed != nullptr) {
+        const std::string body = text_of(store.read(renamed->path).bytes);
+        OA_CHECK(has_assignment(body, "UnitName", "RGBOT_2"));
+        OA_CHECK(has_assignment(body, "Weapon1", "RGGUN_2"));
+    }
+    OA_CHECK(weapon_slot(store, "RGGUN") == 1);
+    OA_CHECK(weapon_slot(store, "RGGUN_2") > 2);
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// explodeas and selfdestructas follow a weapon this mutator renamed.
+void test_corpse_weapons_follow_the_rename() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-corpse");
+    std::vector<std::pair<std::string, std::string>> files;
+    files.emplace_back("weapons/ridge.tdf", "[RGGUN]\n{\nID=1;\nRange=4;\n}\n");
+    files.emplace_back(
+        "units/RGBOOM.fbi",
+        "[UNITINFO]\n{\nUnitName=RGBOOM;\nWeapon1=RGGUN;\nExplodeAs=RGGUN;\n"
+        "SelfDestructAs=RGGUN;\n}\n"
+    );
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(make_package(scratch, "ridge-corpse", "add", "\"files\"", k_files_lua, files));
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string body = text_of(store.read("units/RGBOOM.fbi").bytes);
+    OA_CHECK(has_assignment(body, "Weapon1", "RGGUN_2"));
+    OA_CHECK(has_assignment(body, "ExplodeAs", "RGGUN_2"));
+    OA_CHECK(has_assignment(body, "SelfDestructAs", "RGGUN_2"));
+    OA_CHECK(weapon_slot(store, "RGGUN") == 1);
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// This mutator's hook and rule name its own renamed unit, not the game's.
+void test_own_name_reaches_the_private_unit() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-names");
+    constexpr std::string_view hook = "function mutate(ctx)\n"
+                                      "  return {\n"
+                                      "    files = { add = { \"files\" } },\n"
+                                      "    units = function(units, ctx)\n"
+                                      "      units.RGBOT.maxdamage = 5\n"
+                                      "    end\n"
+                                      "  }\n"
+                                      "end\n";
+    constexpr std::string_view rule = "function mutate(ctx)\n"
+                                      "  return {\n"
+                                      "    files = { add = { \"files\" } },\n"
+                                      "    rules = { where { unitname = is(\"RGBOT\") }:change { "
+                                      "maxdamage = 7 } }\n"
+                                      "  }\n"
+                                      "end\n";
+    const std::string bot =
+        "[UNITINFO]\n{\nUnitName=RGBOT;\nName=Ridge Bot;\nMaxDamage=1;\nWeapon1=RGGUN;\n}\n";
+    oa::AssetStore hooked = open_ridge();
+    {
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("units/RGBOT.fbi", bot);
+        std::vector<mutators::PipelineMutator> list;
+        list.push_back(
+            make_package(scratch, "ridge-hook-name", "add", "\"files\", \"units\"", hook, files)
+        );
+        const mutators::PipelineResult result =
+            mutators::run_pipeline(hooked, make_input(std::move(list)));
+        OA_CHECK(result.playable());
+        if (!result.playable())
+            note_failures(result);
+        const std::string base = text_of(hooked.read("units/RGBOT.fbi").bytes);
+        OA_CHECK(!has_assignment(base, "MaxDamage", "5"));
+        const mutators::JournalEntry* renamed =
+            entry_named(result, mutators::Collection::units, "RGBOT_2");
+        OA_CHECK(renamed != nullptr);
+        if (renamed != nullptr)
+            OA_CHECK(has_assignment(text_of(hooked.read(renamed->path).bytes), "MaxDamage", "5"));
+    }
+    release(hooked);
+
+    oa::AssetStore ruled = open_ridge();
+    {
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("units/RGBOT.fbi", bot);
+        std::vector<mutators::PipelineMutator> list;
+        list.push_back(
+            make_package(scratch, "ridge-rule-name", "add", "\"files\", \"units\"", rule, files)
+        );
+        const mutators::PipelineResult result =
+            mutators::run_pipeline(ruled, make_input(std::move(list)));
+        OA_CHECK(result.playable());
+        if (!result.playable())
+            note_failures(result);
+        const std::string base = text_of(ruled.read("units/RGBOT.fbi").bytes);
+        OA_CHECK(!has_assignment(base, "MaxDamage", "7"));
+        const mutators::JournalEntry* renamed =
+            entry_named(result, mutators::Collection::units, "RGBOT_2");
+        OA_CHECK(renamed != nullptr);
+        if (renamed != nullptr)
+            OA_CHECK(has_assignment(text_of(ruled.read(renamed->path).bytes), "MaxDamage", "7"));
+    }
+    release(ruled);
+    fs::remove_all(scratch);
+}
+
+/// A rule's weapon write, with or without a hook, uses the private weapon.
+void test_rule_write_uses_the_private_weapon() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-rule-gun");
+    constexpr std::string_view rules_only =
+        "function mutate(ctx)\n"
+        "  return {\n"
+        "    files = { add = { \"files\" } },\n"
+        "    rules = { where { unitname = is(\"RGCOM\") }:change { weapon1 = \"RGGUN\" } }\n"
+        "  }\n"
+        "end\n";
+    constexpr std::string_view with_hook =
+        "function mutate(ctx)\n"
+        "  return {\n"
+        "    files = { add = { \"files\" } },\n"
+        "    rules = { where { unitname = is(\"RGCOM\") }:change { weapon1 = \"RGGUN\" } },\n"
+        "    units = function(units, ctx)\n"
+        "      units.RGCOM.maxdamage = 3000\n"
+        "    end\n"
+        "  }\n"
+        "end\n";
+    const auto run_one = [&](std::string_view id, std::string_view lua, std::string_view layers) {
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("weapons/ridge.tdf", "[RGGUN]\n{\nID=1;\nRange=4;\n}\n");
+        std::vector<mutators::PipelineMutator> list;
+        list.push_back(make_package(scratch, id, "add", layers, lua, files));
+        oa::AssetStore store = open_ridge();
+        const mutators::PipelineResult result =
+            mutators::run_pipeline(store, make_input(std::move(list)));
+        OA_CHECK(result.playable());
+        if (!result.playable())
+            note_failures(result);
+        const std::string commander = text_of(store.read("units/RGCOM.fbi").bytes);
+        OA_CHECK(has_assignment(commander, "weapon1", "RGGUN_2"));
+        OA_CHECK(!has_assignment(commander, "weapon1", "RGGUN"));
+        OA_CHECK(weapon_slot(store, "RGGUN") == 1);
+        release(store);
+    };
+    run_one("ridge-rule-gun", rules_only, "\"files\", \"units\"");
+    run_one("ridge-hook-gun", with_hook, "\"files\", \"units\"");
+    fs::remove_all(scratch);
+}
+
+/// A later mutator that names the weapon as it was written is left on that weapon.
+void test_later_mutator_keeps_the_name_it_wrote() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-later");
+    constexpr std::string_view later = "function mutate(ctx)\n"
+                                       "  return {\n"
+                                       "    rules = { where { unitname = is(\"RGCOM\") }:change { "
+                                       "weapon1 = \"RGGUN\" } }\n"
+                                       "  }\n"
+                                       "end\n";
+    std::vector<mutators::PipelineMutator> list;
+    {
+        std::vector<std::pair<std::string, std::string>> files;
+        files.emplace_back("weapons/ridge.tdf", "[RGGUN]\n{\nID=1;\nRange=4;\n}\n");
+        list.push_back(
+            make_package(scratch, "ridge-gun-add", "add", "\"files\"", k_files_lua, files)
+        );
+    }
+    list.push_back(make_package(scratch, "ridge-gun-use", "", "\"units\"", later, {}));
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string commander = text_of(store.read("units/RGCOM.fbi").bytes);
+    OA_CHECK(has_assignment(commander, "weapon1", "RGGUN"));
+    OA_CHECK(commander.find("RGGUN_2") == std::string::npos);
+    OA_CHECK(text_of(store.read("weapons/ridge.tdf").bytes).find("[RGGUN_2]") != std::string::npos);
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// A renamed builder's menu button and build list follow the private name.
+void test_renamed_builder_keeps_its_menu_and_list() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-builder");
+    constexpr std::string_view lua = "function mutate(ctx)\n"
+                                     "  return {\n"
+                                     "    files = { add = { \"files\" } },\n"
+                                     "    units = function(units, ctx)\n"
+                                     "      ctx.sides:add_canbuild(\"RGLAB\", \"RGNEW2\")\n"
+                                     "    end\n"
+                                     "  }\n"
+                                     "end\n";
+    std::vector<std::pair<std::string, std::string>> files;
+    files.emplace_back(
+        "units/RGLAB.fbi",
+        "[UNITINFO]\n{\nUnitName=RGLAB;\nBuilder=1;\nBMcode=0;\nWorkerTime=50;\n}\n"
+    );
+    files.emplace_back("units/RGNEW2.fbi", "[UNITINFO]\n{\nUnitName=RGNEW2;\n}\n");
+    files.emplace_back("download/mylab.tdf", "[MENU0]\n{\nUNITMENU=RGLAB;\nUNITNAME=RGNEW2;\n}\n");
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(
+        make_package(scratch, "ridge-builder", "add", "\"files\", \"units\", \"sides\"", lua, files)
+    );
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string menu = text_of(store.read("download/mylab.tdf").bytes);
+    OA_CHECK(menu.find("[MENU0]") != std::string::npos);
+    OA_CHECK(menu.find("[MENU0_2]") == std::string::npos);
+    OA_CHECK(has_assignment(menu, "UNITMENU", "RGLAB_2"));
+    OA_CHECK(has_assignment(menu, "UNITNAME", "RGNEW2"));
+    const std::string game_menu = text_of(store.read("download/rglab.tdf").bytes);
+    OA_CHECK(has_assignment(game_menu, "UNITMENU", "RGLAB"));
+    OA_CHECK(game_menu.find("RGNEW2") == std::string::npos);
+    const std::string sides = text_of(store.read("gamedata/sidedata.tdf").bytes);
+    OA_CHECK(sides.find("[RGLAB_2]") != std::string::npos);
+    OA_CHECK(sides.find("[RGLAB]") == std::string::npos);
+    OA_CHECK(has_assignment(sides, "canbuild1", "RGNEW2"));
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// Add clones onto an existing name, notes the rename, and later name
+/// lookups in the same hook reach the clone.
+void test_add_clone_onto_an_existing_name() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-clone-add");
+    constexpr std::string_view lua = "function mutate(ctx)\n"
+                                     "  return {\n"
+                                     "    units = function(units, ctx)\n"
+                                     "      units:clone(\"RGBOT\", \"RGCOM\", { maxdamage = 31 })\n"
+                                     "      units.RGCOM.maxdamage = 32\n"
+                                     "    end\n"
+                                     "  }\n"
+                                     "end\n";
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(make_package(scratch, "ridge-clone-add", "add", "\"units\"", lua, {}));
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string game = text_of(store.read("units/RGCOM.fbi").bytes);
+    OA_CHECK(has_assignment(game, "MaxDamage", "3000"));
+    OA_CHECK(!has_assignment(game, "MaxDamage", "32"));
+    const mutators::JournalEntry* clone =
+        entry_named(result, mutators::Collection::units, "RGCOM_2");
+    OA_CHECK(clone != nullptr);
+    if (clone != nullptr) {
+        OA_CHECK(clone->old_text.has_value() && *clone->old_text == "RGCOM");
+        const std::string body = text_of(store.read(clone->path).bytes);
+        OA_CHECK(has_assignment(body, "UnitName", "RGCOM_2"));
+        OA_CHECK(has_assignment(body, "maxdamage", "32"));
+    }
+    const std::vector<std::string> ids{"ridge-clone-add"};
+    bool saw_rename = false;
+    for (const mutators::Conflict& conflict : result.report.conflicts) {
+        if (conflict.kind != mutators::ConflictKind::record_renamed)
+            continue;
+        if (mutators::describe(conflict, ids) == "ridge-clone-add renamed RGCOM to RGCOM_2")
+            saw_rename = true;
+    }
+    OA_CHECK(saw_rename);
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// Replace puts a clone in place of the record that already has that name.
+void test_replace_clone_overwrites_the_existing_unit() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-clone-replace");
+    constexpr std::string_view lua = "function mutate(ctx)\n"
+                                     "  return {\n"
+                                     "    units = function(units, ctx)\n"
+                                     "      units:clone(\"RGBOT\", \"RGCOM\", { maxdamage = 31 })\n"
+                                     "    end\n"
+                                     "  }\n"
+                                     "end\n";
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(make_package(scratch, "ridge-clone-replace", "replace", "\"units\"", lua, {}));
+    oa::AssetStore store = open_ridge();
+    const std::vector<uint8_t> bot_before = store.read("units/RGBOT.fbi").bytes;
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    OA_CHECK(store.read("units/RGBOT.fbi").bytes == bot_before);
+    const std::string commander = text_of(store.read("units/RGCOM.fbi").bytes);
+    OA_CHECK(has_assignment(commander, "UnitName", "RGCOM"));
+    OA_CHECK(has_assignment(commander, "maxdamage", "31"));
+    OA_CHECK(!has_assignment(commander, "MaxDamage", "3000"));
+    const mutators::JournalEntry* clone = entry_named(result, mutators::Collection::units, "RGCOM");
+    OA_CHECK(clone != nullptr);
+    if (clone != nullptr) {
+        OA_CHECK(clone->old_text.has_value() && *clone->old_text == "RGCOM");
+        OA_CHECK(clone->new_text.has_value());
+        if (clone->new_text.has_value())
+            OA_CHECK(*clone->new_text == "replaced unit RGCOM (copy of RGBOT)");
+    }
+    const std::vector<std::string> ids{"ridge-clone-replace"};
+    bool saw_game = false;
+    for (const mutators::Conflict& conflict : result.report.conflicts) {
+        if (conflict.kind != mutators::ConflictKind::value_replaced)
+            continue;
+        const std::string line = mutators::describe(conflict, ids);
+        const std::string game_owner = std::string("the ") + "game";
+        if (line == "ridge-clone-replace replaced " + game_owner + "'s RGCOM on " + conflict.path)
+            saw_game = true;
+    }
+    OA_CHECK(saw_game);
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// A section name used by another download file is not a clash.
+void test_download_section_name_is_per_file() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-menu-file");
+    std::vector<std::pair<std::string, std::string>> files;
+    files.emplace_back("units/RGNEW.fbi", "[UNITINFO]\n{\nUnitName=RGNEW;\n}\n");
+    files.emplace_back("download/rgnew.tdf", "[MENU0]\n{\nUNITMENU=RGLAB;\nUNITNAME=RGNEW;\n}\n");
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(
+        make_package(scratch, "ridge-menu-file", "replace", "\"files\"", k_files_lua, files)
+    );
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string menu = text_of(store.read("download/rgnew.tdf").bytes);
+    OA_CHECK(menu.find("[MENU0]") != std::string::npos);
+    OA_CHECK(menu.find("[MENU0_2]") == std::string::npos);
+    OA_CHECK(count_kind(result, mutators::ConflictKind::record_renamed) == 0);
+    const std::string game = text_of(store.read("download/rglab.tdf").bytes);
+    OA_CHECK(game.find("[MENU0]") != std::string::npos);
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// A sixth button spills into a new download file that starts with a placeholder.
+void test_sixth_download_button_spills() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-spill");
+    std::string menu;
+    for (int index = 0; index < 6; ++index) {
+        const char name = static_cast<char>('A' + index);
+        menu += "[MENU";
+        menu += std::to_string(index);
+        menu += "]\n{\nUNITMENU=RGLAB;\nUNITNAME=RGN";
+        menu.push_back(name);
+        menu += ";\n}\n";
+    }
+    std::vector<std::pair<std::string, std::string>> files;
+    files.emplace_back("download/six.tdf", menu);
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(
+        make_package(scratch, "ridge-spill", "replace", "\"files\"", k_files_lua, files)
+    );
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string original = text_of(store.read("download/six.tdf").bytes);
+    OA_CHECK(original.find("UNITNAME=RGNE") != std::string::npos);
+    OA_CHECK(original.find("UNITNAME=RGNF") == std::string::npos);
+    OA_CHECK(original.find("PLACEHOLDER") == std::string::npos);
+    const std::string spill = text_of(store.read("download/RGNF.tdf").bytes);
+    OA_CHECK(spill.find("PLACEHOLDER") != std::string::npos);
+    OA_CHECK(spill.find("UNITNAME=RGNF") != std::string::npos);
+    OA_CHECK(has_assignment(spill, "UNITMENU", "RGLAB"));
+    release(store);
+    fs::remove_all(scratch);
+}
+
 } // namespace
 
 int main() {
@@ -1761,5 +2699,22 @@ int main() {
     test_request_overflow_follows_list_order();
     test_removed_record_file_comes_back();
     test_removed_weapon_file_comes_back();
+    test_add_gives_each_unit_its_own_weapon();
+    test_replace_makes_both_units_fire_the_later_weapon();
+    test_add_shares_an_identical_weapon();
+    test_renamed_unit_keeps_menu_side_and_clone();
+    test_download_entries_match_builder_and_unit();
+    test_effective_mode_follows_player_manifest_setting();
+    test_renamed_unit_keeps_its_name_keyed_files();
+    test_unit_follows_its_renamed_weapon();
+    test_corpse_weapons_follow_the_rename();
+    test_own_name_reaches_the_private_unit();
+    test_rule_write_uses_the_private_weapon();
+    test_later_mutator_keeps_the_name_it_wrote();
+    test_renamed_builder_keeps_its_menu_and_list();
+    test_add_clone_onto_an_existing_name();
+    test_replace_clone_overwrites_the_existing_unit();
+    test_download_section_name_is_per_file();
+    test_sixth_download_button_spills();
     return oa::test::check_exit_status();
 }

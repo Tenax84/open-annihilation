@@ -13,6 +13,7 @@
 #include "oa/data/mod_profile/overrides.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/clashes.hpp"
 #include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamut/manifest.hpp"
@@ -184,7 +185,8 @@ void log_applied(
         std::set<std::string> rewritten;
         for (const mutators::JournalEntry& entry : result.journal.entries) {
             if (entry.change == mutators::Change::added) {
-                ++added;
+                if (entry.new_text != "shared")
+                    ++added;
             } else if (entry.change == mutators::Change::hidden) {
                 ++hidden;
             } else if (
@@ -531,7 +533,11 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     if (mutator_state_ == nullptr || mutator_state_->chosen.empty())
         return;
     const std::vector<mutators::ResolvedMutator> listed = mutator_state_->chosen;
-    const mutators::Loadout requested = mutators::loadout_of(listed);
+    const auto stored = preference_values_.find(std::string{mutators::clash_default_preference});
+    const oa::formats::oamut::ClashMode clash_default =
+        stored == preference_values_.end() ? mutators::clash_setting_default
+                                           : mutators::clash_from_setting(stored->second);
+    const mutators::Loadout requested = mutators::loadout_of(listed, clash_default);
     // Written before the pipeline, so a crash while the mutators are applied
     // leaves the file. A playable run rewrites it with what applied.
     arm_mutator_sentinel(pending_setup, requested);
@@ -541,12 +547,14 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         release_match_mutators();
 
     mutators::PipelineInput input;
+    input.clash_default = clash_default;
     input.mutators.reserve(listed.size());
     for (const mutators::ResolvedMutator& one : listed) {
         mutators::PipelineMutator item;
         item.package = one.package_folder;
         item.manifest = one.manifest;
         item.options = one.options;
+        item.clashes = one.clashes;
         input.mutators.push_back(std::move(item));
     }
     if (const oa::data::mod_profile::ModProfile* profile = mod_profile()) {

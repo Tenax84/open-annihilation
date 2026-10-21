@@ -38,7 +38,7 @@ namespace sha = oa::base::sha256;
 
 /// The canonical text of the fixed two-entry loadout, one of them a folder.
 constexpr std::string_view kCanonical =
-    R"({"mutators":[{"folder":false,"id":"ridge-pace","options":{"boost":false,"pace":1.5,"temper":"hot"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"folder":true,"id":"ridge-kit","options":{},"sha256":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210","version":"3"}],"oaloadout":1})";
+    R"({"mutators":[{"clashes":"replace","folder":false,"id":"ridge-pace","options":{"boost":false,"pace":1.5,"temper":"hot"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"clashes":"replace","folder":true,"id":"ridge-kit","options":{},"sha256":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210","version":"3"}],"oaloadout":1})";
 
 /// Prints a failed requirement before counting it.
 ///
@@ -228,11 +228,11 @@ void digests() {
     const mutators::Loadout loadout = sample_loadout();
     // python3 - <<'PY'
     // import hashlib
-    // text = '{"mutators":[{"folder":false,"id":"ridge-pace","options":{"boost":false,"pace":1.5,"temper":"hot"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"folder":true,"id":"ridge-kit","options":{},"sha256":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210","version":"3"}],"oaloadout":1}'
+    // text = '{"mutators":[{"clashes":"replace","folder":false,"id":"ridge-pace","options":{"boost":false,"pace":1.5,"temper":"hot"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"clashes":"replace","folder":true,"id":"ridge-kit","options":{},"sha256":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210","version":"3"}],"oaloadout":1}'
     // print(hashlib.sha256(text.encode()).hexdigest())
     // PY
     const sha::Digest loadout_pin =
-        digest_of_hex("e1e65f3c4c6b16fe1f28baaa5bdb304d50233f0b8c97e5c1a4efb5032ee8f7cd");
+        digest_of_hex("6e25afc8642291d65eb72bedb934432c87522677246f5c62bdc51d4462c58fee");
     const sha::Digest got_loadout = mutators::loadout_digest(loadout);
     if (got_loadout != loadout_pin)
         std::fprintf(stderr, "loadout digest %s\n", hex_of(got_loadout).c_str());
@@ -313,12 +313,12 @@ void digests() {
 
     // python3 - <<'PY'
     // import hashlib
-    // text = b'{"mutators":[{"folder":false,"id":"ridge-pace","options":{"boost":false,"pace":1.5,"temper":"hot"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"folder":true,"id":"ridge-kit","options":{},"sha256":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210","version":"3"}],"oaloadout":1}'
+    // text = b'{"mutators":[{"clashes":"replace","folder":false,"id":"ridge-pace","options":{"boost":false,"pace":1.5,"temper":"hot"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"clashes":"replace","folder":true,"id":"ridge-kit","options":{},"sha256":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210","version":"3"}],"oaloadout":1}'
     // layer = bytes.fromhex("0f193230fd2df02e7fee7ea8c2a5da796ecb40da04d817c4ae1dc177307d6d95")
     // print(hashlib.sha256(b"oa-mutators-1\n" + text + layer).hexdigest())
     // PY
     const sha::Digest mutator_pin =
-        digest_of_hex("52c097378a2a9ab324a9e9820cd8e449dda3e197b7c3991abf57265a0c24c0a1");
+        digest_of_hex("3368faef830f6ac5f02909bc9ba97b7a565a10572725cb291093cec67d40bee5");
     const sha::Digest got_mutator = mutators::mutator_digest(loadout, got_layer);
     if (got_mutator != mutator_pin)
         std::fprintf(stderr, "mutator digest %s\n", hex_of(got_mutator).c_str());
@@ -339,6 +339,45 @@ void digests() {
     if (folded_hash != fold_pin)
         std::fprintf(stderr, "folded hash %s\n", hex_of(folded_hash).c_str());
     expect(folded_hash == fold_pin, "fold_sim_hash matches the independent digest");
+
+    mutators::Loadout added = loadout;
+    added.entries[0].clashes = oamut::ClashMode::add;
+    const std::string added_text = mutators::canonical_loadout(added);
+    expect(
+        added_text.find("{\"mutators\":[{\"clashes\":\"add\",\"folder\":false,") == 0,
+        "an added mutator writes clashes add"
+    );
+    expect(
+        added_text.find("\"clashes\":\"replace\",\"folder\":true") != std::string::npos,
+        "the other entry stays replace"
+    );
+    // python3 - <<'PY'
+    // import hashlib
+    // text = '{"mutators":[{"clashes":"add","folder":false,"id":"ridge-pace","options":{"boost":false,"pace":1.5,"temper":"hot"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"clashes":"replace","folder":true,"id":"ridge-kit","options":{},"sha256":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210","version":"3"}],"oaloadout":1}'
+    // print(hashlib.sha256(text.encode()).hexdigest())
+    // layer = bytes.fromhex("0f193230fd2df02e7fee7ea8c2a5da796ecb40da04d817c4ae1dc177307d6d95")
+    // print(hashlib.sha256(b"oa-mutators-1\n" + text.encode() + layer).hexdigest())
+    // PY
+    const sha::Digest add_loadout_pin =
+        digest_of_hex("1e3d26a32403c2e73104763887577a5e1e3260d467175384e7b03d7737d3256e");
+    const sha::Digest add_mutator_pin =
+        digest_of_hex("daefb0c197b4b102e224ff8085a0b5a55292416103a73bc271a32f61ecbec325");
+    const sha::Digest got_add = mutators::loadout_digest(added);
+    if (got_add != add_loadout_pin)
+        std::fprintf(stderr, "add loadout digest %s\n", hex_of(got_add).c_str());
+    expect(got_add == add_loadout_pin, "an add-mode loadout matches its independent digest");
+    expect(got_add != got_loadout, "the clash mode changes the loadout digest");
+    const sha::Digest got_add_mutator = mutators::mutator_digest(added, got_layer);
+    if (got_add_mutator != add_mutator_pin)
+        std::fprintf(stderr, "add mutator digest %s\n", hex_of(got_add_mutator).c_str());
+    expect(got_add_mutator == add_mutator_pin, "an add-mode mutator digest matches");
+    expect(!(added == loadout), "entries that differ only in clashes are unequal");
+    std::string add_error;
+    const std::optional<mutators::Loadout> read_add =
+        mutators::parse_loadout(added_text, &add_error);
+    expect(
+        read_add.has_value() && *read_add == added, "an add-mode loadout reads back: " + add_error
+    );
 }
 
 /// Checks that a refusal names what was wrong.
@@ -355,6 +394,22 @@ void refuses(std::string_view text, std::string_view needle) {
 
 /// Checks the texts parse_loadout refuses, and the two limits' boundaries.
 void refusals() {
+    std::string missing{kCanonical};
+    const std::string member = "\"clashes\":\"replace\",";
+    const std::size_t member_at = missing.find(member);
+    expect(member_at != std::string::npos, "the fixture names clashes");
+    if (member_at != std::string::npos)
+        missing.erase(member_at, member.size());
+    refuses(missing, "clashes");
+
+    std::string bad{kCanonical};
+    const std::string replace_mode = "\"clashes\":\"replace\"";
+    const std::size_t mode_at = bad.find(replace_mode);
+    expect(mode_at != std::string::npos, "the fixture's clash mode is replace");
+    if (mode_at != std::string::npos)
+        bad.replace(mode_at, replace_mode.size(), "\"clashes\":\"Add\"");
+    refuses(bad, "clashes");
+
     refuses(std::string{kCanonical}.replace(kCanonical.rfind(":1}"), 3, ":2}"), "oaloadout");
     refuses(R"({"extra":false,"mutators":[],"oaloadout":1})", "extra");
 
@@ -895,6 +950,7 @@ void applied_only();
 void chosen_list(const Scratch& scratch);
 void resolves_installed(const Scratch& scratch);
 void hand_made_folder(const Scratch& scratch);
+void clash_mode_is_part_of_the_loadout(const Scratch& scratch);
 } // namespace
 
 int main() {
@@ -913,6 +969,7 @@ int main() {
         chosen_list(scratch);
         resolves_installed(scratch);
         hand_made_folder(scratch);
+        clash_mode_is_part_of_the_loadout(scratch);
     }
     const int status = oa::test::check_exit_status();
     if (status == 0)
@@ -1104,7 +1161,7 @@ void chosen_list(const Scratch& scratch) {
     expect(pace.package == digest_of_hex(pace_sha), "an installed id keeps the recorded SHA-256");
 
     const std::vector<mutators::ResolvedMutator> list{pace, by_path};
-    const mutators::Loadout made = mutators::loadout_of(list);
+    const mutators::Loadout made = mutators::loadout_of(list, oamut::ClashMode::replace);
     expect(made.entries.size() == 2, "loadout_of lists every mutator");
     expect(
         made.entries.size() == 2 && made.entries[0].id == "ridge-pace" &&
@@ -1136,7 +1193,7 @@ void chosen_list(const Scratch& scratch) {
 
     const std::string literal =
         std::string(
-            R"({"mutators":[{"folder":false,"id":"ridge-pace","options":{"boost":false,"health":4000,"pace":1.5,"temper":"cold"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"folder":true,"id":"ridge-kit","options":{},"sha256":")"
+            R"({"mutators":[{"clashes":"replace","folder":false,"id":"ridge-pace","options":{"boost":false,"health":4000,"pace":1.5,"temper":"cold"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"clashes":"replace","folder":true,"id":"ridge-kit","options":{},"sha256":")"
         ) +
         hex_of(by_path.package) + R"(","version":"3"}],"oaloadout":1})";
     const std::string canonical = mutators::canonical_loadout(made);
@@ -1317,6 +1374,90 @@ void hand_made_folder(const Scratch& scratch) {
                 "\"ridge-bad\" records a package SHA-256 that is not 64 hexadecimal digits",
             "the short SHA-256 is named: " + bad_error
         );
+    }
+}
+
+/// The mode in force is recorded, and a loadout read back keeps that mode.
+///
+/// @param scratch the scratch directory
+void clash_mode_is_part_of_the_loadout(const Scratch& scratch) {
+    mutators::ResolvedMutator manifest_add;
+    manifest_add.manifest = plain_manifest("ridge-manifest", "1.0");
+    manifest_add.manifest.clashes = oamut::ClashMode::add;
+    manifest_add.package = filled_digest(0x21);
+    const mutators::Loadout from_manifest = mutators::loadout_of(
+        std::vector<mutators::ResolvedMutator>{manifest_add}, oamut::ClashMode::replace
+    );
+    expect(from_manifest.entries.size() == 1, "a manifest mode makes one entry");
+    if (!from_manifest.entries.empty()) {
+        expect(
+            from_manifest.entries[0].clashes == oamut::ClashMode::add,
+            "a manifest of add wins over a default of replace"
+        );
+    }
+    expect(
+        mutators::canonical_loadout(from_manifest).find("\"clashes\":\"add\"") != std::string::npos,
+        "the manifest mode is in the canonical text"
+    );
+
+    mutators::ResolvedMutator setting_add;
+    setting_add.manifest = plain_manifest("ridge-setting", "1.0");
+    setting_add.package = filled_digest(0x22);
+    const mutators::Loadout from_setting = mutators::loadout_of(
+        std::vector<mutators::ResolvedMutator>{setting_add}, oamut::ClashMode::add
+    );
+    expect(
+        !from_setting.entries.empty() && from_setting.entries[0].clashes == oamut::ClashMode::add,
+        "no manifest key and a default of add records add"
+    );
+    expect(
+        mutators::canonical_loadout(from_setting).find("\"clashes\":\"add\"") != std::string::npos,
+        "the preference default is in the canonical text"
+    );
+
+    mutators::ResolvedMutator player;
+    player.manifest = plain_manifest("ridge-player", "1.0");
+    player.manifest.clashes = oamut::ClashMode::add;
+    player.clashes = oamut::ClashMode::replace;
+    player.package = filled_digest(0x23);
+    const mutators::Loadout from_player =
+        mutators::loadout_of(std::vector<mutators::ResolvedMutator>{player}, oamut::ClashMode::add);
+    expect(
+        !from_player.entries.empty() && from_player.entries[0].clashes == oamut::ClashMode::replace,
+        "the player's choice wins"
+    );
+    expect(
+        mutators::canonical_loadout(from_player).find("\"clashes\":\"replace\"") !=
+            std::string::npos,
+        "the player's choice is in the canonical text"
+    );
+
+    constexpr std::string_view sha =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const fs::path mutators = scratch.root / "clash-mode";
+    oamut::Manifest written = plain_manifest("ridge-recorded", "1.0");
+    written.clashes = oamut::ClashMode::add;
+    write_package(mutators / "ridge-recorded", written, sha);
+    const mutators::ResolvedMutator resolved = resolved_text("ridge-recorded", mutators);
+    expect(!resolved.clashes.has_value(), "a choice without a mode leaves the player unset");
+    const mutators::Loadout recorded = mutators::loadout_of(
+        std::vector<mutators::ResolvedMutator>{resolved}, oamut::ClashMode::replace
+    );
+    expect(
+        !recorded.entries.empty() && recorded.entries[0].clashes == oamut::ClashMode::add,
+        "the recorded entry keeps the manifest mode"
+    );
+    std::string error;
+    const std::optional<std::vector<mutators::ResolvedMutator>> played =
+        mutators::resolve_loadout(recorded, mutators, &error);
+    expect(played.has_value(), "resolve_loadout reads the recorded mode: " + error);
+    if (played && played->size() == 1) {
+        expect(
+            (*played)[0].clashes.has_value() && *(*played)[0].clashes == oamut::ClashMode::add,
+            "resolve_loadout of an add entry returns add"
+        );
+    } else {
+        expect(false, "resolve_loadout returned the recorded package");
     }
 }
 

@@ -346,11 +346,7 @@ void test_units(const fs::path& scratch) {
 }
 
 void expect_refused(
-    const fs::path& game,
-    const fs::path& package,
-    std::string_view needle,
-    std::string_view absent,
-    bool store_holds_that_path
+    const fs::path& game, const fs::path& package, std::string_view needle, std::string_view absent
 ) {
     oa::AssetStore store(game);
     const mutators::PipelineResult result =
@@ -363,11 +359,64 @@ void expect_refused(
         expect(contains(result.mutators[0].message, needle), result.mutators[0].message);
     }
     expect(find_entry(result.layer, absent) == nullptr, std::string(absent) + " was served");
-    // A new name that differs only in case is the same store path as the source.
-    if (!store_holds_that_path) {
-        const std::optional<std::vector<uint8_t>> loaded = store.load_file_contents(absent);
-        expect(!loaded.has_value(), std::string(absent) + " is in the store");
+    const std::optional<std::vector<uint8_t>> loaded = store.load_file_contents(absent);
+    expect(!loaded.has_value(), std::string(absent) + " is in the store");
+    release(store);
+}
+
+/// Replace puts a clone whose name matches an existing record, ignoring case, in place.
+void test_same_letters_replace_the_unit(const fs::path& game, const fs::path& package) {
+    oa::AssetStore store(game);
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input({load_package(package)}));
+    if (!result.playable() && !result.mutators.empty())
+        std::fprintf(stderr, "clone: %s\n", result.mutators[0].message.c_str());
+    expect(
+        result.playable(),
+        result.refusal.empty() ? "same-letter clone did not apply" : result.refusal
+    );
+
+    const std::string unit = entry_text(find_entry(result.layer, "units/PLAIN.FBI"));
+    expect(unit.find("UnitName=PLAIN") != std::string::npos, "replaced unit keeps the stored name");
+    expect(unit.find("UnitName=plain") == std::string::npos, "the asked spelling is not stored");
+    expect(unit.find("Objectname=PlainHull") != std::string::npos, "replaced unit keeps its model");
+    expect(unit.find("MaxDamage=80") != std::string::npos, "replaced unit keeps the source fields");
+    expect(
+        find_entry(result.layer, "scripts/PLAIN.COB") == nullptr, "a replacement copied the script"
+    );
+    expect(
+        find_entry(result.layer, "unitpics/PLAIN.PCX") == nullptr,
+        "a replacement copied the picture"
+    );
+    expect(
+        find_entry(result.layer, "objects3d/PLAIN.3DO") == nullptr, "a replacement copied the model"
+    );
+    expect(has_sentence(result.journal, "replaced unit PLAIN (copy of PLAIN)"), "replace journal");
+
+    bool saw_old = false;
+    for (const mutators::JournalEntry& entry : result.journal.entries) {
+        if (!entry.new_text.has_value() || *entry.new_text != "replaced unit PLAIN (copy of PLAIN)")
+            continue;
+        saw_old =
+            entry.old_text.has_value() && *entry.old_text == "PLAIN" && entry.record == "PLAIN";
     }
+    expect(saw_old, "replace journal names the record that was already there");
+
+    const std::vector<std::string> ids{"ridge-clone-case"};
+    bool saw_note = false;
+    bool saw_rename = false;
+    for (const mutators::Conflict& conflict : result.report.conflicts) {
+        if (conflict.kind == mutators::ConflictKind::record_renamed)
+            saw_rename = true;
+        if (conflict.kind != mutators::ConflictKind::value_replaced)
+            continue;
+        const std::string line = mutators::describe(conflict, ids);
+        const std::string game_owner = std::string("the ") + "game";
+        if (line == "ridge-clone-case replaced " + game_owner + "'s PLAIN on " + conflict.path)
+            saw_note = true;
+    }
+    expect(saw_note, "replace note names the record");
+    expect(!saw_rename, "a replacement was noted as a rename");
     release(store);
 }
 
@@ -429,16 +478,14 @@ void test_refusals(const fs::path& scratch) {
         "    error(\"boom\")\n"
         "  end }\nend\n"
     );
+    test_same_letters_replace_the_unit(game, packages / "case");
     expect_refused(
-        game, packages / "case", "units:clone(\"PLAIN\", \"plain\")", "units/plain.FBI", true
+        game, packages / "long", "not 1 to 31", "units/ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEF.FBI"
     );
-    expect_refused(
-        game, packages / "long", "not 1 to 31", "units/ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEF.FBI", false
-    );
-    expect_refused(game, packages / "dot", "PLAIN.2", "units/PLAIN.2.FBI", false);
-    expect_refused(game, packages / "missing", "NOSUCH", "units/MADEUP.FBI", false);
-    expect_refused(game, packages / "field", "footprintx", "units/HULL2.FBI", false);
-    expect_refused(game, packages / "boom", "boom", "units/HULL2.FBI", false);
+    expect_refused(game, packages / "dot", "PLAIN.2", "units/PLAIN.2.FBI");
+    expect_refused(game, packages / "missing", "NOSUCH", "units/MADEUP.FBI");
+    expect_refused(game, packages / "field", "footprintx", "units/HULL2.FBI");
+    expect_refused(game, packages / "boom", "boom", "units/HULL2.FBI");
 }
 
 void test_weapon_lowest(const fs::path& scratch) {

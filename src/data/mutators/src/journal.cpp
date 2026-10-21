@@ -380,9 +380,44 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
         const std::string earlier = earlier_names(conflict, ids);
         std::string line = winner_name(conflict, ids);
         line += " replaced ";
-        line += earlier.empty() ? std::string("an earlier mutator") : earlier;
-        line += "'s value";
+        const bool record_note = conflict.field.empty() && !conflict.record.empty();
+        std::string who = earlier;
+        if (who.empty()) {
+            if (record_note && !conflict.detail.empty())
+                who = conflict.detail;
+            else
+                who = "an earlier mutator";
+        }
+        line += who;
+        if (record_note) {
+            line += "'s ";
+            line += conflict.record;
+        } else {
+            line += "'s value";
+        }
         append_place(line, conflict);
+        return line;
+    }
+    if (conflict.kind == ConflictKind::record_shared) {
+        std::string line = winner_name(conflict, ids);
+        line += " shares ";
+        line += conflict.record;
+        const std::string earlier = earlier_names(conflict, ids);
+        if (!earlier.empty()) {
+            line += " with ";
+            line += earlier;
+        } else if (!conflict.path.empty()) {
+            line += " on ";
+            line += conflict.path;
+        }
+        return line;
+    }
+    if (conflict.kind == ConflictKind::record_renamed) {
+        std::string line = winner_name(conflict, ids);
+        line += " renamed ";
+        line += conflict.record;
+        line += " to ";
+        line += conflict.detail;
         return line;
     }
     if (conflict.kind == ConflictKind::field_locked) {

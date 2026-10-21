@@ -36,7 +36,7 @@ RUN_TIMEOUT = 300
 # Canonical loadout text for ridge-tough 1.0. The crash record stores this
 # text; the next start names the id and the version and does not resolve it.
 TOUGH_LOADOUT = (
-    '{"mutators":[{"folder":false,"id":"ridge-tough","options":{},'
+    '{"mutators":[{"clashes":"replace","folder":false,"id":"ridge-tough","options":{},'
     '"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",'
     '"version":"1.0"}],"oaloadout":1}'
 )
