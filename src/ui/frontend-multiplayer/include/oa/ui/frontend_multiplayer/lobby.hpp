@@ -16,6 +16,7 @@
 #include "oa/core/unit_def.h"
 #include "oa/netgame/presence.hpp"
 #include "oa/netgame/recorder_session.hpp"
+#include "oa/ui/frontend_multiplayer/room_mutators.hpp"
 #include "oa/netgame/wire_rules.hpp"
 #include "oa/ui/frontend_multiplayer/launch_block.hpp"
 #include "oa/ui/frontend_multiplayer/lobby_net.hpp"
@@ -391,6 +392,18 @@ struct PresenceRecords {
     /// while the baseline does not resolve. Under a 3.1c host the rules dot
     /// compares a player's record with it (lobby_rules_differ_from_host).
     std::optional<netgame::PresenceDigest> plain_sim_hash{};
+    /// The host's loadout as this machine holds it (presence_assembly_take).
+    /// A guest's copy of the list the host's records have carried. Empty
+    /// until a host record with a mutator field is kept, and emptied when a
+    /// host record carries none.
+    netgame::PresenceLoadoutAssembly host_loadout{};
+    /// The full mutator field this machine sends parts from. The bound
+    /// source may be cut to leave room for a map pack; a part is drawn from
+    /// this, which keeps every mutator. Empty when this machine sends none.
+    std::optional<netgame::PresenceMutators> part_source{};
+    /// The loadout digest last named when a mutator part would not fit
+    /// beside the map pack. One line is logged for each digest.
+    std::optional<netgame::PresenceDigest> part_refused_digest{};
 };
 
 struct Lobby {
@@ -449,6 +462,9 @@ struct Lobby {
     /// The presence record this machine sends to the OA players of other
     /// machines, and the ones they sent (PresenceRecords).
     PresenceRecords presence_records{};
+    /// The mutator hold last logged for this host, and whether one was logged.
+    MutatorsBlock mutators_hold_logged{};
+    bool mutators_hold_seen{};
     /// Difficulty of a computer player in this slot, 0 easy, 1 medium, 2 hard.
     /// Shown before the start. Zero, and computer_difficulty_set false, until
     /// this machine seats the player or a presence record names it.
@@ -1376,6 +1392,26 @@ void lobby_request_machine_groups(Lobby& lobby) noexcept;
 /// @param[in,out] lobby Lobby state.
 /// @param host Whether this machine hosts the game.
 void unit_sync_create(Lobby& lobby, bool host) noexcept;
+
+/// Starts the handshake again from the lobby's current unit table.
+///
+/// A guest drops its table and seeds it again. The host refills the records
+/// from the current table, keeps a peer whose setup block lacks the Open
+/// Annihilation signature with what that peer reported, drops every other
+/// peer, and re-evaluates every record. A peer with no setup block is
+/// dropped. The next tick greets a dropped peer again.
+///
+/// @param[in,out] lobby Lobby state.
+void unit_sync_rebuild(Lobby& lobby) noexcept;
+
+/// Drops one peer so the host greets it again.
+///
+/// The host only. A player the host is not waiting on is left as it is.
+/// The next tick sends the greeting.
+///
+/// @param[in,out] lobby Lobby state.
+/// @param player_id The peer to greet again.
+void unit_sync_regreet(Lobby& lobby, uint32_t player_id) noexcept;
 
 /// Drops the table.
 ///

@@ -6,6 +6,7 @@ add_library(oa-ui-frontend-multiplayer
   src/panel.cpp
   src/lobby_net.cpp
   src/battleroom.cpp
+  src/room_mutators.cpp
   src/team_rules.cpp
   src/unit_sync.cpp
   src/restrict.cpp
