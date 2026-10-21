@@ -170,35 +170,66 @@ bool specs_match(const oa::MutatorLayerSpec& left, const oa::MutatorLayerSpec& r
     return true;
 }
 
-bool same_entry(const mutators::JournalEntry& left, const mutators::JournalEntry& right) {
-    return left.mutators == right.mutators && left.phase == right.phase &&
-           left.collection == right.collection && left.change == right.change &&
-           left.record == right.record && left.block == right.block && left.field == right.field &&
+/// The ids that `slots` name in `run`'s own list. Journal entries and
+/// conflicts name mutators by their index in the list a run was given, so
+/// two runs over different lists are compared by the ids those indices name.
+std::vector<std::string>
+ids_of(const std::vector<std::uint16_t>& slots, const mutators::PipelineResult& run) {
+    std::vector<std::string> ids;
+    for (const std::uint16_t slot : slots) {
+        OA_CHECK(slot < run.mutators.size());
+        if (slot < run.mutators.size())
+            ids.push_back(run.mutators[slot].id);
+    }
+    return ids;
+}
+
+bool same_entry(
+    const mutators::JournalEntry& left,
+    const mutators::PipelineResult& left_run,
+    const mutators::JournalEntry& right,
+    const mutators::PipelineResult& right_run
+) {
+    return ids_of(left.mutators, left_run) == ids_of(right.mutators, right_run) &&
+           left.phase == right.phase && left.collection == right.collection &&
+           left.change == right.change && left.record == right.record &&
+           left.block == right.block && left.field == right.field &&
            left.old_text == right.old_text && left.new_text == right.new_text &&
            left.path == right.path;
 }
 
-bool journals_match(const mutators::Journal& left, const mutators::Journal& right) {
-    if (left.entries.size() != right.entries.size())
+/// Compares two runs' journals entry by entry, naming mutators by id.
+bool journals_match(const mutators::PipelineResult& left, const mutators::PipelineResult& right) {
+    if (left.journal.entries.size() != right.journal.entries.size())
         return false;
-    for (std::size_t index = 0; index < left.entries.size(); ++index) {
-        if (!same_entry(left.entries[index], right.entries[index]))
+    for (std::size_t index = 0; index < left.journal.entries.size(); ++index) {
+        if (!same_entry(left.journal.entries[index], left, right.journal.entries[index], right))
             return false;
     }
     return true;
 }
 
-bool conflicts_match(const mutators::Conflict& left, const mutators::Conflict& right) {
+bool conflicts_match(
+    const mutators::Conflict& left,
+    const mutators::PipelineResult& left_run,
+    const mutators::Conflict& right,
+    const mutators::PipelineResult& right_run
+) {
     return left.severity == right.severity && left.kind == right.kind &&
-           left.mutators == right.mutators && left.record == right.record &&
-           left.field == right.field && left.path == right.path && left.detail == right.detail;
+           ids_of(left.mutators, left_run) == ids_of(right.mutators, right_run) &&
+           left.record == right.record && left.field == right.field && left.path == right.path &&
+           left.detail == right.detail;
 }
 
-bool reports_match(const mutators::ConflictReport& left, const mutators::ConflictReport& right) {
-    if (left.unread != right.unread || left.conflicts.size() != right.conflicts.size())
+/// Compares two runs' conflict reports, naming mutators by id.
+bool reports_match(const mutators::PipelineResult& left, const mutators::PipelineResult& right) {
+    if (left.report.unread != right.report.unread ||
+        left.report.conflicts.size() != right.report.conflicts.size())
         return false;
-    for (std::size_t index = 0; index < left.conflicts.size(); ++index) {
-        if (!conflicts_match(left.conflicts[index], right.conflicts[index]))
+    for (std::size_t index = 0; index < left.report.conflicts.size(); ++index) {
+        if (!conflicts_match(
+                left.report.conflicts[index], left, right.report.conflicts[index], right
+            ))
             return false;
     }
     return true;
@@ -346,8 +377,8 @@ void test_failed_mutator_leaves_no_trace() {
         OA_CHECK(with_boom.mutators[2].outcome == mutators::Outcome::applied);
     }
     OA_CHECK(specs_match(with_boom.layer, clean.layer));
-    OA_CHECK(journals_match(with_boom.journal, clean.journal));
-    OA_CHECK(reports_match(with_boom.report, clean.report));
+    OA_CHECK(journals_match(with_boom, clean));
+    OA_CHECK(reports_match(with_boom, clean));
     for (const mutators::JournalEntry& entry : with_boom.journal.entries) {
         for (const std::uint16_t slot : entry.mutators)
             OA_CHECK(slot != 1);
@@ -598,8 +629,8 @@ void test_compatibility_and_repeat() {
     const mutators::PipelineResult second = mutators::run_pipeline(second_store, input);
     OA_CHECK(first.playable() && second.playable());
     OA_CHECK(specs_match(first.layer, second.layer));
-    OA_CHECK(journals_match(first.journal, second.journal));
-    OA_CHECK(reports_match(first.report, second.report));
+    OA_CHECK(journals_match(first, second));
+    OA_CHECK(reports_match(first, second));
     release(first_store);
     release(second_store);
 
