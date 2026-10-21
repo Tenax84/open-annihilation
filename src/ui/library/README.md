@@ -158,7 +158,12 @@ translator finds them together. Every word passes through `Library::text`
     SWITCH OFF and ROLL BACK are off during a game, and PLAY NOW and
     SWITCH OFF while `Inputs::mod_from_command_line` says `--mod-dir` or
     `--base-game` chose the mod. GET stays on. A package that cannot run
-    stays in the list;
+    stays in the list. A mutator offers GET or UPDATE (CANCEL while queued,
+    RETRY after a failure that can be retried), then CHECK WITH THIS MOD
+    when an installed copy's verdict is set (off during a game and while a
+    check runs), then UNINSTALL, OPEN FOLDER and HOMEPAGE. It never offers
+    ROLL BACK, PLAY NOW, SWITCH OFF, USE NOW or TURN ON, and an incompatible
+    verdict does not turn GET or UPDATE off;
   - the facts Installed, Latest, Author, Size, Base, Games, Needs, Hacks, Rules,
     Maps, Coverage and From, in a long and a short form. Installed and
     Latest are the installed copy's and the listing's version and revision
@@ -172,7 +177,17 @@ translator finds them together. Every word passes through `Library::text`
     ("9c1f 4e0b → 51d2 07aa · changes the game's rules; saved games from
     revision 3 won't load under revision 4"), since a built-in registry's
     update asks no question that would say it. From says "Not reviewed by
-    the OA team" for an added registry;
+    the OA team" for an added registry. A mutator leaves out Size, Base,
+    Games, Hacks, Maps and Coverage. After Author it lists Works with
+    ("Any mod" when the list is empty or names `*`, marked when the mutator
+    does not fit the mod being played), Checked (an installed copy whose
+    verdict is set: the played mod's name, or "No Mod"; a bad mark is the
+    danger colour), one Needs per prerequisite (the name alone when it names
+    no range: "Gatehouse: not installed", or "Gatehouse ✓" when it is met)
+    and then the engine's Needs,
+    Options, Changes, Rules ("Changes the game: unranked on Core Prime",
+    shown whole) and From. `verdict_of_record` maps a dry-run record; a
+    compatible summary counts the collections ("changes 2 units");
   - the byline names the author, or the publisher when there is no author.
     A listing that names neither shows nothing more. The byline does not
     change an entry's state, order or search rank;
@@ -180,7 +195,10 @@ translator finds them together. Every word passes through `Library::text`
     Ridge."), after "The command line chose this run's mod." on every
     installed mod while the command line chose it;
   - the status line says "No oamod.yaml present" for a mod folder without
-    one (`Installed::without_manifest`), installed or played.
+    one (`Installed::without_manifest`), installed or played. A mutator that
+    is not installed names its version, including a revision of 1
+    ("Not installed · 2.0 · rev 1"). Installed, update and queue lines stay
+    as they are for every kind.
 - `entry_summary` gives the words under the details' status line: the
   listing's summary, else the installed manifest's description
   (`Installed::description`), as for a mod of the player's own.
@@ -479,7 +497,9 @@ app removes the folder (`Runtime::library_uninstall`,
   On the Mutators tab the Regular tag pills, Large's filter pane and the
   details' tag pills show those eight icons beside the label. A tag outside
   the eight draws no icon, and a mod's, map pack's or language's tag never
-  does. The Rules and From facts are shown
+  does. Compact's mutator details page puts the 40-point badge beside the
+  name, and the header stays Library and Mutators; a mod's Compact details
+  page is unchanged. A fact marked bad is drawn in the danger colour. The Rules and From facts are shown
   whole at every class; the other facts take at most two lines at Compact
   and three in the details pane. The list and the details scroll, each with
   the kit's scroll bar while it holds more than it shows. A press on a
@@ -642,7 +662,10 @@ stay valid until the model's next refresh.
 - No two controls meet, but the list and the rows it holds and each row
   and its icon; a row that does not show has no control. Every control that takes the focus is in Tab's
   declared order and reached by the arrows from the first tab.
-- An update's Rules fact is shown whole at every class, never cut.
+- An update's Rules fact is shown whole at every class, never cut. An
+  updatable mutator's actions are controls at every class, Compact's on the
+  details page with MORE ▾ open, its Rules fact is whole, and an
+  incompatible verdict is drawn in the danger colour.
 - A press on a row only selects it, and at Compact opens its details; only
   its download arrow or up-arrow asks for GET or UPDATE, by the same rule
   as the details' button.
@@ -745,7 +768,13 @@ in for a listing's for a mod of the player's own, and "No oamod.yaml
 present" for a folder without one; the facts with the sample numbers, Installed,
 Latest and Author among them, a revision of 0 left out, a version left
 out, a fact with nothing to say left out and the manifest's author
-standing in; the Rules fact for an unchanged, changed and unknown rules
+standing in; a listed and an installed mutator's facts in both forms, each
+verdict state's words and mark from `verdict_of_record`, the counts'
+summary, no Checked fact and no CHECK WITH THIS MOD when the verdict is
+unset, Ridge Walls' Works with marked while No Mod is played with GET
+still on, an incompatible verdict marked and still offered UPDATE and
+CHECK WITH THIS MOD, the status "Not installed · 2.0 · rev 1", and no
+ROLL BACK even with a kept copy; the Rules fact for an unchanged, changed and unknown rules
 hash in both lengths; status lines, "Update available" for an update
 that names no revision, bylines with a maker and with none, and
 the playing note; the queue lines, after an update that changed the

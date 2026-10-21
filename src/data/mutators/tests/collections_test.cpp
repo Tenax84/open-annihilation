@@ -1402,6 +1402,68 @@ void test_weak_need() {
     expect_ok(world, "p10_weak.lua", k_all);
 }
 
+void test_fixed() {
+    World reads;
+    if (!ready(reads))
+        return;
+    expect_ok(reads, "fixed_read.lua", k_all);
+    OA_CHECK(reads.collections.writes().empty());
+    const tdf::Block* com = section_of(reads.documents, "units/RIDGECOM.fbi", "UNITINFO");
+    OA_CHECK(com != nullptr);
+    OA_CHECK(tdf::get_fixed(com, "MaxVelocity", 0) == 104857);
+
+    World velocity;
+    if (!ready(velocity))
+        return;
+    expect_ok(velocity, "fixed_velocity.lua", k_units);
+    OA_CHECK(velocity.collections.writes().size() == 1);
+    expect_write(
+        velocity.collections,
+        0,
+        "units/RIDGECOM.fbi",
+        "RIDGECOM",
+        "",
+        "MaxVelocity",
+        "1.6",
+        "2.3999786376953125"
+    );
+    expect_text(
+        field_of(velocity.documents, "units/RIDGECOM.fbi", "UNITINFO", "MaxVelocity"),
+        "2.3999786376953125",
+        "speed"
+    );
+
+    World assign;
+    if (!ready(assign))
+        return;
+    expect_ok(assign, "fixed_assign.lua", k_units);
+    OA_CHECK(assign.collections.writes().size() == 2);
+    expect_write(
+        assign.collections, 0, "units/RIDGEJET.fbi", "RIDGEJET", "", "MaxVelocity", "10", "3"
+    );
+    expect_write(
+        assign.collections, 1, "units/RIDGEJET.fbi", "RIDGEJET", "", "bankscale", nullptr, "0.5"
+    );
+    expect_text(
+        field_of(assign.documents, "units/RIDGEJET.fbi", "UNITINFO", "MaxVelocity"), "3", "jet"
+    );
+    expect_text(
+        field_of(assign.documents, "units/RIDGEJET.fbi", "UNITINFO", "bankscale"), "0.5", "bank"
+    );
+    expect_text(
+        field_of(assign.documents, "units/RIDGECOM.fbi", "UNITINFO", "MaxVelocity"), "1.6", "kept"
+    );
+
+    World footprint;
+    if (!ready(footprint))
+        return;
+    expect_fail(footprint, "fixed_footprint.lua", k_units, true, 4, "RIDGECOM footprintx");
+    OA_CHECK(footprint.collections.writes().empty());
+    expect_text(
+        field_of(footprint.documents, "units/RIDGECOM.fbi", "UNITINFO", "FootprintX"), "2", "foot"
+    );
+}
+
 void test_memory_cap() {
     World world;
     if (!load_ridge(world.documents)) {
@@ -1410,6 +1472,8 @@ void test_memory_cap() {
     }
     host::Profile profile = host::mutator_profile();
     profile.budget.memory_bytes = std::size_t{8} << 20;
+    // Index and field charges spend the default allowance before 8 MiB is held.
+    profile.budget.instructions = uint64_t{1} << 40;
     if (!open_sandbox(world, profile)) {
         OA_CHECK(false);
         return;
@@ -1455,6 +1519,7 @@ int main() {
     test_identity_walks();
     test_walk_skips_removed();
     test_weak_need();
+    test_fixed();
     test_memory_cap();
     return oa::test::check_exit_status();
 }

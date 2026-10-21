@@ -16,8 +16,9 @@ expansion, not a mod.
 | `.oaexp` | `oaexp.yaml`, at most 256 KiB | [OAEXP standard](../expansions/oaexp-standard.md) |
 | `oamut` | `oamut.yaml`, at most 256 KiB | [oamut.yaml](../../src/formats/oamut/README.md) |
 
-The catalogue entry for a package is [catalogue.md](catalogue.md). The file
-the catalogue names is the zip.
+The catalogue entry for a package is [catalogue.md](catalogue.md). A mutator's
+entry may name `clashes` as `add` or `replace`; absent leaves the game's
+default. The file the catalogue names is the zip.
 
 A registry MUST NOT serve the original game's data. OA does not check a
 package for it.

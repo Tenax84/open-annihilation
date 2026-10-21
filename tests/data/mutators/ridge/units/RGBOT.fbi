@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+[UNITINFO]
+{
+UnitName=RGBOT;
+MaxVelocity=1.6;
+Weapon1=RGGUN;
+Corpse=RGBOT_DEAD;
+MovementClass=RGKBOT;
+}

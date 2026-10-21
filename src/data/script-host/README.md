@@ -32,6 +32,11 @@ The interpreter underneath is Lua 5.4.9, built as the C library
   `<package>: <phase>: <chunk>:<line>: <message>`, and leaves the chunk and
   the line out when the chunk is unknown.
 - `compile_check` loads a chunk in a throwaway state and does not run it.
+- `charge_work` adds instruction units to the running phase and raises when
+  the allowance is spent, as the library charges do. The units come from
+  element counts and byte lengths. Host code outside this module, including
+  the mutator collections and rule forms, uses it. No C++ object with a
+  destructor may be alive across the call: the raise leaves it unrun.
 
 ## State
 
@@ -141,7 +146,19 @@ moves that state; the moved-from object has no state.
   units per value it converts, and one unit per byte of each text it copies
   with `%s` or `%q`. `utf8.char` counts one unit per code point.
   `math.max` and `math.min` count a comparison, as `table.sort` does, for
-  each value after the first. `warn` counts 2 units per argument.
+  each value after the first. `fixed.min` and `fixed.max` do the same.
+  `fixed.parse`, and `fixed` of a text, count one unit per 32 bytes of that
+  text. `warn` counts 2 units per argument.
+- `charge_work` is that same count for a walk the libraries do not make.
+  One walk that collects keys costs `scan_call_charge` (4096). A `where`
+  or `:change` table costs `table_walk_charge` (64), then `element_charge`
+  (1) per entry. Past the entry limit only that count is charged, so the
+  count does not depend on which keys `next` visits first. When every key
+  is visited, each key's bytes cost `units_for_bytes`, one unit per 32
+  bytes. A comparison costs `comparison_unit`. The count depends only on
+  those sizes, so one script spends the same count on every build and
+  every run. A call that stays inside the allowance keeps the values and
+  the errors it would raise with no count.
 - `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `string.format`,
   the charged `table` and `utf8` calls and `utf8.char` are copies of Lua
   5.4.9's with the count inside. The script calls them directly, so an
@@ -211,6 +228,56 @@ basic operations are the IEEE results. The compatibility names `cosh`,
 which the caller sets from the game's seed, and `math.randomseed()` with no
 argument returns to that same seed. It does not read a clock or a place in
 memory. Zero is a defined sequence.
+
+## Fixed-point numbers
+
+`fixed` counts 65536ths, the scale of the engine's 16.16 `oa_fixed`, in a
+signed 64-bit integer. A whole number is that number times 65536. The whole
+part runs from -2147483648 to 2147483647, so a count runs from -2^47 to
+2^47 - 1. A result past either end raises and names the operation. Nothing
+wraps or stops at the end.
+
+`fixed(v)` takes a fixed value (that same value), an integer (times 65536),
+a float or a string. `fixed.parse(text)` reads text the way `get_fixed`
+does: `parse_double`, times 65536, truncated toward zero with
+`truncate_to_int64`, and it keeps the full count rather than the low 32
+bits. Text with no digits reads as 0, and characters after the number are
+ignored, so `fixed("abc")` is 0 and `fixed("1,5")` is 1. `fixed.raw(n)`
+builds a value from an integer count; a fractional count is refused.
+`fixed.min` and `fixed.max` take one or more values, each converted as
+`fixed(v)` is.
+
+`f:raw()` is the count. `f:text()` and `tostring(f)` are `format_number` of
+the count divided by 65536, so the decimal is exact. `f:tonumber()` is that
+quotient as a float. `f:floor()` shifts the count right by 16, toward minus
+infinity. `f:ceil()` moves the other way. `f:round()` takes a half away
+from zero. Those three return integers, not fixed values.
+
+`+`, `-`, `*` and `/` convert a number the way `fixed(v)` does and refuse a
+string. `*` builds the product and shifts it right by 16, so a negative
+product rounds toward minus infinity, as `scale_vector_fixed` does. `/` is
+the dividend times 65536, divided in 64 bits and truncated toward zero.
+Dividing by zero raises. Unary minus negates the count.
+
+Every operation is integer arithmetic. Three conversions touch a
+floating-point value, and each one is exact or is the loader's own. A float
+times 65536 is truncated toward zero. Text goes through `parse_double`, the
+function the loader calls. Text and `tonumber` divide the count by 65536,
+which is exact for every count in range. The same counts come out on every
+build, the 32-bit ones included.
+
+A rule file still computes on the field's text. `MaxVelocity=*1.5` on a
+field written `1.6` stores `2.4`, and the game reads that as 157286.
+`u:fixed("maxvelocity") * fixed("1.5")` multiplies the counts the game
+holds, 104857 and 98304, and the shift leaves 157285. Compute stats with
+`fixed`.
+
+`fixed(1) == 1` is false. Lua calls that comparison only when both values
+are userdata. `<` and `<=` accept a number on either side. `//` has no
+metamethod, so it raises Lua's own arithmetic error. Use `(a / b):floor()`.
+A fixed value is a poor table key: two equal values are two keys, and
+`pairs` refuses a userdata key. Use `f:raw()` as the key. `getmetatable`
+does not hand back the metatable.
 
 ## Iteration
 
@@ -302,8 +369,10 @@ matches Lua's own text, chunk and line included.
 `tests/maths_reference.py`, the exact powers of two and ten, and the math
 library's argument rules. `tests/random_reference.py` prints the generator's
 draws. Both scripts are run with `python3 -I` and print the tables the test
-holds. `data-script-host-iteration` checks `pairs`, the refusal of unordered
-keys, and the name helpers.
+holds. `data-script-host-fixed` checks every count against
+`tests/fixed_reference.py` the same way, through the C++ functions and
+through a sandbox. `data-script-host-iteration` checks `pairs`, the refusal
+of unordered keys, and the name helpers.
 
 `data-script-host-patterns` runs each pattern case through the sandbox and
 through Lua's own string functions and compares every returned value, its
@@ -311,6 +380,12 @@ type, and any error text. It also checks that a match which backtracks past
 the allowance stops with an instruction-budget error, including when the
 script catches that error itself, and that a long match which stays inside
 the allowance adds to `instructions_used`.
+
+`data-mutators-charge` runs the mutator collections and rule forms through
+`charge_work`. A `where` over a 4,000-key table, repeated, and a collection
+`pairs` loop each stop on a small instruction allowance. A small plan stays
+inside one hundredth of the default allowance and spends the same count on
+two runs.
 
 `data-script-host-c-work` compares every copied call with Lua's own
 results and error messages, chunk and line included, method calls among

@@ -1571,6 +1571,44 @@ void test_resume_after_restart() {
     OA_CHECK(file_bytes(session.final_path()) == session.package.bytes);
 }
 
+/// A saved queue names a mutator. The kind is read, and the row is dropped
+/// because the empty catalogue has no such release. The file itself is read.
+void test_saved_oamut_kind() {
+    Scratch scratch("u03-oamut");
+    std::error_code error;
+    const fs::path queue =
+        content::downloads_folder(scratch.data()) / std::string(content::queue_file_name);
+    fs::create_directories(queue.parent_path(), error);
+    OA_CHECK(!error);
+    {
+        std::ofstream out(queue);
+        out << "queue: 1\n"
+               "items:\n"
+               "  - registry: \"check-builtin\"\n"
+               "    key: \"fast-builders\"\n"
+               "    kind: \"oamut\"\n"
+               "    release: 1\n"
+               "    sha256: "
+               "\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n"
+               "    reason: \"install\"\n";
+        OA_CHECK(static_cast<bool>(out));
+    }
+    Logs logs;
+    content::DownloadsOptions options;
+    options.data_folder = scratch.data();
+    options.log = remember_log;
+    options.log_context = &logs;
+    content::Downloads downloads(options);
+    downloads.start(content::Snapshot{});
+    OA_CHECK(wait_until(
+        [&] { return logs_text(logs).find("no longer has that release") != std::string::npos; },
+        kBusyWaitMs
+    ));
+    const std::string text = logs_text(logs);
+    OA_CHECK(text.find("no longer has that release") != std::string::npos);
+    OA_CHECK(text.find("could not be read") == std::string::npos);
+}
+
 void test_drop_changed_release() {
     Session session("f10-drop", 60, 0x4d);
     if (!session.open())
@@ -2184,6 +2222,7 @@ int main() {
     test_match_pauses();
     test_one_at_a_time();
     test_resume_after_restart();
+    test_saved_oamut_kind();
     test_drop_changed_release();
     test_saved_before_start();
     test_install_id_off();

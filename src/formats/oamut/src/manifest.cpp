@@ -18,7 +18,7 @@ namespace {
 namespace oamod = oa::formats::oamod;
 
 /// The top-level keys a manifest may hold.
-constexpr std::array<std::string_view, 17> manifest_keys{
+constexpr std::array<std::string_view, 18> manifest_keys{
     "oamut",
     "id",
     "name",
@@ -32,6 +32,7 @@ constexpr std::array<std::string_view, 17> manifest_keys{
     "requires",
     "conflicts-with",
     "layers",
+    "clashes",
     "options",
     "strings",
     "entry",
@@ -52,6 +53,9 @@ constexpr std::array<std::string_view, 11> profile_keys{
     "supportedGames",
     "requiredExpansions",
 };
+
+/// The clash modes, in enum order.
+constexpr std::array<std::string_view, 2> clash_mode_names{"add", "replace"};
 
 /// The keys of the author block.
 constexpr std::array<std::string_view, 2> author_keys{"name", "email"};
@@ -337,25 +341,6 @@ bool mutator_id(std::string_view text) noexcept {
         if (character == '-' && previous == '-')
             return false;
         previous = character;
-    }
-    return true;
-}
-
-/// Tells whether an option id is a Lua name of 1 to 32 bytes.
-///
-/// @param text the id
-/// @return true for [a-z][a-z0-9_]*
-bool option_id(std::string_view text) noexcept {
-    if (text.empty() || text.size() > most_option_id_bytes)
-        return false;
-    if (text.front() < 'a' || text.front() > 'z')
-        return false;
-    for (std::size_t index = 1; index < text.size(); ++index) {
-        const char character = text[index];
-        const bool word =
-            (character >= 'a' && character <= 'z') || digit(character) || character == '_';
-        if (!word)
-            return false;
     }
     return true;
 }
@@ -1101,12 +1086,15 @@ void read_number(
 bool read_option(const oamod::Node& entry, Option& option, std::vector<Problem>& problems) {
     const std::string block = "options." + entry.key.text;
     if (entry.key.kind != oamod::KeyKind::string || !option_id(entry.key.text)) {
+        const bool reserved =
+            entry.key.kind == oamod::KeyKind::string && lua_reserved_word(entry.key.text);
         add_problem(
             problems,
             entry.key.position,
             block,
-            "an option id is a Lua name, [a-z][a-z0-9_]*, of 1 to " +
-                std::to_string(most_option_id_bytes) + " bytes"
+            reserved ? "is a word Lua reserves"
+                     : "an option id is a Lua name, [a-z][a-z0-9_]*, of 1 to " +
+                           std::to_string(most_option_id_bytes) + " bytes"
         );
         return false;
     }
@@ -1759,6 +1747,17 @@ void read_document_manifest(
         add_problem(problems, root.position, "layers", "layers is required");
     }
 
+    if (const oamod::Node* clashes = oamod::find_entry(root, "clashes")) {
+        const std::optional<ClashMode> mode = clashes->kind == oamod::NodeKind::string
+                                                  ? parse_clash_mode(clashes->text)
+                                                  : std::nullopt;
+        if (!mode) {
+            add_problem(problems, clashes->position, "clashes", "clashes must be add or replace");
+        } else {
+            manifest.clashes = *mode;
+        }
+    }
+
     if (const oamod::Node* options = oamod::find_entry(root, "options")) {
         if (options->kind != oamod::NodeKind::mapping) {
             add_problem(problems, options->position, "options", "options must be an object");
@@ -1866,6 +1865,35 @@ std::string cut_summary(std::string_view description) {
 
 } // namespace
 
+bool lua_reserved_word(std::string_view text) noexcept {
+    // Lua 5.4's 22 reserved words, in order, matched byte for byte.
+    constexpr std::array<std::string_view, 22> reserved{
+        "and",      "break",  "do",   "else", "elseif", "end",   "false", "for",
+        "function", "goto",   "if",   "in",   "local",  "nil",   "not",   "or",
+        "repeat",   "return", "then", "true", "until",  "while",
+    };
+    for (const std::string_view word : reserved) {
+        if (word == text)
+            return true;
+    }
+    return false;
+}
+
+bool option_id(std::string_view text) noexcept {
+    if (text.empty() || text.size() > most_option_id_bytes || lua_reserved_word(text))
+        return false;
+    if (text.front() < 'a' || text.front() > 'z')
+        return false;
+    for (std::size_t index = 1; index < text.size(); ++index) {
+        const char character = text[index];
+        const bool word =
+            (character >= 'a' && character <= 'z') || digit(character) || character == '_';
+        if (!word)
+            return false;
+    }
+    return true;
+}
+
 bool choice_value_text(std::string_view text) noexcept {
     if (text.empty() || text.size() > most_choice_value_bytes)
         return false;
@@ -1881,6 +1909,18 @@ bool choice_value_text(std::string_view text) noexcept {
 
 const char* layer_name(Layer layer) noexcept {
     return layer_names[static_cast<std::size_t>(layer)].data();
+}
+
+const char* clash_mode_name(ClashMode mode) noexcept {
+    return clash_mode_names[static_cast<std::size_t>(mode)].data();
+}
+
+std::optional<ClashMode> parse_clash_mode(std::string_view text) noexcept {
+    for (std::size_t index = 0; index < clash_mode_names.size(); ++index) {
+        if (clash_mode_names[index] == text)
+            return static_cast<ClashMode>(index);
+    }
+    return std::nullopt;
 }
 
 std::optional<Layer> parse_layer(std::string_view text) noexcept {

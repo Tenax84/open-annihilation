@@ -36,7 +36,9 @@ namespace mutators = oa::data::mutators;
 namespace host = oa::data::script_host;
 namespace sm = oa::formats::soft_mutator;
 
-constexpr const char* k_cases[] = {"needs", "changes", "selectors", "targets", "depth", "line"};
+constexpr const char* k_cases[] = {
+    "needs", "changes", "selectors", "targets", "depth", "line", "fixed_set", "fixed_scale"
+};
 
 constexpr std::string_view k_com = R"([UNITINFO]
 {
