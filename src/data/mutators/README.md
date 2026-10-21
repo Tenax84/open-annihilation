@@ -112,10 +112,10 @@ a drive's names an existing folder or file, and keeps nothing.
 `format_choice` reads nothing. `resolve_choice` reads one package's
 `oamut.yaml`, or the installed listing of the Mutators folder it is given.
 For a path, and for an id whose origin record names no SHA-256, it also
-reads every file of that folder (`folder_digest`). It
+reads the files of that folder that `folder_digest` counts. It
 keeps nothing after it returns. `resolve_loadout` reads the installed
-listing, each package's manifest and, for a folder entry, every file of
-the installed folder. `loadout_of` and `applied_loadout` read nothing.
+listing, each package's manifest and, for a folder entry, those same files
+of the installed folder. `loadout_of` and `applied_loadout` read nothing.
 The two checks are pure: they do not read files, the asset store or the
 preferences. A null `PathContext::layout` means `data_layout()`. An empty
 `is_unit_name` knows no unit. `build_files_layer` reads the package
@@ -876,16 +876,22 @@ are listed in.
 
 `loadout_digest` is the SHA-256 of the canonical text.
 
-`folder_digest` hashes each regular file under the folder, sorted by its
-relative path compared bytewise. The path is the UTF-8 spelling, with `/`
-between its parts, of the names as the file system stores them, on every
-system; there is no Unicode normalisation, so a name stored composed and
-the same name stored decomposed give different digests. Each file is that
-path, a NUL, its size as eight little-endian bytes, and the SHA-256 of its
-bytes. A symbolic link, anything that is not a regular file or a folder (a
-pipe, a socket or a device), or a file that cannot be read refuses the
-digest, and the error names the path in UTF-8. An empty folder hashes the
-empty message.
+`folder_digest` hashes each regular file under the folder that a package
+would carry, sorted by its relative path compared bytewise. The path is the
+UTF-8 spelling, with `/` between its parts, of the names as the file system
+stores them, on every system; there is no Unicode normalisation, so a name
+stored composed and the same name stored decomposed give different digests.
+Each file is that path, a NUL, its size as eight little-endian bytes, and
+the SHA-256 of its bytes. The names left out are the ones `oa-tool mutator
+pack` leaves out: `__MACOSX` and `.backup` only when they are the first
+part of the path, `.git` and `.oa-origin.yaml` at any depth, and
+`.DS_Store` (in any ASCII case) and a name that starts with `._` at any
+depth. A folder left out that way is not walked. A name that starts with
+`.` and is none of those is still hashed, including `.notes`, `.gitignore`
+and `.github`. A symbolic link, anything that is not a regular file or a
+folder (a pipe, a socket or a device), or a file that cannot be read
+refuses the digest, and the error names the path in UTF-8, even when the
+name would otherwise be left out. An empty folder hashes the empty message.
 
 `layer_digest` hashes `oa-mutator-layer-1` and a line feed, then each path
 the layer answers for, sorted by its lower-case `/` form. The message

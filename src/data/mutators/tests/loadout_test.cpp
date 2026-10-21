@@ -822,6 +822,46 @@ void folder(const Scratch& scratch) {
         from_first.has_value() && *from_first == pin, "folder_digest matches the independent digest"
     );
 
+    // The names oa-tool mutator pack leaves out do not change the digest.
+    // A dot name it keeps, and __MACOSX below the first part, do.
+    const fs::path noisy = scratch.root / "noisy";
+    plant_files(noisy, false);
+    write_text(noisy / ".DS_Store", "finder");
+    write_text(noisy / "nested" / ".ds_store", "nested");
+    write_text(noisy / "._a.txt", "appledouble");
+    write_text(noisy / ".git" / "config", "repo");
+    write_text(noisy / ".oa-origin.yaml", "origin");
+    write_text(noisy / ".backup" / "old.txt", "backup");
+    write_text(noisy / "__MACOSX" / "a.txt", "resource");
+    std::string noisy_error;
+    const std::optional<sha::Digest> from_noisy = mutators::folder_digest(noisy, &noisy_error);
+    expect(
+        from_noisy.has_value() && *from_noisy == pin,
+        "names the packer leaves out do not change the digest: " + noisy_error
+    );
+    std::error_code git_link_error;
+    fs::create_symlink(noisy / "a.txt", noisy / ".git" / "linked.txt", git_link_error);
+    if (!git_link_error) {
+        const std::optional<sha::Digest> with_git_link =
+            mutators::folder_digest(noisy, &noisy_error);
+        expect(
+            with_git_link.has_value() && *with_git_link == pin,
+            "a link inside a left-out folder is not walked: " + noisy_error
+        );
+    }
+    write_text(noisy / ".notes", "kept");
+    const std::optional<sha::Digest> with_notes = mutators::folder_digest(noisy, &noisy_error);
+    expect(
+        with_notes.has_value() && from_noisy.has_value() && *with_notes != *from_noisy,
+        "a dot name the packer keeps changes the digest: " + noisy_error
+    );
+    write_text(noisy / "nested" / "__MACOSX" / "x", "kept-mac");
+    const std::optional<sha::Digest> with_nested_mac = mutators::folder_digest(noisy, &noisy_error);
+    expect(
+        with_nested_mac.has_value() && with_notes.has_value() && *with_nested_mac != *with_notes,
+        "__MACOSX below the first part is hashed: " + noisy_error
+    );
+
     write_text(first / "a.txt", "alphe");
     const std::optional<sha::Digest> changed = mutators::folder_digest(first, &error);
     expect(
