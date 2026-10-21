@@ -18,7 +18,8 @@
 // extension calls rather than hooks (extension.hpp lists them).
 // This extension calls set_extension_window_source and extension_clock.
 // Version 15 adds the OA UI kit, which this extension does not use.
-constexpr uint32_t kExtensionApiVersionFollowed = 15;
+// Version 16 adds run_mutators, which this extension does not call.
+constexpr uint32_t kExtensionApiVersionFollowed = 16;
 static_assert(
     oa::app::extension_api_version == kExtensionApiVersionFollowed,
     "the engine's extension table changed: follow its change, then raise "

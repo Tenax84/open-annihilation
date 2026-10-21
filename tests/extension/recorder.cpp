@@ -72,8 +72,9 @@ namespace kit = oa::ui::kit;
 // the table raises OA_EXTENSION_API_VERSION (extension.hpp); both follow it.
 // Version 14 adds only functions an extension calls rather than hooks, so the
 // hook count is unchanged. Version 15 adds register_settings_pages, which the
-// recorder records and registers its own page from.
-constexpr uint32_t kExtensionApiVersionRecorded = 15;
+// recorder records and registers its own page from. Version 16 adds
+// run_mutators, a function an extension calls, so the hook count is unchanged.
+constexpr uint32_t kExtensionApiVersionRecorded = 16;
 constexpr std::size_t kHookCount = 41;
 static_assert(
     extension_api_version == kExtensionApiVersionRecorded,
