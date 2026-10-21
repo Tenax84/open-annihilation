@@ -11,6 +11,7 @@
 #include "oa/formats/tdf/number.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -58,6 +59,9 @@ struct Contrib {
     double assignment{};
     bool has_factor{};
     double factor{1};
+    /// Source name and line of each scale, in file order. Ties between equal
+    /// factor bits sort on this text, so the product does not follow the list.
+    std::string factor_tie;
     bool has_clamp{};
     double clamp_low{};
     double clamp_high{};
@@ -397,6 +401,7 @@ void clear_number(Contrib& contrib) {
     contrib.assignment = 0;
     contrib.has_factor = false;
     contrib.factor = 1;
+    contrib.factor_tie.clear();
     contrib.has_clamp = false;
     contrib.clamp_low = 0;
     contrib.clamp_high = 0;
@@ -405,13 +410,15 @@ void clear_number(Contrib& contrib) {
 /// Folds one numeric change into a contribution.
 ///
 /// A meta value replaces the numeric state and later numeric changes do not
-/// compose with it. An assignment resets factors and clamps. A scale multiplies.
+/// compose with it. An assignment resets factors and clamps. Scales multiply
+/// in file order, and each one appends its source and line to the tie text.
 /// A clamped scale also joins the clamp, taking the lower low and the higher high.
 ///
 /// @param contrib the contribution
 /// @param change the change
+/// @param source_name the rule source the change came from
 /// @return false when a meta value already occupies the contribution and this change is not a meta value
-bool apply_number(Contrib& contrib, const sm::Change& change) {
+bool apply_number(Contrib& contrib, const sm::Change& change, const std::string& source_name) {
     if (change.kind == sm::ChangeKind::meta) {
         clear_number(contrib);
         contrib.numeric = true;
@@ -426,16 +433,23 @@ bool apply_number(Contrib& contrib, const sm::Change& change) {
         contrib.assignment = change.value;
         contrib.has_factor = false;
         contrib.factor = 1;
+        contrib.factor_tie.clear();
         contrib.has_clamp = false;
         contrib.clamp_low = 0;
         contrib.clamp_high = 0;
         return true;
     }
+    std::string piece = source_name;
+    piece.push_back(':');
+    piece += std::to_string(change.line);
     if (!contrib.has_factor) {
         contrib.has_factor = true;
         contrib.factor = change.value;
+        contrib.factor_tie = std::move(piece);
     } else {
         contrib.factor *= change.value;
+        contrib.factor_tie.push_back('\n');
+        contrib.factor_tie += piece;
     }
     if (change.kind == sm::ChangeKind::scale_clamp) {
         if (!contrib.has_clamp) {
@@ -504,7 +518,7 @@ void fold_one(Contrib& contrib, const sm::Change& change, const std::string& sou
             contrib.text.clear();
         }
         contrib.numeric = true;
-        took = apply_number(contrib, change);
+        took = apply_number(contrib, change, source_name);
     }
     contrib.used = true;
     if (took) {
@@ -649,6 +663,24 @@ names_of(const std::vector<size_t>& involved, std::span<const MutatorRules> muta
     for (const size_t mutator_index : involved)
         names.push_back(mutators[mutator_index].mutator);
     return names;
+}
+
+/// One mutator's factor, ordered by its bits and then by its rule text.
+struct FactorTerm {
+    double value{};
+    uint64_t bits{};
+    std::string rule_text;
+};
+
+/// Orders factors by their exact value bits, then by the rule text.
+///
+/// @param left a factor
+/// @param right another factor
+/// @return true when `left` multiplies first
+bool factor_before(const FactorTerm& left, const FactorTerm& right) {
+    if (left.bits != right.bits)
+        return left.bits < right.bits;
+    return left.rule_text < right.rule_text;
 }
 
 /// Combines one field's contributions into a planned write and its notes.
@@ -805,10 +837,16 @@ void combine_slot(
         double bound_low = 0;
         double bound_high = 0;
         std::vector<size_t> writers;
+        std::vector<FactorTerm> factors;
         for (const size_t mutator_index : plain) {
             const Contrib& contrib = slot.contribs[mutator_index];
-            if (contrib.has_factor)
-                product *= contrib.factor;
+            if (contrib.has_factor) {
+                FactorTerm term;
+                term.value = contrib.factor;
+                term.bits = std::bit_cast<uint64_t>(contrib.factor);
+                term.rule_text = contrib.factor_tie;
+                factors.push_back(std::move(term));
+            }
             if (contrib.has_clamp) {
                 if (!any_clamp) {
                     any_clamp = true;
@@ -824,6 +862,9 @@ void combine_slot(
             if (contrib.has_assignment || contrib.has_factor || contrib.has_clamp)
                 writers.push_back(mutator_index);
         }
+        std::stable_sort(factors.begin(), factors.end(), factor_before);
+        for (const FactorTerm& term : factors)
+            product *= term.value;
         double result_number = base * product;
         if (!std::isfinite(result_number)) {
             RuleNote failed = field_note(
