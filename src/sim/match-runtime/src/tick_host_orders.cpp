@@ -251,9 +251,9 @@ void TickHost::stop_building(sim::unit_spawn::Slot& s, sim::simulation_state::Or
         return;
     auto* object = match.instance(s.unit_index);
     auto* script = object != nullptr ? object->script() : nullptr;
-    const auto function = script != nullptr ? script->find("StopBuilding") : -1;
+    const auto function = script != nullptr ? script->find(ScriptFunction::stop_building) : -1;
     if (script != nullptr)
-        script->call("StopBuilding", {}, false);
+        script->call(ScriptFunction::stop_building, {}, false);
     match.share_script_start(s.unit_index, static_cast<int16_t>(function));
     order.flags &= static_cast<uint8_t>(~order_building_flag);
 }
