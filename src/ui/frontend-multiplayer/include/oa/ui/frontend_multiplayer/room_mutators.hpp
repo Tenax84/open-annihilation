@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace oa::ui::frontend_multiplayer {
 
@@ -28,6 +29,7 @@ enum class MutatorsHold : uint8_t {
     none,           ///< nothing about mutators holds START
     host_not_built, ///< the host's layer is not built yet
     host_failed,    ///< the host's build stopped with an error
+    classic_player, ///< a seated 3.1c human or watcher, while mutators are on
     no_support,     ///< an OA player sent no mutator field
     receiving,      ///< an OA player is still taking the list, or names another one
     lacking,        ///< an OA player does not have a mutator of the list
@@ -111,13 +113,14 @@ struct MutatorsBlock {
 ///
 /// None when no record carries a mutator field. When the host's record has
 /// none and an Open Annihilation peer's still does, START waits while that
-/// peer drops it. Otherwise the host's own build, then each Open
-/// Annihilation human or watcher of another machine in slot order: no
-/// mutator field, another list or a list still arriving, a mutator they do
-/// not have, a failed build, a build not finished, another layer, another
-/// sim hash. A layer digest that differs names the earlier of the two
-/// dropped positions when those positions differ. Reads the fixed part of
-/// each mutator field and the sim hash only. Allocates nothing.
+/// peer drops it. Otherwise the host's own build, then each seated 3.1c
+/// human or watcher in slot order, then each Open Annihilation human or
+/// watcher of another machine: no mutator field, another list or a list
+/// still arriving, a mutator they do not have, a failed build, a build not
+/// finished, another layer, another sim hash. A layer digest that differs
+/// names the earlier of the two dropped positions when those positions
+/// differ. Reads the fixed part of each mutator field and the sim hash
+/// only. Allocates nothing.
 ///
 /// @param lobby Lobby state.
 /// @return The first hold, or none.
@@ -129,15 +132,48 @@ struct MutatorsBlock {
 /// @return True when nothing about mutators holds START.
 [[nodiscard]] bool lobby_mutators_allow_start(Lobby& lobby) noexcept;
 
-/// Tells whether one slot alone would hold START.
+/// Slots of seated 3.1c humans and watchers, in slot order.
 ///
-/// The host's own row does not. A 3.1c player and this machine's computer
-/// players do not. Another slot's problem does not hide this one.
-/// Allocates nothing.
+/// A player counts when its own setup block has arrived and lacks the
+/// engine signature. The picker reads this before the host turns a list on.
+/// START waits for these players (`classic_player`) only while the host's
+/// record carries mutators.
+///
+/// @param lobby Lobby state.
+/// @return The slots.
+[[nodiscard]] std::vector<int32_t> lobby_classic_players(Lobby& lobby);
+
+/// Posts one local line per seated 3.1c player when mutators turn on.
+///
+/// Looks at the host's record. The first time it carries a mutator field,
+/// each machine posts "*** {player} plays Total Annihilation 3.1c, which
+/// cannot play with mutators." for every seated 3.1c human or watcher, in
+/// its own language, and not again until that field is gone and comes back.
+/// A room without the field posts nothing and arms the next change. The
+/// lines are not sent.
+///
+/// @param[in,out] lobby Lobby state.
+void lobby_note_classic_room(Lobby& lobby) noexcept;
+
+/// Posts one 3.1c line about a slot, split between words so each part fits.
+///
+/// Translates `words`, fills `{player}` with the slot's name, and posts each
+/// part of the sentence. The parts are not sent.
+///
+/// @param[in,out] lobby Lobby state.
+/// @param words The English sentence, with `{player}`.
+/// @param player_slot The player the line names.
+void lobby_post_classic_line(Lobby& lobby, const char* words, int32_t player_slot) noexcept;
+
+/// Tells whether a row's rules dot is on for mutators.
+///
+/// The host's own row does not, and neither does a computer player. A 3.1c
+/// player holds START as `classic_player` while mutators are on, but it has
+/// no dot. Another slot's problem does not hide this one. Allocates nothing.
 ///
 /// @param lobby Lobby state.
 /// @param slot Player slot, 0..9; any other gives false.
-/// @return True when this slot's mutators would hold START.
+/// @return True when this slot's mutators put a dot on its row.
 [[nodiscard]] bool lobby_mutators_differ_from_host(Lobby& lobby, int32_t slot) noexcept;
 
 /// Logs a change of the host's mutator hold, including the first one seen.

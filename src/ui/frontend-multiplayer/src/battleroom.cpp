@@ -112,6 +112,7 @@ constexpr uint8_t kRejectLeaving = 2;
 constexpr uint8_t kRejectWatching = 9;
 constexpr uint8_t kRejectCreatorLeft = 10;
 constexpr uint8_t kRejectDeathmatch = 0xb;
+constexpr uint8_t kRejectVersion = 8; // "You need a newer version of the game to enter"
 constexpr uint32_t kTicksPerSecond = 30;
 constexpr uint32_t kMillisecondsPerSecond = 1000;
 constexpr std::size_t kComputerNameBytes = 0x10; // session name of a computer player
@@ -1299,6 +1300,7 @@ bool presence_keep(Lobby& lobby, const LobbyEvent& event) noexcept {
     // The host's record carries the room's list. A guest keeps it as far as
     // the records have brought it, including a part that continues the head.
     feed_host_assembly(lobby);
+    lobby_note_classic_room(lobby);
     return true;
 }
 
@@ -1653,11 +1655,16 @@ void presence_refresh(Lobby& lobby) noexcept {
             append_room_mutator_part(lobby, composed, size);
         append_computer_presence(lobby, composed, size, sizeof composed);
     }
-    if (size == records.local_size && std::memcmp(composed, records.local, size) == 0)
+    if (size == records.local_size && std::memcmp(composed, records.local, size) == 0) {
+        if (host)
+            lobby_note_classic_room(lobby);
         return;
+    }
     std::memcpy(records.local, composed, size);
     records.local_size = static_cast<uint16_t>(size);
     ++records.local_generation;
+    if (host)
+        lobby_note_classic_room(lobby);
 }
 
 void presence_send_due(Lobby& lobby, int32_t only_slot) noexcept {
@@ -2044,6 +2051,7 @@ void lobby_reset(Lobby& lobby, Game& game) noexcept {
     lobby.presence_records.host_fed_hash = 0;
     lobby.presence_records.part_refused_digest.reset();
     lobby.mutators_hold_seen = false;
+    lobby.classic_lines_posted = false;
     // The recorder's session starts again; the line it answers with stays.
     char program[sizeof lobby.recorder.program];
     std::memcpy(program, lobby.recorder.program, sizeof program);
@@ -4142,9 +4150,10 @@ void lobby_reject(Lobby& lobby, uint32_t player_id, uint8_t reason) noexcept {
             retire_slot(lobby, player);
         } else if (occupied_by(player, kSlotRemote)) {
             send_reject(lobby, first_seated_here(lobby, nullptr), player_id, reason);
-            if (slot_remote_playing(lobby, player)) {
+            if (slot_remote_playing(lobby, player) && player.machine_group != 0) {
                 // A human still playing takes its machine's other players
-                // with it: every player of its machine group.
+                // with it: every player of its machine group. A player whose
+                // machine group is not known yet takes only itself.
                 const auto group = player.machine_group;
                 for (int32_t other = 0; other < kSlotCount; ++other) {
                     auto& mate = slot_player(lobby, other);
@@ -4460,6 +4469,27 @@ bool assign_machine_group(
     return true;
 }
 
+/// The line a room with mutators posts about a 3.1c player it refuses.
+constexpr const char* kClassicRefusedLine =
+    "*** {player} plays Total Annihilation 3.1c and cannot join a game with mutators.";
+
+/// Tells whether a remote player's block lacks the engine signature while
+/// the host's record carries mutators.
+///
+/// @param lobby Lobby state.
+/// @param slot Player slot of a remote player.
+/// @return True when the room's mutators cannot take that player.
+bool classic_in_mutator_room(Lobby& lobby, int32_t slot) noexcept {
+    const auto host = lobby_host_slot(lobby);
+    if (host == kNoSlot || !occupied_by(slot_player(lobby, slot), kSlotRemote))
+        return false;
+    const auto host_record = lobby_presence_record(lobby, static_cast<int32_t>(host));
+    const auto* info = slot_info(lobby, slot);
+    return netgame::presence_mutators_state(host_record.data(), host_record.size()).has_value() &&
+           info != nullptr &&
+           !netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(info));
+}
+
 } // namespace
 
 int32_t slot_for_player_id(Lobby& lobby, uint32_t player_id) noexcept {
@@ -4625,7 +4655,21 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
         std::memcpy(
             bytes + netgame::player_info_tail_offset, record.info_tail, sizeof(record.info_tail)
         );
+        // A block from a player this machine has had none from: the player arrives.
+        const bool arriving = lobby.presence_records.block_player[slot] != record.player_id;
         lobby.presence_records.block_player[slot] = record.player_id;
+        // A 3.1c joiner cannot play a mutator room. Reason 8 is the text
+        // that machine already shows. The line stays on this machine.
+        // A later block (ready, side, colour) is not an arrival. Only the
+        // host judges: a guest's first block from a player may be the
+        // greeting of one seated before the list, so a guest names the
+        // joiner when the host's refusal comes (the reject case below).
+        if (arriving && host_is_local(lobby) && classic_in_mutator_room(lobby, slot)) {
+            lobby_post_classic_line(lobby, kClassicRefusedLine, slot);
+            lobby_reject(lobby, record.player_id, kRejectVersion);
+            flush(lobby);
+            return true;
+        }
         if (const auto* echoed = slot_info(lobby, slot)) {
             note_computer_command_echo(lobby, record.player_id, kComputerEditSide, echoed->side);
             note_computer_command_echo(lobby, record.player_id, kComputerEditColor, echoed->color);
@@ -4635,6 +4679,7 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
         // A player who arrived, or whose block now says OA, gets this
         // machine's presence record once.
         presence_send_due(lobby, slot);
+        lobby_note_classic_room(lobby);
         return true;
     }
     case netgame::RecordType::machine_group_request: {
@@ -4727,8 +4772,16 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
         netgame::RejectRecord record{};
         if (netgame::decode_record(event.data, event.size, &record) != netgame::WireError::ok)
             return false;
-        if (slot_for_player_id(lobby, record.player_id) < 0)
+        const auto slot = slot_for_player_id(lobby, record.player_id);
+        if (slot < 0)
             return false;
+        // The host refused a 3.1c joiner from its room with mutators: a
+        // guest names it too, once, from the joiner's own block. A guest
+        // never refuses anyone itself.
+        if (record.reason == kRejectVersion && !host_is_local(lobby) &&
+            lobby.presence_records.block_player[slot] == record.player_id &&
+            classic_in_mutator_room(lobby, slot))
+            lobby_post_classic_line(lobby, kClassicRefusedLine, slot);
         // Passed on once, as for a rejection made here.
         lobby_reject(lobby, record.player_id, record.reason);
         flush(lobby);
