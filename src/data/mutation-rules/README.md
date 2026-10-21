@@ -102,8 +102,10 @@ A factor on a field that is absent does nothing, and the step notes it. A
 factor on text that is not a number is noted and does not write. A number
 is written only with the TDF number spelling, and only when it is finite and
 different from the field's current number. The current text has to start,
-after spaces or tabs, with a sign and a digit before it counts as that
-number: a factor does not treat a word as zero. A result that is not finite
+after spaces or tabs, with an optional sign and then a digit, or a point and
+at least one digit (`.8`, `-.5`, `+.25`), before it counts as that number.
+A lone `.` or `-.` is not a number, and a factor does not treat a word as
+zero. A result that is not finite
 is not written, and a clamp is not allowed to pull that result back into
 range. A lock of a number the field already holds writes nothing and still
 marks the field.
@@ -189,9 +191,10 @@ names once. Two sections of the same name in one file share a lock.
 
 ## Tests
 
-`oa-data-mutation-rules-test` builds small documents and rule texts. It
-checks the written text, the writes and the notes for factors stacked in
-both list orders, three scales kept in file order, storage factors, a later
+`oa-data-mutation-rules-test` and `oa-data-mutation-rules-apply-test` build
+small documents and rule texts. They check the written text, the writes and
+the notes for factors stacked in both list orders, three scales kept in file
+order, storage factors, a later
 assignment replacing an earlier one, two removals, a later text assignment,
 two bands in one mutator, a clamp that bounds only its own scale, a lock
 held against a later scale and a later set, two clamps applied one after
@@ -203,7 +206,9 @@ writes of one field listed in applied order when a change creates it again
 under another spelling, a depth change applied once when a block has two
 case variants of a key, and the notes for a block that matched nothing, a
 field that is not a number, a result that is not finite (including a clamp
-that does not rescue it), and a check that warns or refuses.
+that does not rescue it), a check that warns or refuses, and a factor on a
+value that starts with a point (`.8` doubled is `1.6`, `-.5` halved is
+`-0.25`, and a lone `.` or `-.` is left as it was).
 
 ## Limitations
 
