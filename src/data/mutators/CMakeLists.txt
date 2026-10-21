@@ -3,13 +3,14 @@
 
 add_library(
   oa-data-mutators src/allow_list.cpp src/collections.cpp src/files_layer.cpp src/rules_lua.cpp
+                   src/verdicts.cpp
 )
 add_library(oa::data::mutators ALIAS oa-data-mutators)
 target_include_directories(oa-data-mutators PUBLIC include)
 target_compile_features(oa-data-mutators PUBLIC cxx_std_20)
 target_link_libraries(
   oa-data-mutators
-  PUBLIC oa-data-defs oa-data-mutation-rules oa-data-script-host oa-formats-hpi
+  PUBLIC oa-base-sha256 oa-data-defs oa-data-mutation-rules oa-data-script-host oa-formats-hpi
   PRIVATE oa-data-field-schema oa-formats-tdf oa-options
 )
 if(BUILD_TESTING)
@@ -43,4 +44,9 @@ if(BUILD_TESTING)
     PRIVATE "OA_MUTATORS_RULES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/rules_lua\""
   )
   add_test(NAME data-mutators-rules-lua COMMAND oa-data-mutators-rules-lua-test)
+
+  add_executable(oa-data-mutators-verdicts-test tests/verdicts_test.cpp)
+  target_link_libraries(oa-data-mutators-verdicts-test PRIVATE oa-data-mutators oa-test-support)
+  add_test(NAME data-mutators-verdicts COMMAND oa-data-mutators-verdicts-test)
+  set_tests_properties(data-mutators-verdicts PROPERTIES TIMEOUT 30)
 endif()

@@ -12,8 +12,8 @@ sentence chosen from the rule, which is not this module's to write.
 
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
-`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp` and
-`oa/data/mutators/rules_lua.hpp`.
+`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/rules_lua.hpp` and `oa/data/mutators/verdicts.hpp`.
 
 - `check_mutable_path` judges one file path.
 - `check_mutable_mask` judges one mask. The pattern's shape is
@@ -378,3 +378,43 @@ is an error. An unfinished block in the list refuses the plan.
 `data-mutators-rules-lua` checks each Lua fixture against the rule file
 beside it, both as records and as the writes those records make on one
 Ridge document set.
+
+## Verdicts
+
+A dry run's answer for one list of mutators against one mod is a
+`Verdict`: `compatible`, `no_effect`, `incompatible` or `failed`. The
+file and the log spell `no_effect` as `no-effect`. A compatible verdict
+carries `ChangeCounts`, twelve counts per collection (units, weapons and
+features changed, added and removed, then menu entries, files added and
+files hidden). `any` says whether one of them is above zero. `incompatible`
+and `failed` carry a reason; the other two do not. `mod_label` is the
+mod's name and version, empty for the base game. `one_line_reason` turns
+a reason or a label into one line of at most 200 bytes, with the ends
+trimmed again when the cut lands on a space.
+
+A verdict is remembered under a `VerdictKey`: the loadout digest of the
+whole checked list (prerequisites included), the mod key, and the engine
+version text. `RememberedVerdict` pairs that key with a `VerdictRecord`.
+
+The file is named `mutator-verdicts.tsv`. Each line is UTF-8, ends with
+a line feed, and is tab-separated: `1`, the loadout digest as 64
+lower-case hex digits, the mod key likewise, the engine version
+(printable ASCII, no space, 1 to 64 bytes), the verdict word, the twelve
+counts as unsigned decimals without leading zeros joined by `,`, the mod
+label, the reason. The label and the reason are written through
+`one_line_reason`. A line is dropped when it has another field count,
+another form than `1`, a digest that is not 64 lower-case hex digits, a
+bad engine version, an unknown verdict word, a count that is not a
+decimal within `uint32_t`, a reason on a compatible or no-effect verdict,
+more than 2048 bytes, a carriage return, or bytes that are not UTF-8.
+When two lines share a key, the later record wins and keeps the earlier
+line's place. `read_verdicts` then keeps at most the newest 1024 of those
+verdicts; the oldest past that are dropped. The file is at most 4 MiB. A
+longer span reads as empty. `remember_verdict` drops every excess oldest
+verdict in one step.
+
+`read_verdicts` and `write_verdicts` are the codec. `remember_verdict`
+replaces a key and moves it to the newest place. `find_verdict` looks a
+key up. The dry run fills the records. The Library and the picker show
+them. Nothing here decides which outcome is which verdict, and nothing
+here opens the file.
