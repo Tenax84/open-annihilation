@@ -63,6 +63,9 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 - `parse_choice` reads one `--mutator` value, `format_choice` writes it
   back, and `resolve_choice` finds the package and types its options. See
   [Choice text](#choice-text).
+- `loadout_of` builds a loadout from a resolved list, `applied_loadout`
+  keeps the mutators a run applied, and `resolve_loadout` finds the
+  installed packages a loadout names. See [Loadouts](#loadouts).
 
 ## Choice text
 
@@ -81,19 +84,30 @@ are written over them. A missing mutator, an option the manifest does not
 have and a value of the wrong kind or outside the option's choices are
 refused in words that quote the player's text.
 
+`package` is the package file's SHA-256 from the origin record when that
+record names 64 hexadecimal digits, and `folder` stays clear. When the
+record names no SHA-256, `package` is `folder_digest` of the installed
+folder and `folder` is set. A recorded value that is not 64 hexadecimal
+digits is refused. A path sets `folder` and keeps `folder_digest` of that
+folder.
+
 ## State
 
 None kept. `parse_choice` asks whether a target that holds `:` names an
 existing folder or file, and keeps nothing. `format_choice` reads nothing.
 `resolve_choice`
 reads one package's `oamut.yaml`, or the installed listing of the Mutators
-folder it is given, and keeps nothing after it returns. The two checks are
-pure: they do not read files, the asset store or the preferences. A null
-`PathContext::layout` means `data_layout()`. An empty `is_unit_name` knows
-no unit. `build_files_layer` reads the package
+folder it is given. For a path, and for an id whose origin record names no
+SHA-256, it also reads every file of that folder (`folder_digest`). It
+keeps nothing after it returns. `resolve_loadout` reads the installed
+listing, each package's manifest and, for a folder entry, every file of
+the installed folder. `loadout_of` and `applied_loadout` read nothing.
+The two checks are pure: they do not read files, the asset store or the
+preferences. A null `PathContext::layout` means `data_layout()`. An empty
+`is_unit_name` knows no unit. `build_files_layer` reads the package
 folders it is given while it builds the layer, and it keeps nothing after
-it returns. `folder_digest` reads one folder and does not write. The other
-loadout functions read nothing. `run_pipeline` keeps nothing between calls:
+it returns. `folder_digest` reads one folder and does not write.
+`run_pipeline` keeps nothing between calls:
 it reads the packages and the store it is given, and mounts its layer there.
 
 ## Invariants
@@ -604,9 +618,33 @@ digits the canonical loadout writes), and a string choice is its text.
 each value `option_text` of the option. No options write nothing. This is
 the text that follows `id:` on `--mutator`.
 
-The match start fills this record from the mutators that play and folds
-the mutator digest into the simulation hash. Nothing in this header runs
-during a match.
+`loadout_of` builds this record from a resolved list. Every mutator is
+listed, in the list's order, and each option is that mutator's typed
+value with its default already filled, stored in id byte order. The
+package digest and the folder mark are the ones `resolve_choice` recorded:
+an installed id keeps the SHA-256 from its origin record, or, when that
+record names none, `folder_digest` of the installed folder with `folder`
+set. A package folder named by path keeps `folder_digest` and sets
+`folder`. A folder digest that is refused refuses the choice. A recorded
+SHA-256 that is not 64 hexadecimal digits refuses the choice. `loadout_of`
+reads no file.
+
+`applied_loadout` keeps the entries a pipeline result applied, in the
+loadout's order. `resolve_loadout` finds each entry among the installed
+mutators by id, with the same version text. A package entry must have the
+origin record's SHA-256. A folder entry is accepted when that id's
+installed folder has the same folder digest, and refused, naming it as a
+package folder, otherwise. The options are typed as `resolve_choice` types
+`options_text`. A missing package, another version and another SHA-256
+are refused, and the error names the entry.
+
+A playable match that applied at least one mutator keeps that applied
+loadout and `mutator_digest`. The layer digest reads each served path's
+bytes from the asset store while the layer is mounted. Both are forgotten
+when the match releases its mutators, including when the match ends. The
+simulation hash the run reports is the profile's sim hash folded with that
+digest while it is held, and the profile's hash alone otherwise. Nothing
+in this header runs during a match.
 
 `data-mutators-loadout` pins the canonical text, the four digests against
 values computed outside the engine, the refusals, the folder and layer
@@ -614,7 +652,14 @@ digests, the unchanged simulation hash and the options text. It reads
 records back equal (a `1.0` number default, a numeric choice and a string
 choice among them), compares records by their text, digests a folder
 holding a name outside ASCII, and refuses a pipe where the system has
-pipes.
+pipes. It also checks `loadout_of`, `applied_loadout` (applied entries
+kept, and failed, excluded and incompatible entries dropped) and
+`options_text` read back through `parse_choice` and `resolve_choice`. A
+path and an installed folder with no origin record resolve with `folder`
+set and that folder's digest. `resolve_loadout` finds those packages, and
+refuses a missing id, another version, another SHA-256, a folder digest
+that is not the installed folder's, and an origin SHA-256 that is not 64
+hexadecimal digits.
 
 ## Rules in Lua
 

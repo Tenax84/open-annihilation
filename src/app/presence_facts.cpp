@@ -20,8 +20,6 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <span>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -30,21 +28,6 @@ namespace oa::app {
 namespace {
 
 namespace profiles = oa::data::mod_profile;
-
-/// Resolves the plain baseline and returns its sim hash.
-///
-/// @return the hash
-/// @throws std::runtime_error when the baseline does not resolve
-oa::base::sha256::Digest baseline_digest() {
-    const std::string text = profiles::base_game_profile_text();
-    const auto resolved = profiles::resolve_profile(
-        std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(text.data()), text.size()),
-        profiles::base_game_id
-    );
-    if (!resolved.resolution)
-        throw std::runtime_error("the plain baseline does not resolve");
-    return resolved.resolution->profile.sim_hash;
-}
 
 /// Returns the processor architecture this build is for, from the compiler's own names for it.
 ///
@@ -168,14 +151,8 @@ PresenceFacts presence_facts(const Runtime& runtime) {
     facts.architecture = build_architecture();
     facts.developer_mode = runtime.developer_mode();
     const auto* profile = runtime.mod_profile();
-    if (profile != nullptr)
-        facts.sim_hash = profile->sim_hash;
-    else if (runtime.engine_settings_ && runtime.engine_settings_->layered)
-        facts.sim_hash = runtime.engine_settings_->base_sim_hash;
-    else if (runtime.options_.mod_profile)
-        facts.sim_hash = runtime.options_.mod_profile->sim_hash;
-    else
-        facts.sim_hash = baseline_digest();
+    const bool mutators_folded = runtime.match_mutator_digest().has_value();
+    facts.sim_hash = played_sim_hash(runtime);
 
     if (profile == nullptr) {
         facts.rules_differ_from_base = false;
@@ -184,6 +161,8 @@ PresenceFacts presence_facts(const Runtime& runtime) {
     } else {
         facts.rules_differ_from_base = profile->sim_hash != runtime.engine_settings_->base_sim_hash;
     }
+    if (mutators_folded)
+        facts.rules_differ_from_base = true;
 
     if (profile != nullptr) {
         facts.mod =

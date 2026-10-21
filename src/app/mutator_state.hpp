@@ -8,7 +8,9 @@
 #pragma once
 
 #include "oa/app/runtime.hpp"
+#include "oa/base/sha256.hpp"
 #include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 
 #include <cstdint>
@@ -22,6 +24,12 @@ struct Runtime::MutatorState {
     std::vector<oa::data::mutators::ResolvedMutator> chosen{};
     /// The running match's pipeline result. Empty before a match applies them.
     std::optional<oa::data::mutators::PipelineResult> result{};
+    /// The mutators the running match applied, as its loadout. Empty when
+    /// none applied.
+    std::optional<oa::data::mutators::Loadout> loadout{};
+    /// The applied loadout's digest together with its layer. Empty when
+    /// none applied.
+    std::optional<oa::base::sha256::Digest> digest{};
     /// True after this match's hacks were copied into the played profile.
     /// Release puts the player's profile back and clears it.
     bool hacks_played{false};

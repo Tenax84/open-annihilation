@@ -6,8 +6,12 @@
 #include "oa/data/mutators/loadout.hpp"
 
 #include "oa/data/mod_profile/value.hpp"
+#include "oa/data/mutator_library/library.hpp"
+#include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/json.hpp"
 #include "oa/formats/oamod.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 
 #include <algorithm>
 #include <array>
@@ -729,6 +733,18 @@ std::string option_text(const LoadoutOption& option) {
     return oamod::canonical_number_text(option.value.number_value);
 }
 
+namespace {
+
+/// Quotes an id the way a refusal names it.
+///
+/// @param text the id
+/// @return the id in double quotes
+std::string in_quotes(std::string_view text) {
+    return "\"" + std::string(text) + "\"";
+}
+
+} // namespace
+
 std::string options_text(const LoadoutEntry& entry) {
     std::vector<const LoadoutOption*> ordered;
     ordered.reserve(entry.options.size());
@@ -748,6 +764,102 @@ std::string options_text(const LoadoutEntry& entry) {
         text += option_text(*option);
     }
     return text;
+}
+
+Loadout loadout_of(std::span<const ResolvedMutator> chosen) {
+    Loadout loadout;
+    loadout.entries.reserve(chosen.size());
+    for (const ResolvedMutator& one : chosen) {
+        LoadoutEntry entry;
+        entry.id = one.manifest.id;
+        entry.version = oa::formats::oamut::version_text(one.manifest.version);
+        entry.package = one.package;
+        entry.folder = one.folder;
+        entry.options = one.options;
+        std::sort(
+            entry.options.begin(),
+            entry.options.end(),
+            [](const LoadoutOption& left, const LoadoutOption& right) { return left.id < right.id; }
+        );
+        loadout.entries.push_back(std::move(entry));
+    }
+    return loadout;
+}
+
+Loadout applied_loadout(const Loadout& chosen, const PipelineResult& result) {
+    Loadout kept;
+    const std::size_t count = chosen.entries.size() < result.mutators.size()
+                                  ? chosen.entries.size()
+                                  : result.mutators.size();
+    kept.entries.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        if (result.mutators[index].outcome != Outcome::applied)
+            continue;
+        kept.entries.push_back(chosen.entries[index]);
+    }
+    return kept;
+}
+
+std::optional<std::vector<ResolvedMutator>>
+resolve_loadout(const Loadout& loadout, const fs::path& mutators_folder, std::string* error) {
+    const oa::data::mutator_library::Listing listing =
+        oa::data::mutator_library::list_installed(mutators_folder);
+    std::vector<ResolvedMutator> resolved;
+    resolved.reserve(loadout.entries.size());
+    for (const LoadoutEntry& entry : loadout.entries) {
+        const oa::data::mutator_library::InstalledMutator* installed =
+            oa::data::mutator_library::find(listing, entry.id);
+        if (installed == nullptr) {
+            set_error(error, in_quotes(entry.id) + " is not an installed mutator");
+            return std::nullopt;
+        }
+        const std::string version = oa::formats::oamut::version_text(installed->manifest.version);
+        if (version != entry.version) {
+            set_error(
+                error, in_quotes(entry.id) + " is version " + version + ", not " + entry.version
+            );
+            return std::nullopt;
+        }
+        if (entry.folder) {
+            std::string digest_error;
+            const std::optional<base::sha256::Digest> digest =
+                folder_digest(installed->folder, &digest_error);
+            if (!digest || *digest != entry.package) {
+                set_error(error, in_quotes(entry.id) + " is a package folder");
+                return std::nullopt;
+            }
+        } else {
+            const std::optional<base::sha256::Digest> recorded =
+                base::sha256::parse_hex(installed->package_sha256);
+            if (!recorded || *recorded != entry.package) {
+                set_error(error, in_quotes(entry.id) + " is a different package");
+                return std::nullopt;
+            }
+        }
+        const std::string options = options_text(entry);
+        std::string text = entry.id;
+        if (!options.empty()) {
+            text.push_back(':');
+            text += options;
+        }
+        std::string choice_error;
+        const std::optional<MutatorChoice> choice = parse_choice(text, &choice_error);
+        if (!choice) {
+            set_error(error, in_quotes(entry.id) + ": " + choice_error);
+            return std::nullopt;
+        }
+        std::optional<ResolvedMutator> one =
+            resolve_choice(*choice, mutators_folder, &choice_error);
+        if (!one) {
+            set_error(
+                error,
+                choice_error.empty() ? in_quotes(entry.id) + " cannot be resolved" : choice_error
+            );
+            return std::nullopt;
+        }
+        resolved.push_back(std::move(*one));
+    }
+    return resolved;
 }
 
 } // namespace oa::data::mutators

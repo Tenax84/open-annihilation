@@ -204,7 +204,9 @@
 /// and does not read the wall clock, and while the fixed clock is on it is
 /// that clock. simulation_hash reads the simulation hash the run plays
 /// under: the profile in play, with every Developer Mode override that
-/// changes the simulation, or the plain baseline when the game plays 3.1c. A
+/// changes the simulation, or the plain baseline when the game plays 3.1c,
+/// folded with the running match's mutator digest when that match applied
+/// mutators. With no mutators applied it is that profile hash alone. A
 /// running match keeps the hash it started with. Version 15 adds the OA UI
 /// kit to the contract: register_settings_pages; kit screens in
 /// ScreenRegistry and open_kit_screen, show_notice and ask_prompt in
@@ -1582,10 +1584,13 @@ void set_extension_window_source(Runtime& runtime, void* context, ExtensionWindo
 ///
 /// It is the profile in play: the mod's sim hash with every Developer Mode
 /// override that changes the simulation, or the plain 3.1c baseline when
-/// the game plays 3.1c. Saves and network games are matched on it. A
-/// running match keeps the profile it started with, so an override that
-/// changes the simulation shows here once that match ends; with no match
-/// running it shows at once. A display-only override leaves it unchanged.
+/// the game plays 3.1c, folded with the running match's mutator digest when
+/// that match applied mutators. With no mutators applied it is that profile
+/// hash alone. Choosing mutators, before the match builds them, leaves the
+/// hash unchanged. Saves and network games are matched on it. A running
+/// match keeps the profile it started with, so an override that changes the
+/// simulation shows here once that match ends; with no match running it
+/// shows at once. A display-only override leaves it unchanged.
 ///
 /// It is not a hook: the engine does not call it, and no extension fills it.
 /// A call may come from any hook.

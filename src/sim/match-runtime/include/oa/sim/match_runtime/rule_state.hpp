@@ -10,9 +10,10 @@
 // match is built (Match::rule_state), and only when its parameters need the
 // state: at its 3.1c baseline a rule adds none. The match then digests every
 // table into its state digest and its trace, and a save keeps each one
-// (Match::fold_rule_state). With no table added, nothing is digested or saved
-// beyond 3.1c's state, so a match without a profile, or with every rule at its
-// baseline, digests exactly as before.
+// (Match::fold_rule_state). With no table added and no mutator digest, nothing
+// is digested or saved beyond 3.1c's state, so a match without a profile, or
+// with every rule at its baseline, digests exactly as before. A mutator digest
+// the match holds is folded even when no table was added.
 #pragma once
 
 #include <array>
@@ -70,15 +71,20 @@ find_rule_state(const RuleState& state, std::string_view name) noexcept;
 
 /// Digests the tables into a 64-bit FNV-1a digest, over bytes: first the
 /// profile's sim hash, then each table in the order added, as its name's
-/// bytes, its byte count as a little-endian 32-bit word, and its bytes.
+/// bytes, its byte count as a little-endian 32-bit word, and its bytes,
+/// then the mutator digest when one is given.
 ///
 /// @param digest the digest so far
-/// @param state the match's tables; at least one
+/// @param state the match's tables
 /// @param profile_sim_hash the sim hash of the profile the match plays, or
 ///        empty without one
+/// @param mutator_digest the match's mutator digest, or empty when it applied none
 /// @return the new digest
 [[nodiscard]] uint64_t digest_rule_state(
-    uint64_t digest, const RuleState& state, std::span<const uint8_t> profile_sim_hash
+    uint64_t digest,
+    const RuleState& state,
+    std::span<const uint8_t> profile_sim_hash,
+    std::span<const uint8_t> mutator_digest = {}
 ) noexcept;
 
 } // namespace oa::sim::match_runtime
