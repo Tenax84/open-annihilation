@@ -31,10 +31,15 @@ bool key_less(lua_State* state, int left, int right) {
     const int right_type = lua_type(state, right);
     const int left_category = key_category(left_type);
     const int right_category = key_category(right_type);
-    if (left_category != right_category)
+    if (left_category != right_category) {
+        charge(state, comparison_unit);
         return left_category < right_category;
-    if (left_type == LUA_TNUMBER || left_type == LUA_TSTRING)
+    }
+    if (left_type == LUA_TNUMBER || left_type == LUA_TSTRING) {
+        charge(state, comparison_charge(state, left, right));
         return lua_compare(state, left, right, LUA_OPLT) != 0;
+    }
+    charge(state, comparison_unit);
     return lua_toboolean(state, left) == 0 && lua_toboolean(state, right) != 0;
 }
 
@@ -139,6 +144,8 @@ void push_names(lua_State* state, std::span<const std::string> names) {
 }
 
 int push_sorted_keys(lua_State* state, int index) {
+    // One walk can visit every slot an emptied table still holds.
+    charge(state, scan_call_charge);
     index = lua_absindex(state, index);
     luaL_checktype(state, index, LUA_TTABLE);
     luaL_checkstack(state, 4, "pairs");
