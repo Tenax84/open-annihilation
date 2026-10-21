@@ -183,6 +183,9 @@ struct Package {
     std::vector<std::string> works_with;
     /// Layers this mutator uses, known names kept once. Empty for every other kind.
     std::vector<formats::oamut::Layer> layers;
+    /// How this mutator treats a unit or weapon that already has that name.
+    /// Absent when the entry names none, and absent for every other kind.
+    std::optional<formats::oamut::ClashMode> clashes;
     /// One summary per option. Empty for every other kind.
     std::vector<OptionSummary> options;
 };

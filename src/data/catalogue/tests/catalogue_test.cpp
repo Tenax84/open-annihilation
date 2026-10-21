@@ -1008,6 +1008,7 @@ void test_mutator() {
             OA_CHECK(package.conflicts_with[0].range_text == "< 2");
             OA_CHECK(package.conflicts_with[0].range.has_value());
         }
+        OA_CHECK(!package.clashes.has_value());
         OA_CHECK(package.layers.size() == 2);
         if (package.layers.size() == 2) {
             OA_CHECK(package.layers[0] == mut::Layer::units);
@@ -1058,6 +1059,7 @@ void test_mutator() {
         OA_CHECK(keeper.works_with.empty());
         OA_CHECK(keeper.conflicts_with.empty());
         OA_CHECK(keeper.layers.empty());
+        OA_CHECK(!keeper.clashes.has_value());
         OA_CHECK(keeper.options.empty());
     }
 
@@ -1218,6 +1220,22 @@ void test_mutator() {
         skips_one(bare("oamut", "steady-hands", many), "layers lists more than 16");
     }
     skips_one(bare("oamut", "steady-hands", "\"layers\":\"units\""), "layers is not a list");
+    const auto added = read_ok(catalogue_of(bare("oamut", "steady-hands", "\"clashes\":\"add\"")));
+    OA_CHECK(added.packages.size() == 1);
+    if (!added.packages.empty())
+        OA_CHECK(added.packages[0].clashes == mut::ClashMode::add);
+    const auto replaced =
+        read_ok(catalogue_of(bare("oamut", "steady-hands", "\"clashes\":\"replace\"")));
+    OA_CHECK(replaced.packages.size() == 1);
+    if (!replaced.packages.empty())
+        OA_CHECK(replaced.packages[0].clashes == mut::ClashMode::replace);
+    skips_one(
+        bare("oamut", "steady-hands", "\"clashes\":\"Add\""), "clashes must be add or replace"
+    );
+    skips_one(
+        bare("oamut", "steady-hands", "\"clashes\":\"merge\""), "clashes must be add or replace"
+    );
+    skips_one(bare("oamut", "steady-hands", "\"clashes\":1"), "clashes must be add or replace");
     {
         std::string many = "\"options\":[";
         for (int slot = 0; slot < 17; ++slot) {

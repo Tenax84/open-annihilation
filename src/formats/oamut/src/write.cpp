@@ -265,6 +265,8 @@ std::string write_manifest(const Manifest& manifest) {
     for (const Layer layer : manifest.layers)
         layers.push_back(quoted(layer_name(layer)));
     write_list(out, 0, "layers", layers);
+    if (manifest.clashes.has_value())
+        field(out, 0, "clashes", quoted(clash_mode_name(*manifest.clashes)));
     if (!manifest.options.empty()) {
         line(out, 0, "options:");
         for (const Option& option : manifest.options)

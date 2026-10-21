@@ -25,6 +25,7 @@ The text is the strict YAML a mod profile is written in
 - `parse_version`, `version_text`, `parse_version_range`, `version_in_range`,
   `parse_condition` and `condition_met` are the version and condition grammar
   below. `layer_name` and `parse_layer` are the nine layer names.
+  `clash_mode_name` and `parse_clash_mode` are `add` and `replace`.
 
 ## State
 
@@ -81,6 +82,11 @@ Required:
 
 Optional:
 
+- `clashes`: `add` or `replace`, compared byte for byte. `add` brings a unit
+  or weapon in beside one that already has that name. `replace` puts this
+  mutator's record in its place. Absent means the game's default applies;
+  the reader does not fill one in. `Add`, `merge` and a number are refused
+  with `clashes must be add or replace`.
 - `description`: 1 to 2,000 bytes. A line feed is allowed. No other control
   character. The first line is the summary.
 - `homepage`: the shared rule, an `http` or `https` address of 1 to 256 bytes.
@@ -164,8 +170,10 @@ A range that holds a comma is quoted in YAML.
 versions meet and miss) and conditions (which id and version meet and miss,
 including a mod version `5b`). It reads the example manifest, reads a
 manifest that uses every key, writes it and reads it back, and refuses each
-rule above once, including a profile key, an unknown key, `layers: [sounds]`
-and a bare `legacy` mapping. `summary_of` is checked on a character boundary.
+rule above once, including a profile key, an unknown key, `layers: [sounds]`,
+`clashes` set to `Add`, `merge` or a number, and a bare `legacy` mapping.
+An absent `clashes` stays absent through a round trip. `summary_of` is
+checked on a character boundary.
 The test does not open a package.
 
 Examples use the made-up mutators `steady-hands` and `long-shadows` and the
