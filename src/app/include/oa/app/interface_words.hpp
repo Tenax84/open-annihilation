@@ -246,6 +246,7 @@ inline constexpr std::string_view interface_words[] = {
     "The graphics card could not draw the battlefield, so it only scales it now. You can try Full "
     "again under Graphics in the OA settings.",
     "The map list does not hold this map.",
+    "The mutators this was made with cannot be read.",
     "The pack was not installed: {reason}",
     "This game includes no multiplayer maps, so multiplayer is not available.",
     "This game includes no skirmish maps, so skirmish is not available.",
@@ -253,6 +254,7 @@ inline constexpr std::string_view interface_words[] = {
     "the file again.",
     "This map is for the TA demo.",
     "This map is for {name}.",
+    "This needs a mutator you do not have: {detail}",
     "Total Annihilation",
     "Touch",
     "Try again",

@@ -9314,6 +9314,14 @@
 	it=Il mod è stato tolto perché un'espansione che gli serve è spenta. Il gioco va con No Mod.;
 	}
 
+[The mutators this was made with cannot be read.]
+	{
+	de=Die Mutatoren, mit denen das gemacht wurde, lassen sich nicht lesen.;
+	fr=Les mutateurs avec lesquels ça a été fait sont illisibles.;
+	es=Los mutadores con los que se hizo esto no se pueden leer.;
+	it=I mutatori con cui è stato fatto questo non si possono leggere.;
+	}
+
 [The new game files are used from the next start of Open Annihilation. Adding or removing files waits until then.]
 	{
 	de=Die neuen Spieldateien gelten ab dem nächsten Start von Open Annihilation. Dateien hinzufügen oder entfernen wartet bis dahin.;
@@ -9776,6 +9784,14 @@
 	fr=Ce mod ne peut pas être utilisé;
 	es=Este mod no se puede usar;
 	it=Questo mod non si può usare;
+	}
+
+[This needs a mutator you do not have: {detail}]
+	{
+	de=Dafür brauchst du einen Mutator, den du nicht hast: {detail};
+	fr=Il te faut un mutateur que tu n'as pas : {detail};
+	es=Te hace falta un mutador que no tienes: {detail};
+	it=Ti serve un mutatore che non hai: {detail};
 	}
 
 [This replaces the game files on this {device} ({size}) with the folder you chose. The current folder is kept as Total Annihilation (old) until you remove it. Saved games and settings stay.]

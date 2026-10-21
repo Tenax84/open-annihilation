@@ -168,6 +168,10 @@ struct PipelineResult;
 struct ResolvedMutator;
 } // namespace oa::data::mutators
 
+namespace oa::data::saves {
+struct ContentMutator;
+} // namespace oa::data::saves
+
 namespace oa::platform::text_font {
 class FontStack;
 } // namespace oa::platform::text_font
@@ -1082,7 +1086,8 @@ class Runtime final : public menu::Host,
     /// calls it for the recording it writes.
     ///
     /// The save or the recording itself is unchanged, so an older build still
-    /// reads it. The note names the base game and the rule-changing expansions.
+    /// reads it. The note names the base game, the rule-changing expansions
+    /// and the mutators the match is playing.
     ///
     /// @param path the save or the recording
     void note_content_beside(const fs::path& path) const;
@@ -4360,6 +4365,48 @@ class Runtime final : public menu::Host,
         std::vector<std::string> fields
     );
 
+    /// The loadout the running match applied, as its canonical text.
+    ///
+    /// Empty when this match applied no mutator. The text is the one
+    /// canonical form, so a recording can store it and read it back.
+    ///
+    /// @return the canonical text, or empty when this match applied none
+    [[nodiscard]] std::string played_loadout_text() const;
+
+    /// The mutators the running match applied, for the content note.
+    ///
+    /// One entry per mutator of the applied loadout, in that order. The name
+    /// is the package's name, the one the player saw. Empty when this match
+    /// applied no mutator.
+    ///
+    /// @return the mutators, or an empty list when this match applied none
+    [[nodiscard]] std::vector<oa::data::saves::ContentMutator> played_mutators() const;
+
+    /// Why a recording's loadout cannot be played on this machine.
+    ///
+    /// Empty when the text is the canonical loadout and every mutator is
+    /// installed at that version and package SHA-256. `resolved` then holds
+    /// those mutators, in the loadout's order. Text that is not that form
+    /// is refused as unreadable. A mutator that is missing or at another
+    /// release is refused by name.
+    ///
+    /// @param loadout_text the recording's loadout text
+    /// @param[out] resolved the mutators, when the text can be played; may be null
+    /// @return the sentence, or empty when the loadout can be played
+    [[nodiscard]] std::string recorded_mutators_refusal(
+        std::string_view loadout_text, std::vector<oa::data::mutators::ResolvedMutator>* resolved
+    ) const;
+
+    /// Plays one list for the next match, then puts the player's list back.
+    ///
+    /// The list the player had chosen is kept. `playback` is chosen for the
+    /// next match, and an empty list chooses none. When that match ends, the
+    /// kept list is chosen again. A match already running is left as it is
+    /// until it ends and the next one starts.
+    ///
+    /// @param playback the mutators the next match plays, top first
+    void play_loadout_once(std::vector<oa::data::mutators::ResolvedMutator> playback);
+
   private:
 
     /// The mutators chosen for the next matches, and the running match's result.
@@ -4395,6 +4442,21 @@ class Runtime final : public menu::Host,
     /// dropped, the result, the loadout and the digest are kept so a later
     /// call can try again.
     void release_match_mutators() noexcept;
+
+    /// The player's chosen mutators, held aside while one replay plays another list.
+    struct ReplayLoadoutHold;
+
+    /// Frees the held list.
+    ///
+    /// @param hold state to free; null is allowed
+    static void destroy_replay_loadout_hold(ReplayLoadoutHold* hold) noexcept;
+
+    /// Puts the player's mutators back when a replay's match ends.
+    ///
+    /// The match that plays the replay's list tears down whatever came before
+    /// it, and that teardown is not the end of the replay. A quiet no-op when
+    /// no replay is holding the player's list.
+    void finish_replay_loadout();
 
     /// The name an installed pack gives a map, for a campaign load.
     friend const char* pack_index_title(void* context, const char* map_name);
@@ -16929,6 +16991,10 @@ class Runtime final : public menu::Host,
     // null until a choice is stored.
     std::unique_ptr<MutatorState, void (*)(MutatorState*) noexcept> mutator_state_{
         nullptr, destroy_mutator_state
+    };
+    /// The player's mutators while a replay plays the recording's list; null until then.
+    std::unique_ptr<ReplayLoadoutHold, void (*)(ReplayLoadoutHold*) noexcept> replay_loadout_hold_{
+        nullptr, destroy_replay_loadout_hold
     };
     // The mounted pack map, the game's names, the fits and the refusals;
     // null until a pack map is first named.
