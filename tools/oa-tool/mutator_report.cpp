@@ -10,10 +10,8 @@
 #include "oa/formats/tdf.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <ostream>
 #include <utility>
@@ -24,12 +22,26 @@ namespace {
 namespace tdf = oa::formats::tdf;
 namespace defs = oa::data::defs;
 
-constexpr std::size_t copyright_capacity = 0x80;
-constexpr const char* copyright_year = "0000";
-constexpr double version_minor_scale = 10.0;
 constexpr int8_t build_major = 3;
 constexpr int8_t build_minor = 1;
 constexpr std::string_view absent = "(absent)";
+
+/// Writes a byte below 0x20, and 0x7F, as `\xHH`. Every other byte stays.
+std::string escape_text(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    constexpr char hex[] = "0123456789ABCDEF";
+    for (const unsigned char piece : text) {
+        if (piece < 0x20 || piece == 0x7F) {
+            out.append("\\x");
+            out.push_back(hex[piece >> 4]);
+            out.push_back(hex[piece & 0x0F]);
+        } else {
+            out.push_back(static_cast<char>(piece));
+        }
+    }
+    return out;
+}
 
 /// Folds ASCII letters and turns backslashes into slashes.
 std::string normalize_path(std::string_view text) {
@@ -128,35 +140,6 @@ std::string sha256_of(const std::vector<uint8_t>& bytes) {
     return {hex.begin(), hex.end()};
 }
 
-/// Whole part of a version, toward -infinity, as the unit header reads it.
-int32_t floor_whole(double value) {
-    return static_cast<int32_t>(std::floor(value));
-}
-
-/// True when a Copyright value matches the notice, any year.
-bool copyright_matches(std::string_view text) {
-    char buffer[copyright_capacity]{};
-    const std::size_t count = std::min(text.size(), copyright_capacity - 1);
-    if (count != 0)
-        std::memcpy(buffer, text.data(), count);
-    const char* const slot = std::strstr(defs::unit_copyright, copyright_year);
-    if (slot == nullptr)
-        return false;
-    const auto year_at = static_cast<std::size_t>(slot - defs::unit_copyright);
-    if (year_at + 4 >= copyright_capacity)
-        return false;
-    std::memcpy(buffer + year_at, copyright_year, 4);
-    return std::strcmp(buffer, defs::unit_copyright) == 0;
-}
-
-/// True when a Version value is not above the running build.
-bool version_current(std::string_view text) {
-    const double version = text.empty() ? 0.0 : tdf::parse_double(std::string(text).c_str());
-    const int32_t major = floor_whole(version);
-    const int32_t minor = floor_whole((version - static_cast<double>(major)) * version_minor_scale);
-    return major < build_major || (major == build_major && minor <= build_minor);
-}
-
 /// Splits `[unitinfo] workertime` into the section path and the key.
 bool split_field(std::string_view key, std::string& section, std::string& name) {
     const auto mark = key.rfind("] ");
@@ -229,7 +212,7 @@ const std::string* field_of(const DumpedFile& file, std::string_view key) {
     return &found->second;
 }
 
-/// Classifies one FBI. Hidden files are not read.
+/// Classifies one FBI from `load_unit_header`. Hidden files are not read.
 void classify_unit(const oa::data::defs::Files& files, Dump& dump, const std::string& path) {
     const std::string name = unit_name_of(path);
     if (name.empty())
@@ -238,13 +221,8 @@ void classify_unit(const oa::data::defs::Files& files, Dump& dump, const std::st
         dump.dropped_units.insert_or_assign(name, "hidden");
         return;
     }
-    const auto stored = dump.files.find(path);
-    if (stored == dump.files.end())
+    if (!dump.files.contains(path))
         return;
-    const std::string* const copyright = field_of(stored->second, "[unitinfo] copyright");
-    const std::string notice =
-        copyright != nullptr ? *copyright : std::string(defs::unit_copyright_default);
-    const bool notice_ok = copyright_matches(notice);
     UnitDef unit{};
     defs::WeaponTdfSet weapons{};
     defs::weapon_tdf_set_init(&weapons);
@@ -256,14 +234,15 @@ void classify_unit(const oa::data::defs::Files& files, Dump& dump, const std::st
     bool refused = false;
     const bool loaded = defs::load_unit_header(&files, path.c_str(), unit, sources, &refused);
     defs::weapon_tdf_set_free(&weapons);
-    if (!notice_ok) {
+    if (!loaded) {
+        dump.dropped_units.insert_or_assign(name, "version");
+        return;
+    }
+    if (refused) {
         dump.dropped_units.insert_or_assign(name, "copyright");
         return;
     }
-    const std::string* const version = field_of(stored->second, "[unitinfo] version");
-    const bool current = version_current(version != nullptr ? *version : std::string_view{});
-    const bool catalog = loaded && (unit.flags & OA_UNIT_DEF_FLAG_AVAILABLE) != 0 && current;
-    if (!catalog)
+    if ((unit.flags & OA_UNIT_DEF_FLAG_AVAILABLE) == 0)
         dump.dropped_units.insert_or_assign(name, "version");
 }
 
@@ -336,10 +315,14 @@ std::set<std::string> available_units(const Dump& dump) {
 }
 
 /// Appends a journal suffix when the attribution names the write.
+///
+/// A field with no entry of its own uses the file's owner.
 void finish_line(
     std::string& line, const Attribution& attribution, std::string_view path, std::string_view field
 ) {
-    const std::vector<std::string>* const owners = attribution.ids(path, field);
+    const std::vector<std::string>* owners = attribution.ids(path, field);
+    if ((owners == nullptr || owners->empty()) && !field.empty())
+        owners = attribution.ids(path, {});
     if (owners == nullptr || owners->empty())
         return;
     line.push_back('\t');
@@ -363,11 +346,12 @@ std::string field_line(
     std::string name;
     if (!split_field(key, section, name))
         return {};
-    std::string line = "field " + path + " " + section + " " + name + ": ";
-    line.append(before != nullptr ? *before : std::string(absent));
+    std::string line =
+        "field " + escape_text(path) + " " + escape_text(section) + " " + escape_text(name) + ": ";
+    line.append(escape_text(before != nullptr ? *before : std::string(absent)));
     line.append(" -> ");
-    line.append(after != nullptr ? *after : std::string(absent));
-    finish_line(line, attribution, path, name);
+    line.append(escape_text(after != nullptr ? *after : std::string(absent)));
+    finish_line(line, attribution, path, key);
     return line;
 }
 
@@ -384,14 +368,14 @@ void append_path_lines(
     const bool had = before_file != before.files.end();
     const bool has = after_file != after.files.end();
     if (had && !has) {
-        std::string line = "file hidden " + path;
+        std::string line = "file hidden " + escape_text(path);
         finish_line(line, attribution, path, {});
         lines.push_back(std::move(line));
         return;
     }
     if (!had && has) {
         if (after_file->second.parsed) {
-            std::string line = "file added " + path;
+            std::string line = "file added " + escape_text(path);
             finish_line(line, attribution, path, {});
             lines.push_back(std::move(line));
             for (const auto& [key, value] : after_file->second.fields) {
@@ -401,16 +385,15 @@ void append_path_lines(
             }
             return;
         }
-        std::string line = "file added " + path + " " + after_file->second.sha256;
+        std::string line = "file added " + escape_text(path) + " " + after_file->second.sha256;
         finish_line(line, attribution, path, {});
         lines.push_back(std::move(line));
         return;
     }
     if (!had || !has)
         return;
-    const bool parsed =
-        text_extension(path) && (before_file->second.parsed || after_file->second.parsed);
-    if (parsed) {
+    const bool both_parsed = before_file->second.parsed && after_file->second.parsed;
+    if (both_parsed) {
         std::set<std::string> keys;
         for (const auto& [key, value] : before_file->second.fields) {
             (void)value;
@@ -440,8 +423,8 @@ void append_path_lines(
         return;
     }
     if (before_file->second.sha256 != after_file->second.sha256) {
-        std::string line = "file replaced " + path + " " + before_file->second.sha256 + " " +
-                           after_file->second.sha256;
+        std::string line = "file replaced " + escape_text(path) + " " + before_file->second.sha256 +
+                           " " + after_file->second.sha256;
         finish_line(line, attribution, path, {});
         lines.push_back(std::move(line));
     }
@@ -470,17 +453,45 @@ bool download_line(std::string_view line) {
     return false;
 }
 
+/// True when `text` is 64 hexadecimal digits.
+bool hash_token(std::string_view text) {
+    if (text.size() != 64)
+        return false;
+    for (const unsigned char piece : text) {
+        const bool digit = piece >= '0' && piece <= '9';
+        const bool lower = piece >= 'a' && piece <= 'f';
+        if (!digit && !lower)
+            return false;
+    }
+    return true;
+}
+
 /// The path a file or field line names.
+///
+/// A field path ends at the first ` [`. A hidden file, and a text file that
+/// was added, take the rest of the line. A hashed file line ends at the
+/// last hash token.
 std::string line_path(std::string_view line) {
-    constexpr std::string_view kinds[] = {
-        "file added ", "file hidden ", "file replaced ", "field "
-    };
+    constexpr std::string_view field = "field ";
+    if (line.starts_with(field)) {
+        const std::string_view rest = line.substr(field.size());
+        const auto bracket = rest.find(" [");
+        return std::string(rest.substr(0, bracket));
+    }
+    constexpr std::string_view kinds[] = {"file added ", "file hidden ", "file replaced "};
     for (const std::string_view kind : kinds) {
         if (!line.starts_with(kind))
             continue;
-        const std::string_view rest = line.substr(kind.size());
-        const auto space = rest.find(' ');
-        return std::string(rest.substr(0, space));
+        std::string_view rest = line.substr(kind.size());
+        if (kind != "file hidden ") {
+            while (true) {
+                const auto space = rest.rfind(' ');
+                if (space == std::string_view::npos || !hash_token(rest.substr(space + 1)))
+                    break;
+                rest = rest.substr(0, space);
+            }
+        }
+        return std::string(rest);
     }
     return {};
 }
@@ -533,7 +544,7 @@ bool field_parts(std::string_view line, std::string& path, std::string& section,
     if (!line.starts_with(prefix))
         return false;
     const std::string_view body = line.substr(prefix.size());
-    const auto path_end = body.find(' ');
+    const auto path_end = body.find(" [");
     if (path_end == std::string_view::npos)
         return false;
     path.assign(body.substr(0, path_end));
@@ -550,18 +561,41 @@ bool field_parts(std::string_view line, std::string& path, std::string& section,
     return true;
 }
 
-/// True when a GUI field sits in a section whose name is the unit.
+/// The first `[gadget]` of a section path.
+std::string gadget_of(std::string_view section) {
+    if (section.empty() || section.front() != '[')
+        return {};
+    const auto end = section.find(']');
+    if (end == std::string_view::npos)
+        return {};
+    return std::string(section.substr(0, end + 1));
+}
+
+/// True when `section` is `gadget` or a child of it, and not a longer gadget.
+bool under_gadget(std::string_view section, std::string_view gadget) {
+    if (!section.starts_with(gadget))
+        return false;
+    return section.size() == gadget.size() || section[gadget.size()] == '[';
+}
+
+/// True when a GUI field belongs to a gadget named for the unit.
 bool gui_button(std::string_view line, const Dump& dump, const std::string& name) {
     std::string path;
     std::string section;
     std::string key;
     if (!field_parts(line, path, section, key) || !path.starts_with("guis/"))
         return false;
+    const std::string gadget = gadget_of(section);
+    if (gadget.empty() || !under_gadget(section, gadget))
+        return false;
     const auto file = dump.files.find(path);
     if (file == dump.files.end())
         return false;
-    const std::string* const label = field_of(file->second, section + " name");
-    return label != nullptr && same_ascii(*label, name);
+    const std::string* const common = field_of(file->second, gadget + "[common] name");
+    const std::string* const plain = field_of(file->second, gadget + " name");
+    const bool named = (common != nullptr && same_ascii(*common, name)) ||
+                       (plain != nullptr && same_ascii(*plain, name));
+    return named;
 }
 
 /// `*` any run, `?` one character, matched against the whole text.
@@ -600,10 +634,12 @@ std::set<std::string> every_path(const Dump& before, const Dump& after) {
     return paths;
 }
 
+/// The hidden-path set a lookup observer fills.
 struct HiddenNote {
-    std::set<std::string>* hidden{};
+    std::set<std::string>* hidden{}; ///< paths the mutator layer hid
 };
 
+/// Records a path the mutator layer hid.
 void note_hidden(void* context, std::string_view path, std::string_view owner, bool hidden) {
     (void)owner;
     if (!hidden || context == nullptr)
@@ -637,30 +673,38 @@ Attribution::ids(std::string_view path, std::string_view field) const {
     return &found->second;
 }
 
-Dump dump_store(const oa::AssetStore& store) {
+Dump dump_store(oa::AssetStore& store, const Dump* unchanged) {
     Dump dump;
-    // The listing is const, and the observer that hears a hidden path is not.
-    // It is cleared before this returns, so nothing keeps the note.
-    auto& mutable_store = const_cast<oa::AssetStore&>(store);
+    // The observer is cleared before this returns, which also clears one the
+    // caller had installed. Nothing keeps the note.
     HiddenNote note{&dump.hidden};
     oa::LookupObserver observer{};
     observer.context = &note;
     observer.mutator_layer_used = note_hidden;
-    mutable_store.observe_lookups(observer);
+    store.observe_lookups(observer);
     std::vector<std::string> listed;
     try {
         listed = store.list_effective_recursive("", "");
     } catch (...) {
-        mutable_store.observe_lookups({});
+        store.observe_lookups({});
         throw;
     }
-    mutable_store.observe_lookups({});
+    store.observe_lookups({});
 
     for (const std::string& listed_path : listed) {
         const std::string path = normalize_path(listed_path);
+        const oa::Provider provider = store.provider(path);
+        const bool layered = provider.kind == oa::ProviderKind::mutator_layer;
+        if (unchanged != nullptr && !layered && !dump.hidden.contains(path)) {
+            const auto kept = unchanged->files.find(path);
+            if (kept != unchanged->files.end()) {
+                dump.files.insert_or_assign(path, kept->second);
+                continue;
+            }
+        }
         const std::vector<uint8_t> bytes = store.read(path).bytes;
         DumpedFile file;
-        file.source = source_label(store.provider(path));
+        file.source = source_label(provider);
         file.sha256 = sha256_of(bytes);
         if (text_extension(path) && bytes.size() <= tdf::max_input_bytes) {
             const std::string_view text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
@@ -696,14 +740,14 @@ report_lines(const Dump& before, const Dump& after, const Attribution& attributi
             continue;
         const auto reason = after.dropped_units.find(name);
         const std::string why = reason != after.dropped_units.end() ? reason->second : "hidden";
-        std::string line = "unit dropped " + name + " " + why;
+        std::string line = "unit dropped " + escape_text(name) + " " + why;
         finish_line(line, attribution, "units/" + lower_ascii(name) + ".fbi", {});
         lines.push_back(std::move(line));
     }
     for (const std::string& name : after_units) {
         if (before_units.contains(name))
             continue;
-        std::string line = "unit added " + name;
+        std::string line = "unit added " + escape_text(name);
         finish_line(line, attribution, "units/" + lower_ascii(name) + ".fbi", {});
         lines.push_back(std::move(line));
     }
@@ -712,17 +756,20 @@ report_lines(const Dump& before, const Dump& after, const Attribution& attributi
     for (const MenuEntry& entry : before.menus) {
         if (after.menus.contains(entry))
             continue;
-        lines.push_back(
-            "menu removed " + entry.builder + " " + entry.page + " " + entry.button + " " +
-            entry.unit
-        );
+        std::string line = "menu removed " + escape_text(entry.builder) + " " +
+                           escape_text(entry.page) + " " + escape_text(entry.button) + " " +
+                           escape_text(entry.unit);
+        finish_line(line, attribution, "menu", entry.unit);
+        lines.push_back(std::move(line));
     }
     for (const MenuEntry& entry : after.menus) {
         if (before.menus.contains(entry))
             continue;
-        lines.push_back(
-            "menu added " + entry.builder + " " + entry.page + " " + entry.button + " " + entry.unit
-        );
+        std::string line = "menu added " + escape_text(entry.builder) + " " +
+                           escape_text(entry.page) + " " + escape_text(entry.button) + " " +
+                           escape_text(entry.unit);
+        finish_line(line, attribution, "menu", entry.unit);
+        lines.push_back(std::move(line));
     }
     std::sort(lines.begin(), lines.end());
     return lines;
@@ -819,6 +866,11 @@ Comparison compare(
 }
 
 std::optional<AllowList> parse_allowed(std::string_view text, std::string* error) {
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
+        static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.remove_prefix(3);
+    }
     AllowList list;
     bool reason = false;
     std::size_t line_number = 1;
@@ -851,11 +903,11 @@ std::optional<AllowList> parse_allowed(std::string_view text, std::string* error
 
 void write_dump(std::ostream& out, const Dump& dump) {
     for (const auto& [path, file] : dump.files) {
-        out << path << '\t' << file.source << '\t' << file.sha256 << '\n';
+        out << escape_text(path) << '\t' << escape_text(file.source) << '\t' << file.sha256 << '\n';
         if (!file.parsed)
             continue;
         for (const auto& [key, value] : file.fields)
-            out << '\t' << key << " = " << value << '\n';
+            out << '\t' << escape_text(key) << " = " << escape_text(value) << '\n';
     }
 }
 

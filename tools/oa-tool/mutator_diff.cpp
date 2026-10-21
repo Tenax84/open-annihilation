@@ -63,29 +63,23 @@ int usage(Output& output, std::string_view problem) {
     return exit_usage;
 }
 
-/// The file name of a path, as UTF-8.
-std::string file_name_of(const fs::path& path) {
-    const auto text = path.filename().u8string();
-    return {text.begin(), text.end()};
-}
-
 /// A path as UTF-8, for a refusal that names a file the player passed.
 std::string path_text(const fs::path& path) {
     const auto text = path.u8string();
     return {text.begin(), text.end()};
 }
 
-/// Folds ASCII letters and turns backslashes into slashes.
-std::string normalize_path(std::string_view text) {
-    std::string out;
-    out.reserve(text.size());
-    for (const unsigned char piece : text) {
-        char lowered = static_cast<char>(piece);
-        if (lowered == '\\')
-            lowered = '/';
-        else if (lowered >= 'A' && lowered <= 'Z')
-            lowered = static_cast<char>(lowered - 'A' + 'a');
-        out.push_back(lowered);
+/// A command-line path, read as UTF-8 rather than the ANSI code page.
+fs::path utf8_path(std::string_view text) {
+    return fs::path(std::u8string(text.begin(), text.end()));
+}
+
+/// Folds ASCII letters to lower case.
+std::string lower_ascii(std::string_view text) {
+    std::string out(text);
+    for (char& piece : out) {
+        if (piece >= 'A' && piece <= 'Z')
+            piece = static_cast<char>(piece - 'A' + 'a');
     }
     return out;
 }
@@ -143,7 +137,8 @@ std::string game_label(const std::vector<fs::path>& archives) {
     for (const fs::path& archive : archives) {
         if (!line.empty())
             line.push_back(' ');
-        line.append(file_name_of(archive));
+        const auto text = archive.filename().u8string();
+        line.append(text.begin(), text.end());
     }
     return line;
 }
@@ -232,17 +227,75 @@ resolve_specs(const std::vector<std::string>& specs, std::string& problem) {
     return listed;
 }
 
-/// The map the maps phase reads. A missing OTA leaves the bytes empty.
-mutators::ChosenMap chosen_map(const oa::AssetStore& store, std::string_view name) {
+/// The map the maps phase reads. A missing OTA is reported through `problem`.
+std::optional<mutators::ChosenMap>
+chosen_map(const oa::AssetStore& store, std::string_view name, std::string& problem) {
     mutators::ChosenMap chosen;
     chosen.key = std::string(name);
     chosen.ota_path = "maps/" + chosen.key + ".ota";
     const std::size_t mark = chosen.key.rfind('@');
     if (mark != std::string::npos && mark + 1 < chosen.key.size())
         chosen.pack = chosen.key.substr(mark + 1);
-    if (const std::optional<std::vector<uint8_t>> bytes = store.load_file_contents(chosen.ota_path))
-        chosen.ota = std::make_shared<const std::vector<uint8_t>>(std::move(*bytes));
+    std::optional<std::vector<uint8_t>> bytes = store.load_file_contents(chosen.ota_path);
+    if (!bytes || bytes->empty()) {
+        const std::string folded = lower_ascii(name);
+        for (const std::string& listed : store.list_effective("maps", ".ota")) {
+            const auto slash = listed.rfind('/');
+            const std::string_view file = slash == std::string::npos
+                                              ? std::string_view{listed}
+                                              : std::string_view{listed}.substr(slash + 1);
+            if (!file.ends_with(".ota"))
+                continue;
+            const std::string_view stem = file.substr(0, file.size() - 4);
+            if (lower_ascii(stem) != folded)
+                continue;
+            chosen.key = std::string(stem);
+            chosen.ota_path = "maps/" + chosen.key + ".ota";
+            bytes = store.load_file_contents(chosen.ota_path);
+            break;
+        }
+    }
+    if (!bytes || bytes->empty()) {
+        problem = "map " + std::string(name) + " is not in this game";
+        return std::nullopt;
+    }
+    chosen.ota = std::make_shared<const std::vector<uint8_t>>(std::move(*bytes));
     return chosen;
+}
+
+/// The dump field key a journal entry names, or empty for a whole file.
+std::string journal_field(const mutators::JournalEntry& entry) {
+    if (entry.field.empty())
+        return {};
+    const std::string field = lower_ascii(entry.field);
+    const std::string block = lower_ascii(entry.block);
+    const bool ota = entry.record.starts_with("map:") || lower_ascii(entry.path).ends_with(".ota");
+    if (ota) {
+        std::string section = "[globalheader]";
+        constexpr std::string_view schema = "/Schema ";
+        const auto mark = entry.record.find(schema);
+        if (mark != std::string::npos)
+            section += "[schema " + lower_ascii(entry.record.substr(mark + schema.size())) + "]";
+        return section + " " + field;
+    }
+    std::string section;
+    if (entry.collection == mutators::Collection::units) {
+        section = "[unitinfo]";
+    } else if (
+        entry.collection == mutators::Collection::weapons ||
+        entry.collection == mutators::Collection::features ||
+        entry.collection == mutators::Collection::menus ||
+        entry.collection == mutators::Collection::sides ||
+        entry.collection == mutators::Collection::tables
+    ) {
+        if (!entry.record.empty())
+            section = "[" + lower_ascii(entry.record) + "]";
+    }
+    if (section.empty())
+        return field;
+    if (!block.empty())
+        section += "[" + block + "]";
+    return section + " " + field;
 }
 
 /// Records journal writers in loadout order, each id once per path and field.
@@ -251,28 +304,28 @@ void attribute(
     const mutators::Journal& journal,
     const std::vector<std::string>& ids
 ) {
-    std::map<std::string, std::set<uint16_t>> buckets;
+    const auto add_index = [&](std::string_view path, std::string_view field, uint16_t index) {
+        if (static_cast<std::size_t>(index) >= ids.size())
+            return;
+        attribution.add(path, field, ids[index]);
+    };
     for (const mutators::JournalEntry& entry : journal.entries) {
         const bool file_level = entry.field.empty() && (entry.change == mutators::Change::added ||
                                                         entry.change == mutators::Change::hidden ||
                                                         entry.change == mutators::Change::removed);
-        if (entry.field.empty() && !file_level)
-            continue;
-        std::string key = normalize_path(entry.path);
-        key.push_back('\n');
-        key.append(entry.field);
-        std::set<uint16_t>& indices = buckets[key];
+        const std::string field = journal_field(entry);
         for (const uint16_t index : entry.mutators) {
-            if (static_cast<std::size_t>(index) < ids.size())
-                indices.insert(index);
+            if (file_level || field.empty())
+                add_index(entry.path, {}, index);
+            if (!field.empty())
+                add_index(entry.path, field, index);
+            if (entry.collection != mutators::Collection::menus)
+                continue;
+            if (!entry.record.empty())
+                add_index("menu", entry.record, index);
+            if (lower_ascii(entry.field) == "unitname" && entry.new_text.has_value())
+                add_index("menu", *entry.new_text, index);
         }
-    }
-    for (const auto& [key, indices] : buckets) {
-        const auto split = key.find('\n');
-        const std::string path = key.substr(0, split);
-        const std::string field = key.substr(split + 1);
-        for (const uint16_t index : indices)
-            attribution.add(path, field, ids[index]);
     }
 }
 
@@ -344,17 +397,26 @@ Side apply_loadout(
         throw Failure(failure_reason(result));
     report::Attribution attribution;
     attribute(attribution, result.journal, ids);
-    side.after = report::dump_store(store);
+    side.after = report::dump_store(store, &before);
     side.lines = report::report_lines(before, side.after, attribution);
     return side;
 }
 
 /// Prints the comparison and returns 0 only when nothing remains unmatched.
-int write_comparison(Output& output, const report::Comparison& compared) {
+int write_comparison(
+    Output& output,
+    const std::string& header,
+    const std::string& versus,
+    const report::Comparison& compared
+) {
+    output.out << header;
+    output.out << "# versus: " << versus << '\n';
     for (const std::string& line : compared.left_only)
         output.out << line << '\n';
     for (const std::string& line : compared.right_only)
         output.out << line << '\n';
+    for (const std::string& line : compared.allowed)
+        output.out << "allowed " << line << '\n';
     for (const std::string& pattern : compared.unused_patterns)
         output.out << "allowed difference matched nothing: " << pattern << '\n';
     const std::size_t differences = compared.left_only.size() + compared.right_only.size();
@@ -395,10 +457,18 @@ int run_mutator_diff(std::span<const std::string> arguments, Output& output) {
 
     report::AllowList allowed;
     if (allow_path != nullptr) {
-        std::optional<report::AllowList> read = read_allow(fs::path(*allow_path), problem);
+        std::optional<report::AllowList> read = read_allow(utf8_path(*allow_path), problem);
         if (!read)
             return usage(output, problem);
         allowed = std::move(*read);
+    }
+
+    std::ofstream dumped;
+    const std::string* const dump_path = parsed->value("dump");
+    if (dump_path != nullptr) {
+        dumped.open(utf8_path(*dump_path), std::ios::out | std::ios::binary);
+        if (!dumped)
+            return usage(output, *dump_path + ": cannot be written");
     }
 
     const std::vector<std::string> specs = repeated(*parsed, "mutator");
@@ -411,15 +481,15 @@ int run_mutator_diff(std::span<const std::string> arguments, Output& output) {
     if (!other)
         return usage(output, problem);
 
-    const fs::path game(*game_dir);
+    const fs::path game = utf8_path(*game_dir);
     const std::string* const mod_text = parsed->value("mod-dir");
     app::ModChoice choice;
     if (mod_text != nullptr)
-        choice.folder = fs::path(*mod_text);
+        choice.folder = utf8_path(*mod_text);
     const app::GameInstall install = app::inspect_game_install(game, {}, app::demo_1997, choice);
     if (!install.profile_errors.empty() || !install.problem.empty() || !install.folder ||
         install.archives.empty() || install.folders.empty()) {
-        throw Failure(app::describe_install_problem(install));
+        throw Failure(path_text(game) + ": " + app::describe_install_problem(install));
     }
 
     oa::AssetStore store(install.folders);
@@ -429,19 +499,19 @@ int run_mutator_diff(std::span<const std::string> arguments, Output& output) {
     }
     const oa::data::defs::DataLayout layout = app::data_layout_of(install.profile.get());
     std::optional<mutators::ChosenMap> map;
-    if (map_name != nullptr)
-        map = chosen_map(store, *map_name);
+    if (map_name != nullptr) {
+        map = chosen_map(store, *map_name, problem);
+        if (!map)
+            return usage(output, problem);
+    }
+    const std::string* const shown_map = map.has_value() ? &map->key : nullptr;
 
     const report::Dump before = report::dump_store(store);
     const Side left = apply_loadout(store, before, *listed, install, layout, seed, map);
-    const std::string* const dump_path = parsed->value("dump");
     if (dump_path != nullptr) {
-        std::ofstream dumped(*dump_path, std::ios::out | std::ios::binary);
-        if (!dumped)
-            throw Failure("cannot write " + *dump_path);
         report::write_dump(dumped, left.after);
         if (!dumped)
-            throw Failure("cannot write " + *dump_path);
+            throw Failure(*dump_path + ": cannot be written");
     }
 
     if (!versus.empty()) {
@@ -449,10 +519,12 @@ int run_mutator_diff(std::span<const std::string> arguments, Output& output) {
         const Side right = apply_loadout(store, before, *other, install, layout, seed, map);
         const report::Comparison compared =
             report::compare(left.lines, right.lines, left.after, right.after, allowed);
-        return write_comparison(output, compared);
+        return write_comparison(
+            output, header_text(install, *listed, seed, shown_map), loadout_label(*other), compared
+        );
     }
 
-    output.out << header_text(install, *listed, seed, map_name);
+    output.out << header_text(install, *listed, seed, shown_map);
     for (const std::string& line : left.lines)
         output.out << line << '\n';
     return exit_done;

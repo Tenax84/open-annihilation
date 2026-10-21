@@ -63,8 +63,10 @@ struct Dump {
 
 /// The mutators behind each changed path and field.
 ///
-/// The key is the lower-case path, a line feed and the lower-case field
-/// name. The field name is empty for a file added or hidden. Ids are the
+/// The key is the lower-case path, a line feed and the field the dump
+/// uses: the lower-case section path, a space and the key, as in
+/// `[unitinfo] workertime`. The field is empty for a whole file. A menu
+/// line is stored under the path `menu` and the unit's name. Ids are the
 /// manifest ids, in loadout order, each once.
 class Attribution {
   public:
@@ -75,14 +77,15 @@ class Attribution {
     /// ids in loadout order.
     ///
     /// @param path document path
-    /// @param field field name; empty for a whole file
+    /// @param field the dump's field key, or empty for a whole file; a menu
+    ///        line uses the unit name
     /// @param id the mutator's manifest id
     void add(std::string_view path, std::string_view field, std::string_view id);
 
     /// Returns the ids recorded for a path and a field.
     ///
     /// @param path document path
-    /// @param field field name; empty for a whole file
+    /// @param field the dump's field key, or empty for a whole file
     /// @return the ids, or null when none were recorded
     [[nodiscard]] const std::vector<std::string>*
     ids(std::string_view path, std::string_view field) const;
@@ -110,13 +113,20 @@ struct Comparison {
 /// Effective files keep their source label and SHA-256. FBI, TDF, GUI and
 /// OTA files that parse keep their fields. Hidden paths are the files a
 /// mutator layer left out of that listing. A unit is dropped when its FBI
-/// is hidden or `load_unit_header` clears its catalog bit; a copyright that
-/// does not match is reported before a version that is too new. A download
-/// entry is kept when its builder and its unit are both available.
+/// is hidden, or when `load_unit_header` refuses it (`copyright`) or leaves
+/// it out of the catalog (`version`), including a file that call cannot
+/// read. A download entry is kept when its builder and its unit are both
+/// available.
+///
+/// An observer is set for the listing and cleared before return, which
+/// clears an observer the caller had installed. When `unchanged` is set, a
+/// path the mutator layer does not serve and does not hide keeps that
+/// dump's entry, so the game's own bytes are hashed once.
 ///
 /// @param store the mounted game, with any mutator layer already applied
+/// @param unchanged an earlier dump of the same store; null hashes every file
 /// @return the dump
-[[nodiscard]] Dump dump_store(const oa::AssetStore& store);
+[[nodiscard]] Dump dump_store(oa::AssetStore& store, const Dump* unchanged = nullptr);
 
 /// Writes the change lines from a before-dump to an after-dump.
 ///
@@ -135,7 +145,8 @@ report_lines(const Dump& before, const Dump& after, const Attribution& attributi
 /// The lines compared are the text before a tab. Download file and field
 /// lines are dropped. For a unit both sides drop, the reason is removed
 /// from the `unit dropped` line and that unit's FBI lines, menu lines and
-/// build-button GUI lines are dropped. A pattern matches a whole
+/// every field of a GUI gadget whose `[COMMON] name` or `name` is that unit
+/// are dropped. A pattern matches a whole
 /// `left only` or `right only` line. `*` is any run of characters and `?`
 /// is one character.
 ///
