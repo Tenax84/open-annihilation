@@ -1085,6 +1085,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_package_kinds.cpp
   src/app/runtime_mutator_library.cpp
   src/app/runtime_mutators.cpp
+  src/app/runtime_mutators_hacks.cpp
   src/app/runtime_mutators_maps.cpp
   src/app/runtime_pack_maps.cpp
   src/app/pack_map_source.cpp

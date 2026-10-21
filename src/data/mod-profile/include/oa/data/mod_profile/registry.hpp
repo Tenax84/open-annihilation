@@ -183,8 +183,10 @@ struct Constraint {
 struct Entry {
     std::string_view id{};
     EntryKind kind{};
-    Scope scope{};              ///< whether the entry's presence is hashed
-    bool visual{};              ///< a visual hack
+    Scope scope{}; ///< whether the entry's presence is hashed
+    bool visual{}; ///< a visual hack
+    /// A mutator's hacks block may set this entry's match parameters.
+    bool mutator{};
     bool implemented{};         ///< a hack this engine carries out
     std::string_view key{};     ///< an identity, layout, string or media value's profile key
     ValueSpec value{};          ///< an identity, layout, string, media or data-key value

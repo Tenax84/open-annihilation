@@ -13,7 +13,7 @@
 
 ## Description
 
-Sets the slowest and fastest game speed players can choose, and lets the host lock the speed to a narrower range for one game. The default allows speed 0, at which the game stands still without being paused; 3.1c allows 1 to 20 and has no lock.
+Sets the slowest and fastest game speed players can choose, and lets the host lock the speed to a narrower range for one game. The default allows speed 0, at which the game stands still without being paused; 3.1c allows 1 to 20 and has no lock. A mutator may set `min` and `max` for one game.
 
 ## Configuration example
 

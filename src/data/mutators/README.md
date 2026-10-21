@@ -13,7 +13,7 @@ sentence chosen from the rule, which is not this module's to write.
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
 `oa/data/mutators/choice.hpp`, `oa/data/mutators/collections.hpp`,
-`oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/files_layer.hpp`, `oa/data/mutators/hacks.hpp`,
 `oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
 `oa/data/mutators/maps.hpp`, `oa/data/mutators/pipeline.hpp`,
 `oa/data/mutators/rules_lua.hpp`, `oa/data/mutators/verdicts.hpp` and
@@ -26,6 +26,11 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 - `rule_name` returns the stable lower-case name of a `PathRule`.
 - `build_files_layer` turns an ordered list of files plans into one
   `MutatorLayerSpec`. See [Files layer](#files-layer).
+- `read_hacks` reads a plan's `hacks` table, `merge_hacks` keeps the later
+  value for each path, and `developer_conflicts` notes where those hacks
+  overlap Developer Mode or a mod that leaves the entry off. `hack_faults`
+  names the mutators a refused resolution of those hacks fails: each one
+  an error names, or every one when no error names any.
 - `run_pipeline` runs an ordered list of mutators against an asset store
   and returns each mutator's outcome, the layer it left mounted, the
   `Journal` of the changes kept and the `ConflictReport`. See
@@ -172,7 +177,10 @@ hook, its rules or its files would have reached the mutators below it, and
 with the mutators that require it. It also covers plans whose tables have
 metatables, the allowances and the string cap, files added, masked and
 hidden with their journal entries, a document that does not parse, a
-player's option, the list checks and two identical runs. It also runs two
+player's option, the list checks and two identical runs. A hack the
+check refuses, with a units hook beside it, fails in the plan phase and
+leaves no hook change and no journal entry.
+It also runs two
 mutators that share `weapons/extra.tdf`, a unit file that replaces a unit,
 a weapon body that must not move a base id, download sections from two
 mutators, a rule that sees the unit its own file added, and a weapon table
@@ -194,6 +202,9 @@ requests are what overflow, that later mutator is the one refused.
 
 `data-mutators-journal` (`tests/journal_test.cpp`) checks the entry order,
 `entries_of`, each note conversion and the sentences `describe` writes.
+`data-mutators-hacks` (`tests/hacks_test.cpp`) checks reading a hacks table,
+the value's normal form, merging two mutators, the Developer Mode notes,
+and the values the resolver plays.
 
 `data-mutators-sides` (`tests/collections_sides_test.cpp`) runs made-up
 Ridge packages through `run_pipeline` and checks side fields, build lists,
@@ -838,8 +849,18 @@ real-time limit in force, and by raw access only, so no metamethod of the
 script runs. The plan, its `files` table, the `mask` and `add` lists and the
 `rules` list must be plain tables. One with a metatable refuses the plan,
 because its raw contents need not be what the script meant. A plan key the
-engine does not support yet (`menus`, `sides`, `tables` and
-`hacks`) refuses the plan instead of being ignored.
+engine does not support yet (`menus`, `sides` and `tables`) refuses the
+plan instead of being ignored. A `hacks` table sets match parameters of
+entries the registry marks `mutator: true`. Today those are
+`limits.units-per-player.default`, `console.game-speed-range.min` and
+`console.game-speed-range.max`. The manifest must list the `hacks` layer.
+Each value is kept in the registry's normal form. A hack the registry does
+not open, a value it refuses, a table it cannot read, or a `hacks` table
+whose manifest lacks the layer fails that mutator in the plan phase, as
+`Cause::hack_refused`, and the game starts without it.
+`PipelineInput::check_hacks` runs after the plans are read and before
+files, rules and hooks, so a hack the profile refuses fails the same way
+and the pass runs again without that mutator. Nothing of it is mounted.
 
 A pass is a transaction. A plan, or a rule aimed at a folder no mutator may
 change, depends on nothing but the mutator itself, so every such failure is
