@@ -347,6 +347,7 @@ Network play's own checks, the last rows, are in every build.
 | `--check-factory-orders` | Gives a Kbot Lab a move and checks the unit it builds carries it out. |
 | `--check-unit-speech` | Selects and orders the commander and checks what it says. |
 | `--check-mutator-layer` | Plays skirmishes with the mutators `--mutator` named and checks the commanders, and that a mutator which does not apply leaves no layer. |
+| `--check-replay-loadout` | Checks a recorded loadout against the installed mutators, plays it for one skirmish and puts the player's own list back. |
 | `--check-download-builds` | Builds a unit from a download page. |
 | `--check-stockpile-builds` | Queues and builds rounds for every unit that stockpiles, through a save and a load. |
 | `--check-unit-page-memory` | Checks each unit keeps its order page through reselection, a save and a load. |

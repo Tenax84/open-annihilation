@@ -315,6 +315,7 @@ void check_game_files_options(Options& options) {
         {options.check_factory_orders, "--check-factory-orders"},
         {options.check_unit_speech, "--check-unit-speech"},
         {options.check_mutator_layer, "--check-mutator-layer"},
+        {options.check_replay_loadout, "--check-replay-loadout"},
         {options.check_side_data_per_match, "--check-side-data-per-match"},
         {options.check_gadget_art_per_match, "--check-gadget-art-per-match"},
         {options.check_download_builds, "--check-download-builds"},
@@ -539,6 +540,7 @@ void check_director_options(Options& options) {
         {options.check_factory_orders, "--check-factory-orders"},
         {options.check_unit_speech, "--check-unit-speech"},
         {options.check_mutator_layer, "--check-mutator-layer"},
+        {options.check_replay_loadout, "--check-replay-loadout"},
         {options.check_side_data_per_match, "--check-side-data-per-match"},
         {options.check_gadget_art_per_match, "--check-gadget-art-per-match"},
         {options.check_download_builds, "--check-download-builds"},
@@ -627,6 +629,7 @@ void refuse_left_out_self_checks([[maybe_unused]] const Options& options) {
             {options.check_factory_orders, "--check-factory-orders"},
             {options.check_unit_speech, "--check-unit-speech"},
             {options.check_mutator_layer, "--check-mutator-layer"},
+            {options.check_replay_loadout, "--check-replay-loadout"},
             {options.check_side_data_per_match, "--check-side-data-per-match"},
             {options.check_gadget_art_per_match, "--check-gadget-art-per-match"},
             {options.check_download_builds, "--check-download-builds"},
@@ -845,6 +848,7 @@ constexpr FlagOption kFlagOptions[] = {
     {"--check-factory-orders", &Options::check_factory_orders},
     {"--check-unit-speech", &Options::check_unit_speech},
     {"--check-mutator-layer", &Options::check_mutator_layer},
+    {"--check-replay-loadout", &Options::check_replay_loadout},
     {"--check-side-data-per-match", &Options::check_side_data_per_match},
     {"--check-gadget-art-per-match", &Options::check_gadget_art_per_match},
     {"--check-download-builds", &Options::check_download_builds},
@@ -1434,7 +1438,8 @@ void write_startup_line(std::string_view text) {
                      "[--check-match-dialogs] [--check-match-layers] "
                      "[--check-render-tiers [--force-capable]] "
                      "[--check-match-orders] [--check-side-orders] [--check-factory-orders] "
-                     "[--check-unit-speech] [--check-mutator-layer] [--check-side-data-per-match] "
+                     "[--check-unit-speech] [--check-mutator-layer] [--check-replay-loadout] "
+                     "[--check-side-data-per-match] "
                      "[--check-gadget-art-per-match] "
                      "[--check-download-builds] [--check-stockpile-builds] "
                      "[--check-unit-page-memory] [--check-side-column] [--check-match-bars] "
@@ -1660,22 +1665,22 @@ void write_startup_line(std::string_view text) {
         result.check_library_install || result.check_library_map_previews ||
         result.check_library_content || result.check_renderer_ladder || result.check_match_orders ||
         result.check_factory_orders || result.check_unit_speech || result.check_mutator_layer ||
-        result.check_side_data_per_match || result.check_gadget_art_per_match ||
-        result.check_download_builds || result.check_stockpile_builds ||
-        result.check_unit_page_memory || result.check_side_column || result.check_match_bars ||
-        !result.check_unit_pages.empty() || result.check_kill_board ||
-        !result.check_unit_language.empty() || result.check_language_switch ||
-        result.check_language_registry || result.check_language_notice || result.check_first_run ||
-        result.check_setup_window || result.check_window_place || result.check_progress ||
-        result.check_text_fit || result.check_folder_chooser || result.check_patrol_reclaim ||
-        result.check_reclaim_cursor || result.check_wreck_pick || result.check_build_preview ||
-        result.check_pointer_interfaces || result.check_megamap_clicks ||
-        result.check_radar_orders || result.check_touch_controls || result.check_pad_controls ||
-        result.check_running_while_inactive || result.check_director_view ||
-        result.check_director_render || result.check_interpolation || result.check_unit_playout ||
-        result.check_paused_save || result.check_simulation_hash || result.check_zoom_memory ||
-        result.check_map_packs || result.check_map_browser || result.check_map_pack_lists ||
-        result.check_mod_map_settings || result.check_side_orders;
+        result.check_replay_loadout || result.check_side_data_per_match ||
+        result.check_gadget_art_per_match || result.check_download_builds ||
+        result.check_stockpile_builds || result.check_unit_page_memory ||
+        result.check_side_column || result.check_match_bars || !result.check_unit_pages.empty() ||
+        result.check_kill_board || !result.check_unit_language.empty() ||
+        result.check_language_switch || result.check_language_registry ||
+        result.check_language_notice || result.check_first_run || result.check_setup_window ||
+        result.check_window_place || result.check_progress || result.check_text_fit ||
+        result.check_folder_chooser || result.check_patrol_reclaim || result.check_reclaim_cursor ||
+        result.check_wreck_pick || result.check_build_preview || result.check_pointer_interfaces ||
+        result.check_megamap_clicks || result.check_radar_orders || result.check_touch_controls ||
+        result.check_pad_controls || result.check_running_while_inactive ||
+        result.check_director_view || result.check_director_render || result.check_interpolation ||
+        result.check_unit_playout || result.check_paused_save || result.check_simulation_hash ||
+        result.check_zoom_memory || result.check_map_packs || result.check_map_browser ||
+        result.check_map_pack_lists || result.check_mod_map_settings || result.check_side_orders;
     // A capture and a showcase need the application's own loop and window,
     // which checks and benchmarks do not run.
     const bool check_run = result.fixed_clock || result.check_navigation ||

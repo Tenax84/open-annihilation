@@ -809,6 +809,11 @@ int Runtime::run() {
             flush_preferences();
             return 0;
         }
+        if (options_.check_replay_loadout) {
+            check_replay_loadout();
+            flush_preferences();
+            return 0;
+        }
         if (options_.check_side_data_per_match) {
             check_side_data_per_match();
             flush_preferences();

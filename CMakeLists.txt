@@ -1149,6 +1149,7 @@ set(oa_game_self_check_sources src/app/runtime_checks.cpp src/app/runtime_order_
   src/app/runtime_megamap_check.cpp src/app/runtime_radar_orders_check.cpp
   src/app/runtime_inactive_loop_check.cpp src/app/runtime_factory_check.cpp
   src/app/runtime_unit_speech_check.cpp src/app/runtime_mutator_layer_check.cpp
+  src/app/runtime_recorded_mutators_check.cpp
   src/app/runtime_side_data_check.cpp
   src/app/runtime_gadget_art_check.cpp
   src/app/runtime_build_page_check.cpp
@@ -1755,6 +1756,38 @@ if(OA_BUILD_PLATFORM)
         --preferences-file "${oa_mutator_layer_dir}/mutator-layer.conf")
       set_tests_properties(native-mutator-layer PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
         WORKING_DIRECTORY "${oa_mutator_layer_dir}"
+        ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
+      # A recorded loadout: refusals, one match of ridge-art-a, an empty
+      # recording, a list chosen while a match is running, and a start that
+      # throws. Both packages are installed; ridge-commander-boom is a folder.
+      set(oa_replay_loadout_dir "${CMAKE_CURRENT_BINARY_DIR}/native-checks/replay-loadout")
+      set(oa_replay_loadout_user "${oa_replay_loadout_dir}/user")
+      file(MAKE_DIRECTORY "${oa_replay_loadout_user}/Mutators")
+      file(COPY "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-tough"
+        DESTINATION "${oa_replay_loadout_user}/Mutators")
+      file(COPY "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-art-a"
+        DESTINATION "${oa_replay_loadout_user}/Mutators")
+      file(COPY "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-commander-boom"
+        DESTINATION "${oa_replay_loadout_dir}")
+      file(WRITE "${oa_replay_loadout_user}/Mutators/ridge-art-a/.oa-origin.yaml"
+        "# Written by Open Annihilation when it installed this folder; not part of the package.\n"
+        "oa-origin: 1\n"
+        "origin: file\n"
+        "sha256: \"a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90\"\n"
+        "installed: \"2026-10-21\"\n")
+      file(WRITE "${oa_replay_loadout_user}/Mutators/ridge-tough/.oa-origin.yaml"
+        "# Written by Open Annihilation when it installed this folder; not part of the package.\n"
+        "oa-origin: 1\n"
+        "origin: file\n"
+        "sha256: \"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0\"\n"
+        "installed: \"2026-10-21\"\n")
+      add_test(NAME native-replay-loadout COMMAND oa-game --game-dir "${OA_GAME_DIR}"
+        --skip-intro --mute --check-replay-loadout
+        --user-folder "${oa_replay_loadout_user}"
+        --mutator ridge-tough --mutator ridge-art-a
+        --preferences-file "${oa_replay_loadout_dir}/replay-loadout.conf")
+      set_tests_properties(native-replay-loadout PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+        WORKING_DIRECTORY "${oa_replay_loadout_dir}"
         ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
       # The player's own folder beside the check's preferences file: saved
       # games where earlier versions kept them, beside the preferences file

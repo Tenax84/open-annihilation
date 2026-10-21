@@ -455,6 +455,9 @@ struct Options {
     // the commanders' health, and that a mutator which does not apply
     // leaves no layer.
     bool check_mutator_layer = false;
+    // Plays skirmishes with the installed mutators the command line named and
+    // checks a recording's loadout is refused, played once, and given back.
+    bool check_replay_loadout = false;
     // Plays skirmishes over a --mod-dir folder and checks each match reads
     // side data again when gamedata/sidedata.tdf has changed.
     bool check_side_data_per_match = false;
