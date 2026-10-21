@@ -350,7 +350,7 @@ bool reparse_point(const fs::path& path) {
 /// @return true when the file was read
 bool digest_file(const fs::path& path, uint64_t& size, base::sha256::Digest& digest) {
     std::error_code failure;
-    const std::uintmax_t bytes = fs::file_size(path, failure);
+    const uintmax_t bytes = fs::file_size(path, failure);
     if (failure)
         return false;
     size = static_cast<uint64_t>(bytes);
