@@ -1166,7 +1166,17 @@ so a change to how any of them reads shows there.
 `native-mutator-layer` starts the game with `--check-mutator-layer` and two
 package paths. It plays a match with no mutator, one that changes the
 commanders, the same match again with none, and one mutator that does not
-apply. `native-mutators-command-line` runs headless skirmishes with
+apply. `native-replay-loadout` starts the game with `--check-replay-loadout`
+and two installed mutators. It refuses a loadout that cannot be read or
+whose mutator is missing, at another package, at another version or a folder
+entry, plays one match of the recorded mutator, plays one with none, and
+puts the player's list back, including after a start that does not happen.
+`native-replay-mutators` (`tools/check_native_replay_mutators.py`) records a
+loopback game with one installed mutator and checks the recording's sector
+and content note. Playback applies that mutator, refuses a missing package,
+another package and a sector that is not a loadout, and plays no mutators
+when the recording has no sector. `native-mutators-command-line` runs headless
+skirmishes with
 `--mutator`: none, one package, a number option, two packages in each
 order, a missing mutator, an unknown option, a list the manifests refuse
 and a mutator whose script stops.

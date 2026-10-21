@@ -2174,6 +2174,11 @@ hosts them on the OA layer.
   (`native-mutator-layer`): a skirmish with no mutator, one that changes
   the commanders, the same skirmish again, and one mutator that does not
   apply. The layer is mounted only while the match that applied it runs.
+- `runtime_recorded_mutators_check.cpp`: `--check-replay-loadout`
+  (`native-replay-loadout`): a recorded loadout is refused when it cannot
+  be read or its mutator is not the installed one, played for one skirmish,
+  and the player's own list is put back, including after a start that does
+  not happen.
 - `runtime_side_data_check.cpp`: `--check-side-data-per-match`
   (`native-side-data-per-match`): each match reads `gamedata/sidedata.tdf`
   again. When the file is unchanged the match keeps the sides the game
