@@ -57,6 +57,22 @@ inline constexpr uint64_t argument_unit = 2;
 /// runs for long.
 inline constexpr uint64_t scan_call_charge = 4096;
 
+/// Instructions between two reads of the clock in the count hook.
+///
+/// The hook runs this often, and counts the allowance only on every
+/// `budget_check_interval / clock_check_interval`-th call, so the count
+/// still steps by `budget_check_interval` at the same instructions. One
+/// interpreter step that rebuilds a large table can take tens of
+/// milliseconds, and checking the clock every 100 instructions keeps a loop
+/// of such steps from running far past the limit.
+inline constexpr int clock_check_interval = 100;
+
+static_assert(clock_check_interval > 1);
+static_assert(budget_check_interval % clock_check_interval == 0);
+
+/// Count hook calls that make one step of `budget_check_interval`.
+inline constexpr int clock_checks_per_budget_check = budget_check_interval / clock_check_interval;
+
 /// One Lua value, laid out as the interpreter's own value, plus its tag.
 ///
 /// The header that names that value is private to the interpreter, so the
@@ -102,6 +118,8 @@ struct Sandbox::Control {
     uint64_t instruction_allowance{default_instruction_budget};
     uint64_t instructions_used{};
     bool allowance_spent{};
+    /// Count hook calls since the allowance was last counted. Reset at each phase start.
+    int clock_checks{};
     /// Real time this phase may run. Copied from `OpenOptions::time_limit`.
     std::chrono::milliseconds time_limit{default_time_limit};
     /// Steady time when this phase started. The count hook and `charge()` compare it.

@@ -64,29 +64,39 @@ moves that state; the moved-from object has no state.
   `push`, `read` and the `run_host` work may raise and must not throw.
 - The instruction allowance is per phase and is not a clock. The memory cap
   is the Lua allocation only. Passing either one sticks for that phase.
-- Each phase also stops when it has run longer than its real-time limit.
-  The default is `default_time_limit`, 10 seconds. `OpenOptions::time_limit`
+- Each phase also stops when it has run longer than its real-time limit. The
+  default is `default_time_limit`, 10 seconds. `OpenOptions::time_limit`
   sets another for that sandbox. A steady clock is read when the phase
-  starts and checked in the instruction hook, every
-  `budget_check_interval` instructions, and in every library charge. There
-  is no thread and no signal. Past the limit the phase ends with
-  `time_limit` and the message `<phase> ran for more than 10 seconds; its
-  work is too large or never ends` (a limit that is not a whole number of
-  seconds names that length in milliseconds). A `pcall` or `xpcall` cannot
-  keep the phase going. The charges above are unchanged: the limit sits
-  beside them. A phase that finishes inside the limit has the same results,
-  the same charges and the same messages as it would with no clock.
+  starts and checked in the instruction hook, every 100 instructions, and in
+  every library charge. The hook counts the allowance on every tenth of
+  those calls, so the count still steps by `budget_check_interval` at the
+  same instructions. There is no thread and no signal. Past the limit the
+  phase ends with `time_limit` and the message `<phase> ran for more than 10
+  seconds; its work is too large or never ends` (a limit that is not a whole
+  number of seconds names that length in milliseconds). A `pcall` or
+  `xpcall` cannot keep the phase going. The charges above are unchanged: the
+  limit sits beside them. A phase that finishes inside the limit has the
+  same results, the same charges and the same messages as it would with no
+  clock.
 - The check lands at the next hook or the next charge, so a phase can run
-  past the limit by the work of one stretch of `budget_check_interval`
-  instructions, or of one charge. On the machine where this was measured,
-  a loop of 64 KiB zero-filled comparisons stopped 175 milliseconds after
-  a 300 millisecond limit, and a tight loop stopped within that same
-  millisecond. The overshoot stays under a second. The limit only ever
-  stops a script; it never changes a result. A script near the limit
-  can pass on a fast machine and fail on a slow one. In multiplayer the
-  loadout digest refuses a match whose machines disagree, so the difference
-  cannot desync a match. A dry run records `time_limit` like any other
-  failure.
+  past the limit by the work of 100 instructions, or of one charge. Most
+  instructions take well under a microsecond; the slow ones are the steps
+  Limitations names. The slowest found is an assignment that makes a table
+  rebuild itself: 10 to 30 milliseconds of processor time for a table of a
+  million keys, about the largest whose rebuild fits the default memory cap.
+  A loop can do that every 4 instructions, 25 times between two reads of the
+  clock, so it can run a quarter to three quarters of a second of processor
+  time past the limit, and longer in real time on a machine busy with other
+  work. On the machine where this was measured (10 cores, load averages of
+  20 to 80), loops that rebuild such a table stopped 0.01 to 0.9 seconds
+  after a 2 second limit, and in three runs at the busiest 2.4 to 2.9
+  seconds after it. A loop of 64 KiB zero-filled comparisons stopped within
+  60 milliseconds of a 300 millisecond limit, and a tight loop within the
+  same millisecond. The limit only ever stops a script; it never changes a
+  result. A script near the limit can pass on a fast machine and fail on a
+  slow one. In multiplayer the loadout digest refuses a match whose machines
+  disagree, so the difference cannot desync a match. A dry run records
+  `time_limit` like any other failure.
 - `string.find`, `string.match`, `string.gmatch` and `string.gsub` count
   their work against that allowance. A step is one entry into the matcher,
   one character a `*`, `+` or `-` repetition tries, or one character a `%b`

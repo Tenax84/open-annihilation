@@ -25,6 +25,21 @@ namespace {
 extern "C" {
 static void script_count_hook(lua_State* state, lua_Debug* /*activation*/) {
     HostDetail::Control* control = control_from(state);
+    // At the clock interval, nine calls in ten only read the clock. The tenth
+    // counts the allowance as one call per budget_check_interval did, so the
+    // count, the charges and where a spent allowance stops the phase are the
+    // same. Scripts have no coroutines, so every instruction runs on this one
+    // state. Once armed at one instruction, every call takes the full check.
+    if (lua_gethookcount(state) == clock_check_interval) {
+        ++control->clock_checks;
+        if (control->clock_checks < clock_checks_per_budget_check) {
+            if (phase_past_time_limit(control)) {
+                raise_time_limit(state);
+            }
+            return;
+        }
+        control->clock_checks = 0;
+    }
     if (control->string_refused) {
         lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
         luaL_error(state, "%s", control->string_message);
@@ -344,6 +359,7 @@ static int trampoline(lua_State* state) {
     Control* control = control_from(state);
     control->instructions_used = 0;
     control->allowance_spent = false;
+    control->clock_checks = 0;
     control->time_expired = false;
     // The phase's start. Later reads of the clock are in the count hook and
     // in charge(), and only those reads can stop the phase.
@@ -361,7 +377,7 @@ static int trampoline(lua_State* state) {
     control->error_chunk[0] = '\0';
     control->traceback_text[0] = '\0';
     control->loading_count = 0;
-    lua_sethook(state, script_count_hook, LUA_MASKCOUNT, budget_check_interval);
+    lua_sethook(state, script_count_hook, LUA_MASKCOUNT, clock_check_interval);
 
     switch (control->mode) {
     case PhaseMode::open_libraries: {
