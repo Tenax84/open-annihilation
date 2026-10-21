@@ -1,19 +1,20 @@
 // SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 // SPDX-License-Identifier: GPL-3.0-only
 
-// Applies every mutator's rule records to a document set in one pass.
-// Needs read the records as the files layer left them. Each mutator's changes
-// to one field become one contribution, and the contributions combine into
-// one write. The result does not depend on mutator order, except text appends,
-// which follow the list.
+// Applies one mutator's rule records to a document set as a step.
+// Needs read the records as the rules before them left those records.
+// Each change is written before the next change is read. A lock sets the
+// value and marks the field so a later mutator's rules leave it alone.
 #pragma once
 
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/mutation_rules/documents.hpp"
 #include "oa/formats/soft_mutator.hpp"
 
+#include <compare>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -72,9 +73,9 @@ struct CheckResult {
 using FieldCheck =
     std::function<CheckResult(const FieldRef& field, const std::optional<std::string>& text)>;
 
-/// One field the pass actually changed.
+/// One field the step actually changed.
 struct FieldWrite {
-    std::vector<std::string> mutators; ///< mutators that contributed, in list order
+    std::vector<std::string> mutators; ///< the mutator that wrote the field
     std::string path;                  ///< document path
     std::string record;                ///< unit name, or the section name
     std::string block;                 ///< empty for a key of the record; otherwise the inner block
@@ -85,19 +86,17 @@ struct FieldWrite {
 
 /// Why a rule did not do what it said, or did it with a warning.
 enum class NoteKind : uint8_t {
-    matched_nothing,                ///< a block selected no record
-    clamp_widened,                  ///< the combined value lies outside one mutator's own clamp
-    text_assignments_cancel,        ///< more than one assignment or removal, so the field stays
-    text_cancelled_by_number,       ///< a number change dropped the text changes
-    text_assignment_lost_to_append, ///< an assignment or removal lost because another mutator appends
+    matched_nothing,        ///< a block selected no record
+    value_replaced,         ///< a later mutator replaced a value an earlier mutator wrote
+    field_locked,           ///< a later mutator left a locked field alone
     factor_on_absent_field, ///< a factor did nothing because the field is absent and uncreated
     not_a_number,           ///< a factor's field text is not a number
-    not_finite,             ///< the combined value is not finite, so it was not written
+    not_finite,             ///< the value is not finite, so it was not written
     check_warned,           ///< a check warned and the write was kept
     check_refused,          ///< a check, or the document editor, refused the write
 };
 
-/// One note from a pass, for the change journal and the dry run.
+/// One note from a step, for the change journal and the dry run.
 struct RuleNote {
     NoteKind kind{};                   ///< which note
     std::vector<std::string> mutators; ///< mutators involved, in list order
@@ -109,17 +108,61 @@ struct RuleNote {
     std::string message; ///< what happened, in plain words
 };
 
-/// Options for one pass.
+/// One field a step has locked or written, as the step state names it.
+///
+/// The four names are folded: ASCII capitals become lower case, and a path
+/// also treats '\\' as '/'. Two ids name one field when those four names
+/// match.
+struct FieldId {
+    std::string path;   ///< document path, folded
+    std::string record; ///< record name, folded
+    std::string block;  ///< inner block name, folded; empty for a key of the record
+    std::string key;    ///< field name, folded
+
+    /// Returns whether the four folded names match.
+    ///
+    /// @param other the id to compare
+    /// @return true when both ids name one field
+    [[nodiscard]] bool operator==(const FieldId& other) const = default;
+
+    /// Orders by path, then record, block and key, byte by byte.
+    ///
+    /// @param other the id to compare
+    /// @return the order of the two ids
+    [[nodiscard]] auto operator<=>(const FieldId& other) const = default;
+};
+
+/// Lock marks and last writers, kept from one step to the next.
+///
+/// The caller starts from an empty state and passes the same value into each
+/// step of a run. A step looks fields up in both maps and adds to them. It
+/// does not clear a mark an earlier step made.
+///
+/// A lock mark is an entry of `locks`. The mutator named there set the field
+/// with a lock. A later step does not write that field, and notes the refusal,
+/// naming the mutator that locked it and the mutator that tried to change it.
+struct ApplyState {
+    /// The mutator that locked each field. A lock lasts for the rest of the run.
+    std::map<FieldId, std::string> locks;
+    /// The mutator that last wrote each field.
+    std::map<FieldId, std::string> writers;
+};
+
+/// Options for one step.
 struct ApplyOptions {
     const oa::data::defs::DataLayout*
         layout{};     ///< layout to resolve folders; null uses the active one
     FieldCheck check; ///< called for each new text or removal; empty skips checks
 };
 
-/// The writes and notes of one pass.
+/// The writes and notes of one step.
 struct ApplyResult {
-    std::vector<FieldWrite> writes; ///< fields that changed, sorted by path, record, block and key
-    std::vector<RuleNote> notes;    ///< notes, sorted by path, record, key and kind
+    /// Fields that changed. Sorted by path, record, block and key, compared
+    /// after ASCII case folding. Writes of one field stay in the order they
+    /// were applied, whichever spelling of the key each one used.
+    std::vector<FieldWrite> writes;
+    /// Notes, sorted by path, record, key, kind, line, source and message.
+    std::vector<RuleNote> notes;
 };
 
 /// Lists each distinct target the mutators name, in the order first seen.
@@ -164,19 +207,55 @@ targets_of(std::span<const MutatorRules> mutators);
     const oa::formats::soft_mutator::Need& need
 );
 
-/// Applies every mutator's rules to the documents.
+/// Applies one mutator's rules to the documents as they stand.
 ///
-/// Needs are decided on the records as found, before any write. Within one
-/// mutator the last change of a field decides its kind, and changes of that
-/// kind compose. Across mutators, meta values average and win, assignments
-/// average, factors multiply, clamps widen, and text follows the text rules.
+/// The step reads `documents` and `state`, writes the documents its changes
+/// reach, and adds lock marks and writer marks to `state`. Sources run in
+/// plan order. Each source's blocks and changes run in file order. A block's
+/// needs read the records as the rules before that block left them, and each
+/// change is written before the next change is read.
+///
+/// A factor multiplies the current number. An assignment replaces it. A clamp
+/// bounds only that scale. A text change or a removal acts on the current
+/// text. A lock sets the value and adds a lock mark: a later mutator's change
+/// to that field is not written, and the step notes it, naming both mutators.
+/// A later assignment, text change or removal that replaces a value an earlier
+/// mutator wrote is noted, naming both mutators.
+///
 /// A number is written only through the TDF number spelling, and only when it
-/// is finite and different from the field's current number.
+/// is finite and different from the field's current number. A result that is
+/// not finite is not written, and a clamp is not allowed to pull that result
+/// back into range.
+///
+/// @param rules one mutator's sources
+/// @param[in,out] documents documents to edit
+/// @param[in,out] state lock marks and last writers, kept across steps
+/// @param options layout and field check
+/// @return the writes that changed a field, and the notes
+[[nodiscard]] ApplyResult apply_step(
+    const MutatorRules& rules,
+    DocumentSet& documents,
+    ApplyState& state,
+    const ApplyOptions& options
+);
+
+/// Applies every mutator's rules, one `apply_step` per mutator, in list order.
+///
+/// The steps share one `ApplyState`, started empty, so a later mutator reads
+/// the documents the earlier ones left and meets their lock marks. Nothing is
+/// combined between two mutators: the result is exactly what calling
+/// `apply_step` for each mutator in turn gives.
+///
+/// This entry is kept only while the pipeline applies every mutator's rules
+/// before any mutator's hooks. Once the pipeline calls `apply_step` itself,
+/// once per mutator with that mutator's hooks after it, this entry is
+/// removed.
 ///
 /// @param mutators mutators in list order
 /// @param[in,out] documents documents to edit
 /// @param options layout and field check
-/// @return the writes that changed a field, and the notes
+/// @return the writes of every step in step order, and the notes the same
+///         way; within one step they are sorted as `apply_step` sorts them
 [[nodiscard]] ApplyResult apply_rules(
     std::span<const MutatorRules> mutators, DocumentSet& documents, const ApplyOptions& options
 );

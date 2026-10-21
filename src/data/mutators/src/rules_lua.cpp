@@ -15,6 +15,7 @@
 
 #include "oa/data/mutators/collections.hpp"
 #include "oa/data/script_host/fixed.hpp"
+#include "oa/data/script_host/script_host.hpp"
 #include "oa/data/script_host/sorted.hpp"
 
 #include "lua.hpp"
@@ -26,6 +27,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <map>
 #include <new>
 #include <optional>
@@ -278,6 +280,46 @@ void clear_value(lua_State* state, int rule, int value_slot) {
     lua_setiuservalue(state, rule, value_slot);
 }
 
+/// Charges one `where` or `:change` table: a small flat cost, then one unit
+/// per entry, up to `limit` plus one.
+///
+/// Key bytes are charged only when every key is visited. A table past the
+/// limit charges the entry count alone, so the count does not follow
+/// `lua_next`'s order. May raise. No C++ object with a destructor is alive.
+void charge_script_table(lua_State* state, int table, std::size_t limit) {
+    host::charge_work(state, host::table_walk_charge);
+    table = lua_absindex(state, table);
+    lua_pushnil(state);
+    std::size_t visited = 0;
+    uint64_t key_units = 0;
+    bool past_limit = false;
+    while (lua_next(state, table) != 0) {
+        ++visited;
+        if (visited > limit) {
+            past_limit = true;
+            lua_pop(state, 1);
+            lua_pop(state, 1);
+            break;
+        }
+        if (lua_type(state, -2) == LUA_TSTRING) {
+            std::size_t length = 0;
+            lua_tolstring(state, -2, &length);
+            const uint64_t units = host::units_for_bytes(length);
+            if (key_units > UINT64_MAX - units)
+                key_units = UINT64_MAX;
+            else
+                key_units += units;
+        }
+        lua_pop(state, 1);
+    }
+    if (host::element_charge != 0 && visited > UINT64_MAX / host::element_charge)
+        host::charge_work(state, UINT64_MAX);
+    else
+        host::charge_work(state, host::element_charge * static_cast<uint64_t>(visited));
+    if (!past_limit)
+        host::charge_work(state, key_units);
+}
+
 /// Pushes a new table holding every pair of the table at `from`, read raw.
 ///
 /// The keys and values are the same Lua values. Need and change values
@@ -286,18 +328,31 @@ void clear_value(lua_State* state, int rule, int value_slot) {
 /// @param count number of pairs, used to size the table
 void push_raw_copy(lua_State* state, int from, uint32_t count) {
     from = lua_absindex(state, from);
+    host::charge_work(state, host::element_charge * static_cast<uint64_t>(count));
     lua_createtable(state, 0, static_cast<int>(std::min<uint32_t>(count, sm::max_statements)));
     const int private_copy = lua_gettop(state);
     lua_pushnil(state);
+    uint64_t key_units = 0;
     while (lua_next(state, from) != 0) {
+        if (lua_type(state, -2) == LUA_TSTRING) {
+            std::size_t length = 0;
+            lua_tolstring(state, -2, &length);
+            const uint64_t units = host::units_for_bytes(length);
+            if (key_units > UINT64_MAX - units)
+                key_units = UINT64_MAX;
+            else
+                key_units += units;
+        }
         lua_pushvalue(state, -2);
         lua_insert(state, -2);
         lua_rawset(state, private_copy);
     }
+    host::charge_work(state, key_units);
 }
 
 /// Pushes `length` bytes of `text` with ASCII capitals lowered and `\` read as `/`.
 void push_folded(lua_State* state, const char* text, std::size_t length) {
+    host::charge_work(state, host::units_for_bytes(length));
     luaL_Buffer buffer;
     char* bytes = luaL_buffinitsize(state, &buffer, length);
     for (std::size_t byte_index = 0; byte_index < length; ++byte_index)
@@ -460,12 +515,33 @@ bool walk_table(
     count = 0;
     table = lua_absindex(state, table);
     lua_pushnil(state);
+    // Trimmed field to the first spelling that trimmed to it. Two keys that
+    // trim to one field have no order of their own; the walk would otherwise
+    // keep whichever Lua visited first.
+    std::map<std::string, std::string, std::less<>> seen_fields;
     while (lua_next(state, table) != 0) {
+        std::string_view raw;
+        if (lua_type(state, -2) == LUA_TSTRING) {
+            std::size_t raw_length = 0;
+            const char* raw_text = lua_tolstring(state, -2, &raw_length);
+            raw = std::string_view(raw_text != nullptr ? raw_text : "", raw_length);
+        }
         std::string_view field;
         bool accepted = field_at(state, field, reason);
         if (accepted && count >= limit) {
             reason = "too many statements";
             accepted = false;
+        }
+        if (accepted) {
+            const auto earlier = seen_fields.find(field);
+            if (earlier != seen_fields.end()) {
+                reason = "field \"";
+                reason += earlier->second;
+                reason += "\" and field \"";
+                reason += raw;
+                reason += "\" name the same field";
+                accepted = false;
+            }
         }
         Entry entry;
         if (accepted)
@@ -474,6 +550,7 @@ bool walk_table(
             lua_pop(state, 2);
             return false;
         }
+        seen_fields.emplace(std::string(field), std::string(raw));
         entry.line = line;
         if (into != nullptr)
             into->push_back(std::move(entry));
@@ -742,6 +819,10 @@ static int rule_index(lua_State* state) {
 }
 
 static int form_where(lua_State* state) {
+    const RuleBits* prior = rule_at(state, 1);
+    const int table_slot = prior != nullptr ? 2 : 1;
+    if (lua_istable(state, table_slot))
+        charge_script_table(state, table_slot, sm::max_statements);
     Refusal refusal;
     FormPlan plan;
     if (!run_check(state, check_where, plan, refusal))
@@ -758,6 +839,13 @@ static int form_all(lua_State* state) {
 }
 
 static int form_named(lua_State* state) {
+    const RuleBits* prior = rule_at(state, 1);
+    const int name_slot = prior != nullptr ? 2 : 1;
+    if (lua_type(state, name_slot) == LUA_TSTRING) {
+        std::size_t length = 0;
+        lua_tolstring(state, name_slot, &length);
+        host::charge_work(state, host::units_for_bytes(length));
+    }
     Refusal refusal;
     FormPlan plan;
     if (!run_check(state, check_named, plan, refusal))
@@ -774,6 +862,9 @@ static int form_on(lua_State* state) {
 }
 
 static int form_change(lua_State* state) {
+    const RuleBits* box = rule_at(state, 1);
+    if (box != nullptr && lua_istable(state, 2))
+        charge_script_table(state, 2, change_limit(box->need_count));
     Refusal refusal;
     FormPlan plan;
     if (!run_check(state, check_change, plan, refusal))
@@ -822,6 +913,7 @@ static int form_set(lua_State* state) {
     if (type == LUA_TSTRING) {
         std::size_t length = 0;
         const char* text = lua_tolstring(state, 1, &length);
+        host::charge_work(state, host::units_for_bytes(length));
         if (length > sm::max_text_bytes)
             return luaL_error(state, "text is longer than 1024 bytes");
         if (length == 0)
@@ -839,6 +931,7 @@ static int form_scale(lua_State* state) {
         return luaL_error(state, "scale expects a factor, or a factor and two bounds");
     double numbers[3] = {};
     for (int slot = 1; slot <= count; ++slot) {
+        host::charge_work(state, host::element_charge);
         if (!rule_number(state, slot, &numbers[slot - 1]))
             return luaL_error(state, "scale expects a finite number");
     }
@@ -873,6 +966,7 @@ static int form_append(lua_State* state) {
         return luaL_error(state, "append expects a string");
     std::size_t length = 0;
     const char* text = lua_tolstring(state, 1, &length);
+    host::charge_work(state, host::units_for_bytes(length));
     if (length > sm::max_text_bytes)
         return luaL_error(state, "text is longer than 1024 bytes");
     push_change(state, sm::ChangeKind::append, 0, 0, 0, text != nullptr ? text : "", length);
@@ -884,6 +978,7 @@ static int form_sm(lua_State* state) {
         return luaL_error(state, "sm expects a path");
     std::size_t length = 0;
     lua_tolstring(state, 1, &length);
+    host::charge_work(state, host::units_for_bytes(length));
     if (length == 0)
         return luaL_error(state, "sm expects a path");
     ensure_rule_meta(state);

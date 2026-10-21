@@ -145,6 +145,29 @@ struct OptionLine {
     std::vector<std::string> values{};
 };
 
+/// What a check of an installed mutator against the mod being played found.
+///
+/// Set on an installed copy when the host can check mutators. Unset when it
+/// cannot, which leaves out the Checked fact and CHECK WITH THIS MOD.
+struct Verdict {
+    /// Where the check stands.
+    enum class State : uint8_t {
+        unchecked,    ///< not checked with this mod yet
+        checking,     ///< a check is running
+        compatible,   ///< it changes the mod
+        no_effect,    ///< it applies and changes nothing
+        incompatible, ///< it cannot run with this mod
+        failed,       ///< the check itself did not finish
+    };
+
+    /// Where the check stands. A default verdict has not been checked.
+    State state{State::unchecked};
+    /// Why, for an incompatible or a failed check. Empty otherwise.
+    std::string reason{};
+    /// What a compatible check changed, in words. Empty otherwise.
+    std::string summary{};
+};
+
 /// What a mutator's manifest or catalogue entry says about it.
 struct MutatorFacts {
     /// The tag ids, in the order written.
@@ -159,6 +182,9 @@ struct MutatorFacts {
     std::vector<std::string> layers{};
     /// The settings a player picks, in the order written.
     std::vector<OptionLine> options{};
+    /// The check against the mod being played. Set on an installed copy when
+    /// the host can check mutators, and left unset when it cannot.
+    std::optional<Verdict> verdict{};
 };
 
 /// One package a registry's catalogue lists.
@@ -1423,6 +1449,10 @@ enum class Action : uint8_t {
     /// turns on every one G04 accepts, on the pending draft. It applies
     /// when the Library closes.
     turn_on,
+    /// CHECK WITH THIS MOD on an installed mutator. The host checks it
+    /// against the mod being played, with the mutator's default options.
+    /// It never switches the mutator on.
+    check_with_mod,
 };
 
 /// Returns the action an expansion's download arrow asks for.
@@ -1473,6 +1503,14 @@ struct ActionButton {
 /// not match the pending choice. GET stays on. A package that cannot run
 /// stays in the list.
 ///
+/// A mutator offers none of TURN ON, PLAY NOW, SWITCH OFF, USE NOW or
+/// ROLL BACK. Its buttons are GET or UPDATE (CANCEL while queued, RETRY
+/// when a download failed and can be tried again; still on when the mutator
+/// does not work with the mod being played), then CHECK WITH THIS MOD for
+/// an installed copy whose verdict is set (off during a game and while that
+/// check is running), then UNINSTALL and OPEN FOLDER when installed, then
+/// HOMEPAGE when the listing has one.
+///
 /// @param library the Library
 /// @param entry one of its entries
 /// @return the buttons
@@ -1491,6 +1529,7 @@ enum class Mark : uint8_t {
     none,
     good, ///< met
     warn, ///< not met, or a change the player should know of
+    bad,  ///< cannot run with this mod, or the check stopped
 };
 
 /// How a package's games and required expansions sit on the pending choice.
@@ -1595,6 +1634,14 @@ struct Fact {
 /// Rules fact says whether it changes the game's rules and which saved
 /// games stop loading.
 ///
+/// A mutator leaves out Size, Base, Games, Hacks, Maps and Coverage. After
+/// Author it lists Works with, Checked (an installed copy whose verdict is
+/// set), one Needs per prerequisite and then the engine's Needs, Options,
+/// Changes, Rules and From, leaving out a fact with nothing to say. Rules
+/// says the mutator changes the game and is unranked. The installed
+/// manifest's facts are used when a copy is installed, and the listing's
+/// otherwise.
+///
 /// @param library the Library
 /// @param entry one of its entries
 /// @return the facts, in that order
@@ -1607,7 +1654,9 @@ struct Fact {
 /// update is "Revision 4 available" only for a revision above 0 of the
 /// version installed, "Version 4.9 available" for another version, and
 /// "Update available" when it keeps the version and names no revision. A
-/// built-in language says "Built into the game".
+/// built-in language says "Built into the game". A mutator that is not
+/// installed names its version instead of its size ("Not installed · 2.0 ·
+/// rev 1", including a revision of 1).
 ///
 /// @param library the Library
 /// @param entry one of its entries

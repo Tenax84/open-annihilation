@@ -309,6 +309,8 @@ void settle_entry(const Library& library, Entry& entry) {
     if (entry.id.kind == Kind::mutator) {
         if (const MutatorFacts* facts = mutator_facts(entry)) {
             entry.not_compatible = !works_with_played(library.inputs, *facts);
+            if (facts->verdict && facts->verdict->state == Verdict::State::incompatible)
+                entry.not_compatible = true;
             entry.needs_missing = first_unmet_need(library.inputs, *facts);
         }
     }
@@ -717,6 +719,283 @@ Fact fact_of(std::string_view label, std::string long_value, std::string short_v
     fact.short_value = std::move(short_value);
     fact.mark = mark;
     return fact;
+}
+
+/// Joins phrases with a comma between all but the last pair.
+///
+/// @param text how texts are looked up
+/// @param parts the phrases
+/// @param last the pattern for the last pair
+/// @return the joined phrases; empty when there are none
+std::string
+join_parts(const TextHooks& text, const std::vector<std::string>& parts, std::string_view last) {
+    if (parts.empty())
+        return {};
+    if (parts.size() == 1)
+        return parts.front();
+    std::string joined = parts.front();
+    for (std::size_t index = 1; index + 1 < parts.size(); ++index)
+        joined = filled(text, words::names_comma, {{"left", joined}, {"right", parts[index]}});
+    return filled(text, last, {{"left", joined}, {"right", parts.back()}});
+}
+
+/// Tells whether an installed mutator meets one prerequisite.
+///
+/// @param inputs the Library's inputs
+/// @param need the prerequisite
+/// @return true when an installed copy of that id is inside the range
+bool prerequisite_met(const Inputs& inputs, const Prerequisite& need) {
+    for (const Installed& item : inputs.installed) {
+        if (item.kind != Kind::mutator || item.key != need.id)
+            continue;
+        formats::oamut::Condition condition;
+        condition.id = need.id;
+        condition.range_text = need.range;
+        if (!need.range.empty()) {
+            const std::optional<formats::oamut::VersionRange> range =
+                formats::oamut::parse_version_range(need.range);
+            if (!range)
+                continue;
+            condition.range = *range;
+        }
+        if (formats::oamut::condition_met(condition, need.id, item.version))
+            return true;
+    }
+    return false;
+}
+
+/// Writes a mutator version range in the engine's comparison words.
+///
+/// An empty range, or one that does not parse, is returned as written.
+///
+/// @param range_text the range as the manifest writes it
+/// @param text how texts are looked up
+/// @return the words, such as "4.0 or later"
+std::string mutator_range_words(std::string_view range_text, const TextHooks& text) {
+    if (range_text.empty())
+        return {};
+    const std::optional<formats::oamut::VersionRange> range =
+        formats::oamut::parse_version_range(range_text);
+    if (!range)
+        return std::string(range_text);
+    std::string joined;
+    for (const auto& [comparison, version] : range->terms) {
+        if (!joined.empty()) {
+            joined += shown(text, words::list_separator);
+            joined.push_back(' ');
+        }
+        std::string_view pattern = words::engine_at_least;
+        switch (comparison) {
+        case formats::oamod::EngineComparison::at_least:
+            pattern = words::engine_at_least;
+            break;
+        case formats::oamod::EngineComparison::above:
+            pattern = words::engine_above;
+            break;
+        case formats::oamod::EngineComparison::at_most:
+            pattern = words::engine_at_most;
+            break;
+        case formats::oamod::EngineComparison::below:
+            pattern = words::engine_below;
+            break;
+        case formats::oamod::EngineComparison::exactly:
+            pattern = words::engine_exactly;
+            break;
+        }
+        const std::string number = formats::oamut::version_text(version);
+        joined += filled(text, pattern, {{"version", number}});
+    }
+    return joined;
+}
+
+/// The name a Checked fact fills for the mod being played.
+///
+/// @param inputs the Library's inputs
+/// @param text how texts are looked up
+/// @return the played mod's name, else the playing mod's, else "No Mod"
+std::string played_mod_name(const Inputs& inputs, const TextHooks& text) {
+    if (!inputs.played.name.empty())
+        return inputs.played.name;
+    if (inputs.playing_mod && !inputs.playing_mod->name.empty())
+        return inputs.playing_mod->name;
+    return std::string(shown(text, words::no_mod));
+}
+
+/// The word a layer id shows. An id that is not one of the nine is empty.
+///
+/// @param id the layer id
+/// @return the word; empty when the id is not known
+std::string_view layer_word(std::string_view id) {
+    if (id == "files")
+        return words::layer_files;
+    if (id == "units")
+        return words::layer_units;
+    if (id == "weapons")
+        return words::layer_weapons;
+    if (id == "features")
+        return words::layer_features;
+    if (id == "sides")
+        return words::layer_sides;
+    if (id == "tables")
+        return words::layer_tables;
+    if (id == "menus")
+        return words::layer_menus;
+    if (id == "maps")
+        return words::tab_maps;
+    if (id == "hacks")
+        return words::fact_hacks;
+    return {};
+}
+
+/// Writes a mutator's version for its "not installed" status.
+///
+/// A revision above 0 is included, including 1, as "2.0 · rev 1". A revision
+/// of 0 is the version alone.
+///
+/// @param version the version, as written
+/// @param revision the packaging revision
+/// @param text how texts are looked up
+/// @return the version
+std::string
+mutator_status_version(std::string_view version, int64_t revision, const TextHooks& text) {
+    if (revision <= 0)
+        return std::string(version);
+    const std::string number = std::to_string(revision);
+    if (version.empty())
+        return filled(text, words::revision_short, {{"revision", number}});
+    return filled(text, words::version_with_revision, {{"version", version}, {"revision", number}});
+}
+
+/// Appends a mutator's facts after Author: Works with, Checked, Needs,
+/// Options, Changes and Rules. From is written by the caller.
+///
+/// @param library the Library
+/// @param entry the mutator
+/// @param[in,out] list the facts so far
+void append_mutator_facts(const Library& library, const Entry& entry, std::vector<Fact>& list) {
+    const TextHooks& text = library.text;
+    const Listing* listing = entry.listing;
+    const MutatorFacts* mutator = mutator_facts(entry);
+    const MutatorFacts empty;
+    const MutatorFacts& facts = mutator != nullptr ? *mutator : empty;
+
+    std::vector<std::string> mod_names;
+    bool any_mod = facts.works_with.empty();
+    for (const WorksWith& item : facts.works_with) {
+        if (item.id == "*")
+            any_mod = true;
+        else if (!item.name.empty())
+            mod_names.push_back(item.name);
+        else if (!item.id.empty())
+            mod_names.push_back(item.id);
+    }
+    const std::string works = any_mod ? std::string(shown(text, words::works_with_any))
+                                      : join_parts(text, mod_names, words::names_and);
+    if (!works.empty()) {
+        list.push_back(fact_of(
+            shown(text, words::fact_works_with),
+            works,
+            works,
+            entry.not_compatible ? Mark::warn : Mark::none
+        ));
+    }
+
+    if (entry.installed != nullptr && facts.verdict) {
+        const Verdict& verdict = *facts.verdict;
+        const std::string mod = played_mod_name(library.inputs, text);
+        std::string value;
+        Mark mark = Mark::none;
+        switch (verdict.state) {
+        case Verdict::State::compatible:
+            value = filled(text, words::checked_good, {{"mod", mod}, {"summary", verdict.summary}});
+            mark = Mark::good;
+            break;
+        case Verdict::State::no_effect:
+            value = filled(text, words::checked_no_effect, {{"mod", mod}});
+            mark = Mark::warn;
+            break;
+        case Verdict::State::incompatible:
+            value = filled(
+                text, words::checked_incompatible, {{"mod", mod}, {"reason", verdict.reason}}
+            );
+            mark = Mark::bad;
+            break;
+        case Verdict::State::failed:
+            value = filled(text, words::checked_failed, {{"mod", mod}, {"reason", verdict.reason}});
+            mark = Mark::bad;
+            break;
+        case Verdict::State::checking:
+            value = filled(text, words::checked_running, {{"mod", mod}});
+            break;
+        case Verdict::State::unchecked:
+            value = filled(text, words::checked_not_yet, {{"mod", mod}});
+            break;
+        }
+        list.push_back(fact_of(shown(text, words::fact_checked), value, value, mark));
+    }
+
+    for (const Prerequisite& need : facts.needs) {
+        const std::string name = need.name.empty() ? need.id : need.name;
+        if (name.empty())
+            continue;
+        const std::string range = mutator_range_words(need.range, text);
+        const bool met = prerequisite_met(library.inputs, need);
+        // An empty range would leave a blank in "{name} {range}". The met
+        // line reuses the row's "{name} ✓".
+        const std::string value =
+            range.empty() ? filled(
+                                text,
+                                met ? words::name_met : words::needs_mutator_missing_name,
+                                {{"name", name}}
+                            )
+                          : filled(
+                                text,
+                                met ? words::needs_mutator_met : words::needs_mutator_missing,
+                                {{"name", name}, {"range", range}}
+                            );
+        list.push_back(
+            fact_of(shown(text, words::fact_needs), value, value, met ? Mark::good : Mark::warn)
+        );
+    }
+    if (listing != nullptr) {
+        if (const std::optional<formats::oamod::EngineRange> range =
+                formats::oamod::parse_engine_range(listing->requires_engine)) {
+            const bool met = formats::oamod::engine_range_met(*range, library.inputs.engine);
+            list.push_back(fact_of(
+                shown(text, words::fact_needs),
+                filled(text, words::needs_engine, {{"range", engine_text(*range, text)}}),
+                filled(
+                    text, words::needs_engine_short, {{"range", engine_short_text(*range, text)}}
+                ),
+                met ? Mark::good : Mark::warn
+            ));
+        }
+    }
+
+    for (const OptionLine& option : facts.options) {
+        if (option.label.empty() && option.values.empty())
+            continue;
+        const std::string values = join_parts(text, option.values, words::names_or);
+        const std::string value =
+            filled(text, words::option_values, {{"label", option.label}, {"values", values}});
+        list.push_back(fact_of(shown(text, words::fact_options), value, value, Mark::none));
+    }
+
+    std::vector<std::string> layers;
+    for (const std::string& id : facts.layers) {
+        const std::string_view word = layer_word(id);
+        if (!word.empty())
+            layers.push_back(std::string(shown(text, word)));
+        else if (!id.empty())
+            layers.push_back(id);
+    }
+    if (!layers.empty()) {
+        const std::string changes = join_parts(text, layers, words::names_and);
+        list.push_back(fact_of(shown(text, words::fact_changes), changes, changes, Mark::none));
+    }
+
+    const std::string rules(shown(text, words::rules_mutator));
+    list.push_back(fact_of(shown(text, words::fact_rules), rules, rules, Mark::none));
 }
 
 /// Tells whether a finished queue item still stands in for the installed copy.
@@ -1240,6 +1519,29 @@ std::vector<ActionButton> entry_actions(const Library& library, const Entry& ent
             add(Action::use_now, true);
         return buttons;
     }
+    // A mutator is got, checked, uninstalled and opened. Nothing switches it on.
+    if (entry.id.kind == Kind::mutator) {
+        if (entry.state == State::get || entry.state == State::update) {
+            if (item != nullptr && pending(item->phase))
+                add(Action::cancel, true);
+            else if (item != nullptr && item->phase == Phase::failed && item->retryable)
+                add(Action::retry, entry.can_act);
+            else
+                add(entry.state == State::get ? Action::get : Action::update, entry.can_act);
+        }
+        const MutatorFacts* mutator = mutator_facts(entry);
+        if (entry.installed != nullptr && mutator != nullptr && mutator->verdict) {
+            const bool checking = mutator->verdict->state == Verdict::State::checking;
+            add(Action::check_with_mod, !in_match && !checking);
+        }
+        if (entry.installed != nullptr) {
+            add(Action::uninstall, uninstall_off_reason(library, entry).empty());
+            add(Action::open_folder, true);
+        }
+        if (entry.listing != nullptr && !entry.listing->homepage.empty())
+            add(Action::homepage, true);
+        return buttons;
+    }
     const ContentLines lines = content_lines(library, entry);
     if (!lines.turn_on.empty()) {
         buttons.push_back(
@@ -1336,6 +1638,23 @@ std::vector<Fact> facts(const Library& library, const Entry& entry) {
         author = installed->author;
     if (!author.empty())
         list.push_back(fact_of(shown(text, words::fact_author), author, author, Mark::none));
+
+    if (entry.id.kind == Kind::mutator) {
+        append_mutator_facts(library, entry, list);
+        if (entry.id.registry.empty()) {
+            const std::string own(shown(text, words::from_own));
+            list.push_back(fact_of(shown(text, words::fact_from), own, own, Mark::none));
+        } else if (entry.not_reviewed) {
+            const std::string from =
+                filled(text, words::from_not_reviewed, {{"registry", entry.registry_name}});
+            list.push_back(fact_of(shown(text, words::fact_from), from, from, Mark::warn));
+        } else {
+            list.push_back(fact_of(
+                shown(text, words::fact_from), entry.registry_name, entry.registry_name, Mark::none
+            ));
+        }
+        return list;
+    }
 
     if (listing != nullptr) {
         const std::string size = size_text(listing->size, text);
@@ -1509,6 +1828,14 @@ std::string status_line(const Library& library, const Entry& entry) {
             text, entry.state == State::playing ? words::status_playing : words::status_installed
         ));
     case State::get:
+        if (entry.id.kind == Kind::mutator && entry.listing != nullptr) {
+            return filled(
+                text,
+                words::status_not_installed_version,
+                {{"version",
+                  mutator_status_version(entry.listing->version, entry.listing->revision, text)}}
+            );
+        }
         return filled(
             text, words::status_not_installed, {{"size", size_text(entry.listing->size, text)}}
         );

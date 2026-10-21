@@ -23,11 +23,10 @@ inline constexpr std::size_t chunk_buffer_bytes = 160;
 inline constexpr std::size_t scratch_buffer_bytes = 3072;
 inline constexpr std::size_t budget_message_bytes = 160;
 
-/// Bytes of a string's length, or of a scan, that count as one instruction.
-///
-/// Making or walking a string byte by byte, as `upper` or `utf8.len` does,
-/// takes about as long per 32 bytes as a few instructions of the interpreter.
-inline constexpr std::size_t bytes_per_charge = 32;
+// `bytes_per_charge`, `units_for_bytes`, `comparison_unit`, `scan_call_charge`,
+// `element_charge` and `table_walk_charge` are in the public header. The
+// mutator collections and rule forms charge through `charge_work` at those
+// same rates.
 
 /// Longest string the interpreter keeps one shared copy of (Lua 5.4.9's
 /// short-string limit, the same on every build).
@@ -37,25 +36,11 @@ inline constexpr std::size_t bytes_per_charge = 32;
 /// not charged, so a script's count does not depend on the collector.
 inline constexpr std::size_t short_string_limit = 40;
 
-/// Units for one comparison that is not two strings, and the least two
-/// strings cost.
-///
-/// One comparison in `table.sort`, `pairs` or `math.max` takes about as long
-/// as one or two instructions of the interpreter.
-inline constexpr uint64_t comparison_unit = 2;
-
 /// Units for one value `string.format` converts or `warn` passes on.
 ///
 /// One conversion takes about as long as one or two instructions of the
 /// interpreter.
 inline constexpr uint64_t argument_unit = 2;
-
-/// Units for one `next` call, or one walk that collects keys for `pairs`.
-///
-/// An emptied table can make that call visit every slot it used to hold.
-/// 4096 units spends the default allowance before a loop of those calls
-/// runs for long.
-inline constexpr uint64_t scan_call_charge = 4096;
 
 /// Units for one copy `setmetatable` makes of a metatable, before one unit
 /// per field it copies.
@@ -358,14 +343,6 @@ inline void raise_time_limit(lua_State* state) {
     control->time_expired = true;
     rearm_count_hook(state);
     luaL_error(state, "%s", control->time_message);
-}
-
-/// How many instruction units `bytes` cost, one per `bytes_per_charge`, rounded up.
-///
-/// @param bytes requested bytes, not the size the allocator happened to reserve
-/// @return the units, 0 when `bytes` is 0
-inline uint64_t units_for_bytes(std::size_t bytes) {
-    return (static_cast<uint64_t>(bytes) + bytes_per_charge - 1) / bytes_per_charge;
 }
 
 /// Adds `units` to the phase count and marks the allowance spent when it is reached.

@@ -143,9 +143,6 @@ rules::RuleNote rule_note(rules::NoteKind kind) {
 
 void test_rule_notes() {
     const rules::NoteKind dropped[] = {
-        rules::NoteKind::text_assignments_cancel,
-        rules::NoteKind::text_cancelled_by_number,
-        rules::NoteKind::text_assignment_lost_to_append,
         rules::NoteKind::factor_on_absent_field,
         rules::NoteKind::not_a_number,
     };
@@ -171,13 +168,32 @@ void test_rule_notes() {
         );
     }
 
-    const mutators::Conflict widened =
-        mutators::conflict_from_rule(rule_note(rules::NoteKind::clamp_widened), k_ids);
-    OA_CHECK(widened.kind == mutators::ConflictKind::clamp_widened);
-    OA_CHECK(widened.severity == mutators::Severity::warning);
+    // A later mutator replaced the earlier one's value: the earlier comes
+    // first and the later, whose value stands, last.
+    const mutators::Conflict replaced =
+        mutators::conflict_from_rule(rule_note(rules::NoteKind::value_replaced), k_ids);
+    OA_CHECK(replaced.kind == mutators::ConflictKind::value_replaced);
+    OA_CHECK(replaced.severity == mutators::Severity::note);
+    OA_CHECK(replaced.mutators.size() == 2 && replaced.mutators[0] == 0);
+    OA_CHECK(replaced.mutators.size() == 2 && replaced.mutators[1] == 1);
+    OA_CHECK(replaced.field == "maxdamage");
     OA_CHECK(
-        mutators::describe(widened, k_ids) ==
-        "ridge-tough, ridge-tougher widened a clamp on units/rgcom.fbi maxdamage"
+        mutators::describe(replaced, k_ids) ==
+        "ridge-tougher replaced ridge-tough's value on units/rgcom.fbi maxdamage"
+    );
+
+    // An earlier mutator locked the field, so the later one's change was left
+    // undone: the locker comes first.
+    const mutators::Conflict locked =
+        mutators::conflict_from_rule(rule_note(rules::NoteKind::field_locked), k_ids);
+    OA_CHECK(locked.kind == mutators::ConflictKind::field_locked);
+    OA_CHECK(locked.severity == mutators::Severity::note);
+    OA_CHECK(locked.mutators.size() == 2 && locked.mutators[0] == 0);
+    OA_CHECK(locked.mutators.size() == 2 && locked.mutators[1] == 1);
+    OA_CHECK(locked.field == "maxdamage");
+    OA_CHECK(
+        mutators::describe(locked, k_ids) ==
+        "ridge-tough locked units/rgcom.fbi maxdamage, so ridge-tougher left it alone"
     );
 
     const mutators::Conflict nothing =

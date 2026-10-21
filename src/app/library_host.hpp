@@ -18,6 +18,7 @@
 #include "oa/app/runtime.hpp"
 #include "oa/base/threads.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
+#include "oa/data/mutators/verdicts.hpp"
 #include "oa/ui/library/library.hpp"
 #include "oa/ui/library/screen.hpp"
 
@@ -25,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -77,6 +79,46 @@ struct LibraryFeed {
     /// Tells whether a registry is built in: the Registry::built_in inputs
     /// gives it. Null tells that none is.
     bool (*built_in)(void* context, std::string_view registry){};
+    /// The verdict remembered for an installed mutator with its default
+    /// options against the mod being played. Called on the main thread.
+    /// Null remembers none.
+    std::optional<oa::data::mutators::VerdictRecord> (*remembered_verdict)(
+        void* context, std::string_view id
+    ){};
+    /// Starts a check of an installed mutator with its default options
+    /// against the mod being played, and returns the work the Library's
+    /// worker runs. Called on the main thread. The work gives the verdict,
+    /// or nothing when it is cancelled. An empty function means the check
+    /// could not start. Null: the host checks nothing, and the Library
+    /// leaves every verdict unset.
+    std::function<std::optional<oa::data::mutators::VerdictRecord>(
+        const std::atomic<bool>& cancel
+    )> (*start_check)(void* context, std::string_view id){};
+    /// Keeps a verdict the worker found, for the installed mutator with its
+    /// default options against the mod being played. Called on the main
+    /// thread. Null keeps nothing.
+    void (*keep_verdict)(
+        void* context, std::string_view id, const oa::data::mutators::VerdictRecord& record
+    ){};
+};
+
+/// One check handed to the Library's worker.
+struct MutatorCheck {
+    /// The mutator's id.
+    std::string id{};
+    /// The work `start_check` returned. It runs on the worker, not the main thread.
+    std::function<std::optional<oa::data::mutators::VerdictRecord>(const std::atomic<bool>&)>
+        work{};
+};
+
+/// What a check left for the main thread.
+struct MutatorCheckOutcome {
+    /// The mutator's id.
+    std::string id{};
+    /// The check was cancelled, or gave no verdict. Nothing is kept.
+    bool cancelled{};
+    /// The verdict, when the check finished and was not cancelled.
+    std::optional<oa::data::mutators::VerdictRecord> record{};
 };
 
 /// The Library's worker: one thread of its own, started at its first job and
@@ -85,13 +127,17 @@ struct LibraryFeed {
 /// install, and reads and fetches the badge pictures asked for. What it
 /// found is kept under its lock for the main thread to read.
 struct LibraryWork {
-    base::threads::Mutex mutex{};            ///< guards every member below but cancel and pictures
+    base::threads::Mutex
+        mutex{}; ///< guards every member below but cancel, check_cancel and pictures
     base::threads::ConditionVariable wake{}; ///< signalled when a job is due or the worker stops
     base::threads::Thread thread{};          ///< the worker, once started
     bool started{};                          ///< the worker was started
     bool stop{};                             ///< the worker stops at its next wait
     /// Set as the worker stops: a picture's fetch ends within 50 milliseconds.
     std::atomic<bool> cancel{false};
+    /// Set when a match starts, so a running check stops. Distinct from
+    /// `cancel`, which also stops the worker and picture fetches.
+    std::atomic<bool> check_cancel{false};
     /// The next search for updates is due: list the installed packages
     /// again, match them to the catalogues and find their updates.
     bool updates_due{};
@@ -110,6 +156,16 @@ struct LibraryWork {
     uint64_t searches{};  ///< counts the searches done
     bool pictures_due{};  ///< pictures wait to be read or fetched
     bool match_running{}; ///< a match runs: nothing is fetched
+    /// A check is due. The worker runs `check_job`, or records a cancelled
+    /// outcome when a match has started.
+    bool check_due{};
+    /// The check the worker runs. Set on the main thread and taken by the worker.
+    std::optional<MutatorCheck> check_job{};
+    /// The id of a check that waits until the running one ends. The main
+    /// thread calls `start_check` for it then. One check runs at a time.
+    std::optional<std::string> check_waiting{};
+    /// The result the worker left for the main thread.
+    std::optional<MutatorCheckOutcome> check_outcome{};
     /// The pictures asked for, read and fetched; its own lock guards it.
     std::unique_ptr<content::PictureCache> pictures{};
 };
@@ -169,6 +225,10 @@ struct Runtime::LibraryHost {
     /// packages no longer lets that item hide its update.
     std::map<uint64_t, uint64_t> finished_scans{};
     LibraryWork work{}; ///< the worker and what it found
+    /// The mutator whose check is running. Empty when none is.
+    std::string checking_id{};
+    /// A check was handed to the worker and has not come back.
+    bool check_open{};
 
     /// Starts the worker when it has not started.
     ///
@@ -187,6 +247,24 @@ struct Runtime::LibraryHost {
     ///
     /// @param runtime the runtime
     void rebuild(Runtime& runtime);
+
+    /// Marks one installed mutator as checking and hands `start_check`'s
+    /// work to the worker. A check already running waits: this id replaces
+    /// the one waiting, and `start_check` is called on the main thread when
+    /// that check ends. An empty function from `start_check` marks nothing.
+    /// The model is rebuilt so the details say the check is running.
+    ///
+    /// @param runtime the runtime
+    /// @param id the mutator's id
+    void begin_mutator_check(Runtime& runtime, std::string_view id);
+
+    /// Takes a check the worker finished. A verdict it gave is kept, on the
+    /// main thread. A cancelled check is not kept, and a check that was
+    /// waiting is dropped when a match cancelled this one. Otherwise the
+    /// waiting id is started. Nothing is rebuilt here.
+    ///
+    /// @return true when a check ended, so the caller rebuilds the model
+    bool finish_mutator_check();
 
     /// Asks for the pictures of the rows in view and a few rows beyond each
     /// edge, the selected row's first, and for a registry icon the Registries
