@@ -66,6 +66,16 @@ inline std::optional<std::size_t> on_index(const Picker& picker, std::string_vie
     return std::nullopt;
 }
 
+/// A mutator switched on with its default options and clash mode.
+///
+/// A number's default is the canonical spelling the On list keeps, so a
+/// fallback of `4.0` is kept as `4`.
+///
+/// @param picker the picker
+/// @param mutator the mutator
+/// @return its On record
+[[nodiscard]] Chosen with_defaults(const Picker& picker, const Mutator& mutator);
+
 /// Returns the On ids, top to bottom.
 ///
 /// @param picker the picker

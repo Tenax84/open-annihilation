@@ -1751,6 +1751,15 @@ void counts_and_default_lines() {
     scout.tags = {"ai", "economy"};
     scout.brings = true;
     scout.options.push_back(choice_option("speed", "Speed", {"1x", "2x"}, {"1x", "2x"}, "1x"));
+    picker::OptionSpec range;
+    range.id = "range";
+    range.type = picker::OptionSpec::Type::number;
+    range.label = "Range";
+    range.least = "0";
+    range.most = "10";
+    range.step = "2";
+    range.fallback = "4.0";
+    scout.options.push_back(std::move(range));
     picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
     keep.installed = false;
     keep.tags = {"ai"};
@@ -1776,8 +1785,9 @@ void counts_and_default_lines() {
     OA_CHECK(picker::tag_count(model, "ai") == 1);
     OA_CHECK(
         picker::default_options_text(model, "scout-post") ==
-        "Speed: 1x · Units and weapons: Replace"
+        "Speed: 1x · Range: 4 · Units and weapons: Replace"
     );
+    OA_CHECK(picker::default_options_text(model, "scout-post").find("4.0") == std::string::npos);
     OA_CHECK(picker::default_options_text(model, "gatehouse-keep") == "Units and weapons: Add");
     OA_CHECK(picker::default_options_text(model, "ridge-walls").empty());
     OA_CHECK(picker::default_options_text(model, "gone").empty());
