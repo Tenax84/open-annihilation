@@ -4150,9 +4150,10 @@ void lobby_reject(Lobby& lobby, uint32_t player_id, uint8_t reason) noexcept {
             retire_slot(lobby, player);
         } else if (occupied_by(player, kSlotRemote)) {
             send_reject(lobby, first_seated_here(lobby, nullptr), player_id, reason);
-            if (slot_remote_playing(lobby, player)) {
+            if (slot_remote_playing(lobby, player) && player.machine_group != 0) {
                 // A human still playing takes its machine's other players
-                // with it: every player of its machine group.
+                // with it: every player of its machine group. A player whose
+                // machine group is not known yet takes only itself.
                 const auto group = player.machine_group;
                 for (int32_t other = 0; other < kSlotCount; ++other) {
                     auto& mate = slot_player(lobby, other);
