@@ -1458,38 +1458,66 @@ std::vector<Match::NanoLaser> Match::nano_lasers() const {
             return inst->query_nano_world();
         return builder.unit->position;
     };
+    // Each slot views a unit of its own: the slot at the unit's id, unless
+    // that slot views another unit, when the pool is walked for it.
+    auto slot_viewing =
+        [&](const sim::simulation_state::Unit* unit) -> const sim::unit_spawn::Slot* {
+        const auto id = unit->record.id;
+        if (id < slots_.size() && slots_[id].unit == unit)
+            return &slots_[id];
+        for (const auto& slot : slots_)
+            if (slot.unit == unit)
+                return &slot;
+        return nullptr;
+    };
     for (const auto& entry : orders_) {
         if (!entry || !entry->unit || !entry->construction.target)
             continue;
-        const sim::unit_spawn::Slot* builder = nullptr;
-        for (const auto& slot : slots_)
-            if (slot.unit == entry->unit) {
-                builder = &slot;
-                break;
-            }
         if (entry->order.kind == get_built_kind) {
-            const sim::unit_spawn::Slot* worker = nullptr;
-            for (const auto& slot : slots_)
-                if (slot.unit == entry->construction.target) {
-                    worker = &slot;
-                    break;
-                }
+            const auto* worker = slot_viewing(entry->construction.target);
             add(worker ? nano_from(*worker) : entry->construction.target->position, *entry->unit);
             continue;
         }
+        const auto* builder = slot_viewing(entry->unit);
         add(builder ? nano_from(*builder) : entry->unit->position, *entry->construction.target);
     }
+    // The units in their build stance, in pool order, listed at the first
+    // unfinished unit. With more than the list holds, every unfinished unit
+    // walks the whole pool for them instead.
+    constexpr std::size_t listed_stance_capacity = 512;
+    std::array<const sim::unit_spawn::Slot*, listed_stance_capacity> stances{};
+    std::size_t stance_count = 0;
+    bool stances_listed = false;
+    bool stances_fit = true;
     for (const auto& slot : world_.slots) {
         if (slot.unit == nullptr || slot.record.build_remaining == 0.0F)
             continue;
-        for (const auto& builder : world_.slots) {
+        if (!stances_listed) {
+            for (const auto& builder : world_.slots) {
+                if (builder.unit == nullptr || (builder.record.build_flags & 1) == 0)
+                    continue;
+                if (stance_count == stances.size()) {
+                    stances_fit = false;
+                    break;
+                }
+                stances[stance_count++] = &builder;
+            }
+            stances_listed = true;
+        }
+        const auto beam_from = [&](const sim::unit_spawn::Slot& builder) {
             if (builder.unit == nullptr || builder.unit_index == slot.unit_index)
-                continue;
+                return;
             if (builder.record.owner_index != slot.record.owner_index ||
                 (builder.record.build_flags & 1) == 0)
-                continue;
+                return;
             add(nano_from(builder), *slot.unit);
-        }
+        };
+        if (stances_fit)
+            for (std::size_t i = 0; i < stance_count; ++i)
+                beam_from(*stances[i]);
+        else
+            for (const auto& builder : world_.slots)
+                beam_from(builder);
     }
     return beams;
 }

@@ -2896,6 +2896,20 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
     /// @param viewer the viewing player
     /// @param scan_own_units whether its own radar and sonar units stamp
     void scan_contacts_for(const oa::Player& viewer, bool scan_own_units);
+    /// Visits the units around a point as for_each_unit_in_radius does,
+    /// following the bucket links of the spatial projections as they stand
+    /// instead of refreshing every projection first.
+    ///
+    /// @param centre Signed 16.16 centre.
+    /// @param radius Radius, signed 16.16.
+    /// @param visit Called once per unit found, in bucket order.
+    /// @param context Passed to `visit`.
+    void walk_units_in_radius(
+        const sim::ground_orders::Point& centre,
+        int32_t radius,
+        void (*visit)(void* context, sim::unit_spawn::Slot& slot),
+        void* context
+    );
     /// Tells whether the contact scan lets a jammer jam the viewing player's
     /// radar picture: always in 3.1c; under intel.allied-jammers-ignored not
     /// when the viewer allies the jammer's owner, nor for a local watcher or
@@ -3095,6 +3109,7 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
         ConstructionOrderState construction;
         sim::simulation_state::Unit* unit{};
         RuntimeOrder* observer_next{};
+        RuntimeOrder* bucket_next{}; // next record of the same order_buckets_ entry
     };
 
     // What TickHost::owned gives for an order the match does not own, and
@@ -3145,6 +3160,29 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
     /// @param entry Order to check.
     void check_target_observer(const RuntimeOrder& entry) const noexcept;
     std::vector<std::unique_ptr<RuntimeOrder>> orders_;
+    // Bits of an order's address that pick its order_buckets_ entry.
+    static constexpr unsigned order_bucket_bits = 10;
+    // The records of orders_, each on the list (through
+    // RuntimeOrder::bucket_next) of the entry its order's address picks, so
+    // that finding an order's record walks only that list. Which entry a
+    // record is on changes how long a search takes, never what it finds;
+    // nothing walks the entries in turn.
+    std::array<RuntimeOrder*, std::size_t{1} << order_bucket_bits> order_buckets_{};
+    /// Picks the order_buckets_ entry of an order.
+    ///
+    /// @param order Order.
+    /// @return Index into order_buckets_.
+    static std::size_t order_bucket(const sim::simulation_state::Order* order) noexcept;
+    /// Adds a record to the match's orders, after every other one.
+    ///
+    /// @param entry Record to add.
+    /// @return The added record.
+    RuntimeOrder& adopt_order(std::unique_ptr<RuntimeOrder> entry);
+    /// Removes a record from the match's orders, keeping the others in their
+    /// order. A record the match does not own is left alone.
+    ///
+    /// @param record Record to remove.
+    void drop_order(const RuntimeOrder& record);
     SelectionState selection_;
     WindState wind_;
     sim::world_environment::WindState environment_wind_{};
@@ -3269,6 +3307,11 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
     /// @param order Order, or null.
     /// @return The record, or null when the match does not own the order.
     RuntimeOrder* runtime_order(const sim::simulation_state::Order* order);
+    /// Finds the match's record of an order.
+    ///
+    /// @param order Order, or null.
+    /// @return The record, or null when the match does not own the order.
+    const RuntimeOrder* runtime_order(const sim::simulation_state::Order* order) const;
     /// Raises an event on every order that observes a unit.
     ///
     /// @param unit Observed unit.

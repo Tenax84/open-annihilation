@@ -45,9 +45,8 @@ sim::ground_orders::GroundRuntime& TickHost::ground(sim::simulation_state::Unit&
 }
 
 Match::RuntimeOrder& TickHost::owned(sim::simulation_state::Order& order) {
-    for (auto& entry : match.orders_)
-        if (&entry->order == &order)
-            return *entry;
+    if (auto* record = match.runtime_order(&order))
+        return *record;
     match.fault_.note("order is not owned by match");
     match.spare_order_ = {};
     return match.spare_order_;
