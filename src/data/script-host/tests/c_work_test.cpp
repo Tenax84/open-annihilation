@@ -26,6 +26,20 @@ namespace host = oa::data::script_host;
 
 namespace {
 
+// The address sanitizer makes every call several times slower, so its builds
+// get the suite's timeout scale on the time bounds.
+#if defined(__SANITIZE_ADDRESS__)
+constexpr int time_scale = 6;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+constexpr int time_scale = 6;
+#else
+constexpr int time_scale = 1;
+#endif
+#else
+constexpr int time_scale = 1;
+#endif
+
 struct Case {
     std::string name;
     std::string body;
@@ -463,7 +477,7 @@ void expect_budget(const char* source) {
     OA_CHECK(error.kind == host::ErrorKind::instruction_budget);
     OA_CHECK(message_has(error, "50000000"));
     OA_CHECK(sandbox->instructions_used() >= host::default_instruction_budget);
-    OA_CHECK(processor_seconds < 5.0);
+    OA_CHECK(processor_seconds < 5.0 * time_scale);
 }
 
 void expect_range(const char* source, const char* function, const char* count) {
@@ -481,7 +495,7 @@ void expect_range(const char* source, const char* function, const char* count) {
     OA_CHECK(message_has(error, function));
     OA_CHECK(message_has(error, "past the most of"));
     OA_CHECK(message_has(error, count));
-    OA_CHECK(elapsed < std::chrono::seconds(5));
+    OA_CHECK(elapsed < std::chrono::seconds(5 * time_scale));
 }
 
 void review_and_replaced_calls_stop() {
@@ -499,7 +513,7 @@ void review_and_replaced_calls_stop() {
         OA_CHECK(error.kind == host::ErrorKind::string_length);
         OA_CHECK(message_has(error, "1048576"));
         OA_CHECK(message_has(error, "65536"));
-        OA_CHECK(elapsed < std::chrono::seconds(5));
+        OA_CHECK(elapsed < std::chrono::seconds(5 * time_scale));
     }
 
     expect_budget(
