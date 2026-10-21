@@ -282,13 +282,14 @@ Conflict conflict_from_rule(const rules::RuleNote& note, std::span<const std::st
         conflict.severity = Severity::note;
         conflict.kind = ConflictKind::matched_nothing;
         break;
-    case rules::NoteKind::clamp_widened:
-        conflict.severity = Severity::warning;
-        conflict.kind = ConflictKind::clamp_widened;
+    case rules::NoteKind::value_replaced:
+        conflict.severity = Severity::note;
+        conflict.kind = ConflictKind::value_replaced;
         break;
-    case rules::NoteKind::text_assignments_cancel:
-    case rules::NoteKind::text_cancelled_by_number:
-    case rules::NoteKind::text_assignment_lost_to_append:
+    case rules::NoteKind::field_locked:
+        conflict.severity = Severity::note;
+        conflict.kind = ConflictKind::field_locked;
+        break;
     case rules::NoteKind::factor_on_absent_field:
     case rules::NoteKind::not_a_number:
         conflict.severity = Severity::note;
@@ -370,10 +371,30 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
         }
         return line;
     }
-    if (conflict.kind == ConflictKind::clamp_widened) {
-        std::string line = names;
-        line += " widened a clamp";
+    if (conflict.kind == ConflictKind::value_replaced) {
+        const std::string earlier = earlier_names(conflict, ids);
+        std::string line = winner_name(conflict, ids);
+        line += " replaced ";
+        line += earlier.empty() ? std::string("an earlier mutator") : earlier;
+        line += "'s value";
         append_place(line, conflict);
+        return line;
+    }
+    if (conflict.kind == ConflictKind::field_locked) {
+        const std::string locker = earlier_names(conflict, ids);
+        std::string line = locker.empty() ? std::string("an earlier mutator") : locker;
+        line += " locked";
+        if (!conflict.path.empty()) {
+            line += " ";
+            line += conflict.path;
+        }
+        if (!conflict.field.empty()) {
+            line += " ";
+            line += conflict.field;
+        }
+        line += ", so ";
+        line += winner_name(conflict, ids);
+        line += " left it alone";
         return line;
     }
     if (conflict.kind == ConflictKind::text_change_dropped) {

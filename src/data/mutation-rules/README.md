@@ -35,6 +35,12 @@ finite, and a block that matched nothing are noted.
   written. This module does not know the typed field checks; a later pass
   passes them in. The caller keeps one `ApplyState` for the whole run and
   passes it to each step. A step does not clear a mark an earlier step made.
+- `apply_rules` applies a list of mutators: one `apply_step` per mutator, in
+  list order, on one `ApplyState` it starts empty. It combines nothing; its
+  writes and notes are each step's, in step order. It exists only while the
+  pipeline applies every mutator's rules before any mutator's hooks. When the
+  pipeline calls `apply_step` once per mutator, with that mutator's hooks
+  after it, `apply_rules` is removed.
 
 ## Targets and records
 
@@ -190,11 +196,12 @@ held against a later scale and a later set, two clamps applied one after
 another, text appends, the within-mutator sequence, needs that see a field
 an earlier block changed, needs on fields a record leaves out (including a
 movement class and a key no schema holds), targets and folders, a layout
-that renames `units`, the spelling of a key a record does not hold, a depth
-change applied once when a block has two case variants of a key, and the
-notes for a block that matched nothing, a field that is not a number, a
-result that is not finite (including a clamp that does not rescue it), and a
-check that warns or refuses.
+that renames `units`, the spelling of a key a record does not hold,
+`apply_rules` giving what one step per mutator gives, a depth change applied
+once when a block has two case variants of a key, and the notes for a block
+that matched nothing, a field that is not a number, a result that is not
+finite (including a clamp that does not rescue it), and a check that warns
+or refuses.
 
 ## Limitations
 

@@ -224,4 +224,25 @@ targets_of(std::span<const MutatorRules> mutators);
     const ApplyOptions& options
 );
 
+/// Applies every mutator's rules, one `apply_step` per mutator, in list order.
+///
+/// The steps share one `ApplyState`, started empty, so a later mutator reads
+/// the documents the earlier ones left and meets their lock marks. Nothing is
+/// combined between two mutators: the result is exactly what calling
+/// `apply_step` for each mutator in turn gives.
+///
+/// This entry is kept only while the pipeline applies every mutator's rules
+/// before any mutator's hooks. Once the pipeline calls `apply_step` itself,
+/// once per mutator with that mutator's hooks after it, this entry is
+/// removed.
+///
+/// @param mutators mutators in list order
+/// @param[in,out] documents documents to edit
+/// @param options layout and field check
+/// @return the writes of every step in step order, and the notes the same
+///         way; within one step they are sorted as `apply_step` sorts them
+[[nodiscard]] ApplyResult apply_rules(
+    std::span<const MutatorRules> mutators, DocumentSet& documents, const ApplyOptions& options
+);
+
 } // namespace oa::data::mutation_rules

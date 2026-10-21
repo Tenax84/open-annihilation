@@ -1214,6 +1214,49 @@ void created_spelling() {
     run(true);
 }
 
+/// The compatibility entry runs each mutator as its own step in list order,
+/// and gives what one `apply_step` per mutator gives: no mean of two
+/// assignments, and a lock that holds against the later mutator.
+void rules_as_steps() {
+    const std::string_view unit =
+        "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nWorkerTime=300;\nEnergyMake=10;\n}\n";
+    std::vector<rules::MutatorRules> list;
+    list.push_back(rules_of("ridge-a", "[*All*]\n{\nWorkerTime=100;\nEnergyMake=^20;\n}\n"));
+    list.push_back(rules_of("ridge-b", "[*All*]\n{\nWorkerTime=200;\nEnergyMake=*3;\n}\n"));
+    rules::DocumentSet stepped;
+    rules::DocumentSet listed;
+    OA_CHECK(add_text(stepped, "units/RIDGEFAB.fbi", unit));
+    OA_CHECK(add_text(listed, "units/RIDGEFAB.fbi", unit));
+    const rules::ApplyResult by_step = apply_list(list, stepped, {});
+    const rules::ApplyResult by_list = rules::apply_rules(list, listed, {});
+    expect_unit(listed, "units/RIDGEFAB.fbi", "WorkerTime", "200");
+    expect_unit(listed, "units/RIDGEFAB.fbi", "EnergyMake", "20");
+    OA_CHECK(by_list.writes.size() == 3);
+    OA_CHECK(by_list.writes.size() == by_step.writes.size());
+    if (by_list.writes.size() == by_step.writes.size()) {
+        for (size_t index = 0; index < by_list.writes.size(); ++index) {
+            const rules::FieldWrite& got = by_list.writes[index];
+            const rules::FieldWrite& want = by_step.writes[index];
+            OA_CHECK(got.mutators == want.mutators);
+            OA_CHECK(got.key == want.key);
+            OA_CHECK(got.old_text == want.old_text);
+            OA_CHECK(got.new_text == want.new_text);
+        }
+    }
+    OA_CHECK(by_list.notes.size() == 2);
+    OA_CHECK(by_list.notes.size() == by_step.notes.size());
+    if (by_list.notes.size() == by_step.notes.size()) {
+        for (size_t index = 0; index < by_list.notes.size(); ++index) {
+            OA_CHECK(by_list.notes[index].kind == by_step.notes[index].kind);
+            OA_CHECK(by_list.notes[index].mutators == by_step.notes[index].mutators);
+        }
+    }
+    const rules::RuleNote* replaced = find_note(by_list, rules::NoteKind::value_replaced);
+    const rules::RuleNote* locked = find_note(by_list, rules::NoteKind::field_locked);
+    OA_CHECK(replaced != nullptr && mutators_are(replaced->mutators, {"ridge-a", "ridge-b"}));
+    OA_CHECK(locked != nullptr && mutators_are(locked->mutators, {"ridge-a", "ridge-b"}));
+}
+
 void depth_case() {
     rules::DocumentSet docs;
     OA_CHECK(add_text(
@@ -1416,6 +1459,7 @@ int main() {
     sidedata_and_names();
     layout_rename();
     created_spelling();
+    rules_as_steps();
     depth_case();
     schema_kinds();
     notes();

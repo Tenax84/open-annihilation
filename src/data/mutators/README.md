@@ -576,8 +576,9 @@ Each manifest is then checked against the mod and the engine version. A
 mutator that does not fit is incompatible and left out. The rest go through
 passes. A pass plans every mutator by calling its `mutate(ctx)` in a
 sandbox of its own, builds and mounts the files layer, parses every
-document the match will load from the layered store, applies every
-mutator's rules together once, and runs each mutator's hooks in list order,
+document the match will load from the layered store, applies each
+mutator's rules as a step of its own in list order, each on the documents
+the one above it left, and then runs each mutator's hooks in list order,
 its units hook and then its weapons hook. Only a document the pass changed
 is written back, whole, with the text writer, at the path the store listed
 it under. A document a hook removed is hidden.
@@ -604,12 +605,15 @@ result is the run of the mutators that remain: a mutator that failed leaves
 no file, rule, journal entry or note.
 
 The journal keeps every change of the last pass: each rule write, naming
-every mutator that contributed to it, each hook write and removal, each file
-a mutator added, and each file of the mod a mask hides. It is sorted by
-phase, then by the first mutator, then by path, record, block and field.
-The conflict report holds the stacking notes, and the paths a parse left
-out, one warning each. A script stopped by an allowance, the real-time
-limit or the string cap has a cause of its own (`instruction_budget`,
+the mutator that made it, each hook write and removal, each file a mutator
+added, and each file of the mod a mask hides. It is sorted by phase, then
+by the first mutator, then by path, record, block and field. The conflict
+report holds the stacking notes, and the paths a parse left out, one
+warning each. Among the notes, `value_replaced` is a value a later
+mutator's rule replaced, and `field_locked` is a field an earlier mutator
+locked, so a later mutator's rule left it alone. Each names both mutators,
+the earlier first. A script stopped by an allowance, the real-time limit or
+the string cap has a cause of its own (`instruction_budget`,
 `memory_budget`, `time_limit` or `string_length`), never `script_error`.
 
 The pipeline prints nothing and keeps nothing between calls. The same input
