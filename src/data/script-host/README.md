@@ -78,6 +78,17 @@ moves that state; the moved-from object has no state.
   engine's floating-point options: no fused multiply-add and no
   value-changing optimisation, and Visual Studio's strict floating-point
   mode.
+- A sandbox opens only when the C library's collation locale is `C` or
+  `POSIX`. String comparison and `table.sort` on strings then follow byte
+  order on every machine. Any other collation is refused at open, with the
+  locale's name in the error.
+- `setmetatable` installs a copy of the metatable. The copy keeps every
+  field the caller's table had at that moment, including `__index`, so a
+  methods table that `__index` points at still sees fields added later.
+  A later write to the caller's own table does not change the copy, and the
+  copy refuses `__mode`. `rawset` of `__mode` is refused on every table.
+  No script can make a weak table. `getmetatable` returns the copy, or the
+  `__metatable` field when the caller set one.
 
 ## Maths
 
@@ -126,6 +137,28 @@ a tie by the raw bytes. `sort_names` uses that order and does not call Lua.
 first, outside any protected region. `push_sorted_keys` pushes one table's
 keys in the `pairs` order and raises as `pairs` does.
 
+## Text
+
+`tostring` of a float is the same characters on every machine. A NaN of
+either sign is `nan`, the infinities are `inf` and `-inf`, and every finite
+value is `%.14g`, with `.0` added to an integral value the way Lua does.
+Joining a float to a string uses that same text.
+
+A table, a function or any other value without `__tostring` prints as its
+kind, a colon and `hidden`, for example `table: hidden`. It does not print
+where the value sits. `__tostring` is used when the metatable has one, and
+`__name` is used as the kind when it has no `__tostring`.
+
+`string.format` is Lua's own format, with two refusals. `%p` is refused,
+because it would show where a value sits. `%a`, `%e`, `%f` and `%g`, in
+either case, are refused when the number is a NaN or an infinity; the
+script tests the number first, or uses `tostring`. A finite number, `%q`,
+`%s`, `%d`, `%i`, `%x` and `%c` are unchanged. `%q` of an infinity is
+`1e9999` or `-1e9999`, and `%q` of a NaN is `(0/0)`.
+
+`string.pack`, `string.unpack` and `string.packsize` are nil. Their sizes
+and alignment are not the same on every machine the engine builds for.
+
 ## Profiles
 
 A profile is a name, an instruction allowance, a memory cap and an optional
@@ -169,12 +202,15 @@ the allowance stops with an instruction-budget error, including when the
 script catches that error itself, and that a long match which stays inside
 the allowance adds to `instructions_used`.
 
+`data-script-host-text` checks the float spellings, `hidden` in place of
+where a value sits, the `string.format` refusals, the absent pack functions,
+C collation, and that no route makes a weak table.
+
 ## Limitations
 
 Some work inside a C function is bounded by memory, not by the instruction
 count: `table.sort` with no comparison function, `table.concat`, and
-`string.rep` up to its cap. Text of numbers that must come out the same on
-every platform is not part of this library yet. A `__gc` or `__mode` entry
-added to a metatable after `setmetatable` is not caught. `instructions_used`
-counts Lua instructions in steps of the check interval, so a short phase can
-report zero; pattern steps are counted one by one.
+`string.rep` up to its cap. A `__gc` entry added to the installed metatable
+after `setmetatable` is not caught. `instructions_used` counts Lua
+instructions in steps of the check interval, so a short phase can report
+zero; pattern steps are counted one by one.

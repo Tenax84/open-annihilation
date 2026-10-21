@@ -38,3 +38,18 @@ double oa_script_host_power(double base, double exponent);
 
 #undef lua_strx2number // stops hexadecimal numbers being read by the C library
 #undef lua_number2strx // stops hexadecimal numbers being written by the C library
+
+// NaN of either sign is "nan". The infinities are "inf" and "-inf".
+// Anything else is "%.14g". The result is the length snprintf would report.
+#ifdef __cplusplus
+extern "C" {
+#endif
+int oa_script_host_number_text(char* buffer, size_t size, double value);
+#ifdef __cplusplus
+}
+#endif
+#undef lua_number2str // stops a NaN or an infinity taking the C library's spelling
+#define lua_number2str(s, sz, n) oa_script_host_number_text((s), (sz), (n))
+
+#undef lua_pointer2str // stops a table, a function or userdata showing where it sits
+#define lua_pointer2str(buff, sz, p) ((void)(p), l_sprintf((buff), (sz), "%s", "hidden"))

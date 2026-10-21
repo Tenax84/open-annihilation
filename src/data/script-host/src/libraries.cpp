@@ -7,6 +7,7 @@
 
 #include "internal.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -20,8 +21,10 @@ namespace {
 using Control = HostDetail::Control;
 
 const char string_rep_key = 0;
+const char string_format_key = 0;
 const char setmetatable_key = 0;
 const char rawset_key = 0;
+const char metatable_guard_key = 0;
 const char xpcall_key = 0;
 
 static_assert(string_rep_limit == 1048576);
@@ -195,6 +198,98 @@ static int host_string_rep(lua_State* state) {
     return 1;
 }
 
+// True for the characters Lua's format parser treats as flags, width or precision.
+static bool format_span(char character) {
+    switch (character) {
+    case '-':
+    case '+':
+    case '#':
+    case '0':
+    case ' ':
+    case '.':
+        return true;
+    default:
+        return character >= '1' && character <= '9';
+    }
+}
+
+static bool float_conversion(char conversion) {
+    switch (conversion) {
+    case 'a':
+    case 'A':
+    case 'e':
+    case 'E':
+    case 'f':
+    case 'g':
+    case 'G':
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Finds %p, and %a %e %f %g (either case) of a NaN or an infinity, then calls
+// Lua's own format. Other conversions, including a finite float, are unchanged.
+static int host_string_format(lua_State* state) {
+    std::size_t length = 0;
+    const char* format = luaL_checklstring(state, 1, &length);
+    int argument = 1;
+    const int top = lua_gettop(state);
+    for (std::size_t index = 0; index < length; ++index) {
+        if (format[index] != '%')
+            continue;
+        if (index + 1 >= length)
+            break;
+        ++index;
+        if (format[index] == '%')
+            continue;
+        ++argument;
+        while (index < length && format_span(format[index]))
+            ++index;
+        if (index >= length)
+            break;
+        const char conversion = format[index];
+        if (conversion == 'p')
+            return luaL_error(state, "string.format: %%p would show a memory address");
+        if (!float_conversion(conversion) || argument > top)
+            continue;
+        int is_number = 0;
+        const lua_Number number = lua_tonumberx(state, argument, &is_number);
+        if (is_number != 0 && (std::isnan(number) || std::isinf(number))) {
+            return luaL_error(
+                state,
+                "string.format: cannot write nan or an infinity with %%%c; test the number "
+                "first, or use tostring",
+                conversion
+            );
+        }
+    }
+
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &string_format_key);
+    lua_insert(state, 1);
+    const int arguments = lua_gettop(state) - 1;
+    lua_call(state, arguments, 1);
+    return 1;
+}
+
+// The installed metatable's own metatable. Writing __mode would make the
+// table weak, and a weak table drops entries at different times on each machine.
+static int host_mode_newindex(lua_State* state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+    if (lua_type(state, 2) == LUA_TSTRING) {
+        std::size_t length = 0;
+        const char* key = lua_tolstring(state, 2, &length);
+        if (length == 6 && std::memcmp(key, "__mode", 6) == 0)
+            return luaL_error(state, "the key __mode is refused");
+    }
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &rawset_key);
+    lua_pushvalue(state, 1);
+    lua_pushvalue(state, 2);
+    lua_pushvalue(state, 3);
+    lua_call(state, 3, 0);
+    return 0;
+}
+
 static int host_setmetatable(lua_State* state) {
     const int metatable_type = lua_type(state, 2);
     luaL_checktype(state, 1, LUA_TTABLE);
@@ -212,6 +307,21 @@ static int host_setmetatable(lua_State* state) {
         if (!lua_isnil(state, -1))
             return luaL_error(state, "setmetatable: a metatable with __mode is refused");
         lua_pop(state, 1);
+
+        // The caller's table stays theirs. The value gets a copy, so a later
+        // write, including one through a table shared by several values, cannot
+        // make this value weak. __index still points at the table it pointed at.
+        lua_newtable(state);
+        const int copy = lua_gettop(state);
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0) {
+            lua_pushvalue(state, -2);
+            lua_insert(state, -2);
+            lua_rawset(state, copy);
+        }
+        lua_rawgetp(state, LUA_REGISTRYINDEX, &metatable_guard_key);
+        lua_setmetatable(state, copy);
+        lua_replace(state, 2);
     }
     lua_rawgetp(state, LUA_REGISTRYINDEX, &setmetatable_key);
     lua_pushvalue(state, 1);
@@ -288,10 +398,22 @@ void open_libraries(lua_State* state) {
     lua_getglobal(state, "string");
     lua_getfield(state, -1, "rep");
     lua_rawsetp(state, LUA_REGISTRYINDEX, &string_rep_key);
+    lua_getfield(state, -1, "format");
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &string_format_key);
     lua_pushnil(state);
     lua_setfield(state, -2, "dump");
+    // Sizes and alignment differ between 32-bit and 64-bit builds, and between
+    // Windows and the rest, so a script cannot pack bytes itself.
+    lua_pushnil(state);
+    lua_setfield(state, -2, "pack");
+    lua_pushnil(state);
+    lua_setfield(state, -2, "unpack");
+    lua_pushnil(state);
+    lua_setfield(state, -2, "packsize");
     lua_pushcfunction(state, host_string_rep);
     lua_setfield(state, -2, "rep");
+    lua_pushcfunction(state, host_string_format);
+    lua_setfield(state, -2, "format");
     // The string metatable's __index is this table, so ("x"):find uses these.
     install_patterns(state);
     lua_pop(state, 1);
@@ -305,6 +427,13 @@ void open_libraries(lua_State* state) {
     lua_rawsetp(state, LUA_REGISTRYINDEX, &rawset_key);
     lua_pushcfunction(state, host_rawset);
     lua_setglobal(state, "rawset");
+
+    lua_newtable(state);
+    lua_pushcfunction(state, host_mode_newindex);
+    lua_setfield(state, -2, "__newindex");
+    lua_pushboolean(state, 1);
+    lua_setfield(state, -2, "__metatable");
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &metatable_guard_key);
 
     lua_pushcfunction(state, host_print);
     lua_setglobal(state, "print");
