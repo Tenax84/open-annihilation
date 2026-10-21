@@ -5858,6 +5858,14 @@
 	it=Serve {name}, ed è disattivata.;
 	}
 
+[Needs {name}, which no registry offers]
+	{
+	de=Braucht {name}, das keine Registrierung anbietet;
+	fr=Requiert {name}, qu'aucun registre n'offre;
+	es=Necesita {name}, que ningún registro ofrece;
+	it=Richiede {name}, che nessun registro offre;
+	}
+
 [Network]
 	{
 	de=Netzwerk;
@@ -9640,14 +9648,6 @@
 	fr=Ces mutateurs ont besoin les uns des autres : {ids};
 	es=Estos mutadores se necesitan entre sí: {ids};
 	it=Questi mutatori hanno bisogno l'uno dell'altro: {ids};
-	}
-
-[These mutators need each other: {names}]
-	{
-	de=Diese Mutatoren brauchen einander: {names};
-	fr=Ces mutateurs ont besoin les uns des autres : {names};
-	es=Estos mutadores se necesitan: {names};
-	it=Questi mutatori hanno bisogno gli uni degli altri: {names};
 	}
 
 [They all stay installed. Turn one on again and {name} comes back with it.]

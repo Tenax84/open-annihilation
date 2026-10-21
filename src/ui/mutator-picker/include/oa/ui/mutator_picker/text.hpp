@@ -28,8 +28,11 @@ inline constexpr std::string_view line_no_effect = "No effect with this mod";
 inline constexpr std::string_view line_conflicts = "Cannot run beside {name}";
 /// Switching on would pass most_on, counting the prerequisites it brings.
 inline constexpr std::string_view refused_cap = "At most {count} mutators can be on";
-/// A mutator whose prerequisites need each other. `{names}` are the ids in the loop.
-inline constexpr std::string_view line_cycle = "These mutators need each other: {names}";
+/// Why a row is locked: a prerequisite that names no version range and is
+/// not among the mutators the picker can get. With a range, the Library's
+/// `blocked_prerequisite` says it; a loop is the Library's `blocked_cycle`.
+inline constexpr std::string_view blocked_prerequisite_any =
+    "Needs {name}, which no registry offers";
 /// One option on a row, the Library's Options fact form.
 inline constexpr std::string_view option_line = "{label}: {value}";
 /// The clash choice on a row that brings units or weapons.

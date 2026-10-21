@@ -70,9 +70,10 @@ struct OptionSpec {
 
 /// One mutator the picker can show. The host fills every field.
 struct Mutator {
-    std::string id{};                ///< the mutator's id
-    std::string name{};              ///< the name a player sees; the id when empty
-    std::string version{};           ///< the version as written
+    std::string id{};   ///< the mutator's id
+    std::string name{}; ///< the name a player sees; the id when empty
+    /// The version as written. A dependant's version range is checked against it.
+    std::string version{};
     std::string author{};            ///< who wrote it; empty when unnamed
     std::string summary{};           ///< the short line under the name
     std::string description{};       ///< the longer text; the search reads it
@@ -159,10 +160,12 @@ struct TurnOff {
 /// The picker's state. `open` fills it. The host may set `filter`, `tag` and
 /// `query`; the other fields change through the functions below.
 struct Picker {
-    Inputs inputs{};                       ///< the host's inputs
-    std::vector<Chosen> on{};              ///< the On mutators, top to bottom
-    std::vector<CameWith> came_with{};     ///< prerequisites brought for a dependant
-    std::vector<std::string> left_out{};   ///< names the last set could not switch on
+    Inputs inputs{};                   ///< the host's inputs
+    std::vector<Chosen> on{};          ///< the On mutators, top to bottom
+    std::vector<CameWith> came_with{}; ///< prerequisites brought for a dependant
+    /// Mutators the picker left out or switched off itself: by name, or by
+    /// id when the inputs no longer hold them.
+    std::vector<std::string> left_out{};
     Filter filter{Filter::all};            ///< which Off mutators show
     std::string tag{};                     ///< the tag filter; empty shows every tag
     std::string query{};                   ///< the search; empty matches everything
@@ -227,26 +230,36 @@ inline constexpr std::string_view turn_off_button_id = "turn-off";
 /// Switches the last set on in its order, with its options. An option the
 /// mutator no longer has is dropped. A value it no longer allows, and an
 /// option the set does not name, take the default. A mutator that is gone
-/// or unavailable is named in `left_out` and not switched on. A mutator
-/// whose prerequisites need each other is named that way and not placed.
-/// Prerequisites the set lacks are brought in above what needs them, then
-/// the order is mended so every prerequisite sits above its dependants,
-/// moving each one above the first dependant that precedes it. At most
-/// `most_on` stay on; the rest are named in `left_out`. `from_last_set` is
-/// set when the set was remembered and anything is on. The selection is the
-/// first On mutator, or the first mutator by name when none are on.
+/// is named in `left_out` by its id. The order is then mended so every
+/// prerequisite sits above its dependants, moving each one above the first
+/// dependant that precedes it. The list is then read from the top: a
+/// mutator that cannot be on beside those kept above it (the rules `rows`
+/// locks a row by) is left out and named in `left_out`, so of two mutators
+/// that conflict the later one is left out, and a mutator that needs one
+/// left out is left out too. One that can be on is kept after the
+/// prerequisites it lacks, which are brought in with their defaults and
+/// recorded in `came_with`. At most `most_on` stay on; the rest are named
+/// in `left_out`. `from_last_set` is set when the set was remembered and
+/// anything is on. The selection is the first On mutator, or the first
+/// mutator by name when none are on.
 ///
 /// @param[in,out] picker the picker
 /// @param inputs the host's inputs
 void open(Picker& picker, Inputs inputs);
 
 /// Replaces the inputs and keeps the On list, its order, its options, the
-/// filters, the search and the selection.
+/// filters, the search and the selection, as far as the new inputs allow.
 ///
 /// A mutator the new inputs do not hold is dropped from the On list and
-/// named in `left_out`. An option that disappeared is dropped, and a value
-/// that is no longer allowed takes the default. The order is mended when
-/// the new needs would put a prerequisite below a dependant. A selection
+/// named in `left_out` by its id. An option that disappeared is dropped,
+/// and a value that is no longer allowed takes the default. The list is
+/// then mended and read from the top as `open` reads it: a mutator whose
+/// prerequisite went, or no longer meets its range, whose needs became a
+/// loop, that became unavailable or that now conflicts with one above it is
+/// switched off with its On dependants, each named in `left_out`, and its
+/// row says why. A prerequisite a mutator now needs is brought in above it
+/// when it can be. Afterwards every prerequisite stands above what needs
+/// it. A question about a mutator that went off is dropped. A selection
 /// the inputs no longer hold becomes the first On mutator, or the first
 /// mutator by name.
 ///
@@ -257,14 +270,17 @@ void refresh(Picker& picker, Inputs inputs);
 /// Switches `id` on, with its default options, and brings the prerequisites
 /// it lacks to just above what needs them.
 ///
-/// Refuses, and changes nothing, when the picker is read-only, when the
-/// mutator is unavailable, when it or a prerequisite conflicts with a
-/// mutator that would be on, when the prerequisites need each other, when a
-/// prerequisite is not among the inputs, and when the On list would pass
-/// `most_on`. Not being installed is no refusal. `place` is where it sits
-/// in the On list, or the end when none is given, clamped below its On
-/// prerequisites and above its On dependants. A mutator that is already on
-/// is left where it is.
+/// Refuses, and changes nothing, when the picker is read-only, when its row
+/// is locked (`rows` gives the reason, and the refusal is the row's line),
+/// and when the On list would pass `most_on`. A row is locked when the
+/// mutator or one of its prerequisites is unavailable, when its
+/// prerequisites need each other, when a prerequisite is not among the
+/// inputs or its version is outside the range asked for, and when it or a
+/// prerequisite it would bring conflicts with an On mutator or with each
+/// other. Conflicts between two mutators already on do not refuse it. Not
+/// being installed is no refusal. `place` is where it sits in the On list,
+/// or the end when none is given, clamped below its On prerequisites and
+/// above its On dependants. A mutator that is already on is left where it is.
 ///
 /// @param[in,out] picker the picker
 /// @param id the mutator's id
@@ -284,10 +300,12 @@ switch_on(Picker& picker, std::string_view id, std::optional<std::size_t> place 
 /// @return the question, when one was asked
 [[nodiscard]] std::optional<TurnOff> switch_off(Picker& picker, std::string_view id);
 
-/// Switches off the mutator `asking` names, and the dependants it recorded.
+/// Switches off the mutator `asking` names, and every On mutator that needs
+/// it now.
 ///
-/// Clears `asking`. A read-only picker and a picker that is not asking
-/// change nothing.
+/// The dependants are worked out again when this is called, so a dependant
+/// switched on after the question was asked goes off too. Clears `asking`.
+/// A read-only picker and a picker that is not asking change nothing.
 ///
 /// @param[in,out] picker the picker
 void confirm_turn_off(Picker& picker);
@@ -373,10 +391,11 @@ set_option(Picker& picker, std::string_view id, std::string_view option, std::st
 /// Returns the rows: every On mutator in order, numbered from 1, then the
 /// Off mutators the filter, the tag and the search keep, by name.
 ///
-/// A row's line is the first that holds: unavailable, a conflict with an On
-/// mutator, an incompatible or failed verdict, needed by an On mutator, a
-/// no-effect verdict, a download, not installed, the options (and the clash
-/// choice when it brings units or weapons), or the summary.
+/// A row's line is the first that holds: locked (why it cannot be on beside
+/// the On list, as `switch_on` refuses it), an incompatible or failed
+/// verdict, needed by an On mutator, a no-effect verdict, a download, not
+/// installed, the options (and the clash choice when it brings units or
+/// weapons), or the summary.
 ///
 /// @param picker the picker
 /// @return the rows, On first
@@ -433,9 +452,10 @@ set_option(Picker& picker, std::string_view id, std::string_view option, std::st
 
 /// Tells whether the On list can start a game.
 ///
-/// True when every On mutator is installed and none is unavailable or in
-/// conflict with another that is on. An empty list can: the game plays
-/// without mutators.
+/// True when every On mutator is installed, none is locked beside the On
+/// list (unavailable, a loop, a prerequisite missing or out of range, a
+/// conflict), and every prerequisite of each is on above it. An empty
+/// list can: the game plays without mutators.
 ///
 /// @param picker the picker
 /// @return true when the set can start
@@ -461,9 +481,10 @@ set_option(Picker& picker, std::string_view id, std::string_view option, std::st
 /// Makes the question `asking` holds.
 ///
 /// The title names the prerequisite. The paragraphs name the dependants
-/// that turn off with it, then that they stay installed. CANCEL is marked
-/// and is the cancel button. TURN OFF is the primary button. An empty
-/// question is returned when the picker is not asking.
+/// that turn off with it (those On now, as `confirm_turn_off` finds them),
+/// then that they stay installed. CANCEL is marked and is the cancel
+/// button. TURN OFF is the primary button. An empty question is returned
+/// when the picker is not asking.
 ///
 /// @param picker the picker
 /// @return the question

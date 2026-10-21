@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -79,7 +80,8 @@ inline std::vector<std::string> on_ids(const Picker& picker) {
 
 /// Returns the prerequisite graph of every mutator in the inputs.
 ///
-/// The first record of an id is the one the closure reads.
+/// The first record of an id is the one the closure reads. A need with no
+/// id is left out.
 ///
 /// @param picker the picker
 /// @return the graph
@@ -90,8 +92,10 @@ inline std::vector<library::Need> needs_graph(const Picker& picker) {
         library::Need need;
         need.id = mutator.id;
         need.needs.reserve(mutator.needs.size());
-        for (const library::Prerequisite& prerequisite : mutator.needs)
-            need.needs.push_back(prerequisite.id);
+        for (const library::Prerequisite& prerequisite : mutator.needs) {
+            if (!prerequisite.id.empty())
+                need.needs.push_back(prerequisite.id);
+        }
         graph.push_back(std::move(need));
     }
     return graph;
@@ -125,22 +129,6 @@ inline bool conflicts(const Mutator& left, const Mutator& right) {
         if (id == left.id)
             return true;
     return false;
-}
-
-/// Returns an On mutator `mutator` cannot run beside, the highest one.
-///
-/// @param picker the picker
-/// @param mutator the mutator
-/// @return that mutator, or null when none of the On list conflicts
-inline const Mutator* on_conflict(const Picker& picker, const Mutator& mutator) {
-    for (const Chosen& chosen : picker.on) {
-        if (chosen.id == mutator.id)
-            continue;
-        const Mutator* other = find_mutator(picker, chosen.id);
-        if (other != nullptr && conflicts(mutator, *other))
-            return other;
-    }
-    return nullptr;
 }
 
 /// Joins names the way a sentence lists them.
@@ -233,11 +221,52 @@ inline void drop_came_with(Picker& picker, std::string_view id) {
 /// @param ids the ids
 /// @param id the id
 /// @return true when the list holds it
-inline bool listed(const std::vector<std::string>& ids, std::string_view id) {
+inline bool listed(std::span<const std::string> ids, std::string_view id) {
     for (const std::string& item : ids)
         if (item == id)
             return true;
     return false;
+}
+
+/// Returns why `id` cannot be on beside the mutators `on` names, in the
+/// words its row shows and `switch_on` refuses with.
+///
+/// The checks run over the mutator's prerequisite closure, in this order:
+/// the mutator is unavailable; the closure is a loop (the ids in it); a
+/// prerequisite is not among the inputs, is unavailable, or has a version
+/// outside the range its dependant asks for; the mutator, or a prerequisite
+/// it would bring (one `on` does not name), conflicts with a mutator `on`
+/// names, or with another of those. A conflict between two mutators `on`
+/// already names is not this mutator's. The words are `line_not_compatible`
+/// with the reason, or `line_conflicts` naming the other mutator, the On
+/// one when there is one.
+///
+/// @param picker the picker
+/// @param graph the prerequisite graph of its inputs
+/// @param on the mutators it would be on beside, top to bottom
+/// @param id the mutator
+/// @return the line; empty when it can be on, or the inputs do not hold it
+[[nodiscard]] std::string blocked_line(
+    const Picker& picker,
+    std::span<const library::Need> graph,
+    std::span<const std::string> on,
+    std::string_view id
+);
+
+/// Returns the On mutators that need `id` now, top to bottom, `id` left out.
+///
+/// @param picker the picker
+/// @param id the prerequisite
+/// @return its On dependants
+inline std::vector<std::string> on_dependants(const Picker& picker, std::string_view id) {
+    const std::vector<library::Need> graph = needs_graph(picker);
+    const std::vector<std::string> ids = on_ids(picker);
+    std::vector<std::string> dependants;
+    for (std::string& item : library::dependants_of(graph, ids, id)) {
+        if (item != id && !listed(dependants, item))
+            dependants.push_back(std::move(item));
+    }
+    return dependants;
 }
 
 } // namespace detail

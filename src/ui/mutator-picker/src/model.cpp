@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Which mutators are on, in which order, and with which option values.
-// Prerequisites come from the Library's closure. A number is compared as
+// Prerequisites come from the Library's closure, and their version ranges
+// are checked with the manifest's condition matcher. A number is compared as
 // decimal text, never as a floating-point value. Nothing here reads a file,
 // a clock, a preference or the network.
 #include "oa/ui/mutator_picker/model.hpp"
 
 #include "internal.hpp"
 
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/ui/library/prerequisites.hpp"
 #include "oa/ui/library/text.hpp"
 #include "oa/ui/mutator_picker/text.hpp"
@@ -16,6 +18,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -24,6 +27,9 @@
 
 namespace oa::ui::mutator_picker {
 namespace {
+
+namespace oamod = formats::oamod;
+namespace oamut = formats::oamut;
 
 /// A decimal kept as digits. The value is ± digits × 10^(−scale).
 struct Decimal {
@@ -371,13 +377,26 @@ kept_clash(const Mutator& mutator, const Inputs& inputs, std::optional<Clash> gi
     return inputs.clash_default;
 }
 
+/// A mutator switched on with its default options and clash mode.
+///
+/// @param picker the picker
+/// @param mutator the mutator
+/// @return its On record
+Chosen with_defaults(const Picker& picker, const Mutator& mutator) {
+    Chosen chosen;
+    chosen.id = mutator.id;
+    chosen.options = normalize(mutator, {});
+    chosen.clash = kept_clash(mutator, picker.inputs, std::nullopt);
+    return chosen;
+}
+
 /// The ids in a closure that need each other.
 ///
 /// @param graph the prerequisite graph
 /// @param closure the closure
 /// @return those ids; the closure's order when the loop cannot be named
 std::vector<std::string>
-cycle_ids(const std::vector<library::Need>& graph, const library::Closure& closure) {
+cycle_ids(std::span<const library::Need> graph, const library::Closure& closure) {
     std::vector<std::string> loop;
     for (const std::string& item : closure.order) {
         const std::vector<std::string> dependants =
@@ -390,18 +409,193 @@ cycle_ids(const std::vector<library::Need>& graph, const library::Closure& closu
     return loop;
 }
 
-/// Joins ids for the cycle sentence.
+/// Writes a version range in the Library's words for engine and mutator ranges.
+///
+/// @param text how texts are looked up
+/// @param range_text the range as the manifest writes it
+/// @return the words, such as "4.0 or later"; the range as written when it
+///         does not read; empty for an empty range
+std::string range_words(const library::TextHooks& text, std::string_view range_text) {
+    if (range_text.empty())
+        return {};
+    const std::optional<oamut::VersionRange> range = oamut::parse_version_range(range_text);
+    if (!range)
+        return std::string(range_text);
+    std::string joined;
+    for (const auto& [comparison, version] : range->terms) {
+        if (!joined.empty()) {
+            joined += library::shown(text, library::words::list_separator);
+            joined.push_back(' ');
+        }
+        std::string_view pattern = library::words::engine_at_least;
+        switch (comparison) {
+        case oamod::EngineComparison::at_least:
+            pattern = library::words::engine_at_least;
+            break;
+        case oamod::EngineComparison::above:
+            pattern = library::words::engine_above;
+            break;
+        case oamod::EngineComparison::at_most:
+            pattern = library::words::engine_at_most;
+            break;
+        case oamod::EngineComparison::below:
+            pattern = library::words::engine_below;
+            break;
+        case oamod::EngineComparison::exactly:
+            pattern = library::words::engine_exactly;
+            break;
+        }
+        joined += library::filled(text, pattern, {{"version", oamut::version_text(version)}});
+    }
+    return joined;
+}
+
+/// Tells whether a prerequisite's version meets the range its dependant asks for.
+///
+/// An empty range is any version. A range that does not read is not met.
+///
+/// @param need the dependant's record of the prerequisite
+/// @param version the prerequisite's version, as written
+/// @return true when the range is met
+bool range_met(const library::Prerequisite& need, std::string_view version) {
+    if (need.range.empty())
+        return true;
+    oamut::Condition condition;
+    condition.id = need.id;
+    condition.range_text = need.range;
+    condition.range = oamut::parse_version_range(need.range);
+    if (!condition.range)
+        return false;
+    return oamut::condition_met(condition, need.id, version);
+}
+
+/// The name a prerequisite is called by: its record's name, else the
+/// mutator's, else its id.
 ///
 /// @param picker the picker
-/// @param ids the ids
-/// @return the sentence
-std::string cycle_sentence(const Picker& picker, const std::vector<std::string>& ids) {
+/// @param need the dependant's record of the prerequisite
+/// @return the name
+std::string need_name(const Picker& picker, const library::Prerequisite& need) {
+    if (!need.name.empty())
+        return need.name;
+    return detail::display_name_of(picker, need.id);
+}
+
+/// The reason for a prerequisite that cannot be had at a version in range.
+///
+/// @param picker the picker
+/// @param need the dependant's record of the prerequisite
+/// @return "Needs {name} {range}, which no registry offers", or the same
+///         without the range when it names none
+std::string not_offered(const Picker& picker, const library::Prerequisite& need) {
+    const library::TextHooks& text = picker.inputs.text;
+    const std::string range = range_words(text, need.range);
+    if (range.empty()) {
+        return library::filled(
+            text, words::blocked_prerequisite_any, {{"name", need_name(picker, need)}}
+        );
+    }
     return library::filled(
-        picker.inputs.text,
-        words::line_cycle,
-        {{"names", detail::join_names(picker.inputs.text, ids)}}
+        text,
+        library::words::blocked_prerequisite,
+        {{"name", need_name(picker, need)}, {"range", range}}
     );
 }
+
+/// A locked row's line for a reason that is not a conflict.
+///
+/// @param picker the picker
+/// @param reason the reason
+/// @return "Not compatible with this mod: {reason}"
+std::string not_compatible(const Picker& picker, const std::string& reason) {
+    return library::filled(picker.inputs.text, words::line_not_compatible, {{"reason", reason}});
+}
+
+/// A locked row's line for a conflict.
+///
+/// @param picker the picker
+/// @param other the mutator it cannot run beside
+/// @return "Cannot run beside {name}"
+std::string conflict_line(const Picker& picker, const Mutator& other) {
+    return library::filled(
+        picker.inputs.text, words::line_conflicts, {{"name", detail::display_name(other)}}
+    );
+}
+
+} // namespace
+
+namespace detail {
+
+std::string blocked_line(
+    const Picker& picker,
+    std::span<const library::Need> graph,
+    std::span<const std::string> on,
+    std::string_view id
+) {
+    const Mutator* self = find_mutator(picker, id);
+    if (self == nullptr)
+        return {};
+    if (!self->unavailable.empty())
+        return not_compatible(picker, self->unavailable);
+    const std::string roots[]{std::string(id)};
+    const library::Closure closure = library::prerequisite_closure(graph, roots);
+    if (closure.cyclic) {
+        const library::TextHooks& text = picker.inputs.text;
+        return not_compatible(
+            picker,
+            library::filled(
+                text,
+                library::words::blocked_cycle,
+                {{"ids", join_names(text, cycle_ids(graph, closure))}}
+            )
+        );
+    }
+    for (const std::string& item : closure.order) {
+        const Mutator* holder = find_mutator(picker, item);
+        if (holder == nullptr)
+            continue;
+        for (const library::Prerequisite& need : holder->needs) {
+            if (need.id.empty())
+                continue;
+            const Mutator* needed = find_mutator(picker, need.id);
+            if (needed == nullptr || !range_met(need, needed->version))
+                return not_compatible(picker, not_offered(picker, need));
+            if (!needed->unavailable.empty())
+                return not_compatible(picker, needed->unavailable);
+        }
+    }
+    // The mutator and the prerequisites it would bring, against the On list
+    // and against each other. Pairs already on are not this mutator's.
+    std::vector<const Mutator*> coming;
+    for (const std::string& item : closure.order) {
+        if (item != id && listed(on, item))
+            continue;
+        if (const Mutator* one = find_mutator(picker, item))
+            coming.push_back(one);
+    }
+    for (const Mutator* one : coming) {
+        for (const std::string& other_id : on) {
+            if (other_id == one->id)
+                continue;
+            const Mutator* other = find_mutator(picker, other_id);
+            if (other != nullptr && conflicts(*one, *other))
+                return conflict_line(picker, *other);
+        }
+    }
+    for (std::size_t first = 0; first < coming.size(); ++first) {
+        for (std::size_t second = first + 1; second < coming.size(); ++second) {
+            if (!conflicts(*coming[first], *coming[second]))
+                continue;
+            const Mutator& named = coming[second]->id == id ? *coming[first] : *coming[second];
+            return conflict_line(picker, named);
+        }
+    }
+    return {};
+}
+
+} // namespace detail
+
+namespace {
 
 /// Where a mutator that is not yet on is inserted, clamped.
 ///
@@ -513,180 +707,6 @@ void mend(Picker& picker) {
     }
 }
 
-/// What switching one mutator on decided, before the picker is changed.
-struct Admission {
-    bool changed = false;
-    std::vector<std::string> brought;
-    std::string refused;
-    std::vector<std::string> cycle;
-};
-
-/// An On mutator `id` cannot run beside, naming the one a player already has on
-/// when there is one.
-///
-/// @param picker the picker
-/// @param graph_ids the ids that would be on
-/// @param id the mutator being switched on
-/// @return the sentence, or empty when nothing conflicts
-std::string conflict_sentence(
-    const Picker& picker, const std::vector<std::string>& graph_ids, std::string_view id
-) {
-    const Mutator* self = detail::find_mutator(picker, id);
-    if (self != nullptr) {
-        for (const Chosen& chosen : picker.on) {
-            const Mutator* other = detail::find_mutator(picker, chosen.id);
-            if (other != nullptr && detail::conflicts(*self, *other)) {
-                return library::filled(
-                    picker.inputs.text,
-                    words::line_conflicts,
-                    {{"name", detail::display_name(*other)}}
-                );
-            }
-        }
-    }
-    for (const std::string& item : graph_ids) {
-        const Mutator* one = detail::find_mutator(picker, item);
-        if (one == nullptr)
-            continue;
-        for (const std::string& other_id : graph_ids) {
-            if (other_id == item)
-                continue;
-            const Mutator* other = detail::find_mutator(picker, other_id);
-            if (other != nullptr && detail::conflicts(*one, *other)) {
-                return library::filled(
-                    picker.inputs.text,
-                    words::line_conflicts,
-                    {{"name", detail::display_name(*other)}}
-                );
-            }
-        }
-    }
-    return {};
-}
-
-/// Switches `id` on when it can be, bringing missing prerequisites.
-///
-/// `given` supplies the options and clash of a last set. Null starts from
-/// the defaults. Refusals change nothing.
-///
-/// @param[in,out] picker the picker
-/// @param id the mutator
-/// @param place where it sits; the end when none
-/// @param given the last set's record, or null
-/// @param enforce_cap refuse when the On list would pass most_on
-/// @param refuse_conflicts refuse when the set would hold a conflict
-/// @return what changed
-Admission admit(
-    Picker& picker,
-    std::string_view id,
-    std::optional<std::size_t> place,
-    const Chosen* given,
-    bool enforce_cap,
-    bool refuse_conflicts
-) {
-    if (picker.inputs.read_only) {
-        Admission admission;
-        admission.refused = std::string(library::shown(picker.inputs.text, words::hint_view));
-        return admission;
-    }
-    const Mutator* mutator = detail::find_mutator(picker, id);
-    if (mutator == nullptr)
-        return {};
-    if (detail::on_index(picker, id))
-        return {};
-    if (!mutator->unavailable.empty()) {
-        Admission admission;
-        admission.refused = library::filled(
-            picker.inputs.text, words::line_not_compatible, {{"reason", mutator->unavailable}}
-        );
-        return admission;
-    }
-    const std::vector<library::Need> graph = detail::needs_graph(picker);
-    const std::vector<std::string> roots{std::string(id)};
-    const library::Closure closure = library::prerequisite_closure(graph, roots);
-    if (closure.cyclic) {
-        Admission admission;
-        admission.cycle = cycle_ids(graph, closure);
-        admission.refused = cycle_sentence(picker, admission.cycle);
-        return admission;
-    }
-    for (const std::string& item : closure.order) {
-        const Mutator* one = detail::find_mutator(picker, item);
-        if (one == nullptr) {
-            Admission admission;
-            admission.refused =
-                library::filled(picker.inputs.text, words::line_not_compatible, {{"reason", item}});
-            return admission;
-        }
-        if (item != id && !one->unavailable.empty()) {
-            Admission admission;
-            admission.refused = library::filled(
-                picker.inputs.text, words::line_not_compatible, {{"reason", one->unavailable}}
-            );
-            return admission;
-        }
-    }
-    if (refuse_conflicts) {
-        std::vector<std::string> future = detail::on_ids(picker);
-        for (const std::string& item : closure.order) {
-            if (!detail::listed(future, item))
-                future.push_back(item);
-        }
-        const std::string conflict = conflict_sentence(picker, future, id);
-        if (!conflict.empty()) {
-            Admission admission;
-            admission.refused = conflict;
-            return admission;
-        }
-    }
-    std::size_t added = 0;
-    for (const std::string& item : closure.order) {
-        if (!detail::on_index(picker, item))
-            ++added;
-    }
-    if (enforce_cap && (added > most_on || picker.on.size() > most_on - added)) {
-        Admission admission;
-        admission.refused = library::filled(
-            picker.inputs.text, words::refused_cap, {{"count", std::to_string(most_on)}}
-        );
-        return admission;
-    }
-
-    Chosen chosen;
-    chosen.id = std::string(id);
-    if (given != nullptr) {
-        chosen.options = normalize(*mutator, given->options);
-        chosen.clash = kept_clash(*mutator, picker.inputs, given->clash);
-    } else {
-        chosen.options = normalize(*mutator, {});
-        chosen.clash = kept_clash(*mutator, picker.inputs, std::nullopt);
-    }
-    const std::size_t at = insertion_at(picker, graph, closure, id, place);
-    picker.on.insert(picker.on.begin() + static_cast<std::ptrdiff_t>(at), std::move(chosen));
-
-    Admission admission;
-    admission.changed = true;
-    for (const std::string& item : closure.order) {
-        if (item == id || detail::on_index(picker, item))
-            continue;
-        const Mutator* one = detail::find_mutator(picker, item);
-        if (one == nullptr)
-            continue;
-        Chosen brought;
-        brought.id = item;
-        brought.options = normalize(*one, {});
-        brought.clash = kept_clash(*one, picker.inputs, std::nullopt);
-        insert_above_dependant(picker, graph, std::move(brought));
-        CameWith record;
-        record.prerequisite = item;
-        record.dependant = std::string(id);
-        picker.came_with.push_back(std::move(record));
-        admission.brought.push_back(item);
-    }
-    mend(picker);
-    return admission;
-}
-
 /// The first On mutator, or the first mutator by name.
 ///
 /// @param[in,out] picker the picker
@@ -712,71 +732,6 @@ void select_first(Picker& picker) {
         picker.selected.reset();
 }
 
-/// Why a last-set mutator cannot be placed, ignoring conflicts and the cap.
-///
-/// @param picker the picker
-/// @param id the mutator, known to be present and available
-/// @return the block; empty when it can be placed
-Admission placement_block(const Picker& picker, std::string_view id) {
-    const std::vector<library::Need> graph = detail::needs_graph(picker);
-    const std::vector<std::string> roots{std::string(id)};
-    const library::Closure closure = library::prerequisite_closure(graph, roots);
-    Admission admission;
-    if (closure.cyclic) {
-        admission.cycle = cycle_ids(graph, closure);
-        admission.refused = cycle_sentence(picker, admission.cycle);
-        return admission;
-    }
-    for (const std::string& item : closure.order) {
-        const Mutator* one = detail::find_mutator(picker, item);
-        if (one == nullptr) {
-            admission.refused =
-                library::filled(picker.inputs.text, words::line_not_compatible, {{"reason", item}});
-            return admission;
-        }
-        if (item != id && !one->unavailable.empty()) {
-            admission.refused = library::filled(
-                picker.inputs.text, words::line_not_compatible, {{"reason", one->unavailable}}
-            );
-            return admission;
-        }
-    }
-    return admission;
-}
-
-/// Brings prerequisites the On list does not already hold.
-///
-/// Each one is recorded against the On mutator whose closure named it, which
-/// is the mutator the player switched on, not an intermediate.
-///
-/// @param[in,out] picker the picker
-void bring_lacking(Picker& picker) {
-    const std::vector<std::string> asked = detail::on_ids(picker);
-    const std::vector<library::Need> graph = detail::needs_graph(picker);
-    for (const std::string& id : asked) {
-        const std::vector<std::string> roots{id};
-        const library::Closure closure = library::prerequisite_closure(graph, roots);
-        if (closure.cyclic)
-            continue;
-        for (const std::string& item : closure.order) {
-            if (item == id || detail::on_index(picker, item))
-                continue;
-            const Mutator* one = detail::find_mutator(picker, item);
-            if (one == nullptr || !one->unavailable.empty())
-                continue;
-            Chosen brought;
-            brought.id = item;
-            brought.options = normalize(*one, {});
-            brought.clash = kept_clash(*one, picker.inputs, std::nullopt);
-            insert_above_dependant(picker, graph, std::move(brought));
-            CameWith record;
-            record.prerequisite = item;
-            record.dependant = id;
-            picker.came_with.push_back(std::move(record));
-        }
-    }
-}
-
 /// Appends a name to `left_out` when it is not there yet.
 ///
 /// @param[in,out] picker the picker
@@ -784,6 +739,92 @@ void bring_lacking(Picker& picker) {
 void leave_out(Picker& picker, std::string name) {
     if (!detail::listed(picker.left_out, name))
         picker.left_out.push_back(std::move(name));
+}
+
+/// Makes the On list one a game can start with.
+///
+/// Mends the order, then reads the list from the top. A mutator that is
+/// locked beside those kept above it is switched off and named in
+/// `left_out`: of two that conflict, the later one goes, and a mutator that
+/// needs one that went is locked for the same reason and goes too. One that
+/// is not locked is kept after the prerequisites it lacks: a prerequisite
+/// still further down the list is moved up with its options, any other is
+/// brought with its defaults and recorded in `came_with`. Then at most
+/// `most_on` stay on, the rest named in `left_out`. Records and a question
+/// that name a mutator now off are dropped.
+///
+/// @param[in,out] picker the picker
+void settle(Picker& picker) {
+    mend(picker);
+    const std::vector<library::Need> graph = detail::needs_graph(picker);
+    std::vector<Chosen> waiting = std::move(picker.on);
+    std::vector<bool> taken(waiting.size(), false);
+    picker.on.clear();
+    std::vector<std::string> kept;
+    for (std::size_t index = 0; index < waiting.size(); ++index) {
+        if (taken[index] || detail::listed(kept, waiting[index].id))
+            continue;
+        taken[index] = true;
+        const std::string id = waiting[index].id;
+        if (!detail::blocked_line(picker, graph, kept, id).empty()) {
+            leave_out(picker, detail::display_name_of(picker, id));
+            continue;
+        }
+        const std::string roots[]{id};
+        const library::Closure closure = library::prerequisite_closure(graph, roots);
+        for (const std::string& item : closure.order) {
+            if (item == id || detail::listed(kept, item))
+                continue;
+            const Mutator* one = detail::find_mutator(picker, item);
+            if (one == nullptr)
+                continue;
+            std::optional<Chosen> later;
+            for (std::size_t below = index + 1; below < waiting.size(); ++below) {
+                if (!taken[below] && waiting[below].id == item) {
+                    taken[below] = true;
+                    later = std::move(waiting[below]);
+                    break;
+                }
+            }
+            if (later) {
+                picker.on.push_back(std::move(*later));
+            } else {
+                picker.on.push_back(with_defaults(picker, *one));
+                CameWith record;
+                record.prerequisite = item;
+                record.dependant = id;
+                picker.came_with.push_back(std::move(record));
+            }
+            kept.push_back(item);
+        }
+        picker.on.push_back(std::move(waiting[index]));
+        kept.push_back(id);
+    }
+    while (picker.on.size() > most_on) {
+        leave_out(picker, detail::display_name_of(picker, picker.on.back().id));
+        picker.on.pop_back();
+    }
+    std::vector<CameWith> records;
+    for (const CameWith& record : picker.came_with) {
+        if (detail::on_index(picker, record.prerequisite) &&
+            detail::on_index(picker, record.dependant))
+            records.push_back(record);
+    }
+    picker.came_with = std::move(records);
+    if (picker.asking && !detail::on_index(picker, picker.asking->id))
+        picker.asking.reset();
+}
+
+/// Removes `id` from the On list and drops the records that name it.
+///
+/// @param[in,out] picker the picker
+/// @param id the mutator
+void take_off(Picker& picker, std::string_view id) {
+    const std::optional<std::size_t> at = detail::on_index(picker, id);
+    if (!at)
+        return;
+    picker.on.erase(picker.on.begin() + static_cast<std::ptrdiff_t>(*at));
+    detail::drop_came_with(picker, id);
 }
 
 } // namespace
@@ -797,36 +838,15 @@ void open(Picker& picker, Inputs inputs) {
             leave_out(next, chosen.id);
             continue;
         }
-        if (!mutator->unavailable.empty()) {
-            leave_out(next, detail::display_name(*mutator));
-            continue;
-        }
         if (detail::on_index(next, chosen.id))
             continue;
-        const Admission blocked = placement_block(next, chosen.id);
-        if (!blocked.cycle.empty()) {
-            for (const std::string& item : blocked.cycle)
-                leave_out(next, item);
-            continue;
-        }
-        if (!blocked.refused.empty()) {
-            leave_out(next, detail::display_name(*mutator));
-            continue;
-        }
         Chosen placed;
         placed.id = chosen.id;
         placed.options = normalize(*mutator, chosen.options);
         placed.clash = kept_clash(*mutator, next.inputs, chosen.clash);
         next.on.push_back(std::move(placed));
     }
-    bring_lacking(next);
-    mend(next);
-    while (next.on.size() > most_on) {
-        const std::string id = next.on.back().id;
-        leave_out(next, detail::display_name_of(next, id));
-        detail::drop_came_with(next, id);
-        next.on.pop_back();
-    }
+    settle(next);
     next.from_last_set = next.inputs.remembered && !next.on.empty();
     select_first(next);
     picker = std::move(next);
@@ -840,7 +860,6 @@ void refresh(Picker& picker, Inputs inputs) {
         const Mutator* mutator = detail::find_mutator(picker, chosen.id);
         if (mutator == nullptr) {
             leave_out(picker, chosen.id);
-            detail::drop_came_with(picker, chosen.id);
             continue;
         }
         chosen.options = normalize(*mutator, chosen.options);
@@ -848,55 +867,74 @@ void refresh(Picker& picker, Inputs inputs) {
         kept.push_back(std::move(chosen));
     }
     picker.on = std::move(kept);
-
-    std::vector<CameWith> records;
-    for (const CameWith& record : picker.came_with) {
-        if (detail::on_index(picker, record.prerequisite) &&
-            detail::on_index(picker, record.dependant))
-            records.push_back(record);
-    }
-    picker.came_with = std::move(records);
-    if (picker.asking && !detail::on_index(picker, picker.asking->id))
-        picker.asking.reset();
-
-    const std::vector<library::Need> graph = detail::needs_graph(picker);
-    const std::vector<std::string> order = detail::on_ids(picker);
-    if (!library::prerequisites_above(graph, order))
-        mend(picker);
+    settle(picker);
     if (picker.selected && detail::find_mutator(picker, *picker.selected) == nullptr)
         select_first(picker);
 }
 
 SwitchResult switch_on(Picker& picker, std::string_view id, std::optional<std::size_t> place) {
-    const Admission admission = admit(picker, id, place, nullptr, true, true);
     SwitchResult outcome;
-    outcome.changed = admission.changed;
-    outcome.brought = admission.brought;
-    outcome.refused = admission.refused;
+    if (picker.inputs.read_only) {
+        outcome.refused = std::string(library::shown(picker.inputs.text, words::hint_view));
+        return outcome;
+    }
+    const Mutator* mutator = detail::find_mutator(picker, id);
+    if (mutator == nullptr || detail::on_index(picker, id))
+        return outcome;
+    const std::vector<library::Need> graph = detail::needs_graph(picker);
+    const std::vector<std::string> ids = detail::on_ids(picker);
+    outcome.refused = detail::blocked_line(picker, graph, ids, id);
+    if (!outcome.refused.empty())
+        return outcome;
+    const std::string roots[]{std::string(id)};
+    const library::Closure closure = library::prerequisite_closure(graph, roots);
+    std::size_t added = 0;
+    for (const std::string& item : closure.order) {
+        if (!detail::listed(ids, item))
+            ++added;
+    }
+    if (picker.on.size() + added > most_on) {
+        outcome.refused = library::filled(
+            picker.inputs.text, words::refused_cap, {{"count", std::to_string(most_on)}}
+        );
+        return outcome;
+    }
+
+    const std::size_t at = insertion_at(picker, graph, closure, id, place);
+    picker.on.insert(
+        picker.on.begin() + static_cast<std::ptrdiff_t>(at), with_defaults(picker, *mutator)
+    );
+    outcome.changed = true;
+    for (const std::string& item : closure.order) {
+        if (item == id || detail::on_index(picker, item))
+            continue;
+        const Mutator* one = detail::find_mutator(picker, item);
+        if (one == nullptr)
+            continue;
+        insert_above_dependant(picker, graph, with_defaults(picker, *one));
+        CameWith record;
+        record.prerequisite = item;
+        record.dependant = std::string(id);
+        picker.came_with.push_back(std::move(record));
+        outcome.brought.push_back(item);
+    }
+    mend(picker);
     return outcome;
 }
 
 std::optional<TurnOff> switch_off(Picker& picker, std::string_view id) {
     if (picker.inputs.read_only)
         return std::nullopt;
-    const std::optional<std::size_t> at = detail::on_index(picker, id);
-    if (!at)
+    if (!detail::on_index(picker, id))
         return std::nullopt;
-    const std::vector<library::Need> graph = detail::needs_graph(picker);
-    const std::vector<std::string> ids = detail::on_ids(picker);
-    const std::vector<std::string> dependants = library::dependants_of(graph, ids, id);
     TurnOff question;
     question.id = std::string(id);
-    for (const std::string& dependant : dependants) {
-        if (dependant != id)
-            question.dependants.push_back(dependant);
-    }
+    question.dependants = detail::on_dependants(picker, id);
     if (!question.dependants.empty()) {
         picker.asking = question;
         return question;
     }
-    picker.on.erase(picker.on.begin() + static_cast<std::ptrdiff_t>(*at));
-    detail::drop_came_with(picker, id);
+    take_off(picker, id);
     if (picker.asking && picker.asking->id == id)
         picker.asking.reset();
     return std::nullopt;
@@ -905,16 +943,14 @@ std::optional<TurnOff> switch_off(Picker& picker, std::string_view id) {
 void confirm_turn_off(Picker& picker) {
     if (picker.inputs.read_only || !picker.asking)
         return;
-    std::vector<std::string> dropping = picker.asking->dependants;
-    dropping.push_back(picker.asking->id);
-    for (const std::string& id : dropping) {
-        const std::optional<std::size_t> at = detail::on_index(picker, id);
-        if (!at)
-            continue;
-        picker.on.erase(picker.on.begin() + static_cast<std::ptrdiff_t>(*at));
-        detail::drop_came_with(picker, id);
-    }
+    const std::string id = picker.asking->id;
     picker.asking.reset();
+    if (!detail::on_index(picker, id))
+        return;
+    std::vector<std::string> dropping = detail::on_dependants(picker, id);
+    dropping.push_back(id);
+    for (const std::string& item : dropping)
+        take_off(picker, item);
 }
 
 void cancel_turn_off(Picker& picker) {
@@ -926,7 +962,7 @@ Band allowed_places(const Picker& picker, std::string_view id) {
     if (!at)
         return {};
     const std::vector<library::Need> graph = detail::needs_graph(picker);
-    const std::vector<std::string> roots{std::string(id)};
+    const std::string roots[]{std::string(id)};
     const library::Closure closure = library::prerequisite_closure(graph, roots);
     std::size_t first = 0;
     for (const std::string& need : closure.order) {
@@ -1051,12 +1087,22 @@ std::vector<Chosen> result(const Picker& picker) {
 }
 
 bool ready(const Picker& picker) {
+    const std::vector<library::Need> graph = detail::needs_graph(picker);
+    const std::vector<std::string> ids = detail::on_ids(picker);
+    if (!library::prerequisites_above(graph, ids))
+        return false;
     for (const Chosen& chosen : picker.on) {
         const Mutator* mutator = detail::find_mutator(picker, chosen.id);
-        if (mutator == nullptr || !mutator->installed || !mutator->unavailable.empty())
+        if (mutator == nullptr || !mutator->installed)
             return false;
-        if (detail::on_conflict(picker, *mutator) != nullptr)
+        if (!detail::blocked_line(picker, graph, ids, chosen.id).empty())
             return false;
+        const std::string roots[]{chosen.id};
+        const library::Closure closure = library::prerequisite_closure(graph, roots);
+        for (const std::string& item : closure.order) {
+            if (!detail::listed(ids, item))
+                return false;
+        }
     }
     return true;
 }

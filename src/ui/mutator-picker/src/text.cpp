@@ -125,7 +125,8 @@ std::string option_lines(const Picker& picker, const Mutator& mutator, const Cho
     return detail::join_dot(text, parts);
 }
 
-/// Fills a row's line, tone and marks. The first case that holds wins.
+/// Fills a row's line, tone and marks. The first case that holds wins: a
+/// row locked beside the On list comes first.
 ///
 /// @param picker the picker
 /// @param graph the prerequisite graph
@@ -144,16 +145,9 @@ void fill_line(
     const library::TextHooks& text = picker.inputs.text;
     if (mutator == nullptr)
         return;
-    if (!mutator->unavailable.empty()) {
-        row.line =
-            library::filled(text, words::line_not_compatible, {{"reason", mutator->unavailable}});
-        row.tone = Tone::bad;
-        row.locked = true;
-        return;
-    }
-    if (const Mutator* other = detail::on_conflict(picker, *mutator)) {
-        row.line =
-            library::filled(text, words::line_conflicts, {{"name", detail::display_name(*other)}});
+    std::string blocked = detail::blocked_line(picker, graph, on, mutator->id);
+    if (!blocked.empty()) {
+        row.line = std::move(blocked);
         row.tone = Tone::bad;
         row.locked = true;
         return;
@@ -435,12 +429,17 @@ kit::Question turn_off_question(const Picker& picker) {
     const library::TextHooks& text = picker.inputs.text;
     const std::string name = detail::display_name_of(picker, picker.asking->id);
     question.title = library::filled(text, words::turn_off_title, {{"name", name}});
+    // The dependants On now, as confirm_turn_off finds them; those recorded
+    // when it asked while the prerequisite is no longer on.
+    std::vector<std::string> ids = detail::on_dependants(picker, picker.asking->id);
+    if (ids.empty())
+        ids = picker.asking->dependants;
     std::vector<std::string> dependants;
-    dependants.reserve(picker.asking->dependants.size());
-    for (const std::string& id : picker.asking->dependants)
+    dependants.reserve(ids.size());
+    for (const std::string& id : ids)
         dependants.push_back(detail::display_name_of(picker, id));
     const std::string names = detail::join_names(text, dependants);
-    const bool one = picker.asking->dependants.size() <= 1;
+    const bool one = dependants.size() <= 1;
     question.paragraphs.push_back(
         {library::filled(
              text,

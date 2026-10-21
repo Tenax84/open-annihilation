@@ -2,14 +2,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The mutator picker's model: opening a set, prerequisites and their order,
-// conflicts, options, rows, the footer, the hint and the turn-off question.
+// rows locked by a prerequisite that cannot be had, a loop or a conflict,
+// refreshing, options, rows, the footer, the hint, the
+// turn-off question, and random walks that check the set after every call.
 // The mutators are made up.
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/test/check.hpp"
 #include "oa/ui/library/prerequisites.hpp"
 #include "oa/ui/mutator_picker/model.hpp"
 #include "oa/ui/mutator_picker/text.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -42,6 +48,20 @@ picker::Mutator made(std::string id, std::string name) {
 void need(picker::Mutator& mutator, std::string id) {
     lib::Prerequisite prerequisite;
     prerequisite.id = std::move(id);
+    mutator.needs.push_back(std::move(prerequisite));
+}
+
+/// Records that `mutator` needs `id` in a version range.
+///
+/// @param[in,out] mutator the mutator
+/// @param id the prerequisite
+/// @param range the range as written; empty for any version
+/// @param name the prerequisite's name; empty when its record names none
+void need_range(picker::Mutator& mutator, std::string id, std::string range, std::string name) {
+    lib::Prerequisite prerequisite;
+    prerequisite.id = std::move(id);
+    prerequisite.range = std::move(range);
+    prerequisite.name = std::move(name);
     mutator.needs.push_back(std::move(prerequisite));
 }
 
@@ -351,7 +371,8 @@ void switch_on_brings() {
     OA_CHECK(oa::ui::library::prerequisites_above(graph, ids));
 }
 
-/// Grounded is refused while Quiet Seas, which conflicts with it, is on.
+/// Grounded is refused while Quiet Seas, which conflicts with it, is on, and
+/// a last set holding both opens with the later one off.
 void switch_on_conflict() {
     picker::Mutator grounded = made("grounded", "Grounded");
     picker::Mutator seas = made("quiet-seas", "Quiet Seas");
@@ -366,22 +387,22 @@ void switch_on_conflict() {
     const std::vector<std::string> before = ids_of(model);
     const picker::SwitchResult outcome = picker::switch_on(model, "grounded");
     OA_CHECK(!outcome.changed);
-    OA_CHECK(outcome.refused.find("Quiet Seas") != std::string::npos);
+    OA_CHECK(outcome.refused == "Cannot run beside Quiet Seas");
     check_ids(model, before);
     OA_CHECK(picker::ready(model));
-    picker::open(model, inputs);
     inputs.last_set.push_back(chosen_id("quiet-seas"));
     inputs.last_set.push_back(chosen_id("grounded"));
     picker::open(model, inputs);
-    check_ids(model, {"quiet-seas", "grounded"});
-    OA_CHECK(!picker::ready(model));
+    check_ids(model, {"quiet-seas"});
+    OA_CHECK(model.left_out.size() == 1 && model.left_out[0] == "Grounded");
+    OA_CHECK(picker::ready(model));
     const std::vector<picker::Row> listed = picker::rows(model);
     const picker::Row* seas_row = row_of(listed, "quiet-seas");
     const picker::Row* grounded_row = row_of(listed, "grounded");
-    OA_CHECK(seas_row != nullptr && seas_row->locked && seas_row->tone == picker::Tone::bad);
-    OA_CHECK(seas_row->line == "Cannot run beside Grounded");
-    OA_CHECK(grounded_row != nullptr && grounded_row->locked);
-    OA_CHECK(grounded_row->line == "Cannot run beside Quiet Seas");
+    OA_CHECK(seas_row != nullptr && seas_row->on && !seas_row->locked);
+    OA_CHECK(grounded_row != nullptr && !grounded_row->on && grounded_row->locked);
+    OA_CHECK(grounded_row != nullptr && grounded_row->tone == picker::Tone::bad);
+    OA_CHECK(grounded_row != nullptr && grounded_row->line == "Cannot run beside Quiet Seas");
 }
 
 /// An unavailable mutator is refused with its reason.
@@ -399,28 +420,49 @@ void switch_on_unavailable() {
     OA_CHECK(model.on.empty());
 }
 
-/// Two mutators that need each other are refused, and not placed.
+/// Two mutators that need each other are refused with the Library's words,
+/// naming the ids in the loop, and their rows are locked. So is a mutator
+/// that needs one of them. A last set naming one opens without it.
 void switch_on_cycle() {
     picker::Mutator left = made("loop-a", "Loop A");
     picker::Mutator right = made("loop-b", "Loop B");
     need(left, "loop-b");
     need(right, "loop-a");
+    picker::Mutator above = made("loop-c", "Loop C");
+    need(above, "loop-a");
     picker::Inputs inputs;
     inputs.remembered = true;
     inputs.mod_name = "No Mod";
     inputs.mutators.push_back(left);
     inputs.mutators.push_back(right);
+    inputs.mutators.push_back(above);
     picker::Picker model;
     picker::open(model, inputs);
+    // The loop's ids, in the order the mutator's own closure meets them.
+    const std::string line = "Not compatible with this mod: These mutators need each other: ";
     const picker::SwitchResult outcome = picker::switch_on(model, "loop-a");
     OA_CHECK(!outcome.changed);
     OA_CHECK(model.on.empty());
-    OA_CHECK(outcome.refused.find("loop-a") != std::string::npos);
-    OA_CHECK(outcome.refused.find("loop-b") != std::string::npos);
+    OA_CHECK(outcome.refused == line + "loop-a and loop-b");
+    OA_CHECK(picker::switch_on(model, "loop-c").refused == line + "loop-a and loop-b");
+    OA_CHECK(!picker::drop(model, "loop-b", picker::Drop{true, 0}));
+    OA_CHECK(model.on.empty());
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const std::pair<std::string_view, std::string> expected[] = {
+        {"loop-a", line + "loop-a and loop-b"},
+        {"loop-b", line + "loop-b and loop-a"},
+        {"loop-c", line + "loop-a and loop-b"},
+    };
+    for (const auto& [id, text] : expected) {
+        const picker::Row* row = row_of(listed, id);
+        OA_CHECK(row != nullptr && row->locked && row->tone == picker::Tone::bad);
+        OA_CHECK(row != nullptr && row->line == text);
+    }
     inputs.last_set.push_back(chosen_id("loop-a"));
     picker::open(model, std::move(inputs));
     OA_CHECK(model.on.empty());
-    OA_CHECK(model.left_out.size() == 2);
+    OA_CHECK(model.left_out.size() == 1 && model.left_out[0] == "Loop A");
+    OA_CHECK(picker::ready(model));
 }
 
 /// A read-only picker still opens on the set, and then refuses every change.
@@ -1094,6 +1136,883 @@ void not_installed_switches_on() {
     OA_CHECK(!picker::ready(model));
 }
 
+/// A prerequisite the inputs do not hold locks the row and refuses the
+/// switch in the Library's words, with its range, or without one.
+void locked_missing_prerequisite() {
+    picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
+    need_range(keep, "gatehouse", ">= 4.0", "Gatehouse");
+    picker::Mutator walls = made("ridge-walls", "Ridge Walls");
+    need(walls, "ridge-tower");
+    picker::Inputs inputs;
+    inputs.remembered = true;
+    inputs.mod_name = "No Mod";
+    inputs.mutators.push_back(keep);
+    inputs.mutators.push_back(walls);
+    inputs.mutators.push_back(made("fast-builders", "Fast Builders"));
+    picker::Picker model;
+    picker::open(model, inputs);
+    const std::string keep_line = "Not compatible with this mod: Needs Gatehouse 4.0 or later, "
+                                  "which no registry offers";
+    const std::string walls_line =
+        "Not compatible with this mod: Needs ridge-tower, which no registry offers";
+    picker::SwitchResult outcome = picker::switch_on(model, "gatehouse-keep");
+    OA_CHECK(!outcome.changed);
+    OA_CHECK(outcome.refused == keep_line);
+    outcome = picker::switch_on(model, "ridge-walls");
+    OA_CHECK(!outcome.changed);
+    OA_CHECK(outcome.refused == walls_line);
+    OA_CHECK(!picker::drop(model, "gatehouse-keep", picker::Drop{true, 0}));
+    OA_CHECK(model.on.empty());
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* keep_row = row_of(listed, "gatehouse-keep");
+    OA_CHECK(keep_row != nullptr && keep_row->locked && keep_row->tone == picker::Tone::bad);
+    OA_CHECK(keep_row != nullptr && keep_row->line == keep_line);
+    const picker::Row* walls_row = row_of(listed, "ridge-walls");
+    OA_CHECK(walls_row != nullptr && walls_row->locked && walls_row->line == walls_line);
+    const picker::Row* builders_row = row_of(listed, "fast-builders");
+    OA_CHECK(builders_row != nullptr && !builders_row->locked);
+
+    inputs.last_set.push_back(chosen_id("gatehouse-keep"));
+    inputs.last_set.push_back(chosen_id("fast-builders"));
+    picker::open(model, std::move(inputs));
+    check_ids(model, {"fast-builders"});
+    OA_CHECK(model.left_out.size() == 1 && model.left_out[0] == "Gatehouse Keep");
+    OA_CHECK(picker::ready(model));
+    OA_CHECK(
+        picker::hint(model) == "Your last skirmish set, ready to use. CANCEL plays without "
+                               "mutators. Left out of your last set: Gatehouse Keep"
+    );
+}
+
+/// Gatehouse 3.9 does not meet Gatehouse Keep's ">= 4.0": the row is locked
+/// and the switch refused, through a dependant too. Gatehouse 4.1 does.
+void locked_version_range() {
+    picker::Mutator gatehouse = made("gatehouse", "Gatehouse");
+    gatehouse.version = "3.9";
+    picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
+    need_range(keep, "gatehouse", ">= 4.0", "");
+    picker::Mutator tower = made("gatehouse-tower", "Gatehouse Tower");
+    need(tower, "gatehouse-keep");
+    picker::Inputs inputs;
+    inputs.mod_name = "No Mod";
+    inputs.mutators.push_back(gatehouse);
+    inputs.mutators.push_back(keep);
+    inputs.mutators.push_back(tower);
+    picker::Picker model;
+    picker::open(model, inputs);
+    const std::string line = "Not compatible with this mod: Needs Gatehouse 4.0 or later, "
+                             "which no registry offers";
+    OA_CHECK(picker::switch_on(model, "gatehouse-keep").refused == line);
+    OA_CHECK(picker::switch_on(model, "gatehouse-tower").refused == line);
+    OA_CHECK(model.on.empty());
+    OA_CHECK(picker::switch_on(model, "gatehouse").changed);
+    OA_CHECK(picker::switch_on(model, "gatehouse-keep").refused == line);
+    check_ids(model, {"gatehouse"});
+    OA_CHECK(picker::ready(model));
+    std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* keep_row = row_of(listed, "gatehouse-keep");
+    OA_CHECK(keep_row != nullptr && keep_row->locked && keep_row->line == line);
+    const picker::Row* tower_row = row_of(listed, "gatehouse-tower");
+    OA_CHECK(tower_row != nullptr && tower_row->locked && tower_row->line == line);
+
+    // Two comparisons, and a range that does not read.
+    model.inputs.mutators[0].version = "5.1";
+    model.inputs.mutators[1].needs[0].range = ">= 4.0, < 5.0";
+    OA_CHECK(
+        picker::switch_on(model, "gatehouse-keep").refused ==
+        "Not compatible with this mod: Needs Gatehouse 4.0 or later, before 5.0, which no "
+        "registry offers"
+    );
+    model.inputs.mutators[1].needs[0].range = "about 4";
+    OA_CHECK(
+        picker::switch_on(model, "gatehouse-keep").refused ==
+        "Not compatible with this mod: Needs Gatehouse about 4, which no registry offers"
+    );
+
+    inputs.mutators[0].version = "4.1";
+    picker::refresh(model, inputs);
+    const picker::SwitchResult outcome = picker::switch_on(model, "gatehouse-tower");
+    OA_CHECK(outcome.changed && outcome.refused.empty());
+    check_ids(model, {"gatehouse", "gatehouse-keep", "gatehouse-tower"});
+    OA_CHECK(picker::ready(model));
+    listed = picker::rows(model);
+    for (const picker::Row& row : listed)
+        OA_CHECK(!row.locked);
+}
+
+/// A prerequisite that is unavailable locks its dependant with its reason.
+void locked_unavailable_prerequisite() {
+    picker::Mutator gatehouse = made("gatehouse", "Gatehouse");
+    gatehouse.unavailable = "needs Ridge's gates";
+    picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
+    need(keep, "gatehouse");
+    picker::Inputs inputs;
+    inputs.mod_name = "Ridge";
+    inputs.mutators.push_back(gatehouse);
+    inputs.mutators.push_back(keep);
+    picker::Picker model;
+    picker::open(model, std::move(inputs));
+    const std::string line = "Not compatible with this mod: needs Ridge's gates";
+    OA_CHECK(picker::switch_on(model, "gatehouse-keep").refused == line);
+    OA_CHECK(model.on.empty());
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* keep_row = row_of(listed, "gatehouse-keep");
+    OA_CHECK(keep_row != nullptr && keep_row->locked && keep_row->line == line);
+}
+
+/// A prerequisite the switch would bring that conflicts with an On mutator
+/// refuses it naming the On one; so does a mutator that conflicts with its
+/// own prerequisite, or two prerequisites that conflict with each other.
+void locked_brought_conflict() {
+    picker::Mutator gatehouse = made("gatehouse", "Gatehouse");
+    gatehouse.conflicts.push_back("quiet-seas");
+    picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
+    need(keep, "gatehouse");
+    picker::Mutator seas = made("quiet-seas", "Quiet Seas");
+    picker::Mutator grounded = made("grounded", "Grounded");
+    picker::Mutator walls = made("ridge-walls", "Ridge Walls");
+    need(walls, "grounded");
+    walls.conflicts.push_back("grounded");
+    picker::Mutator tower = made("ridge-tower", "Ridge Tower");
+    need(tower, "grounded");
+    need(tower, "fast-builders");
+    picker::Mutator builders = made("fast-builders", "Fast Builders");
+    builders.conflicts.push_back("grounded");
+    picker::Inputs inputs;
+    inputs.mod_name = "No Mod";
+    for (const picker::Mutator& mutator : {gatehouse, keep, seas, grounded, walls, tower, builders})
+        inputs.mutators.push_back(mutator);
+    picker::Picker model;
+    picker::open(model, std::move(inputs));
+    OA_CHECK(picker::switch_on(model, "quiet-seas").changed);
+    OA_CHECK(picker::switch_on(model, "gatehouse-keep").refused == "Cannot run beside Quiet Seas");
+    OA_CHECK(picker::switch_on(model, "gatehouse").refused == "Cannot run beside Quiet Seas");
+    OA_CHECK(picker::switch_on(model, "ridge-walls").refused == "Cannot run beside Grounded");
+    OA_CHECK(picker::switch_on(model, "ridge-tower").refused == "Cannot run beside Fast Builders");
+    check_ids(model, {"quiet-seas"});
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* keep_row = row_of(listed, "gatehouse-keep");
+    OA_CHECK(keep_row != nullptr && keep_row->locked && keep_row->tone == picker::Tone::bad);
+    OA_CHECK(keep_row != nullptr && keep_row->line == "Cannot run beside Quiet Seas");
+    const picker::Row* walls_row = row_of(listed, "ridge-walls");
+    OA_CHECK(walls_row != nullptr && walls_row->locked);
+    OA_CHECK(walls_row != nullptr && walls_row->line == "Cannot run beside Grounded");
+    const picker::Row* grounded_row = row_of(listed, "grounded");
+    OA_CHECK(grounded_row != nullptr && !grounded_row->locked);
+}
+
+/// A conflict between two On mutators does not refuse an unrelated one, and
+/// a last set holding a conflicting pair opens with the later one off.
+void stale_conflict() {
+    picker::Mutator grounded = made("grounded", "Grounded");
+    picker::Mutator seas = made("quiet-seas", "Quiet Seas");
+    seas.conflicts.push_back("grounded");
+    picker::Inputs inputs;
+    inputs.remembered = true;
+    inputs.mod_name = "No Mod";
+    inputs.mutators.push_back(grounded);
+    inputs.mutators.push_back(seas);
+    inputs.mutators.push_back(made("fast-builders", "Fast Builders"));
+    inputs.mutators.push_back(made("gatehouse", "Gatehouse"));
+    inputs.last_set.push_back(chosen_id("grounded"));
+    inputs.last_set.push_back(chosen_id("quiet-seas"));
+    inputs.last_set.push_back(chosen_id("fast-builders"));
+    picker::Picker model;
+    picker::open(model, inputs);
+    check_ids(model, {"grounded", "fast-builders"});
+    OA_CHECK(model.left_out.size() == 1 && model.left_out[0] == "Quiet Seas");
+    OA_CHECK(
+        picker::hint(model) == "Your last skirmish set, ready to use. CANCEL plays without "
+                               "mutators. Left out of your last set: Quiet Seas"
+    );
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* seas_row = row_of(listed, "quiet-seas");
+    OA_CHECK(seas_row != nullptr && !seas_row->on && seas_row->locked);
+    OA_CHECK(seas_row != nullptr && seas_row->line == "Cannot run beside Grounded");
+    OA_CHECK(picker::ready(model));
+    OA_CHECK(picker::switch_on(model, "gatehouse").changed);
+
+    // A pair already on, however it got there, is not the next mutator's.
+    model.on.clear();
+    model.on.push_back(chosen_id("grounded"));
+    model.on.push_back(chosen_id("quiet-seas"));
+    OA_CHECK(!picker::ready(model));
+    const picker::SwitchResult outcome = picker::switch_on(model, "gatehouse");
+    OA_CHECK(outcome.changed && outcome.refused.empty());
+}
+
+/// Gatehouse leaves the inputs: Gatehouse Keep goes off with it, and says why.
+void refresh_prerequisite_goes() {
+    picker::Mutator gatehouse = made("gatehouse", "Gatehouse");
+    gatehouse.version = "4.1";
+    picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
+    need_range(keep, "gatehouse", ">= 4.0", "Gatehouse");
+    picker::Inputs inputs;
+    inputs.mod_name = "No Mod";
+    inputs.mutators.push_back(gatehouse);
+    inputs.mutators.push_back(keep);
+    inputs.mutators.push_back(made("fast-builders", "Fast Builders"));
+    picker::Picker model;
+    picker::open(model, inputs);
+    OA_CHECK(picker::switch_on(model, "gatehouse-keep").changed);
+    OA_CHECK(picker::switch_on(model, "fast-builders").changed);
+    check_ids(model, {"gatehouse", "gatehouse-keep", "fast-builders"});
+    inputs.mutators.erase(inputs.mutators.begin());
+    picker::refresh(model, inputs);
+    check_ids(model, {"fast-builders"});
+    OA_CHECK(model.left_out.size() == 2);
+    OA_CHECK(model.left_out.size() == 2 && model.left_out[0] == "gatehouse");
+    OA_CHECK(model.left_out.size() == 2 && model.left_out[1] == "Gatehouse Keep");
+    OA_CHECK(model.came_with.empty());
+    OA_CHECK(picker::ready(model));
+    OA_CHECK(oa::ui::library::prerequisites_above(graph_of(model), ids_of(model)));
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* keep_row = row_of(listed, "gatehouse-keep");
+    OA_CHECK(keep_row != nullptr && !keep_row->on && keep_row->locked);
+    OA_CHECK(
+        keep_row != nullptr && keep_row->line == "Not compatible with this mod: Needs Gatehouse "
+                                                 "4.0 or later, which no registry offers"
+    );
+    OA_CHECK(picker::hint(model) == "Left out of your last set: gatehouse and Gatehouse Keep");
+}
+
+/// Gatehouse falls to 3.9: Gatehouse Keep and what needs it go off, and
+/// Gatehouse stays.
+void refresh_version_falls() {
+    picker::Mutator gatehouse = made("gatehouse", "Gatehouse");
+    gatehouse.version = "4.1";
+    picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
+    need_range(keep, "gatehouse", ">= 4.0", "Gatehouse");
+    picker::Mutator walls = made("ridge-walls", "Ridge Walls");
+    need(walls, "gatehouse-keep");
+    picker::Inputs inputs;
+    inputs.mod_name = "No Mod";
+    inputs.mutators.push_back(gatehouse);
+    inputs.mutators.push_back(keep);
+    inputs.mutators.push_back(walls);
+    picker::Picker model;
+    picker::open(model, inputs);
+    OA_CHECK(picker::switch_on(model, "ridge-walls").changed);
+    check_ids(model, {"gatehouse", "gatehouse-keep", "ridge-walls"});
+    OA_CHECK(picker::ready(model));
+    inputs.mutators[0].version = "3.9";
+    picker::refresh(model, inputs);
+    check_ids(model, {"gatehouse"});
+    OA_CHECK(model.left_out.size() == 2);
+    OA_CHECK(model.left_out.size() == 2 && model.left_out[0] == "Gatehouse Keep");
+    OA_CHECK(model.left_out.size() == 2 && model.left_out[1] == "Ridge Walls");
+    OA_CHECK(picker::ready(model));
+    const std::string line = "Not compatible with this mod: Needs Gatehouse 4.0 or later, "
+                             "which no registry offers";
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* keep_row = row_of(listed, "gatehouse-keep");
+    OA_CHECK(keep_row != nullptr && keep_row->locked && keep_row->line == line);
+    const picker::Row* walls_row = row_of(listed, "ridge-walls");
+    OA_CHECK(walls_row != nullptr && walls_row->locked && walls_row->line == line);
+}
+
+/// New needs make a loop: the mutators in it, and one that needs them, go off.
+void refresh_loop() {
+    picker::Inputs inputs;
+    inputs.mod_name = "No Mod";
+    inputs.mutators.push_back(made("loop-a", "Loop A"));
+    inputs.mutators.push_back(made("loop-b", "Loop B"));
+    inputs.mutators.push_back(made("loop-c", "Loop C"));
+    inputs.mutators.push_back(made("fast-builders", "Fast Builders"));
+    picker::Picker model;
+    picker::open(model, inputs);
+    for (const std::string_view id : {"loop-a", "loop-b", "loop-c", "fast-builders"})
+        OA_CHECK(picker::switch_on(model, id).changed);
+    need(inputs.mutators[0], "loop-b");
+    need(inputs.mutators[1], "loop-a");
+    need(inputs.mutators[2], "loop-a");
+    picker::refresh(model, inputs);
+    check_ids(model, {"fast-builders"});
+    OA_CHECK(model.left_out.size() == 3);
+    OA_CHECK(oa::ui::library::prerequisites_above(graph_of(model), ids_of(model)));
+    OA_CHECK(picker::ready(model));
+    // Each names the loop in its own closure's order.
+    const std::string line = "Not compatible with this mod: These mutators need each other: ";
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const std::pair<std::string_view, std::string> expected[] = {
+        {"loop-a", line + "loop-a and loop-b"},
+        {"loop-b", line + "loop-b and loop-a"},
+        {"loop-c", line + "loop-a and loop-b"},
+    };
+    for (const auto& [id, text] : expected) {
+        const picker::Row* row = row_of(listed, id);
+        OA_CHECK(row != nullptr && !row->on && row->locked && row->line == text);
+    }
+}
+
+/// A mutator gains a prerequisite: brought above it when it can be had,
+/// otherwise the mutator goes off, with the reason on its row.
+void refresh_new_need() {
+    picker::Inputs inputs;
+    inputs.mod_name = "No Mod";
+    inputs.mutators.push_back(made("gatehouse", "Gatehouse"));
+    inputs.mutators.push_back(made("gatehouse-keep", "Gatehouse Keep"));
+    inputs.mutators.push_back(made("fast-builders", "Fast Builders"));
+    picker::Picker model;
+    picker::open(model, inputs);
+    OA_CHECK(picker::switch_on(model, "gatehouse-keep").changed);
+    need(inputs.mutators[1], "gatehouse");
+    picker::refresh(model, inputs);
+    check_ids(model, {"gatehouse", "gatehouse-keep"});
+    OA_CHECK(model.came_with.size() == 1);
+    OA_CHECK(model.came_with.size() == 1 && model.came_with[0].prerequisite == "gatehouse");
+    OA_CHECK(model.came_with.size() == 1 && model.came_with[0].dependant == "gatehouse-keep");
+    OA_CHECK(model.left_out.empty());
+    OA_CHECK(picker::ready(model));
+    OA_CHECK(picker::footer(model).summary == "2 on · Gatehouse came with Gatehouse Keep");
+
+    // A prerequisite no input holds.
+    need(inputs.mutators[1], "gatehouse-tower");
+    picker::refresh(model, inputs);
+    check_ids(model, {"gatehouse"});
+    OA_CHECK(model.left_out.size() == 1 && model.left_out[0] == "Gatehouse Keep");
+    OA_CHECK(model.came_with.empty());
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* keep_row = row_of(listed, "gatehouse-keep");
+    OA_CHECK(
+        keep_row != nullptr && keep_row->locked &&
+        keep_row->line ==
+            "Not compatible with this mod: Needs gatehouse-tower, which no registry offers"
+    );
+
+    // A prerequisite that conflicts with a mutator above.
+    inputs.mutators[1].needs.clear();
+    picker::refresh(model, inputs);
+    OA_CHECK(picker::switch_off(model, "gatehouse") == std::nullopt);
+    OA_CHECK(picker::switch_on(model, "fast-builders").changed);
+    OA_CHECK(picker::switch_on(model, "gatehouse-keep").changed);
+    check_ids(model, {"fast-builders", "gatehouse-keep"});
+    need(inputs.mutators[1], "gatehouse");
+    inputs.mutators[0].conflicts.push_back("fast-builders");
+    picker::refresh(model, inputs);
+    check_ids(model, {"fast-builders"});
+    OA_CHECK(picker::ready(model));
+    const std::vector<picker::Row> after = picker::rows(model);
+    const picker::Row* gone = row_of(after, "gatehouse-keep");
+    OA_CHECK(gone != nullptr && gone->locked && gone->line == "Cannot run beside Fast Builders");
+}
+
+/// A refresh that makes two On mutators conflict keeps the earlier one, and
+/// one that makes a mutator unavailable switches it off.
+void refresh_conflict_and_unavailable() {
+    picker::Inputs inputs;
+    inputs.mod_name = "No Mod";
+    inputs.mutators.push_back(made("grounded", "Grounded"));
+    inputs.mutators.push_back(made("fast-builders", "Fast Builders"));
+    inputs.mutators.push_back(made("quiet-seas", "Quiet Seas"));
+    picker::Picker model;
+    picker::open(model, inputs);
+    for (const std::string_view id : {"grounded", "fast-builders", "quiet-seas"})
+        OA_CHECK(picker::switch_on(model, id).changed);
+    inputs.mutators[2].conflicts.push_back("grounded");
+    picker::refresh(model, inputs);
+    check_ids(model, {"grounded", "fast-builders"});
+    OA_CHECK(model.left_out.size() == 1 && model.left_out[0] == "Quiet Seas");
+    OA_CHECK(picker::ready(model));
+    inputs.mutators[1].unavailable = "needs Ridge";
+    picker::refresh(model, inputs);
+    check_ids(model, {"grounded"});
+    const std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* builders_row = row_of(listed, "fast-builders");
+    OA_CHECK(builders_row != nullptr && builders_row->locked);
+    OA_CHECK(
+        builders_row != nullptr && builders_row->line == "Not compatible with this mod: needs Ridge"
+    );
+    OA_CHECK(picker::ready(model));
+}
+
+/// A dependant switched on while the question is open goes off at TURN OFF
+/// too, and the question names it.
+void confirm_recomputes() {
+    picker::Mutator gatehouse = made("gatehouse", "Gatehouse");
+    picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
+    need(keep, "gatehouse");
+    picker::Mutator walls = made("ridge-walls", "Ridge Walls");
+    need(walls, "gatehouse");
+    picker::Inputs inputs;
+    inputs.mod_name = "No Mod";
+    inputs.mutators.push_back(gatehouse);
+    inputs.mutators.push_back(keep);
+    inputs.mutators.push_back(walls);
+    picker::Picker model;
+    picker::open(model, std::move(inputs));
+    OA_CHECK(picker::switch_on(model, "gatehouse-keep").changed);
+    const std::optional<picker::TurnOff> asked = picker::switch_off(model, "gatehouse");
+    OA_CHECK(asked && asked->dependants.size() == 1);
+    OA_CHECK(picker::switch_on(model, "ridge-walls").changed);
+    check_ids(model, {"gatehouse", "gatehouse-keep", "ridge-walls"});
+    const oa::ui::kit::Question question = picker::turn_off_question(model);
+    OA_CHECK(!question.paragraphs.empty());
+    OA_CHECK(
+        !question.paragraphs.empty() &&
+        question.paragraphs[0].text ==
+            "Gatehouse Keep and Ridge Walls turn off too: they need Gatehouse."
+    );
+    picker::confirm_turn_off(model);
+    OA_CHECK(model.on.empty());
+    OA_CHECK(!model.asking);
+    OA_CHECK(model.came_with.empty());
+
+    // The dependant went off before the answer: only the prerequisite goes.
+    OA_CHECK(picker::switch_on(model, "gatehouse-keep").changed);
+    OA_CHECK(picker::switch_off(model, "gatehouse"));
+    OA_CHECK(picker::switch_off(model, "gatehouse-keep") == std::nullopt);
+    OA_CHECK(model.asking && model.asking->id == "gatehouse");
+    picker::confirm_turn_off(model);
+    OA_CHECK(model.on.empty());
+}
+
+/// A mutator that brings units or weapons shows its clash mode on its row.
+void clash_rows() {
+    picker::Mutator walls = made("ridge-walls", "Ridge Walls");
+    walls.brings = true;
+    walls.summary = "Walls";
+    picker::Mutator builders = made("fast-builders", "Fast Builders");
+    builders.brings = true;
+    builders.clashes = picker::Clash::add;
+    builders.options.push_back(
+        choice_option("build-speed", "Build speed", {"1", "4"}, {"1×", "4×"}, "1")
+    );
+    picker::Mutator gatehouse = made("gatehouse", "Gatehouse");
+    gatehouse.summary = "A gate";
+    picker::Inputs inputs;
+    inputs.mod_name = "No Mod";
+    inputs.clash_default = picker::Clash::replace;
+    inputs.mutators.push_back(walls);
+    inputs.mutators.push_back(builders);
+    inputs.mutators.push_back(gatehouse);
+    picker::Picker model;
+    picker::open(model, inputs);
+    for (const std::string_view id : {"ridge-walls", "fast-builders", "gatehouse"})
+        OA_CHECK(picker::switch_on(model, id).changed);
+    std::vector<picker::Row> listed = picker::rows(model);
+    const picker::Row* walls_row = row_of(listed, "ridge-walls");
+    OA_CHECK(walls_row != nullptr && walls_row->line == "Units and weapons: Replace");
+    OA_CHECK(walls_row != nullptr && walls_row->tone == picker::Tone::hint);
+    const picker::Row* builders_row = row_of(listed, "fast-builders");
+    OA_CHECK(
+        builders_row != nullptr && builders_row->line == "Build speed: 1× · Units and weapons: Add"
+    );
+    const picker::Row* gatehouse_row = row_of(listed, "gatehouse");
+    OA_CHECK(gatehouse_row != nullptr && gatehouse_row->line == "A gate");
+    OA_CHECK(picker::set_clash(model, "ridge-walls", picker::Clash::add));
+    OA_CHECK(!picker::set_clash(model, "gatehouse", picker::Clash::add));
+    listed = picker::rows(model);
+    walls_row = row_of(listed, "ridge-walls");
+    OA_CHECK(walls_row != nullptr && walls_row->line == "Units and weapons: Add");
+    const std::vector<picker::Chosen> chosen = picker::result(model);
+    OA_CHECK(chosen.size() == 3);
+    OA_CHECK(chosen.size() == 3 && chosen[0].clash == picker::Clash::add);
+    OA_CHECK(chosen.size() == 3 && chosen[1].clash == picker::Clash::add);
+    OA_CHECK(chosen.size() == 3 && !chosen[2].clash);
+
+    // The setting's default, and a mode carried in a last set.
+    inputs.clash_default = picker::Clash::add;
+    picker::Chosen remembered = chosen_id("ridge-walls");
+    remembered.clash = picker::Clash::replace;
+    inputs.last_set.push_back(remembered);
+    picker::open(model, inputs);
+    OA_CHECK(!model.on.empty() && model.on[0].clash == picker::Clash::replace);
+    inputs.last_set.clear();
+    picker::open(model, inputs);
+    OA_CHECK(picker::switch_on(model, "ridge-walls").changed);
+    listed = picker::rows(model);
+    walls_row = row_of(listed, "ridge-walls");
+    OA_CHECK(walls_row != nullptr && walls_row->line == "Units and weapons: Add");
+}
+
+/// The size of the random walks' pool of mutators.
+constexpr std::size_t walk_size = 8;
+
+/// A small generator with the same sequence on every machine.
+struct Steps {
+    uint64_t state{}; ///< the generator's state; never zero
+
+    /// Returns the next number.
+    ///
+    /// @return a number
+    uint64_t next() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    }
+
+    /// Returns a number below `count`.
+    ///
+    /// @param count how many numbers to choose from
+    /// @return a number from 0 to `count` - 1; 0 when `count` is 0
+    std::size_t below(std::size_t count) {
+        if (count == 0)
+            return 0;
+        return static_cast<std::size_t>(next() % count);
+    }
+};
+
+/// The id of the walk's mutator `index`. Ids at `walk_size` and above are
+/// never among the inputs.
+///
+/// @param index the mutator's number
+/// @return its id
+std::string walk_id(std::size_t index) {
+    return "walk-" + std::to_string(index);
+}
+
+/// A random made-up mutator: installed or not, a version, up to two needs
+/// with or without a range (a loop is allowed), perhaps a conflict, perhaps
+/// unavailable, perhaps bringing units, and a number option.
+///
+/// @param steps the generator
+/// @param index the mutator's number
+/// @return the mutator
+picker::Mutator walk_mutator(Steps& steps, std::size_t index) {
+    static constexpr std::string_view versions[] = {"1.0", "3.9", "4.0", "4.1"};
+    static constexpr std::string_view ranges[] = {"", ">= 4.0", "< 4.0", ">= 1.0, < 5.0"};
+    picker::Mutator mutator = made(walk_id(index), "Walk " + std::to_string(index));
+    mutator.installed = steps.below(4) != 0;
+    mutator.version = std::string(versions[steps.below(4)]);
+    const std::size_t edges = steps.below(3);
+    for (std::size_t edge = 0; edge < edges; ++edge) {
+        const std::size_t target = steps.below(walk_size);
+        if (target == index)
+            continue;
+        need_range(mutator, walk_id(target), std::string(ranges[steps.below(4)]), "");
+    }
+    if (steps.below(6) == 0)
+        mutator.conflicts.push_back(walk_id(steps.below(walk_size)));
+    if (steps.below(12) == 0)
+        mutator.unavailable = "needs Ridge";
+    mutator.brings = steps.below(2) == 0;
+    mutator.options.push_back(number_option("level", "Level", "0", "2", "0.5", "1"));
+    return mutator;
+}
+
+/// A level value, valid or not, in one spelling or another.
+///
+/// @param steps the generator
+/// @return the text
+std::string walk_level(Steps& steps) {
+    static constexpr std::string_view levels[] = {"0", "1.5", "2.0", "+1", "3", "05e-1", "5e-1"};
+    return std::string(levels[steps.below(std::size(levels))]);
+}
+
+/// Random inputs: most of the pool, and a last set that may name mutators
+/// the inputs lack, repeat one, and carry option values.
+///
+/// @param steps the generator
+/// @return the inputs
+picker::Inputs walk_inputs(Steps& steps) {
+    picker::Inputs inputs;
+    inputs.mod_name = "Ridge";
+    inputs.remembered = steps.below(2) == 0;
+    for (std::size_t index = 0; index < walk_size; ++index) {
+        if (steps.below(8) != 0)
+            inputs.mutators.push_back(walk_mutator(steps, index));
+    }
+    const std::size_t count = steps.below(walk_size + 2);
+    for (std::size_t index = 0; index < count; ++index) {
+        picker::Chosen chosen = chosen_id(walk_id(steps.below(walk_size + 2)));
+        if (steps.below(3) == 0)
+            chosen.options.emplace_back("level", walk_level(steps));
+        inputs.last_set.push_back(std::move(chosen));
+    }
+    return inputs;
+}
+
+/// Changes one thing about the inputs, as a finished download or a new
+/// catalogue would: a mutator goes or comes, a version moves, a need or a
+/// conflict appears (a loop may form), or availability or installation flips.
+///
+/// @param steps the generator
+/// @param[in,out] inputs the inputs
+void walk_change(Steps& steps, picker::Inputs& inputs) {
+    const std::size_t kind = steps.below(7);
+    if (inputs.mutators.empty() || kind == 1) {
+        const std::size_t index = steps.below(walk_size);
+        for (const picker::Mutator& mutator : inputs.mutators)
+            if (mutator.id == walk_id(index))
+                return;
+        inputs.mutators.push_back(walk_mutator(steps, index));
+        return;
+    }
+    picker::Mutator& mutator = inputs.mutators[steps.below(inputs.mutators.size())];
+    switch (kind) {
+    case 0:
+        for (std::size_t index = 0; index < inputs.mutators.size(); ++index) {
+            if (&inputs.mutators[index] == &mutator) {
+                inputs.mutators.erase(inputs.mutators.begin() + static_cast<std::ptrdiff_t>(index));
+                break;
+            }
+        }
+        break;
+    case 2:
+        mutator.version = steps.below(2) == 0 ? "3.9" : "4.1";
+        break;
+    case 3:
+        need_range(
+            mutator,
+            walk_id(steps.below(walk_size)),
+            steps.below(2) == 0 ? std::string() : std::string(">= 4.0"),
+            ""
+        );
+        break;
+    case 4:
+        mutator.conflicts.push_back(walk_id(steps.below(walk_size)));
+        break;
+    case 5:
+        mutator.unavailable = mutator.unavailable.empty() ? "needs Ridge" : "";
+        break;
+    default:
+        mutator.installed = !mutator.installed;
+        break;
+    }
+}
+
+/// Finds a mutator in the picker's inputs.
+///
+/// @param model the picker
+/// @param id the id
+/// @return the mutator, or null
+const picker::Mutator* input_of(const picker::Picker& model, std::string_view id) {
+    for (const picker::Mutator& mutator : model.inputs.mutators)
+        if (mutator.id == id)
+            return &mutator;
+    return nullptr;
+}
+
+/// Tells whether a version meets a range, by the manifest's matcher.
+///
+/// @param need the record of the prerequisite
+/// @param version the version
+/// @return true when it does; an empty range is any version
+bool range_holds(const lib::Prerequisite& need, const std::string& version) {
+    if (need.range.empty())
+        return true;
+    oa::formats::oamut::Condition condition;
+    condition.id = need.id;
+    condition.range_text = need.range;
+    condition.range = oa::formats::oamut::parse_version_range(need.range);
+    return condition.range && oa::formats::oamut::condition_met(condition, need.id, version);
+}
+
+/// Tells whether the On list could start a game, read from the inputs alone:
+/// each On mutator held and available, its prerequisites a closure without a
+/// loop and all on above it, each in its range and available, and no two On
+/// mutators in conflict.
+///
+/// @param model the picker
+/// @return true when the set is playable, installation aside
+bool playable(const picker::Picker& model) {
+    const std::vector<lib::Need> graph = graph_of(model);
+    const std::vector<std::string> ids = ids_of(model);
+    if (ids.size() > picker::most_on || !lib::prerequisites_above(graph, ids))
+        return false;
+    for (std::size_t index = 0; index < ids.size(); ++index) {
+        const picker::Mutator* mutator = input_of(model, ids[index]);
+        if (mutator == nullptr || !mutator->unavailable.empty())
+            return false;
+        const std::string roots[]{ids[index]};
+        const lib::Closure closure = lib::prerequisite_closure(graph, roots);
+        if (closure.cyclic)
+            return false;
+        for (const std::string& item : closure.order) {
+            bool present = false;
+            for (std::size_t above = 0; above <= index; ++above)
+                present = present || ids[above] == item;
+            if (!present)
+                return false;
+        }
+        for (const lib::Prerequisite& prerequisite : mutator->needs) {
+            const picker::Mutator* needed = input_of(model, prerequisite.id);
+            if (needed == nullptr || !needed->unavailable.empty() ||
+                !range_holds(prerequisite, needed->version))
+                return false;
+        }
+        for (std::size_t other = 0; other < ids.size(); ++other) {
+            if (other == index)
+                continue;
+            if (ids[other] == ids[index])
+                return false;
+            const picker::Mutator* beside = input_of(model, ids[other]);
+            if (beside == nullptr)
+                return false;
+            for (const std::string& conflict : mutator->conflicts)
+                if (conflict == beside->id)
+                    return false;
+        }
+    }
+    return true;
+}
+
+/// Checks the picker after one call of the walk: the order, a playable set,
+/// `ready` exactly when that set is installed, each row agreeing with what
+/// `switch_on` does, and records and a question that name On mutators.
+///
+/// @param model the picker
+/// @return true when everything holds
+bool walk_holds(const picker::Picker& model) {
+    if (!lib::prerequisites_above(graph_of(model), ids_of(model)))
+        return false;
+    if (!playable(model))
+        return false;
+    bool installed = true;
+    for (const picker::Chosen& chosen : model.on) {
+        const picker::Mutator* mutator = input_of(model, chosen.id);
+        installed = installed && mutator != nullptr && mutator->installed;
+    }
+    if (picker::ready(model) != installed)
+        return false;
+    for (const picker::CameWith& record : model.came_with) {
+        bool prerequisite_on = false;
+        bool dependant_on = false;
+        for (const picker::Chosen& chosen : model.on) {
+            prerequisite_on = prerequisite_on || chosen.id == record.prerequisite;
+            dependant_on = dependant_on || chosen.id == record.dependant;
+        }
+        if (!prerequisite_on || !dependant_on)
+            return false;
+    }
+    if (model.asking) {
+        bool asked_on = false;
+        for (const picker::Chosen& chosen : model.on)
+            asked_on = asked_on || chosen.id == model.asking->id;
+        if (!asked_on)
+            return false;
+    }
+    for (const picker::Row& row : picker::rows(model)) {
+        if (row.on) {
+            if (row.locked)
+                return false;
+            continue;
+        }
+        if (model.inputs.read_only)
+            continue;
+        picker::Picker trial = model;
+        const picker::SwitchResult outcome = picker::switch_on(trial, row.id);
+        if (row.locked && (outcome.changed || outcome.refused != row.line))
+            return false;
+        if (!row.locked && !outcome.changed)
+            return false;
+        if (!playable(trial))
+            return false;
+    }
+    std::ignore = picker::footer(model);
+    std::ignore = picker::hint(model);
+    return true;
+}
+
+/// Random walks through every public call, with questions left open across
+/// other calls and refreshes that change the inputs underneath the set. After
+/// every call the set keeps its order and stays playable.
+void random_walks() {
+    Steps steps{0x9e3779b97f4a7c15ULL};
+    int broken = 0;
+    for (int walk = 0; walk < 300; ++walk) {
+        picker::Picker model;
+        picker::open(model, walk_inputs(steps));
+        for (int call = 0; call < 50; ++call) {
+            // An open question is answered now and then, after other calls.
+            std::size_t kind = steps.below(18);
+            if (model.asking && steps.below(5) == 0)
+                kind = 6;
+            std::string id = walk_id(steps.below(walk_size + 1));
+            switch (kind) {
+            case 0:
+            case 1:
+            case 2:
+                // While a question is open, often switch on a mutator that
+                // needs the prerequisite it asks about.
+                if (model.asking && steps.below(4) != 0) {
+                    std::vector<std::string> needing;
+                    for (const picker::Mutator& mutator : model.inputs.mutators) {
+                        bool on = false;
+                        for (const picker::Chosen& chosen : model.on)
+                            on = on || chosen.id == mutator.id;
+                        for (const lib::Prerequisite& prerequisite : mutator.needs) {
+                            if (!on && prerequisite.id == model.asking->id)
+                                needing.push_back(mutator.id);
+                        }
+                    }
+                    if (!needing.empty())
+                        id = needing[steps.below(needing.size())];
+                }
+                if (steps.below(2) == 0)
+                    std::ignore = picker::switch_on(model, id);
+                else
+                    std::ignore = picker::switch_on(model, id, steps.below(model.on.size() + 2));
+                break;
+            case 3:
+            case 4:
+            case 5:
+                // The question is often left open across later calls.
+                std::ignore = picker::switch_off(model, id);
+                break;
+            case 6:
+                picker::confirm_turn_off(model);
+                break;
+            case 7:
+                picker::cancel_turn_off(model);
+                break;
+            case 8:
+                std::ignore = picker::move_to(model, id, steps.below(model.on.size() + 2));
+                break;
+            case 9:
+                if (steps.below(2) == 0)
+                    std::ignore = picker::move_up(model, id);
+                else
+                    std::ignore = picker::move_down(model, id);
+                break;
+            case 10: {
+                const bool into_on = steps.below(2) == 0;
+                std::ignore = picker::drop(
+                    model, id, picker::Drop{into_on, steps.below(model.on.size() + 2)}
+                );
+                break;
+            }
+            case 11:
+                std::ignore = picker::set_option(model, id, "level", walk_level(steps));
+                break;
+            case 12:
+                std::ignore = picker::set_clash(
+                    model, id, steps.below(2) == 0 ? picker::Clash::add : picker::Clash::replace
+                );
+                break;
+            case 13:
+            case 14:
+            case 15: {
+                picker::Inputs changed = model.inputs;
+                walk_change(steps, changed);
+                picker::refresh(model, std::move(changed));
+                break;
+            }
+            case 16:
+                picker::refresh(model, walk_inputs(steps));
+                break;
+            default:
+                picker::open(model, walk_inputs(steps));
+                break;
+            }
+            if (!walk_holds(model)) {
+                if (broken == 0)
+                    std::fprintf(
+                        stderr,
+                        "walk %d broke at call %d (%d)\n",
+                        walk,
+                        call,
+                        static_cast<int>(kind)
+                    );
+                ++broken;
+            }
+        }
+    }
+    OA_CHECK(broken == 0);
+}
+
 } // namespace
 
 int main() {
@@ -1122,5 +2041,18 @@ int main() {
     translated_row();
     refresh_keeps();
     not_installed_switches_on();
+    locked_missing_prerequisite();
+    locked_version_range();
+    locked_unavailable_prerequisite();
+    locked_brought_conflict();
+    stale_conflict();
+    refresh_prerequisite_goes();
+    refresh_version_falls();
+    refresh_loop();
+    refresh_new_need();
+    refresh_conflict_and_unavailable();
+    confirm_recomputes();
+    clash_rows();
+    random_walks();
     return oa::test::check_exit_status();
 }
