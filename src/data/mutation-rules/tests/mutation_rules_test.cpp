@@ -1214,6 +1214,50 @@ void created_spelling() {
     run(true);
 }
 
+/// Writes of one field are listed in the order they were applied, even when a
+/// later change creates the field again under another spelling.
+void writes_in_applied_order() {
+    rules::DocumentSet docs;
+    OA_CHECK(add_text(
+        docs, "units/RIDGEFAB.fbi", "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nworkertime=5;\n}\n"
+    ));
+    OA_CHECK(add_text(
+        docs, "units/RIDGEAAA.fbi", "[UNITINFO]\n{\nUnitName=RIDGEAAA;\nWORKERTIME=1;\n}\n"
+    ));
+    std::vector<rules::MutatorRules> list;
+    list.push_back(
+        rules_of("ridge-reset", "[*All*]\n{\nworkertime=\"\";\nWorkerTime=7;\nWORKERTIME=*2;\n}\n")
+    );
+    const rules::ApplyResult result = apply_list(list, docs, {});
+    expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "14");
+    OA_CHECK(has_exact_key(unit_section(docs, "units/RIDGEFAB.fbi"), "WorkerTime"));
+    std::vector<const rules::FieldWrite*> chain;
+    for (const rules::FieldWrite& write : result.writes) {
+        if (write.path == "units/RIDGEFAB.fbi")
+            chain.push_back(&write);
+    }
+    OA_CHECK(chain.size() == 3);
+    if (chain.size() != 3)
+        return;
+    // The removal, then the creation under the new spelling, then the factor.
+    OA_CHECK(chain[0]->key == "workertime");
+    OA_CHECK(chain[0]->old_text.has_value() && *chain[0]->old_text == "5");
+    OA_CHECK(!chain[0]->new_text.has_value());
+    OA_CHECK(chain[1]->key == "WorkerTime");
+    OA_CHECK(!chain[1]->old_text.has_value());
+    OA_CHECK(chain[1]->new_text.has_value() && *chain[1]->new_text == "7");
+    OA_CHECK(chain[2]->key == "WorkerTime");
+    OA_CHECK(chain[2]->old_text.has_value() && *chain[2]->old_text == "7");
+    OA_CHECK(chain[2]->new_text.has_value() && *chain[2]->new_text == "14");
+    // The other unit's writes sort before RIDGEFAB's, all of them together.
+    OA_CHECK(result.writes.size() == 6);
+    if (result.writes.size() == 6) {
+        OA_CHECK(result.writes[0].path == "units/RIDGEAAA.fbi");
+        OA_CHECK(result.writes[2].path == "units/RIDGEAAA.fbi");
+        OA_CHECK(result.writes[3].path == "units/RIDGEFAB.fbi");
+    }
+}
+
 /// The compatibility entry runs each mutator as its own step in list order,
 /// and gives what one `apply_step` per mutator gives: no mean of two
 /// assignments, and a lock that holds against the later mutator.
@@ -1459,6 +1503,7 @@ int main() {
     sidedata_and_names();
     layout_rename();
     created_spelling();
+    writes_in_applied_order();
     rules_as_steps();
     depth_case();
     schema_kinds();

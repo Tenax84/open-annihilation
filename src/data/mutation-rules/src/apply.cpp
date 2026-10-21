@@ -115,23 +115,38 @@ std::string fold_path(std::string_view text) {
     return out;
 }
 
+/// Compares two texts by their folded bytes only.
+///
+/// Two spellings that differ only in ASCII case compare equal.
+///
+/// @param left a text
+/// @param right another text
+/// @return negative when `left` sorts first, positive when `right` does, and
+///         zero when both fold to the same bytes
+int compare_folded(std::string_view left, std::string_view right) {
+    const size_t count = left.size() < right.size() ? left.size() : right.size();
+    for (size_t offset = 0; offset < count; ++offset) {
+        const char left_fold = fold_ascii(left[offset]);
+        const char right_fold = fold_ascii(right[offset]);
+        if (left_fold < right_fold)
+            return -1;
+        if (left_fold > right_fold)
+            return 1;
+    }
+    if (left.size() != right.size())
+        return left.size() < right.size() ? -1 : 1;
+    return 0;
+}
+
 /// Orders two texts by their folded bytes, then by the raw bytes.
 ///
 /// @param left a text
 /// @param right another text
 /// @return true when `left` sorts first
 bool less_text(std::string_view left, std::string_view right) {
-    const size_t count = left.size() < right.size() ? left.size() : right.size();
-    for (size_t offset = 0; offset < count; ++offset) {
-        const char left_fold = fold_ascii(left[offset]);
-        const char right_fold = fold_ascii(right[offset]);
-        if (left_fold < right_fold)
-            return true;
-        if (left_fold > right_fold)
-            return false;
-    }
-    if (left.size() != right.size())
-        return left.size() < right.size();
+    const int folded = compare_folded(left, right);
+    if (folded != 0)
+        return folded < 0;
     return left < right;
 }
 
@@ -399,25 +414,23 @@ void remember(std::vector<FieldMark>& marks, FieldMark mark) {
     marks.push_back(std::move(mark));
 }
 
-/// Orders writes by path, record, block and key.
+/// Orders writes by path, record, block and key, compared after folding.
+///
+/// Two writes of one field compare equal whichever spelling of the key each
+/// used, so the stable sort keeps them in the order they were applied.
 ///
 /// @param left a write
 /// @param right another write
 /// @return true when `left` sorts first
 bool write_before(const FieldWrite& left, const FieldWrite& right) {
-    if (less_text(left.path, right.path))
-        return true;
-    if (less_text(right.path, left.path))
-        return false;
-    if (less_text(left.record, right.record))
-        return true;
-    if (less_text(right.record, left.record))
-        return false;
-    if (less_text(left.block, right.block))
-        return true;
-    if (less_text(right.block, left.block))
-        return false;
-    return less_text(left.key, right.key);
+    int order = compare_folded(left.path, right.path);
+    if (order == 0)
+        order = compare_folded(left.record, right.record);
+    if (order == 0)
+        order = compare_folded(left.block, right.block);
+    if (order == 0)
+        order = compare_folded(left.key, right.key);
+    return order < 0;
 }
 
 /// Orders notes by path, record, key, kind, line, source and message.

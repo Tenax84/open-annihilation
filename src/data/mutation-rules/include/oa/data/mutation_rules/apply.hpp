@@ -143,8 +143,9 @@ struct ApplyOptions {
 
 /// The writes and notes of one step.
 struct ApplyResult {
-    /// Fields that changed. Sorted by path, record, block and key. Writes of
-    /// one field stay in the order they were applied.
+    /// Fields that changed. Sorted by path, record, block and key, compared
+    /// after ASCII case folding. Writes of one field stay in the order they
+    /// were applied, whichever spelling of the key each one used.
     std::vector<FieldWrite> writes;
     /// Notes, sorted by path, record, key, kind, line, source and message.
     std::vector<RuleNote> notes;
