@@ -14,8 +14,8 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
 `oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
 `oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
-`oa/data/mutators/pipeline.hpp`, `oa/data/mutators/rules_lua.hpp` and
-`oa/data/mutators/verdicts.hpp`.
+`oa/data/mutators/pipeline.hpp`, `oa/data/mutators/rules_lua.hpp`,
+`oa/data/mutators/verdicts.hpp` and `oa/data/mutators/weapon_ids.hpp`.
 
 - `check_mutable_path` judges one file path.
 - `check_mutable_mask` judges one mask. The pattern's shape is
@@ -33,7 +33,12 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 - `units:clone(source, name, fields)` and `weapons:clone(source, name, fields)`
   add a copy of one record. A unit clone keeps the source model by writing
   `Objectname` and serves the source script, picture and build pages under
-  the new name. A weapon clone takes the lowest free id from 1 to 255.
+  the new name. A weapon clone asks for the lowest free id from 1 to 255.
+  `assign_weapon_ids` gives that id, or another free one when a weapon
+  brought earlier asked for the same id.
+- `record_file_kind` says whether a path is a unit FBI, a weapon TDF, a
+  download TDF, or a whole file. `build_files_layer` keeps every kept
+  mutator's copy of a record file in `FilesLayer::records`.
 - A hook's `ctx.sides` is the side table and the build lists. `ctx.sides[1]`
   is the first side, `ctx.sides.ARM` finds a side by name, ignoring case,
   and `ctx.sides:each` walks the sides in that order. `canbuild`,
@@ -116,7 +121,18 @@ hook, its rules or its files would have reached the mutators below it, and
 with the mutators that require it. It also covers plans whose tables have
 metatables, the allowances and the string cap, files added, masked and
 hidden with their journal entries, a document that does not parse, a
-player's option, the list checks and two identical runs.
+player's option, the list checks and two identical runs. It also runs two
+mutators that share `weapons/extra.tdf`, a unit file that replaces a unit,
+a weapon body that must not move a base id, download sections from two
+mutators, a rule that sees the unit its own file added, and a weapon table
+with no id left.
+
+`data-mutators-weapon-ids` (`tests/weapon_ids_test.cpp`) checks
+`assign_weapon_ids`: a requested id is kept when it is free, two requests
+for one id are split in list order and then by name, a missing id or an id
+outside 1 to 255 is not a request, slot 0 is never given out, a full table
+refuses and writes nothing, and a base weapon's id text stays.
+
 `data-mutators-journal` (`tests/journal_test.cpp`) checks the entry order,
 `entries_of`, each note conversion and the sentences `describe` writes.
 
@@ -144,7 +160,11 @@ the game so that it does.
 A clone does not copy a download entry, and it does not copy
 download-linked button art (`anims/<unit>_gadget.gaf`). A download-linked
 button for a clone draws with no picture. A weapon clone never takes slot
-0, which is the default weapon.
+0, which is the default weapon. Until the clash mode lands, a record whose
+name already exists replaces that record. A replaced base or mod weapon
+keeps the id it had. Two mutators never share an id. When no id from 1 to
+255 is free, the mutator whose weapon could not be numbered is refused and
+named, and nothing of that mutator is served.
 
 A mutator cannot add or remove a side. Rectangle sub-sections of a side
 are neither shown nor changed. A build list keeps at most 1024 names. When
@@ -240,6 +260,17 @@ has no files of its own. A folder that exists is read as follows.
   mod already names that unit, or when this mutator or an earlier one still
   adds that unit's file under the layout's units folder.
 
+A unit FBI, a weapon TDF and a download TDF are record files: one level
+under that layout folder, the unit extension or `.tdf`. The spec still
+holds one host file per path, so a later mutator wins the path for a
+whole-file mount and an `add_replaced` note is still recorded. Each kept
+mutator's bytes are also stored in `records`, including the copy a later
+mutator replaced in the spec. A mask that hides the path drops those
+snapshots. A later folder of the same mutator replaces only its own
+snapshot. The pipeline does not mount those spec entries. It reads each
+mutator's snapshot into that mutator's step. Every other file stays one
+whole file, and the later mutator wins the path.
+
 The spec lists entries in mutator order and, within a mutator, in the order
 the paths were first added. Each folder's new paths are sorted by the folded
 path. Replacing a path does not move it. `spec.archives` holds every archive
@@ -303,7 +334,10 @@ page it served, each with the source's bytes. A field in the clone's
 table is a typed write, in sorted key order, and a bad field adds nothing.
 A weapon clone copies the source section, including `[DAMAGE]`, into
 `Weapons/<name>.tdf` (or `Weapons/<name>-<k>.tdf` when that path is taken,
-`k` from 2) and sets `ID` to the lowest free id from 1 to 255. When several
+`k` from 2) and writes `ID` to the lowest free id from 1 to 255. That id
+is a request. After the last hook the pipeline keeps it when it is still
+free, and otherwise gives the weapon another free id. The journal line
+names the id the weapon was given. When several
 sections share a name, the copy is the first in collection order (name,
 then path, then position), which may not be the lowest slot the game fires.
 A field named `ID` is refused. The journal records each clone and each
@@ -655,13 +689,19 @@ or two mutators that conflict refuses the whole list, and nothing runs.
 Each manifest is then checked against the mod and the engine version. A
 mutator that does not fit is incompatible and left out. The rest go through
 passes. A pass plans every mutator by calling its `mutate(ctx)` in a
-sandbox of its own, builds and mounts the files layer, parses every
-document the match will load from the layered store, then takes each
-mutator in list order and applies its rules and then its hooks, on the
-documents the mutators above it left. Its units hook runs, then its
-weapons hook. A plan that returns map hooks is refused, so none run. Only
-a document the pass changed is written back, whole, with the text writer,
-at the path the store listed it under. A document a hook removed is hidden.
+sandbox of its own, builds the files layer and mounts it without the
+record files, parses every document the match will load from that store,
+then takes each mutator in list order. The mutator first applies the
+records in its own unit, weapon and download files. A unit is one FBI,
+named by `UnitName` or by the file stem. Each section of a weapon TDF is
+a weapon, and each section of a download file is an entry in that file.
+A record whose name already exists replaces that record. A new record is
+added. Other files stay whole files, and the later mutator wins the path.
+The mutator then applies its rules and then its hooks, on the documents
+the mutators above it left. Its units hook runs, then its weapons hook. A
+plan that returns map hooks is refused, so none run. Only a document the
+pass changed is written back, whole, with the text writer, at the path
+the store listed it under. A document a hook removed is hidden.
 
 The plan is read inside the plan phase, with the mutator's allowances and
 real-time limit in force, and by raw access only, so no metamethod of the
@@ -703,8 +743,19 @@ an allowance, the real-time limit or the string cap has a cause of its own
 (`instruction_budget`, `memory_budget`, `time_limit` or `string_length`),
 never `script_error`.
 
+After the last hook, every weapon a mutator brought, by a record file or
+by `weapons:clone`, is given an id. The game's weapons and the mod's
+weapons keep theirs. A section's `ID=` is a request when it is a number
+from 1 to 255, and it is kept when that id is free. The rest take free
+ids from 1 to 255, earlier mutators first and, within a mutator, by name.
+Slot 0 is never given out. The weapons are numbered before anything is
+written. When one weapon has no free id, nothing is written, that
+mutator's result is `failed` in the phase `integrity` with cause
+`weapon_ids`, and the message names the mutator and the weapon. The run
+is repeated without that mutator. The written weapon files carry the
+final ids.
+
 The pipeline prints nothing and keeps nothing between calls. The same input
 gives the same layer bytes, journal and report. The store must hold no
 mutator layer when the call starts. On return the final layer is mounted
-when it holds at least one entry or mask, and the caller unmounts it. No
-integrity check runs after the last hook yet.
+when it holds at least one entry or mask, and the caller unmounts it.
