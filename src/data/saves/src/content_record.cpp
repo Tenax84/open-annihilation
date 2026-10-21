@@ -6,6 +6,7 @@
 #include "oa/data/content_bundles.hpp"
 
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -50,6 +51,72 @@ bool is_copied(std::span<const std::string_view> copied, std::string_view id) {
             return true;
     }
     return false;
+}
+
+/// Tells whether text holds a line break.
+///
+/// @param text the value
+/// @return true when it holds CR or LF
+bool has_line_break(std::string_view text) {
+    return text.find('\n') != std::string_view::npos || text.find('\r') != std::string_view::npos;
+}
+
+/// Tells whether text is 64 lower-case hexadecimal digits.
+///
+/// @param text the token
+/// @return true when it is a SHA-256 written that way
+bool lower_hex64(std::string_view text) {
+    if (text.size() != 64)
+        return false;
+    for (const char character : text) {
+        const bool digit =
+            (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f');
+        if (!digit)
+            return false;
+    }
+    return true;
+}
+
+/// Tells whether an id is lower-case kebab-case.
+///
+/// Words of a-z and 0-9 joined by single hyphens, not empty and not starting
+/// or ending with a hyphen.
+///
+/// @param text the id
+/// @return true when it is such an id
+bool kebab_id(std::string_view text) {
+    if (text.empty() || text.front() == '-' || text.back() == '-')
+        return false;
+    char previous = 0;
+    for (const char character : text) {
+        const bool word =
+            (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9');
+        if (!word && character != '-')
+            return false;
+        if (character == '-' && previous == '-')
+            return false;
+        previous = character;
+    }
+    return true;
+}
+
+/// Splits a `mutator` value into a SHA-256 and an id, when both are well formed.
+///
+/// @param value the text after `mutator:`
+/// @param[out] sha256 the hash, when the value is well formed
+/// @param[out] id the id, when the value is well formed
+/// @return true when the value is one hash, one space and one kebab-case id
+bool mutator_tokens(std::string_view value, std::string& sha256, std::string& id) {
+    const std::size_t space = value.find(' ');
+    if (space == std::string_view::npos || value.find(' ', space + 1) != std::string_view::npos)
+        return false;
+    const std::string_view hash = value.substr(0, space);
+    const std::string_view name = value.substr(space + 1);
+    if (!lower_hex64(hash) || !kebab_id(name))
+        return false;
+    sha256.assign(hash);
+    id.assign(name);
+    return true;
 }
 
 /// Joins English names with a comma and a space.
@@ -111,6 +178,11 @@ ContentRecord content_record_from(
 std::string content_record_text(const ContentRecord& record) {
     if (!record.present)
         return {};
+    for (const ContentMutator& mutator : record.mutators) {
+        if (has_line_break(mutator.sha256) || has_line_break(mutator.id) ||
+            has_line_break(mutator.version) || has_line_break(mutator.name))
+            return {};
+    }
     std::string text = "base-game: " + record.base_game + "\nexpansions: ";
     for (std::size_t index = 0; index < record.expansions.size(); ++index) {
         if (index != 0)
@@ -120,6 +192,17 @@ std::string content_record_text(const ContentRecord& record) {
     text += "\nmod: ";
     text += record.mod;
     text += '\n';
+    for (const ContentMutator& mutator : record.mutators) {
+        text += "mutator: ";
+        text += mutator.sha256;
+        text += ' ';
+        text += mutator.id;
+        text += "\nmutator-version: ";
+        text += mutator.version;
+        text += "\nmutator-name: ";
+        text += mutator.name;
+        text += '\n';
+    }
     return text;
 }
 
@@ -129,6 +212,11 @@ ContentRecord content_record_from_text(std::string_view text) {
     std::string expansions;
     std::string mod;
     bool saw_base = false;
+    // How many mutators a note keeps. Further mutator lines are skipped.
+    constexpr std::size_t most_mutators = 32;
+    std::vector<ContentMutator> mutators;
+    bool follow = false;
+    bool keep = false;
     std::size_t at = 0;
     while (at < text.size()) {
         const std::size_t end = text.find('\n', at);
@@ -142,6 +230,26 @@ ContentRecord content_record_from_text(std::string_view text) {
             expansions = std::move(value);
         } else if (take_field(line, "mod", value)) {
             mod = std::move(value);
+        } else if (take_field(line, "mutator", value)) {
+            std::string hash_text;
+            std::string mutator_id;
+            follow = true;
+            if (mutators.size() >= most_mutators || !mutator_tokens(value, hash_text, mutator_id)) {
+                keep = false;
+            } else {
+                mutators.push_back(
+                    ContentMutator{
+                        std::move(hash_text), std::move(mutator_id), std::string{}, std::string{}
+                    }
+                );
+                keep = true;
+            }
+        } else if (take_field(line, "mutator-version", value)) {
+            if (follow && keep)
+                mutators.back().version = std::move(value);
+        } else if (take_field(line, "mutator-name", value)) {
+            if (follow && keep)
+                mutators.back().name = std::move(value);
         }
         if (end == std::string_view::npos)
             break;
@@ -162,7 +270,10 @@ ContentRecord content_record_from_text(std::string_view text) {
             break;
         comma = next + 1;
     }
-    return content_record_from(base, listed, mod);
+    record = content_record_from(base, listed, mod);
+    if (record.present)
+        record.mutators = std::move(mutators);
+    return record;
 }
 
 ContentGap content_gap(
