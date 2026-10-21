@@ -4,8 +4,8 @@
 # oa-tool's commands. The executable stays in the root CMakeLists.txt, where
 # the Windows DLL copy and the packaged notices attach to it.
 add_library(oa-tool-commands STATIC commands.cpp arguments.cpp files.cpp archive_commands.cpp
-  pack.cpp pack_map.cpp check.cpp check_map.cpp check_mutator.cpp mutator.cpp catalogue.cpp
-  passphrase.cpp registry.cpp expansion.cpp interface_words.cpp)
+  pack.cpp pack_map.cpp check.cpp check_map.cpp check_mutator.cpp mutator.cpp mutator_diff.cpp
+  mutator_report.cpp catalogue.cpp passphrase.cpp registry.cpp expansion.cpp interface_words.cpp)
 add_library(oa::tool::commands ALIAS oa-tool-commands)
 target_include_directories(oa-tool-commands PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # The interface-word lists are headers in the modules that look the texts up.
@@ -30,6 +30,7 @@ target_compile_features(oa-tool-commands PUBLIC cxx_std_20)
 target_link_libraries(oa-tool-commands
   PRIVATE oa-options oa-app-package-install oa-app-game-directory oa-data-content-bundles oa-data-languages
     oa-data-map-pack oa-data-map-fit oa-data-script-host oa-data-mutator-import
+    oa-data-mutators oa-data-defs oa-data-defs-assets oa-formats-tdf
     oa-formats-oamod oa-formats-oamut
     oa-formats-soft-mutator oa-formats-json oa-formats-ota oa-formats-tnt
     oa-formats-zip oa-base-sha256 oa-base-text oa-platform-shims oa-base-signing oa-data-catalogue
@@ -128,6 +129,15 @@ if(BUILD_TESTING)
     oa-options ZLIB::ZLIB)
   add_test(NAME tools-oa-tool-mutator-import COMMAND oa-tool-mutator-import-test)
   set_tests_properties(tools-oa-tool-mutator-import PROPERTIES TIMEOUT 60)
+
+  # mutator diff: a stand-in game and, with --data, the installed game.
+  add_executable(oa-tool-mutator-diff-test tests/mutator_diff_test.cpp)
+  target_link_libraries(oa-tool-mutator-diff-test PRIVATE oa-tool-commands oa-data-defs
+    oa-formats-hpi oa-base-sha256 oa-test-support oa-test-game-data oa-options ZLIB::ZLIB)
+  add_test(NAME tools-oa-tool-mutator-diff COMMAND oa-tool-mutator-diff-test)
+  set_tests_properties(tools-oa-tool-mutator-diff PROPERTIES TIMEOUT 60)
+  oa_add_game_data_test(tools-oa-tool-mutator-diff-data oa-tool-mutator-diff-test --data)
+  set_tests_properties(tools-oa-tool-mutator-diff-data PROPERTIES TIMEOUT 300)
 
   # An expansion packed and checked against the test table, and refused by
   # the commands, which use the built-in table.
