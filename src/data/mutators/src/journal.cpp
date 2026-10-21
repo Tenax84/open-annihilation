@@ -444,7 +444,8 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
         // the words in the rules note.
         if (conflict.detail.find("moved from page") != std::string::npos ||
             conflict.detail.find("has no picture") != std::string::npos ||
-            conflict.detail.find("does not see") != std::string::npos)
+            conflict.detail.find("does not see") != std::string::npos ||
+            conflict.detail.find("placeholder now holds") != std::string::npos)
             return conflict.detail;
         std::string line = names;
         if (conflict.detail.find("a factor") != std::string::npos)

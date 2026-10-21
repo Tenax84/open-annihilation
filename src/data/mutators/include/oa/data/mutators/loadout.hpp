@@ -155,17 +155,22 @@ inline constexpr std::size_t loadout_text_most_bytes = 64 * 1024;
 /// @return the digest of `canonical_loadout`
 [[nodiscard]] base::sha256::Digest loadout_digest(const Loadout& loadout);
 
-/// Returns the digest of every regular file in a folder.
+/// Returns the digest of the regular files in a folder that a package carries.
 ///
 /// The files are sorted by their relative path, compared bytewise. That
 /// path is the UTF-8 spelling, with `/` between its parts, of the names as
 /// the file system stores them, with no Unicode normalisation, so a name
 /// stored composed and one stored decomposed give different digests. Each
 /// file contributes that path, a NUL, its size as eight little-endian bytes,
-/// and the SHA-256 of its bytes. A symbolic link, including one the folder
-/// path itself is, anything that is neither a regular file nor a folder (a
-/// pipe, a socket or a device), or a file that cannot be read refuses the
-/// digest. The folder is only read.
+/// and the SHA-256 of its bytes. The same names `oa-tool mutator pack` leaves
+/// out are left out here: `__MACOSX` and `.backup` only as the first part,
+/// `.git` and `.oa-origin.yaml` at any depth, and `.DS_Store` (any ASCII
+/// case) and a name starting with `._` at any depth. A name that starts with
+/// '.' and is none of those is hashed. A symbolic link, including one the
+/// folder path itself is, anything that is neither a regular file nor a
+/// folder (a pipe, a socket or a device), or a file that cannot be read
+/// refuses the digest, including when that path would otherwise be left out.
+/// The folder is only read.
 ///
 /// @param folder the folder
 /// @param[out] error the path, in UTF-8, and what was wrong; may be null
