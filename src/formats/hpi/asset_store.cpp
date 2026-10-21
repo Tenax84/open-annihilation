@@ -385,6 +385,76 @@ find_loose_directory(const std::filesystem::path& root, const std::string& key) 
     return candidate;
 }
 
+/// Tells whether a folded path is another one or lies below it, whole
+/// '/'-separated parts compared.
+///
+/// @param head the folded path above; empty lies above every path
+/// @param path the folded path tested
+/// @return true when `path` is `head` or lies below it
+bool path_within(std::string_view head, std::string_view path) noexcept {
+    return head.empty() || path == head ||
+           (path.size() > head.size() && path.starts_with(head) && path[head.size()] == '/');
+}
+
+/// Joins two folded paths with '/', leaving out the separator beside an empty one.
+///
+/// @param head the folded path of a folder
+/// @param name the folded name of a record in it
+/// @return the folded path of the record
+std::string joined_key(std::string_view head, std::string_view name) {
+    std::string key;
+    key.reserve(head.size() + 1 + name.size());
+    key.append(head);
+    if (!head.empty() && !name.empty())
+        key.push_back('/');
+    key.append(name);
+    return key;
+}
+
+/// Hands on the folded path of every file record of an archive that a
+/// listing of a folder could take, in stored depth-first order.
+///
+/// A record's folded path is its '/'-joined path through the archive,
+/// folded as normalized_path() folds it, so every record entries() lists
+/// under the folder's path is handed on, duplicates and records a lookup
+/// cannot reach among them. Subtrees whose records cannot lie in the folder,
+/// or, unless `recursive`, deeper than its own files, are not walked.
+///
+/// @param archive the archive
+/// @param folder folded path of the folder, '/'-separated; empty for the root
+/// @param recursive true when the listing takes files below the folder's subfolders too
+/// @param take called with each folded path
+template <class Take>
+void archive_listing(
+    const HpiArchive& archive, std::string_view folder, bool recursive, Take&& take
+) {
+    const auto nodes = archive.nodes();
+    // Whether a folder of this folded path can hold records the listing takes.
+    const auto worth_walking = [&](std::string_view key) {
+        if (path_within(key, folder))
+            return true;
+        if (!path_within(folder, key))
+            return false;
+        if (recursive || key == folder)
+            return true;
+        const auto rest = folder.empty() ? key : key.substr(folder.size() + 1);
+        return rest.find('/') == std::string_view::npos;
+    };
+    const auto visit = [&](const auto& self, uint32_t directory, const std::string& key) -> void {
+        const ArchiveNode& parent = nodes[directory];
+        for (uint32_t i = 0; i < parent.child_count; ++i) {
+            const auto index = parent.first_child + i;
+            const ArchiveNode& node = nodes[index];
+            std::string child = joined_key(key, normalized_path(node.name));
+            if (!node.directory())
+                take(std::move(child));
+            else if (worth_walking(child))
+                self(self, index, child);
+        }
+    };
+    visit(visit, 0, std::string());
+}
+
 } // namespace
 
 // One published pack layer. It is never changed after the store shares it:
@@ -2849,12 +2919,13 @@ std::vector<std::string> AssetStore::list_resources(
                 append(item);
     }
     // Names only: read() resolves the winning content in the same mount order.
+    const std::string_view folder =
+        std::string_view(prefix).substr(0, prefix.empty() ? 0 : prefix.size() - 1);
     for (const auto& mounted : mounts_)
-        for (const auto& entry : mounted.archive.entries()) {
-            const auto key = normalized_path(entry.path);
+        archive_listing(mounted.archive, folder, recursive, [&](std::string key) {
             if (matches(key) && !claim(key))
-                result.push_back(key);
-        }
+                result.push_back(std::move(key));
+        });
     if (include_pack_layer)
         if (const auto layer = pack_layer_snapshot())
             for (const auto& entry : layer->entries)
