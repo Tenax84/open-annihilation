@@ -474,6 +474,22 @@ void fixture_cases() {
     expect_has(same, "mutator diff: 0 differences, 0 allowed, 0 unused allowances");
     expect_has_not(same, "left only");
 
+    const Captured tripled_open = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        boost_arg,
+        "--versus",
+        package_arg(boost_3),
+    });
+    expect_status(tripled_open, oa::tool::exit_failed);
+    expect_has(tripled_open, "left only field units/alpha.fbi [unitinfo] workertime: 100 -> 200");
+    expect_has(tripled_open, "right only field units/alpha.fbi [unitinfo] workertime: 100 -> 300");
+    expect_has(tripled_open, "left only field units/charlie.fbi [unitinfo] workertime: 50 -> 100");
+    expect_has(tripled_open, "right only field units/charlie.fbi [unitinfo] workertime: 50 -> 150");
+
     const Captured flyers = run({
         "mutator",
         "diff",
@@ -543,6 +559,19 @@ void fixture_cases() {
     expect_has(mapped, "# map: isle");
     expect_has(mapped, "aiprofile:");
     expect_has(mapped, "TURBO");
+
+    const Captured unmapped = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        package_arg(turbo),
+    });
+    expect_status(unmapped, oa::tool::exit_done);
+    expect_has_not(unmapped, "aiprofile");
+    expect_has_not(unmapped, "isle.ota");
+    expect_has_not(unmapped, "# map:");
 
     const Captured empty = run({"mutator", "diff", "--game-dir", game_arg});
     expect_status(empty, oa::tool::exit_done);
