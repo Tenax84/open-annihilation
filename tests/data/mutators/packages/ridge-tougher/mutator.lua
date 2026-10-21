@@ -1,7 +1,7 @@
 function mutate(ctx)
-  return {{
+  return {
     units = function(units, ctx)
-      units:where {{ commander = true }}:set {{ maxdamage = ctx.options.health }}
+      units:where { commander = true }:set { maxdamage = ctx.options.health }
     end
-  }}
+  }
 end
