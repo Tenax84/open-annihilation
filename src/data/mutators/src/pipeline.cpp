@@ -4807,9 +4807,7 @@ bool run_pass(
             served_ota
         );
         if (!held.error.empty()) {
-            const Phase failed =
-                held.error == "the chosen map could not be read" ? Phase::rules : Phase::hooks;
-            first.offer(held.slot, failed, Cause::engine_error, held.error);
+            first.offer(held.slot, Phase::rules, Cause::engine_error, held.error);
             maps_done = false;
         }
         for (std::size_t slot = 0; slot < count && slot < first.slot && maps_done; ++slot) {
