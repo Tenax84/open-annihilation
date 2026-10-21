@@ -315,11 +315,12 @@ void fail_mutator(MutatorResult& result, Phase phase, Cause cause, std::string m
 }
 
 /// Marks a mutator excluded because something it requires did not apply.
-void exclude_mutator(MutatorResult& result, Phase phase, std::string message) {
+/// The list decided it, so its phase is `loadout`.
+void exclude_mutator(MutatorResult& result, std::string message) {
     if (result.outcome != Outcome::applied)
         return;
     result.outcome = Outcome::excluded;
-    result.phase = phase;
+    result.phase = Phase::loadout;
     result.cause = Cause::prerequisite_failed;
     result.message = std::move(message);
 }
@@ -1268,9 +1269,11 @@ void exclude_blocked(
                         results[slot].id + " needs " + results[other].id + ", which ";
                     if (results[other].outcome == Outcome::incompatible)
                         message += "is incompatible";
-                    else
+                    else if (results[other].outcome == Outcome::failed)
                         message += "failed";
-                    exclude_mutator(results[slot], results[other].phase, std::move(message));
+                    else
+                        message += "did not apply";
+                    exclude_mutator(results[slot], std::move(message));
                     changed = true;
                     break;
                 }

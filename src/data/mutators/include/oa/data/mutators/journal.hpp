@@ -20,7 +20,7 @@ namespace oa::data::mutators {
 
 /// Where in the pipeline a result or a journal entry belongs.
 enum class Phase : uint8_t {
-    loadout,   ///< the list, before any mutator is opened
+    loadout,   ///< the list: refused whole, or a mutator left out for what it requires
     manifest,  ///< the manifest's works-with and engine requirement
     plan,      ///< the plan returned by mutate
     files,     ///< the files layer

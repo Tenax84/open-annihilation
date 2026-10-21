@@ -250,6 +250,18 @@ bool lists_name(
     return false;
 }
 
+/// Checks that a run with failing mutators is the run of the ones that
+/// remain: the same layer, journal and report, with mutators named by id.
+void check_same_run(
+    const mutators::PipelineResult& with_failures, const mutators::PipelineResult& survivors
+) {
+    OA_CHECK(with_failures.refusal.empty());
+    OA_CHECK(survivors.playable());
+    OA_CHECK(specs_match(with_failures.layer, survivors.layer));
+    OA_CHECK(journals_match(with_failures, survivors));
+    OA_CHECK(reports_match(with_failures, survivors));
+}
+
 /// Counts the paths in `paths` that end with `tail`, ignoring ASCII case.
 std::size_t count_paths(const std::vector<std::string>& paths, std::string_view tail) {
     std::size_t found = 0;
@@ -568,6 +580,7 @@ void test_list_rules() {
         OA_CHECK(boom.mutators[0].outcome == mutators::Outcome::failed);
         OA_CHECK(boom.mutators[1].outcome == mutators::Outcome::excluded);
         OA_CHECK(boom.mutators[1].cause == mutators::Cause::prerequisite_failed);
+        OA_CHECK(boom.mutators[1].phase == mutators::Phase::loadout);
         OA_CHECK(
             boom.mutators[1].message.find("needs ridge-boom, which failed") != std::string::npos
         );
@@ -670,6 +683,37 @@ void test_compatibility_and_repeat() {
     release(mounted);
 }
 
+void test_dependants_of_dependants() {
+    oa::AssetStore with_store = open_ridge();
+    oa::AssetStore swift_store = open_ridge();
+    const mutators::PipelineResult with_chain = mutators::run_pipeline(
+        with_store,
+        input_of({"ridge-boom", "ridge-needs-boom", "ridge-needs-needs-boom", "ridge-swift"})
+    );
+    const mutators::PipelineResult swift_alone =
+        mutators::run_pipeline(swift_store, input_of({"ridge-swift"}));
+    OA_CHECK(with_chain.mutators.size() == 4);
+    if (with_chain.mutators.size() == 4) {
+        OA_CHECK(with_chain.mutators[0].outcome == mutators::Outcome::failed);
+        OA_CHECK(with_chain.mutators[1].outcome == mutators::Outcome::excluded);
+        OA_CHECK(with_chain.mutators[1].phase == mutators::Phase::loadout);
+        OA_CHECK(
+            with_chain.mutators[1].message == "ridge-needs-boom needs ridge-boom, which failed"
+        );
+        OA_CHECK(with_chain.mutators[2].outcome == mutators::Outcome::excluded);
+        OA_CHECK(with_chain.mutators[2].phase == mutators::Phase::loadout);
+        OA_CHECK(with_chain.mutators[2].cause == mutators::Cause::prerequisite_failed);
+        OA_CHECK(
+            with_chain.mutators[2].message ==
+            "ridge-needs-needs-boom needs ridge-needs-boom, which did not apply"
+        );
+        OA_CHECK(with_chain.mutators[3].outcome == mutators::Outcome::applied);
+    }
+    check_same_run(with_chain, swift_alone);
+    release(with_store);
+    release(swift_store);
+}
+
 void test_string_cap_is_its_own_cause() {
     oa::AssetStore store = open_ridge();
     const mutators::PipelineResult result =
@@ -735,6 +779,7 @@ int main() {
     test_files_layer();
     test_list_rules();
     test_compatibility_and_repeat();
+    test_dependants_of_dependants();
     test_string_cap_is_its_own_cause();
     test_unread_document_warned_once();
     test_player_option();

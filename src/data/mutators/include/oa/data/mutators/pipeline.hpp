@@ -59,7 +59,9 @@ struct MutatorResult {
     std::string version;
     /// Applied, failed, incompatible or excluded.
     Outcome outcome{};
-    /// The phase the outcome belongs to.
+    /// The phase the outcome belongs to. An excluded mutator's phase is
+    /// `loadout`: the list decided it, whether it was refused or a mutator
+    /// it requires did not apply.
     Phase phase{};
     /// Why, or `none` when the mutator applied or the list was refused.
     Cause cause{};
