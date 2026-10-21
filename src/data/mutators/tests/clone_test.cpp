@@ -9,6 +9,7 @@
 #include "oa/test/check.hpp"
 #include "oa/test/scratch_directory.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -600,6 +601,168 @@ void test_weapon_id_field(const fs::path& scratch) {
     release(store);
 }
 
+/// The allowance is large enough that the loop's own Lua instructions do not
+/// spend it, and small enough that the charged clone work does, inside the
+/// ten-second clock.
+void expect_budget_stop(const fs::path& game, const fs::path& package, std::string_view label) {
+    oa::AssetStore store(game);
+    mutators::PipelineInput input = make_input({load_package(package)});
+    input.budget.instructions = 1000000;
+    const auto started = std::chrono::steady_clock::now();
+    const mutators::PipelineResult result = mutators::run_pipeline(store, input);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    const auto milliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+    expect(!result.playable(), std::string(label) + " applied");
+    expect(!result.mutators.empty(), std::string(label) + " result");
+    if (!result.mutators.empty()) {
+        expect(result.mutators[0].outcome == mutators::Outcome::failed, std::string(label));
+        expect(
+            result.mutators[0].cause == mutators::Cause::instruction_budget,
+            std::string(label) + " cause " +
+                std::to_string(static_cast<unsigned>(result.mutators[0].cause))
+        );
+        expect(
+            result.mutators[0].cause != mutators::Cause::time_limit, std::string(label) + " clock"
+        );
+        expect(result.mutators[0].phase == mutators::Phase::hooks, std::string(label) + " phase");
+    }
+    expect(
+        milliseconds < 5000, std::string(label) + " took " + std::to_string(milliseconds) + " ms"
+    );
+    expect(result.layer.entries.empty(), std::string(label) + " served a file");
+    expect(!store.mutator_layer_mounted(), std::string(label) + " left a layer mounted");
+    release(store);
+}
+
+void test_clone_budgets(const fs::path& scratch) {
+    const fs::path unit_game = scratch / "budget-units-game";
+    const fs::path unit_package = scratch / "budget-units-package";
+    write_bytes(
+        unit_game / "units" / "ONE.FBI",
+        "[UNITINFO]\n{\nUnitName=ONE;\nObjectname=One;\n"
+        "Copyright=Ridge Holds This Line;\nVersion=9.25;\nMaxDamage=10;\n"
+        "FootprintX=1;\nFootprintZ=1;\n}\n"
+    );
+    write_package(
+        unit_package,
+        "ridge-clone-budget",
+        "units",
+        "function mutate(ctx)\n"
+        "  return { units = function(units, ctx)\n"
+        "    for n = 1, 100000 do\n"
+        "      units:clone(\"ONE\", string.format(\"U%d\", n), {})\n"
+        "    end\n"
+        "  end }\nend\n"
+    );
+    expect_budget_stop(unit_game, unit_package, "unit clone loop");
+
+    const fs::path weapon_game = scratch / "budget-weapons-game";
+    const fs::path weapon_package = scratch / "budget-weapons-package";
+    std::string text;
+    for (int id = 1; id <= 255; ++id) {
+        text += "[W";
+        text += std::to_string(id);
+        text += "]\n{\nID=";
+        text += std::to_string(id);
+        text += ";\nname=Full;\n}\n";
+    }
+    write_bytes(weapon_game / "Weapons" / "FULL.tdf", text);
+    write_package(
+        weapon_package,
+        "ridge-clone-refuse-budget",
+        "weapons",
+        "function mutate(ctx)\n"
+        "  return { weapons = function(weapons, ctx)\n"
+        "    for n = 1, 100000 do\n"
+        "      pcall(function()\n"
+        "        weapons:clone(\"W1\", string.format(\"N%d\", n), {})\n"
+        "      end)\n"
+        "    end\n"
+        "  end }\nend\n"
+    );
+    expect_budget_stop(weapon_game, weapon_package, "refused weapon clone loop");
+}
+
+void test_page_collision(const fs::path& scratch) {
+    const fs::path game = scratch / "collision-game";
+    const fs::path package = scratch / "collision-package";
+    write_bytes(
+        game / "units" / "PLAIN.FBI",
+        "[UNITINFO]\n{\nUnitName=PLAIN;\nObjectname=PlainHull;\n"
+        "Copyright=Ridge Holds This Line;\nVersion=9.25;\nMaxDamage=80;\n"
+        "FootprintX=1;\nFootprintZ=1;\n}\n"
+    );
+    write_bytes(game / "guis" / "PLAIN0.GUI", "gui-page-0");
+    write_bytes(game / "guis" / "PLAIN1.GUI", "gui-page-1");
+    write_bytes(game / "guis" / "PLAIN2.GUI", "gui-page-2");
+    write_bytes(game / "anims" / "PLAIN2.GAF", "gaf-page-2");
+    write_bytes(game / "guis" / "ARMMAIN2.GUI", "screen-bytes");
+    write_bytes(game / "anims" / "ARMMAIN2.GAF", "screen-art");
+    write_bytes(
+        game / "units" / "X.FBI",
+        "[UNITINFO]\n{\nUnitName=X;\nObjectname=X;\n"
+        "Copyright=Ridge Holds This Line;\nVersion=9.25;\nMaxDamage=8;\n"
+        "FootprintX=1;\nFootprintZ=1;\n}\n"
+    );
+    write_bytes(game / "guis" / "X0.GUI", "x-page-0");
+    write_bytes(game / "guis" / "X10.GUI", "x-page-10");
+    write_package(
+        package,
+        "ridge-clone-screen",
+        "units",
+        "function mutate(ctx)\n"
+        "  return { units = function(units, ctx)\n"
+        "    units:clone(\"PLAIN\", \"ARMMAIN\", {})\n"
+        "  end }\nend\n"
+    );
+    oa::AssetStore store(game);
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input({load_package(package)}));
+    expect(!result.playable(), "a clone onto a screen name was accepted");
+    expect(!result.mutators.empty(), "collision result");
+    if (!result.mutators.empty()) {
+        expect(result.mutators[0].cause == mutators::Cause::script_error, "collision cause");
+        expect(
+            contains(result.mutators[0].message, "guis/ARMMAIN2.GUI"), result.mutators[0].message
+        );
+        expect(
+            contains(result.mutators[0].message, "the path already exists"),
+            result.mutators[0].message
+        );
+    }
+    expect(result.layer.entries.empty(), "the layer served a colliding clone");
+    expect(find_entry(result.layer, "guis/ARMMAIN2.GUI") == nullptr, "screen was replaced");
+    expect(find_entry(result.layer, "anims/ARMMAIN2.GAF") == nullptr, "screen art was replaced");
+    expect(find_entry(result.layer, "units/ARMMAIN.FBI") == nullptr, "colliding unit was served");
+    expect(!store.mutator_layer_mounted(), "collision left a layer mounted");
+    release(store);
+
+    const fs::path overlap = scratch / "overlap-package";
+    write_package(
+        overlap,
+        "ridge-clone-overlap",
+        "units",
+        "function mutate(ctx)\n"
+        "  return { units = function(units, ctx)\n"
+        "    units:clone(\"X\", \"X1\", {})\n"
+        "  end }\nend\n"
+    );
+    oa::AssetStore overlap_store(game);
+    const mutators::PipelineResult overlapped =
+        mutators::run_pipeline(overlap_store, make_input({load_package(overlap)}));
+    expect(!overlapped.playable(), "a clone onto a later page was accepted");
+    expect(!overlapped.mutators.empty(), "overlap result");
+    if (!overlapped.mutators.empty()) {
+        expect(
+            contains(overlapped.mutators[0].message, "guis/X10.GUI"), overlapped.mutators[0].message
+        );
+    }
+    expect(overlapped.layer.entries.empty(), "the overlapping clone was served");
+    expect(!overlap_store.mutator_layer_mounted(), "overlap left a layer mounted");
+    release(overlap_store);
+}
+
 } // namespace
 
 int main() {
@@ -610,6 +773,8 @@ int main() {
     test_weapon_zero(scratch);
     test_weapon_full(scratch);
     test_weapon_id_field(scratch);
+    test_clone_budgets(scratch);
+    test_page_collision(scratch);
     std::error_code error;
     fs::remove_all(scratch, error);
     return oa::test::check_exit_status();

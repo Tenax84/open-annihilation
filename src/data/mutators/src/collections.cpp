@@ -3052,6 +3052,20 @@ void push_view(lua_State* state, Collections* owner, Kind kind) {
 
 } // namespace
 
+bool clone_find(
+    lua_State* state, Collections& collections, bool weapons, std::string_view name, CloneHit& hit
+) {
+    const Kind kind = weapons ? Kind::weapons : Kind::units;
+    const Rec* found = find_named(collections, kind, name, state);
+    if (found == nullptr)
+        return false;
+    hit.doc_index = found->doc_index;
+    hit.section = found->section;
+    hit.name = found->name;
+    hit.path = found->path;
+    return true;
+}
+
 bool need_from_lua(
     lua_State* state, int index, std::string_view field, sm::Need& need, std::string* error
 ) {

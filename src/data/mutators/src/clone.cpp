@@ -10,8 +10,10 @@
 #include "clone.hpp"
 
 #include "oa/data/field_schema.hpp"
+#include "oa/data/mutators/allow_list.hpp"
 #include "oa/data/mutators/collections.hpp"
 #include "oa/data/script_host/fixed.hpp"
+#include "oa/data/script_host/script_host.hpp"
 #include "oa/data/script_host/sorted.hpp"
 #include "oa/formats/hpi.hpp"
 #include "oa/formats/tdf/edit.hpp"
@@ -65,6 +67,17 @@ struct CloneAccess {
     static std::vector<CloneRecord>& clones(Collections& self) noexcept { return self.clones_; }
 
     static std::vector<ServedCopy>& served(Collections& self) noexcept { return self.served_; }
+
+    static void index_served(Collections& self, std::string key, std::size_t index) {
+        self.served_index_[std::move(key)] = index;
+    }
+
+    static const ServedCopy* find_served(const Collections& self, const std::string& key) noexcept {
+        const auto found = self.served_index_.find(key);
+        if (found == self.served_index_.end() || found->second >= self.served_.size())
+            return nullptr;
+        return &self.served_[found->second];
+    }
 };
 
 namespace {
@@ -83,15 +96,6 @@ struct HeldField {
     double number = 0;
     std::string text;
     int64_t count = 0;
-};
-
-/// One section the collection would list.
-struct Listed {
-    std::size_t doc_index = 0;
-    tdf::Block* section = nullptr;
-    uint32_t ordinal = 0;
-    std::string name;
-    std::string path;
 };
 
 /// Bytes read for one served copy, kept until the clone has succeeded.
@@ -136,40 +140,6 @@ bool same_text(std::string_view left, std::string_view right) noexcept {
     return true;
 }
 
-int compare_folded(std::string_view left, std::string_view right) noexcept {
-    const std::size_t count = std::min(left.size(), right.size());
-    for (std::size_t index = 0; index < count; ++index) {
-        const unsigned char left_byte = fold_byte(static_cast<unsigned char>(left[index]));
-        const unsigned char right_byte = fold_byte(static_cast<unsigned char>(right[index]));
-        if (left_byte < right_byte)
-            return -1;
-        if (left_byte > right_byte)
-            return 1;
-    }
-    if (left.size() < right.size())
-        return -1;
-    if (left.size() > right.size())
-        return 1;
-    return 0;
-}
-
-bool same_path(std::string_view left, std::string_view right) noexcept {
-    if (left.size() != right.size())
-        return false;
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        char left_byte = left[index];
-        char right_byte = right[index];
-        if (left_byte == '\\')
-            left_byte = '/';
-        if (right_byte == '\\')
-            right_byte = '/';
-        if (fold_byte(static_cast<unsigned char>(left_byte)) !=
-            fold_byte(static_cast<unsigned char>(right_byte)))
-            return false;
-    }
-    return true;
-}
-
 bool is_separator(unsigned char byte) noexcept {
     return byte == ' ' || byte == '\t' || byte == '\n' || byte == '\r';
 }
@@ -182,24 +152,26 @@ std::string_view trim_view(std::string_view text) noexcept {
     return text;
 }
 
-std::string file_stem(std::string_view path) {
-    const std::size_t slash = path.rfind('/');
-    const std::string_view filename =
-        slash == std::string_view::npos ? path : path.substr(slash + 1);
-    const std::size_t dot = filename.rfind('.');
-    if (dot == std::string_view::npos || dot == 0)
-        return std::string(filename);
-    return std::string(filename.substr(0, dot));
+std::string fold_path(std::string_view path) {
+    std::string folded;
+    folded.reserve(path.size());
+    for (std::size_t index = 0; index < path.size(); ++index) {
+        unsigned char byte = static_cast<unsigned char>(path[index]);
+        if (byte == '\\')
+            byte = '/';
+        folded.push_back(static_cast<char>(fold_byte(byte)));
+    }
+    return folded;
 }
 
-bool listed_before(const Listed& left, const Listed& right) noexcept {
-    const int names = compare_folded(left.name, right.name);
-    if (names != 0)
-        return names < 0;
-    const int paths = compare_folded(left.path, right.path);
-    if (paths != 0)
-        return paths < 0;
-    return left.ordinal < right.ordinal;
+void charge_bytes(lua_State* state, std::size_t bytes) {
+    host::charge_work(state, host::units_for_bytes(bytes));
+}
+
+void charge_elements(lua_State* state, uint64_t count) {
+    if (host::element_charge != 0 && count > UINT64_MAX / host::element_charge)
+        count = UINT64_MAX / host::element_charge;
+    host::charge_work(state, count * host::element_charge);
 }
 
 std::string request_error(
@@ -244,73 +216,6 @@ const defs::DataLayout& layout_now(const Collections& self) noexcept {
 std::string folder_of(const Collections& self, defs::DataDirectory directory) {
     const defs::DataLayout& layout = layout_now(self);
     return layout.directories[static_cast<std::size_t>(directory)];
-}
-
-/// Lists live unit or weapon records in collection order.
-std::vector<Listed> list_named(Collections& self, bool weapons) {
-    rules::DocumentSet& documents = CloneAccess::documents(self);
-    const std::string folder = weapons ? folder_of(self, defs::DataDirectory::weapons)
-                                       : folder_of(self, defs::DataDirectory::units);
-    const std::string suffix = weapons ? std::string("tdf") : layout_now(self).unit_extension;
-    const std::vector<std::size_t> docs = documents.documents_in(folder, suffix, false);
-    std::vector<Listed> records;
-    for (const std::size_t doc_index : docs) {
-        rules::LoadedDocument& loaded = documents.at(doc_index);
-        tdf::Block* root = tdf::editable_root(loaded.document.get());
-        if (root == nullptr)
-            continue;
-        const uint32_t sections = tdf::child_count(root);
-        if (!weapons) {
-            for (uint32_t section = 0; section < sections; ++section) {
-                tdf::Block* block = tdf::editable_child(root, section);
-                if (block == nullptr || block->name == nullptr)
-                    continue;
-                if (tdf::compare_nocase(block->name, "UNITINFO") != 0)
-                    continue;
-                Listed listed;
-                listed.doc_index = doc_index;
-                listed.section = block;
-                listed.path = loaded.path;
-                const char* unit_name = tdf::find_value(block, "UnitName");
-                if (unit_name != nullptr && unit_name[0] != '\0')
-                    listed.name = unit_name;
-                else
-                    listed.name = file_stem(loaded.path);
-                records.push_back(std::move(listed));
-                break;
-            }
-            continue;
-        }
-        std::vector<std::string> seen;
-        for (uint32_t section = 0; section < sections; ++section) {
-            tdf::Block* block = tdf::editable_child(root, section);
-            if (block == nullptr || block->name == nullptr)
-                continue;
-            Listed listed;
-            listed.doc_index = doc_index;
-            listed.section = block;
-            listed.path = loaded.path;
-            listed.name = block->name;
-            uint32_t ordinal = 0;
-            for (const std::string& earlier : seen) {
-                if (same_text(earlier, listed.name))
-                    ++ordinal;
-            }
-            listed.ordinal = ordinal;
-            seen.push_back(listed.name);
-            records.push_back(std::move(listed));
-        }
-    }
-    std::sort(records.begin(), records.end(), listed_before);
-    return records;
-}
-
-const Listed* find_named(const std::vector<Listed>& records, std::string_view name) {
-    for (const Listed& listed : records) {
-        if (same_text(listed.name, name))
-            return &listed;
-    }
-    return nullptr;
 }
 
 bool ensure_grant(const Collections& self, bool weapons, std::string& error) {
@@ -695,11 +600,8 @@ bool strip_canbuild(tdf::Document* document, tdf::Block* block, std::string& err
 }
 
 std::shared_ptr<const std::vector<uint8_t>> lookup_bytes(Collections& self, std::string_view path) {
-    const std::vector<ServedCopy>& served = CloneAccess::served(self);
-    for (std::size_t index = served.size(); index > 0; --index) {
-        if (same_path(served[index - 1].path, path))
-            return served[index - 1].bytes;
-    }
+    if (const ServedCopy* served = CloneAccess::find_served(self, fold_path(path)))
+        return served->bytes;
     oa::AssetStore* store = CloneAccess::store(self);
     if (store == nullptr)
         return nullptr;
@@ -711,6 +613,8 @@ std::shared_ptr<const std::vector<uint8_t>> lookup_bytes(Collections& self, std:
 
 bool path_taken(Collections& self, std::string_view path) {
     if (CloneAccess::documents(self).find(path) != nullptr)
+        return true;
+    if (CloneAccess::find_served(self, fold_path(path)) != nullptr)
         return true;
     oa::AssetStore* store = CloneAccess::store(self);
     if (store == nullptr)
@@ -741,43 +645,138 @@ std::string join_path(std::string_view folder, std::string_view name) {
     return path;
 }
 
-/// Reads the script, picture and build pages the game would, under the new name.
-void collect_unit_copies(
+/// Charges the bytes, then keeps the copy when the destination is free and
+/// `check_mutable_path` allows it. A build page is the menus-only exception:
+/// `guis/<name><digits>.gui` is served only when that path does not exist.
+/// A taken path refuses the clone and names the path. Returns false when the
+/// source has no bytes (nothing to serve).
+bool take_copy(
+    lua_State* state,
     Collections& self,
     std::string_view source,
     std::string_view name,
-    std::vector<PendingCopy>& pending
+    std::string path,
+    std::string source_path,
+    const std::shared_ptr<const std::vector<uint8_t>>& bytes,
+    std::vector<PendingCopy>& pending,
+    std::string& error
+) {
+    if (bytes == nullptr || bytes->empty())
+        return false;
+    charge_bytes(state, bytes->size());
+    PathContext context;
+    context.layout = &layout_now(self);
+    const std::string unit(name);
+    context.is_unit_name = [&unit](std::string_view asked) {
+        return clone_names_unit(asked, unit);
+    };
+    const PathVerdict verdict = check_mutable_path(path, context);
+    const bool page = clone_build_page(path, folder_of(self, defs::DataDirectory::guis), name);
+    const bool taken = path_taken(self, path);
+    const bool gui_ok = page && verdict.rule == PathRule::menus_only && !taken;
+    if (taken || (!verdict.allowed() && !gui_ok)) {
+        if (taken) {
+            std::string detail = "the path already exists: ";
+            detail.append(path);
+            error = request_error(false, source, name, detail);
+        } else {
+            error = request_error(false, source, name, verdict.message);
+        }
+        return false;
+    }
+    remember_copy(pending, std::move(path), std::move(source_path), bytes);
+    return true;
+}
+
+/// Reads the script, picture and build pages the game would, under the new name.
+/// A refusal sets `error` and returns false. A missing source file is skipped.
+bool collect_unit_copies(
+    lua_State* state,
+    Collections& self,
+    std::string_view source,
+    std::string_view name,
+    std::vector<PendingCopy>& pending,
+    std::string& error
 ) {
     const std::string pictures = folder_of(self, defs::DataDirectory::unitpics);
     const std::string pages = folder_of(self, defs::DataDirectory::guis);
     const std::string source_script = join_path("scripts", std::string(source) + ".COB");
     const std::string new_script = join_path("scripts", std::string(name) + ".COB");
-    remember_copy(pending, new_script, source_script, lookup_bytes(self, source_script));
+    if (!take_copy(
+            state,
+            self,
+            source,
+            name,
+            new_script,
+            source_script,
+            lookup_bytes(self, source_script),
+            pending,
+            error
+        ) &&
+        !error.empty())
+        return false;
     const std::string source_pic = join_path(pictures, std::string(source) + ".PCX");
     const std::string new_pic = join_path(pictures, std::string(name) + ".PCX");
-    remember_copy(pending, new_pic, source_pic, lookup_bytes(self, source_pic));
+    if (!take_copy(
+            state,
+            self,
+            source,
+            name,
+            new_pic,
+            source_pic,
+            lookup_bytes(self, source_pic),
+            pending,
+            error
+        ) &&
+        !error.empty())
+        return false;
 
     std::vector<std::string> served_pages;
     const auto consider_page = [&](const std::string& page) {
         const std::string source_page = join_path(pages, std::string(source) + page + ".GUI");
         const std::string new_page = join_path(pages, std::string(name) + page + ".GUI");
-        const std::shared_ptr<const std::vector<uint8_t>> bytes = lookup_bytes(self, source_page);
-        if (bytes == nullptr || bytes->empty())
-            return false;
-        remember_copy(pending, new_page, source_page, bytes);
-        served_pages.push_back(page);
-        return true;
+        const bool kept = take_copy(
+            state,
+            self,
+            source,
+            name,
+            new_page,
+            source_page,
+            lookup_bytes(self, source_page),
+            pending,
+            error
+        );
+        if (kept)
+            served_pages.push_back(page);
+        return kept;
     };
-    (void)consider_page("0");
+    if (!consider_page("0") && !error.empty())
+        return false;
     for (uint32_t page = 1; page <= k_page_limit; ++page) {
-        if (!consider_page(std::to_string(page)))
+        if (!consider_page(std::to_string(page))) {
+            if (!error.empty())
+                return false;
             break;
+        }
     }
     for (const std::string& page : served_pages) {
         const std::string source_gaf = join_path("anims", std::string(source) + page + ".GAF");
         const std::string new_gaf = join_path("anims", std::string(name) + page + ".GAF");
-        remember_copy(pending, new_gaf, source_gaf, lookup_bytes(self, source_gaf));
+        if (!take_copy(
+                state,
+                self,
+                source,
+                name,
+                new_gaf,
+                source_gaf,
+                lookup_bytes(self, source_gaf),
+                pending,
+                error
+            ) &&
+            !error.empty())
+            return false;
     }
+    return true;
 }
 
 void note_ids(const tdf::Block* block, bool used[256]) {
@@ -794,40 +793,56 @@ void note_ids(const tdf::Block* block, bool used[256]) {
         note_ids(tdf::child_at(block, index), used);
 }
 
-void note_document_ids(const rules::LoadedDocument& loaded, bool used[256]) {
+/// Charges one element, then reads that section's id. A child block is part of
+/// the section and is not charged again.
+void visit_section(lua_State* state, const tdf::Block* section, bool used[256]) {
+    charge_elements(state, 1);
+    note_ids(section, used);
+}
+
+void note_document_ids(lua_State* state, const rules::LoadedDocument& loaded, bool used[256]) {
     if (loaded.removed)
         return;
     const tdf::Block* root = loaded.document.root();
-    note_ids(root, used);
+    if (root == nullptr)
+        return;
+    const uint32_t count = tdf::child_count(root);
+    for (uint32_t index = 0; index < count; ++index)
+        visit_section(state, tdf::child_at(root, index), used);
 }
 
 /// Every id a live weapon section uses, in the document set and in store files
 /// the set does not already hold. An empty or non-numeric id uses 0. An id
-/// outside 0..255 uses none.
-void collect_used_ids(Collections& self, bool used[256]) {
+/// outside 0..255 uses none. Each section is charged before it is read.
+void collect_used_ids(lua_State* state, Collections& self, bool used[256]) {
     rules::DocumentSet& documents = CloneAccess::documents(self);
     const std::string folder = folder_of(self, defs::DataDirectory::weapons);
     const std::vector<std::size_t> docs = documents.documents_in(folder, "tdf", false);
     for (const std::size_t doc_index : docs)
-        note_document_ids(documents.at(doc_index), used);
+        note_document_ids(state, documents.at(doc_index), used);
     oa::AssetStore* store = CloneAccess::store(self);
     if (store == nullptr)
         return;
     const std::vector<std::string> names =
         store->list_effective_in_mount_order(folder, ".tdf", true);
-    for (const std::string& name : names) {
-        if (documents.find(name) != nullptr)
+    charge_elements(state, static_cast<uint64_t>(names.size()));
+    for (const std::string& file_name : names) {
+        if (documents.find(file_name) != nullptr)
             continue;
-        const std::optional<std::vector<uint8_t>> bytes = store->load_file_contents(name);
+        charge_elements(state, 1);
+        const std::optional<std::vector<uint8_t>> bytes = store->load_file_contents(file_name);
         if (!bytes.has_value() || bytes->empty())
             continue;
         if (bytes->size() > static_cast<std::size_t>(tdf::max_input_bytes))
             continue;
+        charge_bytes(state, bytes->size());
         tdf::OwnedDocument parsed;
         const std::string_view text(reinterpret_cast<const char*>(bytes->data()), bytes->size());
         if (!parsed.parse(text, nullptr))
             continue;
-        note_ids(parsed.root(), used);
+        const uint32_t count = tdf::child_count(parsed.root());
+        for (uint32_t index = 0; index < count; ++index)
+            visit_section(state, tdf::child_at(parsed.root(), index), used);
     }
 }
 
@@ -928,7 +943,10 @@ void publish(
         served.path = std::move(copy.path);
         served.source_path = std::move(copy.source_path);
         served.bytes = std::move(copy.bytes);
+        const std::string key = fold_path(served.path);
+        const std::size_t index = CloneAccess::served(self).size();
         CloneAccess::served(self).push_back(std::move(served));
+        CloneAccess::index_served(self, key, index);
     }
 }
 
@@ -969,9 +987,8 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
     if (!ensure_grant(collections, weapons, error))
         return -1;
 
-    const std::vector<Listed> records = list_named(collections, weapons);
-    const Listed* found = find_named(records, source);
-    if (found == nullptr) {
+    CloneHit found;
+    if (!clone_find(state, collections, weapons, source, found)) {
         error = request_error(
             weapons,
             source,
@@ -980,7 +997,8 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
         );
         return -1;
     }
-    if (find_named(records, name) != nullptr) {
+    CloneHit existing;
+    if (clone_find(state, collections, weapons, name, existing)) {
         error = request_error(weapons, source, name, "the new name already exists");
         return -1;
     }
@@ -1000,7 +1018,7 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
     int weapon_id = 0;
     if (weapons) {
         bool used[256] = {};
-        collect_used_ids(collections, used);
+        collect_used_ids(state, collections, used);
         weapon_id = lowest_free_id(used);
         if (weapon_id == 0) {
             error = no_free_id(source, name);
@@ -1021,14 +1039,14 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
     }
 
     std::vector<PendingCopy> pending;
-    if (!weapons)
-        collect_unit_copies(collections, source, name, pending);
+    if (!weapons && !collect_unit_copies(state, collections, source, name, pending, error))
+        return -1;
 
     rules::DocumentSet& documents = CloneAccess::documents(collections);
     std::string body;
-    const tdf::Block* source_section = found->section;
+    const tdf::Block* source_section = found.section;
     if (!weapons) {
-        rules::LoadedDocument& source_doc = documents.at(found->doc_index);
+        rules::LoadedDocument& source_doc = documents.at(found.doc_index);
         const std::optional<std::string> written = tdf::write_text(source_doc.document.get());
         if (!written.has_value()) {
             error = request_error(weapons, source, name, "the source could not be written");
@@ -1040,6 +1058,7 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
         body.append(name);
         body.append("]\n{\n}\n");
     }
+    charge_bytes(state, body.size());
     std::string add_error;
     if (!documents.add(path, body, &add_error)) {
         error = request_error(
@@ -1067,7 +1086,7 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
             ) ||
             !set_text(*loaded, section, "UnitName", name, error) ||
             !set_text(
-                *loaded, section, "Objectname", effective_model(source_section, found->name), error
+                *loaded, section, "Objectname", effective_model(source_section, found.name), error
             )) {
             const std::string detail = error;
             abandon();
@@ -1108,8 +1127,51 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
         }
     }
 
+    if (const std::optional<std::string> final_text = tdf::write_text(loaded->document.get())) {
+        if (final_text->size() > body.size())
+            charge_bytes(state, final_text->size() - body.size());
+    }
     publish(collections, weapons, name, source, weapon_id, path, std::move(pending));
     return 0;
+}
+
+bool clone_names_unit(std::string_view asked, std::string_view unit) {
+    if (asked.empty() || unit.empty())
+        return false;
+    if (same_text(asked, unit))
+        return true;
+    if (unit.size() <= asked.size() || !same_text(unit.substr(0, asked.size()), asked))
+        return false;
+    for (std::size_t index = asked.size(); index < unit.size(); ++index) {
+        const unsigned char byte = static_cast<unsigned char>(unit[index]);
+        if (byte < '0' || byte > '9')
+            return false;
+    }
+    return true;
+}
+
+bool clone_build_page(std::string_view path, std::string_view gui_folder, std::string_view unit) {
+    if (unit.empty())
+        return false;
+    const std::size_t slash = path.find_last_of("/\\");
+    const std::string_view folder =
+        slash == std::string_view::npos ? std::string_view{} : path.substr(0, slash);
+    const std::string_view file = slash == std::string_view::npos ? path : path.substr(slash + 1);
+    if (!same_text(folder, gui_folder))
+        return false;
+    constexpr std::string_view extension = ".GUI";
+    if (file.size() <= extension.size() ||
+        !same_text(file.substr(file.size() - extension.size()), extension))
+        return false;
+    const std::string_view stem = file.substr(0, file.size() - extension.size());
+    if (stem.size() <= unit.size() || !same_text(stem.substr(0, unit.size()), unit))
+        return false;
+    for (std::size_t index = unit.size(); index < stem.size(); ++index) {
+        const unsigned char byte = static_cast<unsigned char>(stem[index]);
+        if (byte < '0' || byte > '9')
+            return false;
+    }
+    return true;
 }
 
 } // namespace oa::data::mutators

@@ -20,6 +20,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 struct lua_State;
@@ -267,6 +268,8 @@ class Collections {
     oa::AssetStore* store_{};         ///< store a clone reads; not owned
     std::vector<CloneRecord> clones_; ///< clones made during the hooks
     std::vector<ServedCopy> served_;  ///< binary copies those clones serve
+    /// Folded served path to its index in `served_`. A page lookup does not scan the list.
+    std::unordered_map<std::string, std::size_t> served_index_;
 };
 
 } // namespace oa::data::mutators

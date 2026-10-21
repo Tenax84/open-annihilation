@@ -76,7 +76,10 @@ and that every message starts with the path and every rule has its own name.
 `data-mutators-clone` (`tests/clone_test.cpp`) runs made-up packages
 through `run_pipeline` over a scratch store: a unit's copied definition,
 the files the layer serves under the new name, a weapon's free id, and a
-clone that a later error rolls back.
+clone that a later error rolls back. A loop of clones, and a `pcall` loop
+of weapon clones that are refused, each stop on the work budget inside the
+real-time limit. A clone whose build page collides with an existing screen
+is refused and the layer serves nothing.
 
 `data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
 Ridge packages under `tests/data/mutators` through `run_pipeline`: rules in
@@ -93,11 +96,16 @@ player's option, the list checks and two identical runs.
 ## Limitations
 
 The checks do not look at a mutator's files and do not apply a verdict.
-Build pages stay refused, because they change through the menus hook; only
-a named unit's build picture and its download-button art are files a
-mutator may add under `anims/`, and only as those files. `sounds/` stays
-refused until a later ticket shows the game
-reads it again for every match, or changes the game so that it does.
+Build pages stay refused for the files layer, because they change through
+the menus hook. A unit clone may serve `guis/<new><digits>.gui` when that
+path is not already in the store or the layer; every path a clone serves
+still goes through `check_mutable_path`, and the new name counts as a unit
+for `anims/`. A clone is refused, naming the path, when the script, the
+picture, a build page or that page's art already exists. Only a named
+unit's build picture and its download-button art are files a mutator may
+add under `anims/`, and only as those files. `sounds/` stays refused until
+a later ticket shows the game reads it again for every match, or changes
+the game so that it does.
 
 A clone does not copy a download entry, and it does not copy
 download-linked button art (`anims/<unit>_gadget.gaf`). A download-linked
@@ -256,8 +264,12 @@ page it served, each with the source's bytes. A field in the clone's
 table is a typed write, in sorted key order, and a bad field adds nothing.
 A weapon clone copies the source section, including `[DAMAGE]`, into
 `Weapons/<name>.tdf` (or `Weapons/<name>-<k>.tdf` when that path is taken,
-`k` from 2) and sets `ID` to the lowest free id from 1 to 255. A field
-named `ID` is refused. The journal records each clone and each served copy.
+`k` from 2) and sets `ID` to the lowest free id from 1 to 255. When several
+sections share a name, the copy is the first in collection order (name,
+then path, then position), which may not be the lowest slot the game fires.
+A field named `ID` is refused. The journal records each clone and each
+served copy. A unit clone is refused, naming the path, when any path it
+would serve already exists.
 
 `install_selection_forms` publishes `range`, `is`, `has`, `absent` and
 `not_`. `need_from_lua` reads one need: a number `n` is `range(n, n)`,

@@ -8,6 +8,7 @@
 // run starts again from the store.
 #include "oa/data/mutators/pipeline.hpp"
 
+#include "clone.hpp"
 #include "oa/base/sha256.hpp"
 #include "oa/data/defs/asset_files.hpp"
 #include "oa/data/defs/files.hpp"
@@ -1735,6 +1736,58 @@ void plan_mutator(
     }
 }
 
+/// True when `spec` already has an entry for `path`.
+bool layer_has_path(const oa::MutatorLayerSpec& spec, std::string_view path) {
+    for (const oa::MutatorLayerEntry& entry : spec.entries) {
+        if (same_path(entry.path, path))
+            return true;
+    }
+    return false;
+}
+
+/// True when the store, the documents or the layer already hold `path`.
+bool served_path_exists(
+    const oa::AssetStore& store,
+    rules::DocumentSet& documents,
+    const oa::MutatorLayerSpec& spec,
+    std::string_view path
+) {
+    if (documents.find(path) != nullptr)
+        return true;
+    if (store.file_size(path) > 0)
+        return true;
+    return layer_has_path(spec, path);
+}
+
+/// A build page a unit clone may serve: `guis/<unit><digits>.gui` for a unit
+/// cloned this pass, and only when that path is not already present.
+bool fresh_clone_page(
+    std::string_view path,
+    const Collections& collections,
+    const defs::DataLayout& layout,
+    const oa::AssetStore& store,
+    rules::DocumentSet& documents,
+    const oa::MutatorLayerSpec& spec,
+    const PathVerdict& verdict
+) {
+    if (verdict.rule != PathRule::menus_only)
+        return false;
+    const std::string& gui_folder =
+        layout.directories[static_cast<std::size_t>(defs::DataDirectory::guis)];
+    bool matches = false;
+    for (const CloneRecord& record : collections.clones()) {
+        if (record.weapon)
+            continue;
+        if (clone_build_page(path, gui_folder, record.name)) {
+            matches = true;
+            break;
+        }
+    }
+    if (!matches)
+        return false;
+    return !served_path_exists(store, documents, spec, path);
+}
+
 /// Fails every mutator still in the pass with an engine error.
 void fail_every(
     std::vector<MutatorResult>& results,
@@ -2100,12 +2153,42 @@ bool run_pass(
         if (!replaced)
             spec.entries.push_back(std::move(entry));
     }
-    // A clone's build pages and page art are served here, not through
-    // check_mutable_path. guis/ is menus-only, and anims/<unit><digits>.gaf
-    // is allowed only for a unit name captured before the hooks ran. The
-    // bytes are the source file, under the new unit's name. The script and
-    // the picture use the same path so one clone publishes every copy.
+    // Each served path goes through check_mutable_path. A unit cloned this
+    // pass counts as a unit name, so anims/<new><digits>.gaf is allowed.
+    // guis/<new><digits>.gui stays menus-only and is served only when that
+    // path does not already exist. An existing path refuses the clone and
+    // names the path; the entry is not published.
+    PathContext copy_paths;
+    copy_paths.layout = &layout;
+    copy_paths.is_unit_name = [&stems, &collections](std::string_view name) {
+        const std::string folded = fold_copy(name);
+        if (std::binary_search(stems.begin(), stems.end(), folded))
+            return true;
+        if (!collections.has_value())
+            return false;
+        for (const CloneRecord& record : collections->clones()) {
+            if (!record.weapon && clone_names_unit(name, record.name))
+                return true;
+        }
+        return false;
+    };
     for (const ServedCopy& copy : collections->served_copies()) {
+        const PathVerdict verdict = check_mutable_path(copy.path, copy_paths);
+        const bool exists = served_path_exists(store, documents, spec, copy.path);
+        const bool fresh_page =
+            fresh_clone_page(copy.path, *collections, layout, store, documents, spec, verdict);
+        if (exists || (!verdict.allowed() && !fresh_page)) {
+            std::string message = verdict.message;
+            if (exists) {
+                message = copy.path;
+                message.append(": the path already exists");
+            }
+            const std::optional<uint16_t> owner = index_of(ids, copy.mutator);
+            const uint16_t slot = owner.has_value() ? *owner : static_cast<uint16_t>(0);
+            first.offer(slot, Phase::hooks, Cause::protected_path, std::move(message));
+            continue;
+        }
+
         JournalEntry added;
         const std::optional<uint16_t> mutator = index_of(ids, copy.mutator);
         if (mutator.has_value())
