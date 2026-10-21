@@ -3,7 +3,7 @@
 
 // The mutator picker's model: opening a set, prerequisites and their order,
 // rows locked by a prerequisite that cannot be had, a loop or a conflict,
-// refreshing, options, rows, the footer, the hint, the
+// refreshing, options and a number's values, rows, the footer, the hint, the
 // turn-off question, and random walks that check the set after every call.
 // The mutators are made up.
 #include "oa/formats/oamut/manifest.hpp"
@@ -677,8 +677,8 @@ void options_accept_and_refuse() {
     OA_CHECK(picker::set_option(model, "fast-builders", "income", "0"));
     OA_CHECK(picker::set_option(model, "fast-builders", "income", "0.5"));
     OA_CHECK(picker::set_option(model, "fast-builders", "income", "10"));
-    OA_CHECK(picker::set_option(model, "fast-builders", "income", "+4"));
-    OA_CHECK(picker::set_option(model, "fast-builders", "income", "00.5"));
+    OA_CHECK(!picker::set_option(model, "fast-builders", "income", "+4"));
+    OA_CHECK(!picker::set_option(model, "fast-builders", "income", "00.5"));
     OA_CHECK(picker::set_option(model, "fast-builders", "income", "1e1"));
     OA_CHECK(!picker::set_option(model, "fast-builders", "income", "0.3"));
     OA_CHECK(!picker::set_option(model, "fast-builders", "income", "10.1"));
@@ -688,7 +688,7 @@ void options_accept_and_refuse() {
     OA_CHECK(!picker::set_option(model, "fast-builders", "aircraft", "maybe"));
     OA_CHECK(!picker::set_option(model, "fast-builders", "missing", "1"));
     OA_CHECK(model.on[0].options[1].second == "4");
-    OA_CHECK(model.on[0].options[2].second == "1e1");
+    OA_CHECK(model.on[0].options[2].second == "10");
     OA_CHECK(picker::set_clash(model, "fast-builders", picker::Clash::add));
     OA_CHECK(model.on[0].clash && *model.on[0].clash == picker::Clash::add);
     OA_CHECK(!picker::switch_off(model, "fast-builders"));
@@ -1567,6 +1567,120 @@ void confirm_recomputes() {
     OA_CHECK(model.on.empty());
 }
 
+/// The values a number offers, and the spellings a number is kept in.
+void number_values_and_spellings() {
+    const picker::OptionSpec income = number_option("income", "Income", "0", "10", "0.5", "1");
+    const std::vector<std::string> stops = picker::number_values(income);
+    OA_CHECK(stops.size() == 21);
+    OA_CHECK(stops.size() == 21 && stops[0] == "0" && stops[1] == "0.5" && stops[2] == "1");
+    OA_CHECK(stops.size() == 21 && stops[19] == "9.5" && stops[20] == "10");
+    const picker::OptionSpec speed =
+        choice_option("build-speed", "Build speed", {"1", "4"}, {"1×", "4×"}, "1");
+    OA_CHECK(picker::number_values(speed).empty());
+    OA_CHECK(picker::number_values(toggle_option("aircraft", "Aircraft", "off", "on")).empty());
+    const std::vector<std::string> wide =
+        picker::number_values(number_option("count", "Count", "0", "1000", "1", "0"));
+    OA_CHECK(wide.size() == oa::formats::oamut::most_number_steps + 1);
+    OA_CHECK(!wide.empty() && wide.back() == "1000");
+    OA_CHECK(picker::number_values(number_option("count", "Count", "0", "1001", "1", "0")).empty());
+    OA_CHECK(picker::number_values(number_option("bad", "Bad", "0", "10", "0", "0")).empty());
+    OA_CHECK(picker::number_values(number_option("bad", "Bad", "0", "10", "-1", "0")).empty());
+    OA_CHECK(picker::number_values(number_option("bad", "Bad", "10", "0", "1", "0")).empty());
+    OA_CHECK(picker::number_values(number_option("bad", "Bad", "+1", "10", "1", "1")).empty());
+    OA_CHECK(picker::number_values(number_option("bad", "Bad", "0", "10", "1e400", "0")).empty());
+
+    const auto values_are = [](const picker::OptionSpec& spec,
+                               const std::vector<std::string>& expected) {
+        const std::vector<std::string> values = picker::number_values(spec);
+        OA_CHECK(values == expected);
+        if (values != expected) {
+            for (const std::string& value : values)
+                std::fprintf(stderr, "  offered %s\n", value.c_str());
+        }
+    };
+    values_are(
+        number_option("gap", "Gap", "0.1", "1", "0.2", "0.1"), {"0.1", "0.3", "0.5", "0.7", "0.9"}
+    );
+    values_are(
+        number_option("tilt", "Tilt", "-1", "1", "0.5", "0"), {"-1", "-0.5", "0", "0.5", "1"}
+    );
+    values_are(
+        number_option("health", "Health", "1000", "4000", "1000", "2000"),
+        {"1000", "2000", "3000", "4000"}
+    );
+    values_are(
+        number_option("far", "Far", "0", "3e21", "1e21", "0"), {"0", "1e+21", "2e+21", "3e+21"}
+    );
+    values_are(
+        number_option("near", "Near", "1e-7", "3e-7", "1e-7", "1e-7"), {"1e-7", "2e-7", "3e-7"}
+    );
+    values_are(
+        number_option("tiny", "Tiny", "0.000001", "0.000003", "0.000001", "0.000001"),
+        {"0.000001", "0.000002", "0.000003"}
+    );
+    // 512 steps of 1953125 from 1e21: only the stops the number grammar can
+    // write exactly are offered.
+    values_are(
+        number_option("exact", "Exact", "1e21", "1.000000000001e21", "1953125", "1e21"),
+        {"1e+21",
+         "1.00000000000025e+21",
+         "1.0000000000005e+21",
+         "1.00000000000075e+21",
+         "1.000000000001e+21"}
+    );
+
+    picker::Mutator tough = made("ridge-tough", "Ridge Tough");
+    tough.options.push_back(number_option("health", "Health", "1000", "4000", "1000", "2000.0"));
+    tough.options.push_back(number_option("income", "Income", "0", "10", "0.5", "1"));
+    tough.options.push_back(number_option("tilt", "Tilt", "-1", "1", "0.5", "0"));
+    picker::Inputs inputs;
+    inputs.mod_name = "Ridge";
+    inputs.mutators.push_back(tough);
+    picker::Chosen remembered = chosen_id("ridge-tough");
+    remembered.options.emplace_back("health", "3.0e+3");
+    remembered.options.emplace_back("income", "+4");
+    inputs.last_set.push_back(std::move(remembered));
+    picker::Picker model;
+    picker::open(model, inputs);
+    check_ids(model, {"ridge-tough"});
+    OA_CHECK(model.on[0].options[0].second == "3000");
+    OA_CHECK(model.on[0].options[1].second == "1");
+    OA_CHECK(model.on[0].options[2].second == "0");
+    inputs.last_set.clear();
+    picker::open(model, inputs);
+    OA_CHECK(picker::switch_on(model, "ridge-tough").changed);
+    OA_CHECK(model.on[0].options[0].second == "2000");
+
+    const auto kept_as =
+        [&model](std::string_view option, std::string_view value, std::string_view kept) {
+            OA_CHECK(picker::set_option(model, "ridge-tough", option, value));
+            for (const auto& [id, stored] : model.on[0].options) {
+                if (id == option)
+                    OA_CHECK(stored == kept);
+            }
+        };
+    kept_as("health", "2.0e+3", "2000");
+    OA_CHECK(picker::item_text(model, model.on[0]) == "Ridge Tough 2000 1 0");
+    kept_as("health", "2000.000", "2000");
+    kept_as("health", "2e3", "2000");
+    kept_as("health", "4E3", "4000");
+    kept_as("income", "1e1", "10");
+    kept_as("income", "10.0", "10");
+    kept_as("income", "0.50", "0.5");
+    kept_as("income", "5E-1", "0.5");
+    kept_as("tilt", "-0", "0");
+    kept_as("tilt", "-0.5", "-0.5");
+    for (const std::string_view refused :
+         {"+2000", "02000", "2000.", ".5", "0x10", "", " 2000", "2000 ", "1500", "5000", "1e400"})
+        OA_CHECK(!picker::set_option(model, "ridge-tough", "health", refused));
+    for (const std::string_view refused : {"+4", "00.5", "0.3", "10.5", "-0.5"})
+        OA_CHECK(!picker::set_option(model, "ridge-tough", "income", refused));
+    const std::vector<picker::Chosen> chosen = picker::result(model);
+    OA_CHECK(chosen.size() == 1);
+    OA_CHECK(chosen.size() == 1 && chosen[0].options[0].second == "4000");
+    OA_CHECK(chosen.size() == 1 && chosen[0].options[1].second == "0.5");
+}
+
 /// A mutator that brings units or weapons shows its clash mode on its row.
 void clash_rows() {
     picker::Mutator walls = made("ridge-walls", "Ridge Walls");
@@ -2052,6 +2166,7 @@ int main() {
     refresh_new_need();
     refresh_conflict_and_unavailable();
     confirm_recomputes();
+    number_values_and_spellings();
     clash_rows();
     random_walks();
     return oa::test::check_exit_status();

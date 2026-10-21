@@ -47,8 +47,9 @@ enum class Clash : uint8_t {
 ///
 /// A choice lists `values` and their `captions` in the same order. A toggle
 /// lists its two values, off first, and may list a caption for each. A
-/// number's range and step are the decimal texts the manifest writes.
-/// `fallback` is the default, in the same form as a value.
+/// number's range and step are numbers as the manifest writes them, read
+/// with the manifest's number grammar. `fallback` is the default, in the
+/// same form as a value.
 struct OptionSpec {
     /// What kind of value the option holds.
     enum class Type : uint8_t {
@@ -106,11 +107,12 @@ struct Mutator {
     std::optional<Clash> clashes{};
 };
 
-/// One mutator that is on: its id, every option's value as written, and its
-/// clash mode when it brings units or weapons.
+/// One mutator that is on: its id, every option's value, and its clash mode
+/// when it brings units or weapons.
 struct Chosen {
     std::string id{}; ///< the mutator's id
-    /// Each option's id and its value, in the mutator's option order.
+    /// Each option's id and its value, in the mutator's option order. A
+    /// number is kept in its canonical text, as the manifest writes numbers.
     std::vector<std::pair<std::string, std::string>> options{};
     /// The clash mode in force. Empty when the mutator brings no units or weapons.
     std::optional<Clash> clash{};
@@ -363,11 +365,13 @@ void cancel_turn_off(Picker& picker);
 
 /// Sets one option of an On mutator.
 ///
-/// A choice's value must be one of its values. A toggle's must be one of
-/// its two. A number's must lie in its range on its step, compared as
-/// decimal text. Anything else is refused, and so is a mutator that is not
-/// on, an option it does not have, and a read-only picker. Switching off
-/// and on again starts from the defaults; this does not.
+/// A choice's value must be one of its values, compared as an identifier. A
+/// toggle's must be one of its two. A number is read with the manifest's
+/// number grammar and must be one of `number_values`; it is kept in its
+/// canonical text, so `1e1` is kept as `10`. Anything else is refused, and
+/// so is a mutator that is not on, an option it does not have, and a
+/// read-only picker. Switching off and on again starts from the defaults;
+/// this does not.
 ///
 /// @param[in,out] picker the picker
 /// @param id the mutator's id
@@ -376,6 +380,20 @@ void cancel_turn_off(Picker& picker);
 /// @return true when the value is kept
 [[nodiscard]] bool
 set_option(Picker& picker, std::string_view id, std::string_view option, std::string_view value);
+
+/// Returns the values a number option offers, lowest first, in canonical text.
+///
+/// The minimum, then each step up to the maximum: at most
+/// `formats::oamut::most_number_steps` + 1 values. A value the number
+/// grammar cannot write exactly (more significant digits than it holds) is
+/// not offered. Empty for a toggle or a choice, and for a number whose
+/// minimum, maximum or step cannot be read, whose step is not above zero,
+/// whose minimum is above its maximum, or whose range holds more steps than
+/// a manifest may.
+///
+/// @param spec the option
+/// @return the values, such as 0, 0.5, 1 … 10
+[[nodiscard]] std::vector<std::string> number_values(const OptionSpec& spec);
 
 /// Sets the clash mode of an On mutator that brings units or weapons.
 ///

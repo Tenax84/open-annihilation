@@ -13,8 +13,8 @@ target_link_libraries(oa-ui-mutator-picker PUBLIC oa-ui-library oa-ui-kit
 
 if(BUILD_TESTING)
   # Opening a set, prerequisites and their order, locked rows, refreshing,
-  # conflicts, every option type, the rows, the footer, the hint, the
-  # turn-off question, and random walks.
+  # conflicts, every option type and a number's values, the rows, the
+  # footer, the hint, the turn-off question, and random walks.
   add_executable(oa-ui-mutator-picker-model-test tests/model_test.cpp)
   target_link_libraries(oa-ui-mutator-picker-model-test PRIVATE oa-ui-mutator-picker
     oa-formats-oamut oa-test-support oa-options)

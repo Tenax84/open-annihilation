@@ -3,20 +3,23 @@
 
 // Which mutators are on, in which order, and with which option values.
 // Prerequisites come from the Library's closure, and their version ranges
-// are checked with the manifest's condition matcher. A number is compared as
-// decimal text, never as a floating-point value. Nothing here reads a file,
-// a clock, a preference or the network.
+// are checked with the manifest's condition matcher. A number is read with
+// the manifest's number grammar and kept in its canonical text, never as a
+// floating-point value. Nothing here reads a file, a clock, a preference or
+// the network.
 #include "oa/ui/mutator_picker/model.hpp"
 
 #include "internal.hpp"
 
+#include "oa/formats/oamod.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 #include "oa/ui/library/prerequisites.hpp"
 #include "oa/ui/library/text.hpp"
 #include "oa/ui/mutator_picker/text.hpp"
 
-#include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -31,262 +34,145 @@ namespace {
 namespace oamod = formats::oamod;
 namespace oamut = formats::oamut;
 
-/// A decimal kept as digits. The value is ± digits × 10^(−scale).
-struct Decimal {
-    bool negative = false;
-    std::string digits{"0"};
-    int scale = 0;
-};
+/// The largest significand a sum or a product may reach.
+constexpr uint64_t most_significand = std::numeric_limits<uint64_t>::max();
 
-/// Drops leading zeros, leaving one zero when the text is all zeros.
+/// Reads a number in the manifest's grammar: no plus sign, no leading zeros.
 ///
-/// @param text the digits
-/// @return the digits
-std::string strip_zeros(std::string text) {
-    std::size_t start = 0;
-    while (start + 1 < text.size() && text[start] == '0')
-        ++start;
-    if (start > 0)
-        text.erase(0, start);
-    if (text.empty())
-        return "0";
-    return text;
+/// @param text the number's text
+/// @return the number, or nothing when the text is not one
+std::optional<oamod::Number> read_number(std::string_view text) {
+    oamod::Number number{};
+    if (oamod::parse_number(text, number) != oamod::NumberStatus::ok)
+        return std::nullopt;
+    return number;
 }
 
-/// Compares two magnitudes. Both have no leading zeros.
+/// Makes a number, moving the significand's trailing zeros into the exponent.
 ///
-/// @param left one magnitude
-/// @param right the other
-/// @return negative when left is smaller, positive when it is larger, else 0
-int compare_magnitude(std::string_view left, std::string_view right) {
-    if (left.size() != right.size())
-        return left.size() < right.size() ? -1 : 1;
-    if (left == right)
-        return 0;
-    return left < right ? -1 : 1;
+/// @param negative below zero
+/// @param significand the digits' value
+/// @param exponent the power of ten the significand is scaled by
+/// @return the number; zero is never negative
+oamod::Number trimmed(bool negative, uint64_t significand, int64_t exponent) {
+    oamod::Number number{};
+    if (significand == 0)
+        return number;
+    while (significand % 10 == 0) {
+        significand /= 10;
+        ++exponent;
+    }
+    number.negative = negative;
+    number.significand = significand;
+    number.exponent = static_cast<int32_t>(exponent);
+    return number;
 }
 
-/// Adds two magnitudes.
-///
-/// @param left one magnitude
-/// @param right the other
-/// @return the sum, without leading zeros
-std::string add_magnitude(std::string_view left, std::string_view right) {
-    std::string sum_text;
-    sum_text.reserve(std::max(left.size(), right.size()) + 1);
-    int carry = 0;
-    std::size_t index = 0;
-    while (index < left.size() || index < right.size() || carry != 0) {
-        int digit_sum = carry;
-        if (index < left.size())
-            digit_sum += left[left.size() - 1 - index] - '0';
-        if (index < right.size())
-            digit_sum += right[right.size() - 1 - index] - '0';
-        sum_text.push_back(static_cast<char>('0' + (digit_sum % 10)));
-        carry = digit_sum / 10;
-        ++index;
-    }
-    std::reverse(sum_text.begin(), sum_text.end());
-    return strip_zeros(std::move(sum_text));
-}
-
-/// Subtracts two magnitudes. `left` is at least `right`.
-///
-/// @param left the larger magnitude
-/// @param right the smaller
-/// @return the difference, without leading zeros
-std::string subtract_magnitude(std::string_view left, std::string_view right) {
-    std::string difference;
-    difference.reserve(left.size());
-    int borrow = 0;
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        int top = (left[left.size() - 1 - index] - '0') - borrow;
-        int bottom = 0;
-        if (index < right.size())
-            bottom = right[right.size() - 1 - index] - '0';
-        if (top < bottom) {
-            top += 10;
-            borrow = 1;
-        } else {
-            borrow = 0;
-        }
-        difference.push_back(static_cast<char>('0' + (top - bottom)));
-    }
-    std::reverse(difference.begin(), difference.end());
-    return strip_zeros(std::move(difference));
-}
-
-/// Tells whether `dividend` is a multiple of `divisor`. Both are magnitudes.
-///
-/// @param dividend the magnitude
-/// @param divisor the step's magnitude; zero is not a step
-/// @return true when the remainder is zero
-bool remainder_zero(std::string_view dividend, std::string_view divisor) {
-    if (divisor == "0")
-        return false;
-    if (dividend == "0")
-        return true;
-    std::string remainder = "0";
-    for (const char digit : dividend) {
-        if (remainder == "0")
-            remainder.assign(1, digit);
-        else
-            remainder.push_back(digit);
-        remainder = strip_zeros(std::move(remainder));
-        int taken = 0;
-        while (compare_magnitude(remainder, divisor) >= 0 && taken < 9) {
-            remainder = subtract_magnitude(remainder, divisor);
-            ++taken;
-        }
-        if (compare_magnitude(remainder, divisor) >= 0)
-            return false;
-    }
-    return remainder == "0";
-}
-
-/// The most digits a number may use. A longer text is refused.
-constexpr std::size_t most_digits = 4096;
-
-/// Reads a decimal. The grammar is an optional sign, digits, an optional
-/// fraction and an optional exponent. A leading plus is allowed.
-///
-/// @param text the text
-/// @param[out] parsed the number, when the text matches
-/// @return false when the text does not match, or it is too long
-bool parse_decimal(std::string_view text, Decimal& parsed) {
-    if (text.empty() || text.size() > most_digits)
-        return false;
-    std::size_t index = 0;
-    bool negative = false;
-    if (text[index] == '+' || text[index] == '-') {
-        negative = text[index] == '-';
-        ++index;
-        if (index >= text.size())
-            return false;
-    }
-    if (text[index] < '0' || text[index] > '9')
-        return false;
-    const std::size_t whole_at = index;
-    while (index < text.size() && text[index] >= '0' && text[index] <= '9')
-        ++index;
-    const std::string whole(text.substr(whole_at, index - whole_at));
-    std::string fraction;
-    if (index < text.size() && text[index] == '.') {
-        ++index;
-        if (index >= text.size() || text[index] < '0' || text[index] > '9')
-            return false;
-        const std::size_t fraction_at = index;
-        while (index < text.size() && text[index] >= '0' && text[index] <= '9')
-            ++index;
-        fraction.assign(text.substr(fraction_at, index - fraction_at));
-    }
-    int exponent = 0;
-    if (index < text.size() && (text[index] == 'e' || text[index] == 'E')) {
-        ++index;
-        if (index >= text.size())
-            return false;
-        bool exponent_negative = false;
-        if (text[index] == '+' || text[index] == '-') {
-            exponent_negative = text[index] == '-';
-            ++index;
-        }
-        if (index >= text.size() || text[index] < '0' || text[index] > '9')
-            return false;
-        while (index < text.size() && text[index] >= '0' && text[index] <= '9') {
-            if (exponent > 409)
-                return false;
-            exponent = exponent * 10 + (text[index] - '0');
-            ++index;
-        }
-        if (exponent_negative)
-            exponent = -exponent;
-    }
-    if (index != text.size())
-        return false;
-    if (whole.size() + fraction.size() > most_digits)
-        return false;
-    std::string magnitude = whole + fraction;
-    int scale = static_cast<int>(fraction.size());
-    if (exponent > 0) {
-        if (exponent > scale) {
-            const int extra = exponent - scale;
-            if (magnitude.size() + static_cast<std::size_t>(extra) > most_digits)
-                return false;
-            magnitude.append(static_cast<std::size_t>(extra), '0');
-            scale = 0;
-        } else {
-            scale -= exponent;
-        }
-    } else if (exponent < 0) {
-        const long grown = static_cast<long>(scale) + static_cast<long>(-exponent);
-        if (grown > static_cast<long>(most_digits))
-            return false;
-        scale = static_cast<int>(grown);
-    }
-    magnitude = strip_zeros(std::move(magnitude));
-    Decimal number;
-    number.negative = magnitude != "0" && negative;
-    number.digits = std::move(magnitude);
-    number.scale = number.digits == "0" ? 0 : scale;
-    parsed = std::move(number);
-    return true;
-}
-
-/// Writes the magnitude at `scale`, which is at least the number's own.
-///
-/// Zero stays `"0"` at every scale.
+/// Returns a number with its sign turned over.
 ///
 /// @param number the number
-/// @param scale the scale to write
-/// @return the magnitude
-std::string scaled(const Decimal& number, int scale) {
-    if (number.digits == "0")
-        return "0";
-    std::string magnitude = number.digits;
-    if (scale > number.scale)
-        magnitude.append(static_cast<std::size_t>(scale - number.scale), '0');
-    return magnitude;
+/// @return its negation; zero stays zero
+oamod::Number negated(oamod::Number number) {
+    if (number.significand != 0)
+        number.negative = !number.negative;
+    return number;
 }
 
-/// Compares two decimals.
+/// Multiplies a number by a count, exactly.
+///
+/// @param number the number
+/// @param count the count
+/// @return the product, or nothing when its significand would not fit
+std::optional<oamod::Number> times(const oamod::Number& number, uint64_t count) {
+    if (count == 0 || number.significand == 0)
+        return oamod::Number{};
+    if (number.significand > most_significand / count)
+        return std::nullopt;
+    return trimmed(number.negative, number.significand * count, number.exponent);
+}
+
+/// Adds two numbers, exactly.
+///
+/// The sum is worked out at the lower exponent. When its significand would
+/// not fit, the sum has more significant digits than the number grammar
+/// holds (its last digit is the lower number's, which is not zero), so no
+/// number the grammar reads can equal it.
 ///
 /// @param left one number
 /// @param right the other
-/// @return negative when left is smaller, positive when it is larger, else 0
-int compare_decimal(const Decimal& left, const Decimal& right) {
-    const bool left_zero = left.digits == "0";
-    const bool right_zero = right.digits == "0";
-    if (left_zero && right_zero)
-        return 0;
-    if (left_zero)
-        return right.negative ? 1 : -1;
-    if (right_zero)
-        return left.negative ? -1 : 1;
-    if (left.negative != right.negative)
-        return left.negative ? -1 : 1;
-    const int scale = std::max(left.scale, right.scale);
-    const int magnitude = compare_magnitude(scaled(left, scale), scaled(right, scale));
-    return left.negative ? -magnitude : magnitude;
+/// @return the sum, or nothing when its significand would not fit
+std::optional<oamod::Number> sum(const oamod::Number& left, const oamod::Number& right) {
+    if (left.significand == 0)
+        return trimmed(right.negative, right.significand, right.exponent);
+    if (right.significand == 0)
+        return trimmed(left.negative, left.significand, left.exponent);
+    const bool left_high = left.exponent >= right.exponent;
+    const oamod::Number& high = left_high ? left : right;
+    const oamod::Number& low = left_high ? right : left;
+    uint64_t scaled = high.significand;
+    for (int64_t shift = int64_t{high.exponent} - int64_t{low.exponent}; shift > 0; --shift) {
+        if (scaled > most_significand / 10)
+            return std::nullopt;
+        scaled *= 10;
+    }
+    if (high.negative == low.negative) {
+        if (scaled > most_significand - low.significand)
+            return std::nullopt;
+        return trimmed(high.negative, scaled + low.significand, low.exponent);
+    }
+    if (scaled >= low.significand)
+        return trimmed(high.negative, scaled - low.significand, low.exponent);
+    return trimmed(low.negative, low.significand - scaled, low.exponent);
 }
 
-/// Tells whether `value - least` is a non-negative multiple of `step`.
+/// The numbers a number option offers, lowest first.
 ///
-/// @param value the value
-/// @param least the range's low end
-/// @param step the step, already known to be positive
-/// @return true when the value sits on a step
-bool on_step(const Decimal& value, const Decimal& least, const Decimal& step) {
-    const int scale = std::max(value.scale, std::max(least.scale, step.scale));
-    const std::string left = scaled(value, scale);
-    const std::string right = scaled(least, scale);
-    std::string gap;
-    if (!value.negative && !least.negative)
-        gap = subtract_magnitude(left, right);
-    else if (value.negative && least.negative)
-        gap = subtract_magnitude(right, left);
-    else
-        gap = add_magnitude(left, right);
-    return remainder_zero(gap, scaled(step, scale));
+/// Each is the minimum plus a whole number of steps, up to the maximum, and
+/// is kept only when the number grammar writes it and reads it back as the
+/// same number. None when the option is not a number, when its minimum,
+/// maximum or step does not read, when the step is not above zero, when the
+/// minimum is above the maximum, or when the range holds more than
+/// `most_number_steps` steps.
+///
+/// @param spec the option
+/// @return the numbers
+std::vector<oamod::Number> stops_of(const OptionSpec& spec) {
+    std::vector<oamod::Number> stops;
+    if (spec.type != OptionSpec::Type::number)
+        return stops;
+    const std::optional<oamod::Number> least = read_number(spec.least);
+    const std::optional<oamod::Number> most = read_number(spec.most);
+    const std::optional<oamod::Number> step = read_number(spec.step);
+    if (!least || !most || !step)
+        return stops;
+    if (oamod::compare_numbers(*step, oamod::Number{}) <= 0 ||
+        oamod::compare_numbers(*least, *most) > 0)
+        return stops;
+    const std::optional<oamod::Number> span = sum(*most, negated(*least));
+    if (!span)
+        return stops;
+    std::vector<oamod::Number> offsets;
+    for (std::size_t count = 0;; ++count) {
+        const std::optional<oamod::Number> offset = times(*step, count);
+        if (!offset || oamod::compare_numbers(*offset, *span) > 0)
+            break;
+        if (count > oamut::most_number_steps)
+            return stops;
+        offsets.push_back(*offset);
+    }
+    stops.reserve(offsets.size());
+    for (const oamod::Number& offset : offsets) {
+        const std::optional<oamod::Number> value = sum(*least, offset);
+        if (!value)
+            continue;
+        oamod::Number written{};
+        if (oamod::parse_number(oamod::canonical_number_text(*value), written) !=
+                oamod::NumberStatus::ok ||
+            oamod::compare_numbers(written, *value) != 0)
+            continue;
+        stops.push_back(written);
+    }
+    return stops;
 }
 
 /// The option with `id`, or null.
@@ -301,38 +187,41 @@ const OptionSpec* find_option(const Mutator& mutator, std::string_view id) {
     return nullptr;
 }
 
-/// Tells whether a number lies in range, on its step.
+/// The text an option keeps for `value`, when the option allows it.
 ///
-/// @param spec the number option
-/// @param value the text
-/// @return true when the text is allowed
-bool number_allowed(const OptionSpec& spec, std::string_view value) {
-    Decimal parsed;
-    Decimal least;
-    Decimal most;
-    Decimal step;
-    if (!parse_decimal(value, parsed) || !parse_decimal(spec.least, least) ||
-        !parse_decimal(spec.most, most) || !parse_decimal(spec.step, step))
-        return false;
-    if (step.negative || step.digits == "0")
-        return false;
-    if (compare_decimal(parsed, least) < 0 || compare_decimal(parsed, most) > 0)
-        return false;
-    return on_step(parsed, least, step);
-}
-
-/// Tells whether `value` is one the option allows.
+/// A choice or a toggle keeps one of its values, compared byte for byte. A
+/// number keeps the canonical text of one of its stops.
 ///
 /// @param spec the option
-/// @param value the text
-/// @return true when it can be stored
-bool value_allowed(const OptionSpec& spec, std::string_view value) {
-    if (spec.type == OptionSpec::Type::number)
-        return number_allowed(spec, value);
+/// @param value the value as given
+/// @return the text to keep, or nothing when the value is refused
+std::optional<std::string> kept_value(const OptionSpec& spec, std::string_view value) {
+    if (spec.type == OptionSpec::Type::number) {
+        const std::optional<oamod::Number> number = read_number(value);
+        if (!number)
+            return std::nullopt;
+        for (const oamod::Number& stop : stops_of(spec)) {
+            if (oamod::compare_numbers(stop, *number) == 0)
+                return oamod::canonical_number_text(stop);
+        }
+        return std::nullopt;
+    }
     for (const std::string& allowed : spec.values)
         if (allowed == value)
-            return true;
-    return false;
+            return allowed;
+    return std::nullopt;
+}
+
+/// The default an option starts from: a number in its canonical text.
+///
+/// @param spec the option
+/// @return the default
+std::string default_value(const OptionSpec& spec) {
+    if (spec.type == OptionSpec::Type::number) {
+        if (const std::optional<oamod::Number> number = read_number(spec.fallback))
+            return oamod::canonical_number_text(*number);
+    }
+    return spec.fallback;
 }
 
 /// The options a mutator holds, in its order. An unknown id is dropped.
@@ -347,12 +236,12 @@ normalize(const Mutator& mutator, const std::vector<std::pair<std::string, std::
     std::vector<std::pair<std::string, std::string>> options;
     options.reserve(mutator.options.size());
     for (const OptionSpec& spec : mutator.options) {
-        std::string value = spec.fallback;
+        std::string value = default_value(spec);
         for (const auto& [option_id, stored] : given) {
             if (option_id != spec.id)
                 continue;
-            if (value_allowed(spec, stored))
-                value = stored;
+            if (std::optional<std::string> kept = kept_value(spec, stored))
+                value = std::move(*kept);
             break;
         }
         options.emplace_back(spec.id, std::move(value));
@@ -1056,17 +945,29 @@ bool set_option(
     if (mutator == nullptr)
         return false;
     const OptionSpec* spec = find_option(*mutator, option);
-    if (spec == nullptr || !value_allowed(*spec, value))
+    if (spec == nullptr)
+        return false;
+    std::optional<std::string> kept = kept_value(*spec, value);
+    if (!kept)
         return false;
     Chosen& chosen = picker.on[*at];
     for (auto& [option_id, stored] : chosen.options) {
         if (option_id != option)
             continue;
-        stored = std::string(value);
+        stored = std::move(*kept);
         return true;
     }
-    chosen.options.emplace_back(std::string(option), std::string(value));
+    chosen.options.emplace_back(std::string(option), std::move(*kept));
     return true;
+}
+
+std::vector<std::string> number_values(const OptionSpec& spec) {
+    std::vector<std::string> values;
+    const std::vector<oamod::Number> stops = stops_of(spec);
+    values.reserve(stops.size());
+    for (const oamod::Number& stop : stops)
+        values.push_back(oamod::canonical_number_text(stop));
+    return values;
 }
 
 bool set_clash(Picker& picker, std::string_view id, Clash mode) {
