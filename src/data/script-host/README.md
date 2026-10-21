@@ -2,9 +2,10 @@
 
 `oa-data-script-host` runs one package's Lua in a sandbox. A script can use a
 small set of libraries, `require` only the package's own `lua/` files, and
-stop at an instruction allowance or a memory cap. Nothing it does reaches a
-file, a clock, the environment or a network, and a failure comes back as a
-value that names the package, the phase, the chunk and the line.
+stop at an instruction allowance, a memory cap or a real-time limit. Nothing
+it does reaches a file, a clock, the environment or a network, and a failure
+comes back as a value that names the package, the phase, the chunk and the
+line.
 
 The interpreter underneath is Lua 5.4.9, built as the C library
 `oa-data-script-host-lua`. Code that pushes values into a state includes
@@ -25,7 +26,8 @@ The interpreter underneath is Lua 5.4.9, built as the C library
   caller's work on a later phase and calls no script.
 - `run_file` loads a package path as a text chunk and runs it as one phase.
   `call` runs the function `push` placed on the stack, then `read` sees how
-  many results came back. Each phase has a fresh instruction allowance.
+  many results came back. Each phase has a fresh instruction allowance and
+  a fresh real-time limit.
 - A false return fills a `ScriptError`. `describe` prints
   `<package>: <phase>: <chunk>:<line>: <message>`, and leaves the chunk and
   the line out when the chunk is unknown.
@@ -51,16 +53,40 @@ moves that state; the moved-from object has no state.
 - `open`, `run_file`, `call`, `run_host` and `compile_check` do their Lua work
   inside one protected call. A failure marks the sandbox failed, and every
   later phase returns that same error and runs nothing.
-- Once the instruction allowance is spent, or the sandbox has failed,
-  `xpcall` returns the error unchanged and does not run the handler the
-  script passed. A handler that loops, or one that catches errors with
-  `pcall`, cannot keep the phase alive. An instruction error or a memory
-  error is reported even when the script's own `pcall` caught it, including
-  when an allocation spent the allowance.
+- Once the instruction allowance is spent, the real-time limit is past, or
+  the sandbox has failed, `xpcall` returns the error unchanged and does not
+  run the handler the script passed. A handler that loops, or one that
+  catches errors with `pcall`, cannot keep the phase alive. An instruction
+  error, a real-time error or a memory error is reported even when the
+  script's own `pcall` caught it, including when an allocation spent the
+  allowance.
 - No C++ object with a destructor is alive across a Lua raise. `install`,
   `push`, `read` and the `run_host` work may raise and must not throw.
 - The instruction allowance is per phase and is not a clock. The memory cap
   is the Lua allocation only. Passing either one sticks for that phase.
+- Each phase also stops when it has run longer than its real-time limit.
+  The default is `default_time_limit`, 10 seconds. `OpenOptions::time_limit`
+  sets another for that sandbox. A steady clock is read when the phase
+  starts and checked in the instruction hook, every
+  `budget_check_interval` instructions, and in every library charge. There
+  is no thread and no signal. Past the limit the phase ends with
+  `time_limit` and the message `<phase> ran for more than 10 seconds; its
+  work is too large or never ends` (a limit that is not a whole number of
+  seconds names that length in milliseconds). A `pcall` or `xpcall` cannot
+  keep the phase going. The charges above are unchanged: the limit sits
+  beside them. A phase that finishes inside the limit has the same results,
+  the same charges and the same messages as it would with no clock.
+- The check lands at the next hook or the next charge, so a phase can run
+  past the limit by the work of one stretch of `budget_check_interval`
+  instructions, or of one charge. On the machine where this was measured,
+  a loop of 64 KiB zero-filled comparisons stopped 175 milliseconds after
+  a 300 millisecond limit, and a tight loop stopped within that same
+  millisecond. The overshoot stays under a second. The limit only ever
+  stops a script; it never changes a result. A script near the limit
+  can pass on a fast machine and fail on a slow one. In multiplayer the
+  loadout digest refuses a match whose machines disagree, so the difference
+  cannot desync a match. A dry run records `time_limit` like any other
+  failure.
 - `string.find`, `string.match`, `string.gmatch` and `string.gsub` count
   their work against that allowance. A step is one entry into the matcher,
   one character a `*`, `+` or `-` repetition tries, or one character a `%b`
@@ -215,6 +241,16 @@ use part of the allowance both pass. Keeping strings stops on the memory
 cap, including inside `pcall`. A required module that loops forever is
 reported at that module's chunk.
 
+`data-script-host-time-limit` gives a phase a short real-time limit and an
+instruction allowance it cannot spend. A tight loop, a loop of 64 KiB
+zero-filled comparisons, a loop of calls with 300,000 arguments, and the
+same tight loop inside `pcall` and inside `xpcall` with a looping handler
+each stop with `time_limit` within a second of the limit. A script that
+finishes inside the limit returns the same value and spends the same
+instruction count as it does under the default limit, and the next phase
+starts its limit again. The protected-metatable error from `setmetatable`
+matches Lua's own text, chunk and line included.
+
 `data-script-host-maths` checks the engine maths against
 `tests/maths_reference.py`, the exact powers of two and ten, and the math
 library's argument rules. `tests/random_reference.py` prints the generator's
@@ -265,7 +301,8 @@ hundreds of thousands of values passed through `...`, a chain of thousands
 of `__index` tables, arithmetic on a long string of spaces (`s + 0`), and a
 table that grows and shrinks its parts again and again. `next` on a table
 emptied after millions of entries does more work than its 4096 units pay
-for. A limit on a phase's real time is still to come for those. Text of numbers
+for. The real-time limit above is what stops a phase that hides its work
+in those steps. Text of numbers
 that must come out the same on every platform is not part of this library
 yet. A `__gc` or `__mode` entry added to a metatable after `setmetatable`
 is not caught. `instructions_used` counts Lua instructions in steps of the

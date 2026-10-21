@@ -103,6 +103,13 @@ if(BUILD_TESTING)
   add_test(NAME data-script-host-budgets COMMAND oa-data-script-host-budgets-test)
   set_tests_properties(data-script-host-budgets PROPERTIES TIMEOUT 120)
 
+  # Real-time backstop: a short limit, a huge instruction allowance.
+  add_executable(oa-data-script-host-time-limit-test tests/time_limit_test.cpp)
+  target_link_libraries(oa-data-script-host-time-limit-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-time-limit COMMAND oa-data-script-host-time-limit-test)
+  set_tests_properties(data-script-host-time-limit PROPERTIES TIMEOUT 60)
+
   # Engine maths, the seeded generator and the math library's argument rules.
   add_executable(oa-data-script-host-maths-test tests/deterministic_math_test.cpp)
   target_link_libraries(oa-data-script-host-maths-test PRIVATE

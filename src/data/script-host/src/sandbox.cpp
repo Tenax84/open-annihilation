@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The state, its allocator, the instruction hook and the one protected entry
-// every phase uses. A spent allowance makes xpcall return the error unchanged,
-// so a script message handler cannot keep running after the budget is gone.
+// every phase uses. A spent allowance, or a phase past its real-time limit,
+// makes xpcall return the error unchanged, so a script message handler cannot
+// keep running after the phase has stopped.
 
 #include "internal.hpp"
 
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,6 +28,9 @@ static void script_count_hook(lua_State* state, lua_Debug* /*activation*/) {
         lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
         luaL_error(state, "%s", control->string_message);
     }
+    if (control->time_expired) {
+        raise_time_limit(state);
+    }
     if (control->allowance_spent) {
         lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
         luaL_error(state, "%s", control->instruction_message);
@@ -34,6 +40,9 @@ static void script_count_hook(lua_State* state, lua_Debug* /*activation*/) {
         control->allowance_spent = true;
         lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
         luaL_error(state, "%s", control->instruction_message);
+    }
+    if (phase_past_time_limit(control)) {
+        raise_time_limit(state);
     }
 }
 } // extern "C"
@@ -58,6 +67,33 @@ void write_budget_messages(Control& control) {
     cursor = append_text(cursor, end, "the script used more than its ");
     cursor = append_text(cursor, end, mebibytes);
     append_text(cursor, end, " MiB of memory");
+}
+
+// Names the phase and the limit it was given. Whole seconds use the default
+// sentence's unit; any other limit is named in milliseconds.
+void write_time_message(Control& control) {
+    const int64_t milliseconds = control.time_limit.count();
+    const bool whole_seconds = milliseconds > 0 && milliseconds % 1000 == 0;
+    uint64_t number = 0;
+    const char* unit = "milliseconds";
+    if (milliseconds > 0)
+        number = static_cast<uint64_t>(milliseconds);
+    if (whole_seconds) {
+        number = static_cast<uint64_t>(milliseconds / 1000);
+        unit = number == 1 ? "second" : "seconds";
+    } else if (number == 1) {
+        unit = "millisecond";
+    }
+    char digits[32]{};
+    append_u64(digits, digits + sizeof digits, number);
+    char* cursor = control.time_message;
+    char* end = control.time_message + sizeof control.time_message;
+    cursor = append_text(cursor, end, control.phase.c_str());
+    cursor = append_text(cursor, end, " ran for more than ");
+    cursor = append_text(cursor, end, digits);
+    cursor = append_text(cursor, end, " ");
+    cursor = append_text(cursor, end, unit);
+    append_text(cursor, end, "; its work is too large or never ends");
 }
 
 // Strips one leading "chunk:line: " prefix. The chunk is the text before the
@@ -307,6 +343,11 @@ static int trampoline(lua_State* state) {
     Control* control = control_from(state);
     control->instructions_used = 0;
     control->allowance_spent = false;
+    control->time_expired = false;
+    // The phase's start. Later reads of the clock are in the count hook and
+    // in charge(), and only those reads can stop the phase.
+    control->phase_started = std::chrono::steady_clock::now();
+    write_time_message(*control);
     control->string_refused = false;
     control->string_refused_length = 0;
     control->string_message[0] = '\0';
@@ -614,7 +655,8 @@ bool Sandbox::enter(std::string_view phase, ScriptError& error) {
         const bool too_long = control_->string_refused;
         const bool memory = control_->allocation_refused || status == LUA_ERRMEM;
         const bool instructions = control_->allowance_spent;
-        if (status == LUA_OK && !too_long && !memory && !instructions) {
+        const bool timed_out = control_->time_expired;
+        if (status == LUA_OK && !too_long && !memory && !instructions && !timed_out) {
             error = {};
             return true;
         }
@@ -635,6 +677,9 @@ bool Sandbox::enter(std::string_view phase, ScriptError& error) {
         } else if (instructions) {
             result.kind = ErrorKind::instruction_budget;
             result.message = control_->instruction_message;
+        } else if (timed_out) {
+            result.kind = ErrorKind::time_limit;
+            result.message = control_->time_message;
         } else if (control_->pending_kind != ErrorKind::none) {
             result.kind = control_->pending_kind;
         } else if (status == LUA_ERRSYNTAX) {
@@ -660,6 +705,7 @@ std::optional<Sandbox> Sandbox::open(const OpenOptions& options, ScriptError& er
             control = std::make_unique<Control>();
             control->memory_cap = options.profile.budget.memory_bytes;
             control->instruction_allowance = options.profile.budget.instructions;
+            control->time_limit = options.time_limit;
             control->sources = options.sources;
             control->package_id = options.package_id;
             control->random_seed = options.random_seed;

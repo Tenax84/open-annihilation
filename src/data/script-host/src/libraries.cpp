@@ -5,10 +5,10 @@
 // the sandbox. `math` is the engine's library. `pairs` walks keys in a fixed
 // order.
 //
-// next, rawequal, tonumber and warn, string.byte, the table functions move,
-// insert, remove, concat, pack, unpack and sort, and utf8.char, utf8.len,
-// utf8.codepoint, utf8.offset and utf8.codes follow lbaselib.c, lstrlib.c,
-// ltablib.c and lutf8lib.c of Lua 5.4.9.
+// next, rawequal, tonumber, warn and setmetatable, string.byte, the table
+// functions move, insert, remove, concat, pack, unpack and sort, and
+// utf8.char, utf8.len, utf8.codepoint, utf8.offset and utf8.codes follow
+// lbaselib.c, lstrlib.c, ltablib.c and lutf8lib.c of Lua 5.4.9.
 // Copyright (C) 1994-2026 Lua.org, PUC-Rio.
 // The licence is the MIT licence; the text is licenses/lua-LICENSE.txt.
 // Each copy counts its work against the phase allowance and refuses a table
@@ -34,7 +34,6 @@ namespace {
 using Control = HostDetail::Control;
 
 const char string_rep_key = 0;
-const char setmetatable_key = 0;
 const char rawset_key = 0;
 const char xpcall_key = 0;
 
@@ -518,6 +517,9 @@ static int host_string_rep(lua_State* state) {
     return 1;
 }
 
+// setmetatable, from lbaselib.c. The __gc and __mode refusals sit in this
+// function, and so does the protected-metatable check, so each error names
+// the script's chunk and line as Lua's own does.
 static int host_setmetatable(lua_State* state) {
     const int metatable_type = lua_type(state, 2);
     luaL_checktype(state, 1, LUA_TTABLE);
@@ -536,10 +538,10 @@ static int host_setmetatable(lua_State* state) {
             return luaL_error(state, "setmetatable: a metatable with __mode is refused");
         lua_pop(state, 1);
     }
-    lua_rawgetp(state, LUA_REGISTRYINDEX, &setmetatable_key);
-    lua_pushvalue(state, 1);
-    lua_pushvalue(state, 2);
-    lua_call(state, 2, 1);
+    if (luaL_getmetafield(state, 1, "__metatable") != LUA_TNIL)
+        return luaL_error(state, "cannot change a protected metatable");
+    lua_settop(state, 2);
+    lua_setmetatable(state, 1);
     return 1;
 }
 
@@ -563,11 +565,13 @@ static int host_rawset(lua_State* state) {
     return 1;
 }
 
-// Once the allowance is spent, or the sandbox has failed, the script's handler
-// must not run: a looping handler would never return the error to the host.
+// Once the allowance is spent, the real-time limit is past, or the sandbox
+// has failed, the script's handler must not run: a looping handler would
+// never return the error to the host.
 static int host_xpcall_handler(lua_State* state) {
     const Control* control = control_from(state);
-    if (control->string_refused || control->allowance_spent || control->sandbox_failed)
+    if (control->string_refused || control->allowance_spent || control->time_expired ||
+        control->sandbox_failed)
         return 1;
     const int count = lua_gettop(state);
     lua_pushvalue(state, lua_upvalueindex(1));
@@ -1120,8 +1124,6 @@ void open_libraries(lua_State* state) {
     install_patterns(state);
     lua_pop(state, 1);
 
-    lua_getglobal(state, "setmetatable");
-    lua_rawsetp(state, LUA_REGISTRYINDEX, &setmetatable_key);
     lua_pushcfunction(state, host_setmetatable);
     lua_setglobal(state, "setmetatable");
 
