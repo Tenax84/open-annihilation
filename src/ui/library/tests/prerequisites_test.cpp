@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -424,18 +425,21 @@ mutator_at(const lib::Library& library, std::string_view registry, std::string_v
     return lib::find_entry(library, {std::string(registry), Kind::mutator, std::string(key)});
 }
 
-/// The button of one action, or null.
+/// The button of one action, copied out of the action list.
+///
+/// The list is a temporary, so a pointer into it would not outlive this call.
 ///
 /// @param library the Library
 /// @param entry the entry
 /// @param action the action
-/// @return the button
-const lib::ActionButton*
+/// @return the button, or none
+std::optional<lib::ActionButton>
 button_of(const lib::Library& library, const lib::Entry& entry, lib::Action action) {
-    for (const lib::ActionButton& button : lib::entry_actions(library, entry))
+    const std::vector<lib::ActionButton> buttons = lib::entry_actions(library, entry);
+    for (const lib::ActionButton& button : buttons)
         if (button.action == action)
-            return &button;
-    return nullptr;
+            return button;
+    return std::nullopt;
 }
 
 /// needs_of reads the installed manifest when one is set, and the listing otherwise.
@@ -508,11 +512,12 @@ void plans_for_gatehouse_keep() {
             OA_CHECK(plan.steps[1].id.key == gatehouse_keep);
             OA_CHECK(plan.steps[1].version == "2.0");
         }
-        const lib::ActionButton* with = button_of(library, *keep, lib::Action::get_with);
-        OA_CHECK(with != nullptr && with->enabled);
-        if (with != nullptr)
+        const std::optional<lib::ActionButton> with =
+            button_of(library, *keep, lib::Action::get_with);
+        OA_CHECK(with.has_value() && with->enabled);
+        if (with.has_value())
             check_text(with->text, "GET WITH Gatehouse");
-        OA_CHECK(button_of(library, *keep, lib::Action::get) == nullptr);
+        OA_CHECK(!button_of(library, *keep, lib::Action::get).has_value());
     }
     {
         lib::Inputs inputs = shelf();
@@ -543,9 +548,9 @@ void plans_for_gatehouse_keep() {
         OA_CHECK(plan.blocked.empty() && plan.steps.size() == 1);
         if (plan.steps.size() == 1)
             OA_CHECK(plan.steps[0].id.key == gatehouse_keep);
-        const lib::ActionButton* get = button_of(library, *keep, lib::Action::get);
-        OA_CHECK(get != nullptr && get->enabled);
-        OA_CHECK(button_of(library, *keep, lib::Action::get_with) == nullptr);
+        const std::optional<lib::ActionButton> get = button_of(library, *keep, lib::Action::get);
+        OA_CHECK(get.has_value() && get->enabled);
+        OA_CHECK(!button_of(library, *keep, lib::Action::get_with).has_value());
     }
     {
         lib::Inputs inputs = shelf();
@@ -559,8 +564,9 @@ void plans_for_gatehouse_keep() {
         const lib::GetPlan plan = lib::get_plan(library, *keep);
         OA_CHECK(plan.steps.empty());
         check_text(plan.blocked, "Needs Gatehouse 4.0 or later, which no registry offers");
-        const lib::ActionButton* with = button_of(library, *keep, lib::Action::get_with);
-        OA_CHECK(with != nullptr && !with->enabled);
+        const std::optional<lib::ActionButton> with =
+            button_of(library, *keep, lib::Action::get_with);
+        OA_CHECK(with.has_value() && !with->enabled);
     }
     {
         lib::Inputs inputs = shelf();
@@ -607,9 +613,9 @@ void a_chain_downloads_in_order() {
         OA_CHECK(plan.steps[2].id.key == gatehouse);
         OA_CHECK(plan.steps[3].id.key == gatehouse_keep);
     }
-    const lib::ActionButton* with = button_of(library, *keep, lib::Action::get_with);
-    OA_CHECK(with != nullptr && with->enabled);
-    if (with != nullptr)
+    const std::optional<lib::ActionButton> with = button_of(library, *keep, lib::Action::get_with);
+    OA_CHECK(with.has_value() && with->enabled);
+    if (with.has_value())
         check_text(with->text, "GET WITH 3 MORE");
 }
 
@@ -641,8 +647,8 @@ void an_incompatible_prerequisite_stays_in_the_plan() {
     OA_CHECK(plan.blocked.empty() && plan.steps.size() == 2);
     if (plan.steps.size() == 2)
         OA_CHECK(plan.steps[0].id.key == gatehouse);
-    const lib::ActionButton* with = button_of(library, *keep, lib::Action::get_with);
-    OA_CHECK(with != nullptr && with->enabled);
+    const std::optional<lib::ActionButton> with = button_of(library, *keep, lib::Action::get_with);
+    OA_CHECK(with.has_value() && with->enabled);
 }
 
 /// A cycle is refused, naming both ids, and queues nothing.
@@ -662,8 +668,8 @@ void a_cycle_is_refused() {
     const lib::GetPlan plan = lib::get_plan(library, *gate);
     OA_CHECK(plan.steps.empty());
     check_text(plan.blocked, "These mutators need each other: gatehouse and ridge-walls");
-    const lib::ActionButton* with = button_of(library, *gate, lib::Action::get_with);
-    OA_CHECK(with != nullptr && !with->enabled);
+    const std::optional<lib::ActionButton> with = button_of(library, *gate, lib::Action::get_with);
+    OA_CHECK(with.has_value() && !with->enabled);
 }
 
 /// The question names every package, in order, and its text fits at every class.

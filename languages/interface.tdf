@@ -10,12 +10,12 @@
 
 
 
-[ · from {registry}]
+[· from {registry}]
 	{
-	de= · von {registry};
-	fr= · depuis {registry};
-	es= · de {registry};
-	it= · da {registry};
+	de=· von {registry};
+	fr=· depuis {registry};
+	es=· de {registry};
+	it=· da {registry};
 	}
 
 ["{title}" was saved with {name}, which is off.]

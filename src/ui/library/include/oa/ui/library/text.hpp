@@ -94,7 +94,9 @@ inline constexpr std::string_view get_with_body_many =
     "{name} needs {prerequisites}, which you don't have. They download first, and go above {name} "
     "in every list.";
 /// After a package's name and version on the question: the registry it comes from.
-inline constexpr std::string_view get_with_from = " · from {registry}";
+/// The question writes a space in front. A catalogue key cannot begin with a
+/// space: the reader trims it, and the four languages then have no translation.
+inline constexpr std::string_view get_with_from = "· from {registry}";
 /// The question's button when two packages download.
 inline constexpr std::string_view action_get_both = "GET BOTH";
 /// The question's button when three or more packages download.

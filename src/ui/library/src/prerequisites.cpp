@@ -1090,7 +1090,7 @@ oa::ui::kit::Question get_with_question(const Library& library, const Entry& ent
         item.badge = badge_of(step);
         item.text =
             filled(text, words::queue_package, {{"name", step.name}, {"version", step.version}});
-        item.aside = filled(text, words::get_with_from, {{"registry", step.registry_name}});
+        item.aside = " " + filled(text, words::get_with_from, {{"registry", step.registry_name}});
         question.items.push_back(std::move(item));
     }
 
