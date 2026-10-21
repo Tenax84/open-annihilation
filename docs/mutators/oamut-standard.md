@@ -16,6 +16,8 @@ what is different for mutators and does not repeat those rules.
 - [1. Goals and principles](#1-goals-and-principles)
 - [2. The package](#2-the-package)
 - [3. The manifest](#3-the-manifest)
+- [5. The Files layer](#5-the-files-layer)
+- [6. Rules](#6-rules)
 
 ## 1. Goals and principles
 
@@ -285,7 +287,8 @@ order the Library shows them, are:
 | `hacks` | Engine hacks for one match |
 
 What a hook or a rule may write through each of those names is outside
-this text.
+this text. The files a `files` layer may add are
+[5. The Files layer](#5-the-files-layer).
 
 ### 3.4 Options
 
@@ -399,3 +402,476 @@ A range is quoted, as `"ridge >= 1"` is, because a plain `>` starts a
 block scalar, which the strict reader refuses. A description that holds a
 line break is one double-quoted string, with `\n` for the break. A block
 scalar (`|` or `>`) is refused. The summary is `Builders take their time.`
+
+## 5. The Files layer
+
+The Files layer hides files that are already in the game and adds files
+from the package. Both happen before the match, and the match then reads
+ordinary paths. A mask hides. An add folder contributes.
+
+A plan lists `mask` patterns and `add` folders, both in the order written,
+and both optional. The mutators are taken in the player's list order. For
+each mutator that is kept, the masks are applied first and then the add
+folders. A mask is kept on the layer, and every file an earlier mutator
+added that it matches is removed. The note names both mutators. The
+mutator's own files are added after its masks, so a mask hides files from
+earlier mutators and leaves that mutator's own add in place.
+
+An add folder is a relative path inside the package: no `..`, no drive and
+no leading slash, and not a link. Each part is matched to the directory's
+entries without ASCII case, so `FILES` and `files` are the same folder on
+every machine. Two entries that fold to one name refuse the mutator. A
+folder that is not there adds nothing and records that the folder is
+missing. That is what a plan written as `files/<mod id>` relies on when
+that mod has no files of its own.
+
+Inside a folder that exists:
+
+- Only the top of the folder is searched for archives, and only `.ccx` and
+  `.ufo` are opened. An archive further down is an ordinary loose file, as
+  is any other kind of file.
+- `.ccx` archives are opened before `.ufo` archives. Within each group the
+  names follow NTFS order: compared byte by byte after ASCII upper-casing,
+  with the raw bytes breaking a tie. The earlier name keeps a path both
+  archives hold.
+- Loose files are walked after the archives. A loose file keeps a path over
+  that folder's archives. Listings are sorted by the folded path, so the
+  machine's own directory order never decides a file.
+- A path this mutator already added from an earlier folder is replaced, with
+  no note. A path an earlier mutator added is replaced, and the note names
+  the later mutator as the one that won.
+
+The layer lists paths in mutator order and, within a mutator, in the order
+the paths were first added. Each folder's new paths are sorted by the
+folded path. Replacing a path does not move it. The archives a kept entry
+still reads are listed in the order they were opened, and an archive whose
+files were all replaced is omitted. The layer's label is `mutators`
+followed by the ids that were kept, separated by spaces.
+
+A mutator that fails leaves nothing behind. Its masks, paths, archives and
+notes are dropped, and the mutators after it are built as though it were
+not in the list. One mutator failing does not fail the others. Two machines
+with the same packages and the same list build the same paths, owners,
+archive order, masks and label.
+
+### 5.1 Masks
+
+A mask matches a resource path. ASCII case is ignored, and `\` matches `/`.
+`*` matches any run of characters inside one segment. `?` matches one
+character inside a segment. A segment that is exactly `**` matches any
+number of whole segments, including none. `**` anywhere but as a whole
+segment is refused.
+
+A pattern is refused when it is empty, longer than 256 bytes, absolute,
+holds `:`, holds a NUL, holds an empty, `.` or `..` segment, starts with
+`.backup`, or holds more than 16 `*` and `?` counted together. A refused
+pattern matches nothing.
+
+| Limit | Value | What it counts |
+| --- | --- | --- |
+| Masks in one plan | 64 | `mask` patterns one mutator lists |
+| Add folders in one plan | 16 | `add` folders one mutator lists |
+| Archives in one add folder | 16 | `.ccx` and `.ufo` files at the top of that folder |
+| Loose files under one add folder | 16,384 | Files walked under that folder |
+| Nested folders under one add folder | 32 | How deep the walk goes |
+| Masks in the whole layer | 2,048 | Every kept mutator's masks |
+| Paths in the whole layer | 65,536 | Served and hidden paths together |
+| Archives in the whole layer | 512 | Archives a kept entry still reads |
+| Bytes held in memory | 256 MiB | The content the layer keeps in memory, taken together, when the layer is mounted |
+
+Crossing a plan or folder limit fails that mutator. Crossing the mask,
+path or archive limit of the whole layer fails the mutator that would
+cross it. The 256 MiB bound is applied when the layer is mounted.
+
+### 5.2 The allow-list
+
+Every path an add contributes, and every mask, is judged against one
+table. The default is to refuse. A path of 4,096 bytes or more is
+over-long. An empty path, a path that holds a NUL, an absolute path, a
+path that holds `:`, and a path with an empty, `.` or `..` segment, are
+refused.
+
+Names are compared without ASCII case. `/` and `\` both separate segments.
+A variant folder `<directory>-<variant>` follows its base folder. The seven
+directory names a mod may rename come from the active layout. In the base
+game they are `units`, `Weapons`, `gamedata`, `ai`, `guis`, `unitpics` and
+`download`. A renamed directory replaces the base name, and the base name
+is then an unknown folder.
+
+A folder the table allows as a whole may use a wildcard. A folder the
+table allows file by file must name one file in the mask: a wildcard there
+is refused. A mask with no wildcard is judged as that one path.
+
+| Path | Verdict | Why |
+| --- | --- | --- |
+| `units/`, and a variant | allowed, the whole tree | Read again for every match. The layout's units folder. |
+| `Weapons/`, and a variant | allowed, the whole tree | Read again for every match. The layout's weapons folder. |
+| `ai/`, and a variant | allowed, the whole tree | Read again for every match. |
+| `unitpics/`, and a variant | allowed, the whole tree | Read again for every match. |
+| `download/`, and a variant | allowed, the whole tree | Read again for every match. |
+| `features/` | allowed, the whole tree | Read again for every match. |
+| `objects3d/` | allowed, the whole tree | Read again for every match. |
+| `scripts/` | allowed, the whole tree | Read again for every match. |
+| `gamedata/moveinfo.tdf` | allowed | Read again for every match. |
+| `gamedata/sidedata.tdf` | allowed | Read again for every match. |
+| `gamedata/los.tdf` | allowed | Read again for every match. |
+| `gamedata/meteor.tdf` | allowed | Read again for every match. |
+| `gamedata/sound.tdf` | read once | Loaded once when the game starts. |
+| Any other file under `gamedata/` | not confirmed | Not yet shown to be read again for every match. A mask here names one file. |
+| `guis/` | menus only | Build pages and screens change only through a mutator's menus. |
+| `maps/` | maps only | Maps change only through a mutator's maps hook. |
+| `sounds/` | read once | Loaded once when the game starts. |
+| `music/` | read once | Loaded once when the game starts. |
+| `palettes/` | read once | Loaded once when the game starts. |
+| `fonts/` | read once | Loaded once when the game starts. |
+| `bitmaps/` | read once | Loaded once when the game starts. |
+| `camps/` | read once | Loaded once when the game starts. |
+| `textures/` | not confirmed | Not yet shown to be read again for every match. |
+| `anims/<unit><digits>.gaf` | allowed | One level under `anims/`, when the unit name is a unit this game already has, or a unit this mutator or an earlier one still adds. Read again for every match. |
+| `anims/<unit>_gadget.gaf` | allowed | The same, for a unit's download-button art. The suffix matches without regard to case. |
+| Any other file under `anims/` | interface art | Interface art, which changes with the screens. A mask here names one file. |
+| Anything else, including a file at the top | unknown folder | This folder is not one a mutator may change. |
+
+The rule names are `allowed`, `invalid-path`, `menus-only`, `maps-only`,
+`read-once`, `not-confirmed`, `interface-art` and `unknown-folder`.
+
+A path whose rule is anything other than `allowed` fails that mutator
+when the layer is built. The failure names the mutator and the mask,
+folder, archive or file, and it includes the allow-list's own message.
+The message starts with the path. The player sees a translated sentence
+chosen from the rule.
+
+`oa-tool mutator import` does not fail the import for a protected path
+inside a TA: Mutation archive. An archive with no such entry is copied
+unchanged. An entry on a protected path is left out, and the warning is
+`left out <archive>: <path> (<rule>)`. The archive is written again from
+the entries that remain. An archive with nothing left is not written.
+
+### 5.3 Tracing lookups
+
+`--trace-lookups FILE` writes every game file and listing the run looks
+up, one a line. For a path the mutator layer serves or hides it writes a
+second line, `path`, a tab, then `mutator <id>` or
+`hidden by mutator <id>`. The option is
+[the command line](../command-line.md).
+
+## 6. Rules
+
+A rule selects records and writes their fields. The same records are
+written two ways: a Lua block, and a `.sm` file. The two spellings compare
+equal when they are the same rules. Several mutators' rules are combined
+in one pass. The numbers do not depend on the order of the mutators.
+Text that is appended does: appends follow the list.
+
+A plan's rules list is a sequence of finished blocks and `sm` paths.
+Consecutive blocks become one source. Each `sm` path is its own source.
+The bytes come from the package. A path that is absolute, has a drive, or
+has a `..` segment is outside the package and is not read. A file that
+cannot be read, or that the rule parser reports an error in, refuses the
+plan. A warning is kept with the source. A path is read and parsed once,
+however many times the list names it.
+
+The blocks of every source together stay within 4,096 blocks, and the plan
+holds at most 256 sources. A statement, a name, a field and a quoted text
+stay within the rule file's own limits, below. Passing a limit refuses
+the plan.
+
+`where` and `:change` copy the table they are given. A loop that reuses
+one table builds a different block each time, and changing the table later
+changes no block already built. Field names in one block are stored in the
+order of those names after ASCII lower-casing, with the raw bytes breaking
+a tie. Two changes to one field are two blocks, because one table cannot
+hold the same key twice. An unfinished block refuses the plan.
+
+### 6.1 The Lua forms
+
+The engine publishes `where`, `all`, `named`, `on`, `set`, `scale`,
+`lock`, `remove`, `append`, `sm` and `empty` for the changes, and `range`,
+`is`, `has`, `absent` and `not_` for the needs. `not` is a Lua keyword, so
+the need is `not_`.
+
+`on` takes a folder and an extension together. It stores both in lower
+case, turns `\` into `/`, trims spaces, and strips one leading `.` from
+the extension. `on` by itself selects every record of that target. The
+default target, when a block never calls `on`, is the units folder with
+the `fbi` extension. `:change` finishes a block. A second `:change` is an
+error. A later `where`, `all` or `named` on a block that already has a
+selector is refused. Calling `on` on a block that already has a selector
+keeps the line of the call that started the block and replaces the folder
+and the extension.
+
+| Lua | Rule file |
+| --- | --- |
+| `where { field = n }` | `field=n,n` in `[Needs]` |
+| `where { field = true }` | `field=1,1` |
+| `where { field = false }` | `field=!1,1` |
+| `where { field = "text" }` | `field="text"` |
+| `where { field = range(lo, hi) }` | `field=lo,hi` |
+| `where { field = is("text") }` | `field="text"` |
+| `where { field = has("text") }` | `field="text"*` |
+| `where { field = has("") }` | `field=""*` |
+| `where { field = absent() }` | `field=!""*` |
+| `where { field = not_(...) }` | the same need with a leading `!` |
+| `where { ... }:change { ... }` | `[*Group*]` with `[Needs]` and `[Changes]` |
+| `all():change { ... }` | `[*All*]` |
+| `named("NAME"):change { ... }` | `[NAME]` |
+| `on(folder, extension):change { ... }` | `folder=` and `extension=`, then `[*All*]` |
+| `on(folder, extension):all():change { ... }` | the same folder and extension, then `[*All*]` |
+| `on(folder, extension):named("NAME"):change { ... }` | the same folder and extension, then `[NAME]` |
+| `on(folder, extension):where { ... }:change { ... }` | the same folder and extension, then `[*Group*]` |
+| `change { field = n }` or `set(n)` | `field=n` |
+| `change { field = "text" }` or `set("text")` | `field="text"` |
+| `change { field = "" }` or `set("")` or `remove()` | `field=""` |
+| `change { field = empty }` | `field=;` |
+| `change { field = true }` | `field=1` |
+| `change { field = false }` | `field=0` |
+| `change { field = scale(k) }` | `field=*k` |
+| `change { field = scale(k, lo, hi) }` | `field=*k(lo,hi)` |
+| `change { field = lock(n) }` | `field=^n` |
+| `change { field = append("text") }` | `field="text"+` |
+| `change { ["<AllDepth2>"] = scale(k) }` | `<AllDepth2>=*k`, in any ASCII case |
+| `sm "path"` | that rule file, as its own source |
+
+`empty` assigns empty text, the record a rule file writes with `field=;`.
+`""`, `set("")` and `remove()` remove the field.
+
+### 6.2 A field the record leaves out
+
+A need is decided on the record as the pass found it, before any write, so
+one rule's change cannot decide which records another rule selects.
+
+When the field is written, a range holds when the text's number is inside
+the bounds, inclusive. Text that is not a number reads as zero, the way
+the game reads it. An equality holds when the text matches without ASCII
+case. A substring holds when the text contains the needle without ASCII
+case. An empty needle is contained.
+
+When the field is not written, `has("")` and `absent()` do not read a
+default. `has("")` holds exactly when the key is in the file.
+`absent()` holds exactly when the key is not. In the rule file those two
+are `field=""*` and `field=!""*`. Every other need is read against the
+value the loader uses for that key. For a unit, a weapon, or a movement
+class that value is the field's default. A key the schema does not hold,
+and any other record, reads 0 for a range and empty text for an equality
+or a substring. The defaults that are not zero or empty are listed in
+[the field schema](../../src/data/field-schema/README.md#defaults-that-are-not-zero-or-empty).
+
+A negated need holds exactly when the positive one does not.
+
+### 6.3 The .sm file
+
+A rule file is text of at most 1 MiB. A longer text is refused before it
+is read. Keywords, section names and `<AllDepth2>` match without ASCII
+case. A `//` outside quotes runs to the end of the line. `/*` is not a
+comment, and it is an error. A line ends at LF, CRLF or a lone CR.
+Whitespace is free around `=`, around braces and at the start of a line.
+A number is `-` optionally, then digits with an optional fraction, or a
+point and digits. An exponent, or a leading `+`, is not a number. The
+number is then read by the same reader the game uses for the value.
+
+```ebnf
+file        = { directive | block | stray_brace } ;
+directive   = ( "folder" | "extension" ) "=" text [ ";" ] ;
+block       = "[" header "]" "{" body "}" ;
+header      = "*all*" | "*group*" | name ;
+body        = { change }                         (* *all* and a named record *)
+          | { needs | changes } ;                (* a group, either order *)
+needs       = "[Needs]" "{" { need } "}" ;
+changes     = "[Changes]" "{" { change } "}" ;
+need        = field "=" [ "!" ] ( number "," number
+                                | string [ "*" ]
+                                | '""' ) [ ";" ] ;
+change      = ( field | "<AllDepth2>" ) "=" value [ ";" ] ;
+value       = number
+          | "*" number [ "(" number "," number ")" ]
+          | "^" number
+          | string
+          | string "+"
+          | bare ;
+string      = '"' { byte - '"' } '"' ;
+```
+
+`folder` and `extension` apply to every block after them, and each may be
+set more than once. `\` in either becomes `/`, and both are stored in
+lower case. The extension is a filename suffix with no leading dot, so
+`sidedata.tdf` names one file. Until a file sets them, the target is
+`units` and `fbi`. A directive inside a block is an error.
+
+`<AllDepth2>` writes every key of every block directly inside the record,
+each key its own field. A weapon's `[DAMAGE]` entries are reached that
+way. Keys of the record itself are left alone. A record that has no such
+keys still matched. Two spellings of one key inside a block, differing
+only in ASCII case, are one field: the reader keeps the newest, and the
+change is applied once.
+
+A group's needs are all required. There is no or between them. A group
+with no needs matches every record of its target. A group whose body holds
+a statement outside `[Needs]` and `[Changes]` drops that statement.
+
+### 6.4 Lenient forms
+
+Each of these is kept, and a warning names it. The rest of the file is
+still read.
+
+- A statement or directive may end at the end of the line, or at the `}`
+  that closes it, with no `;`. Several statements may share a line when a
+  `;` separates them, and the next header may follow a `}` on that same
+  line.
+- The `{` of a block may be on a later line than its header.
+- A header whose body holds `[Needs]` or `[Changes]` is a group even when
+  the header is not `*Group*`.
+- A number written in quotes is a text change. The bytes inside the quotes
+  are kept. An empty quoted value with no `+` removes the field.
+- Spaces inside an unquoted value, such as `*7 (2,15)`, are ignored.
+- A need whose low bound is above its high bound is kept. It matches
+  nothing, or everything when it is negated.
+- A group with no `[Needs]` is kept. It changes every record of its target.
+- A second `[Needs]` or `[Changes]` in one group is merged.
+- A leading byte-order mark is skipped.
+- A change whose value is a bare word or words is a text assignment. The
+  words are trimmed at both ends and their inner spaces stay. A value that
+  starts like a number, a scale, a clamp, a meta value or a quote keeps
+  the stricter reading, including a malformed one.
+- A change with nothing after `=` assigns empty text. That is the Lua
+  value `empty`. It is distinct from `""`, which removes the field.
+- A need written `""` or `!""` is equality with empty text, negated when
+  it is written `!""`. `""*` and `!""*` stay the presence tests
+  `has("")` and `absent()`.
+- A `}` outside any block is ignored, including one after a middle block
+  and one after the last block. A `}` that ends a block still ends it.
+
+A bad statement is dropped, and reading continues. A block whose header or
+braces are broken is dropped. A `[` inside `[Needs]` or `[Changes]` is an
+unknown section: a section cannot hold a section. That section's braces
+are skipped.
+
+### 6.5 Limits and diagnostics
+
+| Limit | Value |
+| --- | --- |
+| The file | 1 MiB |
+| Blocks kept | 4,096 |
+| Statements in one block | 4,096 |
+| One name, field, quoted text or bare text | 1,024 bytes |
+| Diagnostics stored | 1,000. The last one stored is the notice that collection stopped. |
+
+Warnings keep the statement or the block. Errors drop the statement, or
+the block when its braces or header are broken.
+
+| Code | Meaning |
+| --- | --- |
+| `missing_semicolon` | a kept statement was not closed with `;` |
+| `group_without_asterisks` | a header without `*Group*` holds a group body |
+| `quoted_number` | a change's quoted text is a number |
+| `spaces_in_value` | spaces inside an unquoted value were ignored |
+| `empty_range` | a need's low bound is above its high bound |
+| `group_without_needs` | a group has no needs, so it matches every record |
+| `repeated_section` | a second needs or changes section was merged |
+| `byte_order_mark` | a leading byte-order mark was skipped |
+| `unquoted_text` | bare words read as a text assignment |
+| `empty_value` | a change with nothing after `=`, read as empty text |
+| `empty_text_need` | `""` or `!""` in a need, equality with empty text |
+| `stray_closing_brace` | a `}` outside any block, ignored |
+| `unknown_section` | a section other than needs or changes, or a section inside a section |
+| `unclosed_block` | a header or a brace was never closed |
+| `unexpected_brace` | a brace where a block did not call for one |
+| `directive_in_block` | `folder` or `extension` inside a block |
+| `bad_number` | a number the grammar does not allow |
+| `bad_need` | a need that matches no need form |
+| `bad_change` | a change that matches no change form |
+| `need_form_in_changes` | a need written where a change belongs |
+| `change_form_in_needs` | a change written where a need belongs |
+| `clamp_low_above_high` | a scale's low clamp is above its high clamp |
+| `unterminated_string` | a quote was never closed |
+| `block_comment` | `/*`, which is not part of the language |
+| `stray_text` | text that is not a directive, a block or a statement |
+| `too_large` | the text is longer than 1 MiB |
+| `too_many_blocks` | more than 4,096 blocks |
+| `too_many_statements` | more than 4,096 statements in one block |
+| `text_too_long` | a name, field or quoted text is longer than 1,024 bytes |
+| `too_many_diagnostics` | the list stopped at 1,000 diagnostics |
+
+`oa-tool mutator check` refuses the package when a diagnostic is an error.
+A warning does not refuse it. The tool reads a rule file up to 4 MiB and
+then this reader refuses a text longer than 1 MiB, so either bound refuses
+the file.
+
+### 6.6 How changes combine
+
+Within one mutator, sources in plan order and blocks and changes in file
+order, the last change of a field decides its kind. An assignment resets
+that mutator's factors and clamps. Factors then multiply onto whatever is
+current. Clamps join, taking the lower low and the higher high. A meta
+value, written `lock` or `^`, replaces the numeric state and survives
+later numeric changes; a later meta value replaces the earlier one. Text
+assignments replace, appends extend, and a removal clears. An append after
+a removal becomes an assignment of the appended text, and an append after
+an assignment extends that assignment. A change of the other kind discards
+what came before. That discard inside one mutator is not noted.
+
+Across mutators:
+
+- When any contribution is a meta value, the result is the mean of the
+  meta values. Every other change, numeric or text, is dropped. Only the
+  mutators that supplied a meta value are listed on the write.
+- Otherwise the base is the mean of the assignments, or the field's
+  current value when there is none. That base is multiplied by the product
+  of the factors, then clamped to the lowest low and the highest high of
+  every clamp. Sums run in mutator list order. Each mutator multiplies its
+  own factors in file order. Those products then multiply in a fixed
+  order: the exact bits of the factor, smaller first, and, when the bits
+  match, the rule text of the scales (the source name and line of each
+  one, in file order). A mean is the sum divided by the count. The clamp
+  is applied to the combined product, not to each mutator before the
+  product.
+- A factor on a field that is absent, and that no assignment creates,
+  does nothing. An assignment or a meta value creates the field, and other
+  mutators' factors then apply to that base.
+- Text changes apply only when no numeric change touches the field.
+  Appends add in list order, including when the field is absent. An
+  assignment or a removal takes effect only when it is the only text
+  change. Two assignments, two removals, or one of each, cancel, and the
+  field stays as it was. Appends alongside an assignment or a removal
+  still append; the assignment or removal is noted and does not write. A
+  mutator that contributed nothing to the value actually written is not
+  listed on it.
+
+A number is written only with the TDF number spelling, and only when it is
+finite and different from the field's current number. The current text has
+to start, after spaces or tabs, with a sign and a digit before it counts
+as that number: a factor does not treat a word as zero. A result that is
+not finite is not written, and a clamp is not allowed to pull an infinite
+result back into range. A combined value that is written outside the clamp
+one mutator gave on its own is noted, naming that mutator, its range, and
+the range that was used.
+
+One field is written at most once. A key the record does not hold is
+written with the spelling that sorts first by raw bytes among the changes
+that name it, so `EnergyStorage` precedes `energystorage` and the file's
+bytes do not depend on list order.
+
+### 6.7 Which records a rule reaches
+
+A target is a folder and a filename suffix. The suffix matches the end of
+the file name, without ASCII case, so `sidedata.tdf` reaches that file and
+`tdf` reaches every file of that ending. The folder is not recursive:
+`features/corpses` reaches `features/corpses/a.tdf` and not a file in a
+folder below it.
+
+A folder whose first segment is one of the seven base directory names
+(`units`, `weapons`, `gamedata`, `ai`, `guis`, `unitpics`, `download`)
+means the active layout's folder of that kind. The suffix `fbi` means the
+layout's unit extension. Any other folder and suffix are kept as the rule
+wrote them. Until a block sets a target, the target is the units folder
+and the unit extension.
+
+Unit files hold one record, the first `[UNITINFO]` section. A named block
+matches `UnitName` without ASCII case, and the record is reported under
+that name when the key is present, otherwise under the section name. Every
+other folder treats each top-level section as a record, and a named block
+matches the section name without ASCII case.
+
+The layout's `gamedata/moveinfo.tdf` is read as movement classes. Units
+and weapons win over that path when the same file could be read both ways.
+A weapon file's `[DAMAGE]` block is reached by `<AllDepth2>`, not as a
+record of its own.
