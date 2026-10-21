@@ -117,6 +117,48 @@ struct PlanFault {
     std::string message;
 };
 
+/// What the plan phase found wrong with one part of the plan.
+enum class PartFault : uint8_t {
+    none,
+    wrong_type,     ///< files or rules is not a table, or a hook is not a function
+    metatable,      ///< files or rules has a metatable
+    mask_shape,     ///< files.mask is not a list of text
+    mask_metatable, ///< files.mask has a metatable
+    add_shape,      ///< files.add is not a list of text
+    add_metatable,  ///< files.add has a metatable
+    key_not_text,   ///< files holds a key that is not text
+    unknown_key,    ///< files holds a key other than mask and add
+};
+
+/// The plan as the plan phase read it, by raw access only.
+///
+/// It holds registry references, flags and faults, and nothing that needs
+/// destroying, so the read can raise. The text of a refusal is made after
+/// the phase, from these. Every table a reference names was checked to be
+/// plain, and every list to hold only text.
+struct PlanShape {
+    bool returned_table{false};
+    bool metatable{false};
+    bool key_not_text{false};
+    /// The first unsupported plan key, byte by byte.
+    int unknown_key{LUA_NOREF};
+    bool has_files{false};
+    PartFault files_fault{PartFault::none};
+    /// The unsupported key in files, when it is text.
+    int files_key{LUA_NOREF};
+    int mask_list{LUA_NOREF};
+    int add_list{LUA_NOREF};
+    bool has_rules{false};
+    PartFault rules_fault{PartFault::none};
+    int rules_list{LUA_NOREF};
+    bool has_units{false};
+    PartFault units_fault{PartFault::none};
+    int units_hook{LUA_NOREF};
+    bool has_weapons{false};
+    PartFault weapons_fault{PartFault::none};
+    int weapons_hook{LUA_NOREF};
+};
+
 /// Pointers a Lua callback may use. The callback holds none of its own.
 struct ContextView {
     const ModIdentity* mod{};
@@ -124,10 +166,10 @@ struct ContextView {
     const std::vector<LoadoutOption>* options{};
 };
 
-/// What `mutate` left in the registry.
+/// What `mutate` returned, as the plan phase read it.
 struct MutateBox {
     const ContextView* context{};
-    int ref{LUA_NOREF};
+    PlanShape shape;
     int results{0};
     int missing{0};
 };
@@ -514,14 +556,14 @@ int push_mutate(void* context, lua_State* state) {
     return 1;
 }
 
+void read_plan_shape(lua_State* state, int index, PlanShape* shape);
+
 void read_mutate(void* context, lua_State* state, int results) {
     auto* box = static_cast<MutateBox*>(context);
     box->results = results;
-    box->ref = LUA_NOREF;
     if (results != 1 || !lua_istable(state, -1))
         return;
-    lua_pushvalue(state, -1);
-    box->ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    read_plan_shape(state, lua_gettop(state), &box->shape);
 }
 
 void look_mutate(void* context, lua_State* state) {
@@ -548,126 +590,304 @@ int push_hook(void* context, lua_State* state) {
     return 2;
 }
 
-/// Reads a sequence of strings. `what` names the field in the refusal.
-bool read_string_list(
-    lua_State* state, int table, std::vector<std::string>& out, std::string& error, const char* what
-) {
-    if (lua_isnil(state, table))
-        return true;
-    if (!lua_istable(state, table)) {
-        error = std::string{what} + " must be a list of text";
-        return false;
+/// What the plan phase found in one list of text.
+enum class ListFault : uint8_t {
+    none,      ///< absent, or plain and holding only text
+    shape,     ///< not a list of text
+    metatable, ///< a table with a metatable
+};
+
+/// Reads one list of text inside the plan phase, by raw access only.
+///
+/// Nothing here needs destroying, so a refused allocation can raise. A list
+/// it accepts is kept by a registry reference.
+///
+/// @param state the sandbox state
+/// @param index the list's stack index
+/// @param[out] ref the list's reference, when it is accepted and present
+/// @return what was found
+ListFault read_text_list(lua_State* state, int index, int* ref) {
+    const int list = lua_absindex(state, index);
+    if (lua_isnil(state, list))
+        return ListFault::none;
+    if (!lua_istable(state, list))
+        return ListFault::shape;
+    if (lua_getmetatable(state, list) != 0) {
+        lua_pop(state, 1);
+        return ListFault::metatable;
     }
-    const lua_Unsigned count = lua_rawlen(state, table);
+    const lua_Unsigned count = lua_rawlen(state, list);
     for (lua_Unsigned slot = 1; slot <= count; ++slot) {
-        lua_rawgeti(state, table, static_cast<lua_Integer>(slot));
+        const int kind = lua_rawgeti(state, list, static_cast<lua_Integer>(slot));
+        lua_pop(state, 1);
+        if (kind != LUA_TSTRING)
+            return ListFault::shape;
+    }
+    lua_pushvalue(state, list);
+    *ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    return ListFault::none;
+}
+
+/// Reads the files table inside the plan phase, by raw access only.
+///
+/// @param state the sandbox state
+/// @param index the table's stack index
+/// @param[out] shape where the lists and the fault go
+void read_files_shape(lua_State* state, int index, PlanShape* shape) {
+    const int files = lua_absindex(state, index);
+    shape->has_files = true;
+    if (!lua_istable(state, files)) {
+        shape->files_fault = PartFault::wrong_type;
+        return;
+    }
+    if (lua_getmetatable(state, files) != 0) {
+        lua_pop(state, 1);
+        shape->files_fault = PartFault::metatable;
+        return;
+    }
+    lua_pushliteral(state, "mask");
+    lua_rawget(state, files);
+    const ListFault mask = read_text_list(state, -1, &shape->mask_list);
+    lua_pop(state, 1);
+    if (mask != ListFault::none) {
+        shape->files_fault =
+            mask == ListFault::metatable ? PartFault::mask_metatable : PartFault::mask_shape;
+        return;
+    }
+    lua_pushliteral(state, "add");
+    lua_rawget(state, files);
+    const ListFault add = read_text_list(state, -1, &shape->add_list);
+    lua_pop(state, 1);
+    if (add != ListFault::none) {
+        shape->files_fault =
+            add == ListFault::metatable ? PartFault::add_metatable : PartFault::add_shape;
+        return;
+    }
+    lua_pushnil(state);
+    while (lua_next(state, files) != 0) {
+        lua_pop(state, 1);
         if (lua_type(state, -1) != LUA_TSTRING) {
             lua_pop(state, 1);
-            error = std::string{what} + " must be a list of text";
-            return false;
+            shape->files_fault = PartFault::key_not_text;
+            return;
         }
+        std::size_t length = 0;
+        const char* text = lua_tolstring(state, -1, &length);
+        const std::string_view key{text, length};
+        if (key == "mask" || key == "add")
+            continue;
+        shape->files_fault = PartFault::unknown_key;
+        shape->files_key = luaL_ref(state, LUA_REGISTRYINDEX);
+        return;
+    }
+}
+
+/// Reads the rules list inside the plan phase. D09 reads its entries later.
+///
+/// @param state the sandbox state
+/// @param index the list's stack index
+/// @param[out] shape where the list and the fault go
+void read_rules_shape(lua_State* state, int index, PlanShape* shape) {
+    const int list = lua_absindex(state, index);
+    shape->has_rules = true;
+    if (!lua_istable(state, list)) {
+        shape->rules_fault = PartFault::wrong_type;
+        return;
+    }
+    if (lua_getmetatable(state, list) != 0) {
+        lua_pop(state, 1);
+        shape->rules_fault = PartFault::metatable;
+        return;
+    }
+    lua_pushvalue(state, list);
+    shape->rules_list = luaL_ref(state, LUA_REGISTRYINDEX);
+}
+
+/// Reads one hook inside the plan phase and takes its reference there.
+///
+/// @param state the sandbox state
+/// @param index the value's stack index
+/// @param[out] present set: the plan names the hook
+/// @param[out] fault set when the value is not a function
+/// @param[out] ref the function's reference
+void read_hook_shape(lua_State* state, int index, bool* present, PartFault* fault, int* ref) {
+    const int value = lua_absindex(state, index);
+    *present = true;
+    if (!lua_isfunction(state, value)) {
+        *fault = PartFault::wrong_type;
+        return;
+    }
+    lua_pushvalue(state, value);
+    *ref = luaL_ref(state, LUA_REGISTRYINDEX);
+}
+
+/// Reads what `mutate` returned, inside the plan phase.
+///
+/// Raw access only, so no metamethod of the script runs. Nothing here needs
+/// destroying, so a refused allocation can raise; the phase reports it with
+/// the mutator's allowances and real-time limit in force. A table with a
+/// metatable is refused rather than read around: its raw contents need not
+/// be what the script meant.
+///
+/// @param state the sandbox state
+/// @param index the plan's stack index
+/// @param[out] shape what was found
+void read_plan_shape(lua_State* state, int index, PlanShape* shape) {
+    const int plan = lua_absindex(state, index);
+    shape->returned_table = true;
+    if (lua_getmetatable(state, plan) != 0) {
+        lua_pop(state, 1);
+        shape->metatable = true;
+        return;
+    }
+    lua_pushnil(state);
+    const int first_unknown = lua_gettop(state);
+    lua_pushnil(state);
+    while (lua_next(state, plan) != 0) {
+        const int value = lua_gettop(state);
+        const int key = value - 1;
+        if (lua_type(state, key) != LUA_TSTRING) {
+            shape->key_not_text = true;
+            lua_settop(state, key);
+            continue;
+        }
+        std::size_t length = 0;
+        const char* text = lua_tolstring(state, key, &length);
+        const std::string_view name{text, length};
+        const PlanKeyRow* row = plan_key(name);
+        if (row == nullptr) {
+            bool earlier = lua_isnil(state, first_unknown);
+            if (!earlier) {
+                std::size_t kept_length = 0;
+                const char* kept = lua_tolstring(state, first_unknown, &kept_length);
+                earlier = name < std::string_view{kept, kept_length};
+            }
+            if (earlier) {
+                lua_pushvalue(state, key);
+                lua_replace(state, first_unknown);
+            }
+        } else if (row->job == KeyJob::files) {
+            read_files_shape(state, value, shape);
+        } else if (row->job == KeyJob::rules) {
+            read_rules_shape(state, value, shape);
+        } else if (row->job == KeyJob::units_hook) {
+            read_hook_shape(
+                state, value, &shape->has_units, &shape->units_fault, &shape->units_hook
+            );
+        } else {
+            read_hook_shape(
+                state, value, &shape->has_weapons, &shape->weapons_fault, &shape->weapons_hook
+            );
+        }
+        lua_settop(state, key);
+    }
+    if (lua_isnil(state, first_unknown))
+        lua_pop(state, 1);
+    else
+        shape->unknown_key = luaL_ref(state, LUA_REGISTRYINDEX);
+}
+
+/// A plan refusal.
+PlanFault refuse_plan(Cause cause, std::string message) {
+    PlanFault fault;
+    fault.failed = true;
+    fault.cause = cause;
+    fault.message = std::move(message);
+    return fault;
+}
+
+/// Copies the text a registry reference names.
+///
+/// The plan phase made the reference to a string, and no script runs after
+/// it, so nothing here calls a script or allocates in the state.
+std::string text_at(lua_State* state, int ref) {
+    lua_rawgeti(state, LUA_REGISTRYINDEX, ref);
+    std::size_t length = 0;
+    const char* text = lua_tolstring(state, -1, &length);
+    std::string copied = text != nullptr ? std::string(text, length) : std::string{};
+    lua_pop(state, 1);
+    return copied;
+}
+
+/// Copies a list the plan phase accepted. It is plain and holds only text,
+/// so nothing here calls a script or allocates in the state.
+void copy_text_list(lua_State* state, int ref, std::vector<std::string>& out) {
+    if (ref == LUA_NOREF)
+        return;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, ref);
+    const int list = lua_gettop(state);
+    const lua_Unsigned count = lua_rawlen(state, list);
+    for (lua_Unsigned slot = 1; slot <= count; ++slot) {
+        lua_rawgeti(state, list, static_cast<lua_Integer>(slot));
         std::size_t length = 0;
         const char* text = lua_tolstring(state, -1, &length);
         out.emplace_back(text, length);
         lua_pop(state, 1);
     }
-    return true;
+    lua_pop(state, 1);
 }
 
-/// Collects the plan table's keys and sorts them byte by byte.
-bool collect_keys(lua_State* state, int table, std::vector<std::string>& keys, std::string& error) {
-    bool non_string = false;
-    lua_pushnil(state);
-    while (lua_next(state, table) != 0) {
-        if (lua_type(state, -2) != LUA_TSTRING)
-            non_string = true;
-        else {
-            std::size_t length = 0;
-            const char* text = lua_tolstring(state, -2, &length);
-            keys.emplace_back(text, length);
-        }
-        lua_pop(state, 1);
-    }
-    if (non_string) {
-        error = "a plan key must be text";
-        return false;
-    }
-    std::sort(keys.begin(), keys.end());
-    return true;
-}
-
-/// Reads the files table into `plan`.
-PlanFault
-read_files_table(lua_State* state, int table, const oamut::Manifest& manifest, Plan& plan) {
-    PlanFault fault;
-    if (!lua_istable(state, table)) {
-        fault.failed = true;
-        fault.cause = Cause::invalid_plan;
-        fault.message = "files must be a table";
-        return fault;
-    }
-    lua_getfield(state, table, "mask");
-    std::string shape;
-    if (!read_string_list(state, lua_gettop(state), plan.files.mask, shape, "files.mask")) {
-        lua_pop(state, 1);
-        fault.failed = true;
-        fault.cause = Cause::invalid_plan;
-        fault.message = std::move(shape);
-        return fault;
-    }
-    lua_pop(state, 1);
-    lua_getfield(state, table, "add");
-    if (!read_string_list(state, lua_gettop(state), plan.files.add, shape, "files.add")) {
-        lua_pop(state, 1);
-        fault.failed = true;
-        fault.cause = Cause::invalid_plan;
-        fault.message = std::move(shape);
-        return fault;
-    }
-    lua_pop(state, 1);
-    lua_pushnil(state);
-    while (lua_next(state, table) != 0) {
-        std::string key;
-        if (lua_type(state, -2) == LUA_TSTRING) {
-            std::size_t length = 0;
-            const char* text = lua_tolstring(state, -2, &length);
-            key.assign(text, length);
-        }
-        lua_pop(state, 1);
-        if (key != "mask" && key != "add") {
-            fault.failed = true;
-            fault.cause = Cause::invalid_plan;
-            fault.message = "the plan key files." + key + " is not supported by this engine";
-            return fault;
-        }
-    }
-    if (!declares(manifest, oamut::Layer::files)) {
-        fault.failed = true;
-        fault.cause = Cause::undeclared_layer;
-        fault.message = "returns a files plan but its manifest does not declare the files layer";
-        return fault;
-    }
+/// Turns the files part of a plan into F03's plan, or refuses it.
+PlanFault read_files_part(
+    lua_State* state, const PlanShape& shape, const oamut::Manifest& manifest, Plan& plan
+) {
+    const PartFault seen = shape.files_fault;
+    if (seen == PartFault::wrong_type)
+        return refuse_plan(Cause::invalid_plan, "files must be a table");
+    if (seen == PartFault::metatable)
+        return refuse_plan(
+            Cause::invalid_plan, "files must be a plain table, not one with a metatable"
+        );
+    if (seen == PartFault::mask_shape)
+        return refuse_plan(Cause::invalid_plan, "files.mask must be a list of text");
+    if (seen == PartFault::mask_metatable)
+        return refuse_plan(
+            Cause::invalid_plan, "files.mask must be a plain list, not one with a metatable"
+        );
+    if (seen == PartFault::add_shape)
+        return refuse_plan(Cause::invalid_plan, "files.add must be a list of text");
+    if (seen == PartFault::add_metatable)
+        return refuse_plan(
+            Cause::invalid_plan, "files.add must be a plain list, not one with a metatable"
+        );
+    if (seen == PartFault::key_not_text)
+        return refuse_plan(Cause::invalid_plan, "a key of files must be text");
+    if (seen == PartFault::unknown_key)
+        return refuse_plan(
+            Cause::invalid_plan,
+            "the plan key files." + text_at(state, shape.files_key) +
+                " is not supported by this engine"
+        );
+    if (!declares(manifest, oamut::Layer::files))
+        return refuse_plan(
+            Cause::undeclared_layer,
+            "returns a files plan but its manifest does not declare the files layer"
+        );
+    copy_text_list(state, shape.mask_list, plan.files.mask);
+    copy_text_list(state, shape.add_list, plan.files.add);
     plan.has_files = !plan.files.mask.empty() || !plan.files.add.empty();
-    return fault;
+    return {};
 }
 
-/// Reads the rules list and checks each target's layer.
-PlanFault read_rules_table(
+/// Reads the rules list with D09 and checks each target's layer.
+///
+/// D09 reads the list by raw access and keeps C++ objects while it does,
+/// so it runs after the plan phase, on a list that phase found plain.
+PlanFault read_rules_part(
     lua_State* state,
-    int table,
+    const PlanShape& shape,
     const Listing& listing,
     std::string_view entry,
     const oamut::Manifest& manifest,
     const defs::DataLayout& layout,
     Plan& plan
 ) {
-    PlanFault fault;
-    if (!lua_istable(state, table)) {
-        fault.failed = true;
-        fault.cause = Cause::invalid_plan;
-        fault.message = "rules must be a list";
-        return fault;
-    }
+    if (shape.rules_fault == PartFault::wrong_type)
+        return refuse_plan(Cause::invalid_plan, "rules must be a list");
+    if (shape.rules_fault == PartFault::metatable)
+        return refuse_plan(
+            Cause::invalid_plan, "rules must be a plain list, not one with a metatable"
+        );
     const PackageReader reader = [&listing](std::string_view path, std::string* error) {
         std::vector<uint8_t> bytes;
         if (!read_listed(listing, path, bytes)) {
@@ -677,13 +897,11 @@ PlanFault read_rules_table(
         }
         return std::optional<std::vector<uint8_t>>{std::move(bytes)};
     };
-    PlanRules parsed = read_plan_rules(state, table, reader, entry);
-    if (!parsed.ok()) {
-        fault.failed = true;
-        fault.cause = Cause::unreadable_rules;
-        fault.message = std::move(parsed.error);
-        return fault;
-    }
+    lua_rawgeti(state, LUA_REGISTRYINDEX, shape.rules_list);
+    PlanRules parsed = read_plan_rules(state, lua_gettop(state), reader, entry);
+    lua_pop(state, 1);
+    if (!parsed.ok())
+        return refuse_plan(Cause::unreadable_rules, std::move(parsed.error));
     plan.rules.sources = std::move(parsed.sources);
     plan.has_rules = !plan.rules.sources.empty();
     std::vector<rules::MutatorRules> one;
@@ -695,106 +913,97 @@ PlanFault read_rules_table(
         const rules::TargetKind kind = kind_of(target.folder, folder, extension, layout);
         const oamut::Layer layer = layer_for_kind(kind);
         if (!declares(manifest, layer)) {
-            fault.failed = true;
-            fault.cause = Cause::undeclared_layer;
             const char* name = oamut::layer_name(layer);
-            fault.message = std::string{"returns a rule for the "} + name +
-                            " layer but its manifest does not declare the " + name + " layer";
-            return fault;
+            return refuse_plan(
+                Cause::undeclared_layer,
+                std::string{"returns a rule for the "} + name +
+                    " layer but its manifest does not declare the " + name + " layer"
+            );
         }
     }
-    return fault;
+    return {};
 }
 
-/// Reads one hook function and checks its layer.
-PlanFault read_hook(
-    lua_State* state,
-    int table,
+/// Checks one hook the plan phase found and keeps its reference.
+PlanFault read_hook_part(
+    PartFault seen,
+    int found,
     const char* name,
     oamut::Layer layer,
     const oamut::Manifest& manifest,
     int& ref
 ) {
-    PlanFault fault;
-    if (lua_isnil(state, table))
-        return fault;
-    if (!lua_isfunction(state, table)) {
-        fault.failed = true;
-        fault.cause = Cause::invalid_plan;
-        fault.message = std::string{name} + " must be a function";
-        return fault;
-    }
-    if (!declares(manifest, layer)) {
-        fault.failed = true;
-        fault.cause = Cause::undeclared_layer;
-        fault.message = std::string{"returns a "} + name +
-                        " hook but its manifest does not declare the " + name + " layer";
-        return fault;
-    }
-    lua_pushvalue(state, table);
-    ref = luaL_ref(state, LUA_REGISTRYINDEX);
-    return fault;
+    if (seen == PartFault::wrong_type)
+        return refuse_plan(Cause::invalid_plan, std::string{name} + " must be a function");
+    if (!declares(manifest, layer))
+        return refuse_plan(
+            Cause::undeclared_layer,
+            std::string{"returns a "} + name + " hook but its manifest does not declare the " +
+                name + " layer"
+        );
+    ref = found;
+    return {};
 }
 
-/// Reads the table mutate returned. The state is alive and not inside a callback.
+/// Turns the plan the phase read into a `Plan`, or refuses it.
+///
+/// The checks run in the order the keys sort in: files, rules, units, then
+/// weapons, and the first refusal is the one reported.
 PlanFault read_returned_plan(
     lua_State* state,
-    int ref,
+    const PlanShape& shape,
     const Listing& listing,
     std::string_view entry,
     const oamut::Manifest& manifest,
     const defs::DataLayout& layout,
     Plan& plan
 ) {
+    if (!shape.returned_table)
+        return refuse_plan(Cause::invalid_plan, "mutate must return a table");
+    if (shape.metatable)
+        return refuse_plan(
+            Cause::invalid_plan, "the plan must be a plain table, not one with a metatable"
+        );
+    if (shape.key_not_text)
+        return refuse_plan(Cause::invalid_plan, "a plan key must be text");
+    if (shape.unknown_key != LUA_NOREF)
+        return refuse_plan(
+            Cause::invalid_plan,
+            "the plan key " + text_at(state, shape.unknown_key) + " is not supported by this engine"
+        );
     PlanFault fault;
-    if (ref == LUA_NOREF) {
-        fault.failed = true;
-        fault.cause = Cause::invalid_plan;
-        fault.message = "mutate must return a table";
-        return fault;
-    }
-    lua_rawgeti(state, LUA_REGISTRYINDEX, ref);
-    const int table = lua_gettop(state);
-    std::vector<std::string> keys;
-    std::string keys_error;
-    if (!collect_keys(state, table, keys, keys_error)) {
-        lua_pop(state, 1);
-        fault.failed = true;
-        fault.cause = Cause::invalid_plan;
-        fault.message = std::move(keys_error);
-        return fault;
-    }
-    for (const std::string& key : keys) {
-        if (plan_key(key) == nullptr) {
-            lua_pop(state, 1);
-            fault.failed = true;
-            fault.cause = Cause::invalid_plan;
-            fault.message = "the plan key " + key + " is not supported by this engine";
+    if (shape.has_files) {
+        fault = read_files_part(state, shape, manifest, plan);
+        if (fault.failed)
             return fault;
-        }
     }
-    for (const std::string& key : keys) {
-        const PlanKeyRow* row = plan_key(key);
-        lua_getfield(state, table, key.c_str());
-        const int value = lua_gettop(state);
-        if (row->job == KeyJob::files)
-            fault = read_files_table(state, value, manifest, plan);
-        else if (row->job == KeyJob::rules)
-            fault = read_rules_table(state, value, listing, entry, manifest, layout, plan);
-        else if (row->job == KeyJob::units_hook)
-            fault =
-                read_hook(state, value, "units", oamut::Layer::units, manifest, plan.units_hook);
-        else
-            fault = read_hook(
-                state, value, "weapons", oamut::Layer::weapons, manifest, plan.weapons_hook
-            );
-        lua_pop(state, 1);
-        if (fault.failed) {
-            lua_pop(state, 1);
+    if (shape.has_rules) {
+        fault = read_rules_part(state, shape, listing, entry, manifest, layout, plan);
+        if (fault.failed)
             return fault;
-        }
     }
-    lua_pop(state, 1);
+    if (shape.has_units) {
+        fault = read_hook_part(
+            shape.units_fault,
+            shape.units_hook,
+            "units",
+            oamut::Layer::units,
+            manifest,
+            plan.units_hook
+        );
+        if (fault.failed)
+            return fault;
+    }
+    if (shape.has_weapons) {
+        fault = read_hook_part(
+            shape.weapons_fault,
+            shape.weapons_hook,
+            "weapons",
+            oamut::Layer::weapons,
+            manifest,
+            plan.weapons_hook
+        );
+    }
     return fault;
 }
 
@@ -1423,7 +1632,7 @@ void plan_mutator(
         sandbox.reset();
         return;
     }
-    if (box.missing != 0 || box.ref == LUA_NOREF) {
+    if (box.missing != 0) {
         fail_mutator(result, Phase::plan, Cause::invalid_plan, "mutate must return a table");
         sandbox.reset();
         return;
@@ -1432,7 +1641,7 @@ void plan_mutator(
     PlanFault fault;
     try {
         fault = read_returned_plan(
-            sandbox->state(), box.ref, listing, entry, input.mutators[slot].manifest, layout, plan
+            sandbox->state(), box.shape, listing, entry, input.mutators[slot].manifest, layout, plan
         );
     } catch (const std::bad_alloc&) {
         throw;

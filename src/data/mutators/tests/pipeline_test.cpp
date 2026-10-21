@@ -714,6 +714,28 @@ void test_dependants_of_dependants() {
     release(swift_store);
 }
 
+void test_plan_tables_are_plain() {
+    // The plan is read by raw access inside the plan phase. A files table
+    // with a metatable is refused there, so its __index never runs: neither
+    // its error nor its endless loop can reach the engine.
+    for (const std::string_view id : {"ridge-files-raise", "ridge-files-loop"}) {
+        oa::AssetStore store = open_ridge();
+        mutators::PipelineInput input = input_of({id});
+        input.budget.instructions = 2000000;
+        const mutators::PipelineResult result = mutators::run_pipeline(store, input);
+        OA_CHECK(result.refusal.empty());
+        OA_CHECK(result.mutators.size() == 1);
+        if (result.mutators.size() == 1) {
+            OA_CHECK(result.mutators[0].outcome == mutators::Outcome::failed);
+            OA_CHECK(result.mutators[0].phase == mutators::Phase::plan);
+            OA_CHECK(result.mutators[0].cause == mutators::Cause::invalid_plan);
+            OA_CHECK(result.mutators[0].message.find("metatable") != std::string::npos);
+        }
+        OA_CHECK(!store.mutator_layer_mounted());
+        release(store);
+    }
+}
+
 void test_string_cap_is_its_own_cause() {
     oa::AssetStore store = open_ridge();
     const mutators::PipelineResult result =
@@ -780,6 +802,7 @@ int main() {
     test_list_rules();
     test_compatibility_and_repeat();
     test_dependants_of_dependants();
+    test_plan_tables_are_plain();
     test_string_cap_is_its_own_cause();
     test_unread_document_warned_once();
     test_player_option();
