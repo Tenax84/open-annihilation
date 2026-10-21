@@ -633,9 +633,27 @@ resolve_choice(const MutatorChoice& choice, const fs::path& mutators_folder, std
         if (!installed->package_sha256.empty()) {
             const std::optional<base::sha256::Digest> digest =
                 base::sha256::parse_hex(installed->package_sha256);
-            if (!digest)
-                return refuse_resolved(error, in_quotes(choice.target) + " has no package SHA-256");
+            if (!digest) {
+                return refuse_resolved(
+                    error,
+                    in_quotes(choice.target) +
+                        " records a package SHA-256 that is not 64 hexadecimal digits"
+                );
+            }
             resolved.package = *digest;
+        } else {
+            std::string digest_error;
+            const std::optional<base::sha256::Digest> digest =
+                folder_digest(resolved.package_folder, &digest_error);
+            if (!digest) {
+                return refuse_resolved(
+                    error,
+                    digest_error.empty() ? in_quotes(choice.target) + " is not a mutator package"
+                                         : digest_error
+                );
+            }
+            resolved.package = *digest;
+            resolved.folder = true;
         }
     }
     if (!type_options(resolved.manifest, choice.options, resolved.options, error))

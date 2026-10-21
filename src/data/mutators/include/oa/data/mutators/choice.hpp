@@ -76,9 +76,9 @@ struct ResolvedMutator {
     /// Every option, defaults filled, in the manifest's order.
     std::vector<LoadoutOption> options{};
     /// The package file's SHA-256, or the folder digest when `folder` is set.
-    /// All zero when an installed mutator records no SHA-256.
     base::sha256::Digest package{};
-    /// True when the package was a folder named by path, not a package file.
+    /// True when the package is named by its folder digest: a path, or an
+    /// installed folder whose origin record names no SHA-256.
     bool folder{false};
 };
 
@@ -88,13 +88,13 @@ struct ResolvedMutator {
 /// is the package folder itself, absolute or relative to the working
 /// directory; the listing is not used. The manifest is `oamut.yaml`, matched
 /// without ASCII case, and a symbolic link is not followed. An id keeps the
-/// SHA-256 the origin record stored, or an all-zero digest when that record
-/// names none; a recorded SHA-256 that is not 64 hexadecimal digits is
-/// refused. A path keeps the folder digest, and sets `folder`, and the
-/// folder digest's refusal is the choice's refusal. A missing mutator, an
-/// option the manifest does not have, a value of the wrong kind and a value
-/// outside the option's choices are refused. The words name the player's
-/// text.
+/// SHA-256 the origin record stored. When that record names no SHA-256, the
+/// id keeps the folder digest of the installed folder and sets `folder`. A
+/// recorded SHA-256 that is not 64 hexadecimal digits is refused. A path
+/// keeps the folder digest, and sets `folder`, and the folder digest's
+/// refusal is the choice's refusal. A missing mutator, an option the
+/// manifest does not have, a value of the wrong kind and a value outside
+/// the option's choices are refused. The words name the player's text.
 ///
 /// @param choice the choice
 /// @param mutators_folder the player's Mutators folder, for an id

@@ -260,10 +260,13 @@ struct PipelineResult;
 /// Finds the installed packages a loadout names.
 ///
 /// Each entry is looked up in `mutators_folder` by id. The installed
-/// manifest's version text and the origin record's package SHA-256 must be
-/// the entry's. The options are typed as `resolve_choice` types them from
-/// `options_text`. A folder entry, a missing package, another version and
-/// another SHA-256 are refused, and the error names the entry.
+/// manifest's version text must be the entry's. A package entry's SHA-256
+/// must be the origin record's. A folder entry is accepted when the
+/// installed folder of that id has the same folder digest, and refused,
+/// naming it as a package folder, when it does not. The options are typed
+/// as `resolve_choice` types them from `options_text`. A missing package,
+/// another version and another SHA-256 are refused, and the error names
+/// the entry.
 ///
 /// @param loadout the loadout
 /// @param mutators_folder the player's Mutators folder

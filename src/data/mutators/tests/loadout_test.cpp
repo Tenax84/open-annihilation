@@ -890,6 +890,13 @@ void pipe_folder(const Scratch& scratch) {
 
 } // namespace
 
+namespace {
+void applied_only();
+void chosen_list(const Scratch& scratch);
+void resolves_installed(const Scratch& scratch);
+void hand_made_folder(const Scratch& scratch);
+} // namespace
+
 int main() {
     canonical_form();
     digests();
@@ -902,6 +909,10 @@ int main() {
         folder(scratch);
         unicode_folder(scratch);
         pipe_folder(scratch);
+        applied_only();
+        chosen_list(scratch);
+        resolves_installed(scratch);
+        hand_made_folder(scratch);
     }
     const int status = oa::test::check_exit_status();
     if (status == 0)
@@ -1150,7 +1161,7 @@ void chosen_list(const Scratch& scratch) {
 /// Checks that only the mutators a result applied stay, in order.
 void applied_only() {
     mutators::Loadout chosen;
-    for (const char* id : {"ridge-one", "ridge-two", "ridge-three"}) {
+    for (const char* id : {"ridge-one", "ridge-two", "ridge-three", "ridge-four", "ridge-five"}) {
         mutators::LoadoutEntry entry;
         entry.id = id;
         entry.version = "1";
@@ -1167,6 +1178,8 @@ void applied_only() {
     result.mutators.push_back(outcome("ridge-one", mutators::Outcome::applied));
     result.mutators.push_back(outcome("ridge-two", mutators::Outcome::failed));
     result.mutators.push_back(outcome("ridge-three", mutators::Outcome::applied));
+    result.mutators.push_back(outcome("ridge-four", mutators::Outcome::excluded));
+    result.mutators.push_back(outcome("ridge-five", mutators::Outcome::incompatible));
     const mutators::Loadout kept = mutators::applied_loadout(chosen, result);
     expect(kept.entries.size() == 2, "applied_loadout drops the mutator that did not apply");
     expect(
@@ -1247,15 +1260,64 @@ void resolves_installed(const Scratch& scratch) {
     expect(error == "\"ridge-plain\" is a package folder", "the folder entry is named: " + error);
 }
 
-struct ChosenLoadoutTests {
-    ChosenLoadoutTests() {
-        applied_only();
-        const Scratch scratch;
-        chosen_list(scratch);
-        resolves_installed(scratch);
-    }
-};
+/// Checks a hand-made folder, a different folder digest and a bad SHA-256.
+///
+/// @param scratch the scratch directory
+void hand_made_folder(const Scratch& scratch) {
+    const fs::path mutators = scratch.root / "handmade";
+    write_package(mutators / "ridge-hand", plain_manifest("ridge-hand", "1.0"), {});
+    const mutators::ResolvedMutator hand = resolved_text("ridge-hand", mutators);
+    expect(hand.folder, "a hand-made folder sets folder");
+    std::string digest_error;
+    const std::optional<sha::Digest> digest =
+        mutators::folder_digest(mutators / "ridge-hand", &digest_error);
+    expect(
+        digest.has_value() && hand.package == *digest,
+        "a hand-made folder keeps the folder digest: " + digest_error
+    );
 
-const ChosenLoadoutTests chosen_loadout_tests{};
+    const mutators::Loadout made =
+        mutators::loadout_of(std::vector<mutators::ResolvedMutator>{hand});
+    std::string error;
+    const std::optional<std::vector<mutators::ResolvedMutator>> found =
+        mutators::resolve_loadout(made, mutators, &error);
+    expect(found.has_value(), "the same folder digest resolves: " + error);
+    if (found && found->size() == 1) {
+        expect(
+            (*found)[0].folder && (*found)[0].package == hand.package,
+            "playback keeps the folder digest"
+        );
+    } else {
+        expect(false, "resolve_loadout returned the hand-made package");
+    }
+
+    mutators::Loadout other = made;
+    if (!other.entries.empty())
+        other.entries[0].package = filled_digest(0x11);
+    expect(
+        !mutators::resolve_loadout(other, mutators, &error), "a different folder digest is refused"
+    );
+    expect(
+        error == "\"ridge-hand\" is a package folder",
+        "the different folder digest is named as a package folder: " + error
+    );
+
+    write_package(mutators / "ridge-bad", plain_manifest("ridge-bad", "1.0"), "abcd");
+    std::string bad_error;
+    const std::optional<mutators::MutatorChoice> choice =
+        mutators::parse_choice("ridge-bad", &bad_error);
+    expect(choice.has_value(), "the short SHA-256 choice parses: " + bad_error);
+    if (choice) {
+        expect(
+            !mutators::resolve_choice(*choice, mutators, &bad_error).has_value(),
+            "a SHA-256 that is not 64 hexadecimal digits is refused"
+        );
+        expect(
+            bad_error ==
+                "\"ridge-bad\" records a package SHA-256 that is not 64 hexadecimal digits",
+            "the short SHA-256 is named: " + bad_error
+        );
+    }
+}
 
 } // namespace

@@ -807,10 +807,6 @@ resolve_loadout(const Loadout& loadout, const fs::path& mutators_folder, std::st
     std::vector<ResolvedMutator> resolved;
     resolved.reserve(loadout.entries.size());
     for (const LoadoutEntry& entry : loadout.entries) {
-        if (entry.folder) {
-            set_error(error, in_quotes(entry.id) + " is a package folder");
-            return std::nullopt;
-        }
         const oa::data::mutator_library::InstalledMutator* installed =
             oa::data::mutator_library::find(listing, entry.id);
         if (installed == nullptr) {
@@ -824,11 +820,21 @@ resolve_loadout(const Loadout& loadout, const fs::path& mutators_folder, std::st
             );
             return std::nullopt;
         }
-        const std::optional<base::sha256::Digest> recorded =
-            base::sha256::parse_hex(installed->package_sha256);
-        if (!recorded || *recorded != entry.package) {
-            set_error(error, in_quotes(entry.id) + " is a different package");
-            return std::nullopt;
+        if (entry.folder) {
+            std::string digest_error;
+            const std::optional<base::sha256::Digest> digest =
+                folder_digest(installed->folder, &digest_error);
+            if (!digest || *digest != entry.package) {
+                set_error(error, in_quotes(entry.id) + " is a package folder");
+                return std::nullopt;
+            }
+        } else {
+            const std::optional<base::sha256::Digest> recorded =
+                base::sha256::parse_hex(installed->package_sha256);
+            if (!recorded || *recorded != entry.package) {
+                set_error(error, in_quotes(entry.id) + " is a different package");
+                return std::nullopt;
+            }
         }
         const std::string options = options_text(entry);
         std::string text = entry.id;
