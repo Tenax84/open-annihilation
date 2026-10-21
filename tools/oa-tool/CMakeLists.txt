@@ -130,6 +130,14 @@ if(BUILD_TESTING)
   add_test(NAME tools-oa-tool-mutator-import COMMAND oa-tool-mutator-import-test)
   set_tests_properties(tools-oa-tool-mutator-import PROPERTIES TIMEOUT 60)
 
+  # mutator diff: a stand-in game and, with --data, the installed game.
+  add_executable(oa-tool-mutator-diff-test tests/mutator_diff_test.cpp)
+  target_link_libraries(oa-tool-mutator-diff-test PRIVATE oa-tool-commands oa-data-defs
+    oa-formats-hpi oa-base-sha256 oa-test-support oa-test-game-data oa-options ZLIB::ZLIB)
+  add_test(NAME tools-oa-tool-mutator-diff COMMAND oa-tool-mutator-diff-test)
+  set_tests_properties(tools-oa-tool-mutator-diff PROPERTIES TIMEOUT 60)
+  oa_add_game_data_test(tools-oa-tool-mutator-diff-data oa-tool-mutator-diff-test --data)
+  set_tests_properties(tools-oa-tool-mutator-diff-data PROPERTIES TIMEOUT 300)
 
   # An expansion packed and checked against the test table, and refused by
   # the commands, which use the built-in table.

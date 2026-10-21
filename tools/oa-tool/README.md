@@ -52,6 +52,7 @@ same. `--` ends options. A command takes its options through
 | `mutator pack FOLDER [--out FILE] [--force]` | Packs a folder whose top holds `oamut.yaml`, the same way `pack` does. A folder without `oamut.yaml` is a usage error. |
 | `mutator check FILE [--json]` | Checks a `.oamut` and reports the same facts as `check`. A file of another kind is a usage error. |
 | `mutator import INPUT... --out DIR [--id ID] [--version VERSION] [--tag TAG]... [--works-with CODE=ENTRY]... [--pack] [--force]` | Imports each `.tam` or zip into `DIR/<id>/`. A `.tam`'s companions are read from its own folder, so DIR is not that folder. A zip is read on its own, so DIR may be the folder that holds the zip. A zip's names are the names the archive recorded. `--id` and `--version` apply to one mutator. `--tag` replaces the `gameplay` tag. `--works-with` maps a compatibility code; `OTA` and `TACC` are already mapped. `--pack` also writes `DIR/<id>-<version>.oamut`. `--force` replaces an existing folder. One line per mutator, then its warnings. Exit 0 when every mutator was imported. A link is not followed. |
+| `mutator diff --game-dir DIR [--mod-dir DIR] [--map NAME] [--seed N] [--mutator SPEC]... [--versus SPEC]... [--allow FILE] [--dump FILE]` | Mounts DIR the way the game does, and `--mod-dir` as a mod folder over it. Each `--mutator` and `--versus` is a package folder, with options after the last colon. An id with no path is refused. The report's change lines are `unit dropped NAME hidden\|copyright\|version`, `unit added NAME`, `file added PATH` or `file added PATH SHA`, `file hidden PATH`, `file replaced PATH OLD NEW`, `field PATH SECTION KEY: OLD -> NEW` and `menu added\|removed BUILDER PAGE BUTTON UNIT`. A missing side is `(absent)`. A journal id is added after a tab as `by <id>[,<id>...]`. The header lines are `# oa-tool mutator diff 1`, `# game:`, `# mod:`, `# loadout:`, `# seed:` and, when `--map` is set, `# map:`. `--versus` prints only the comparison: `left only` and `right only` lines, then `allowed difference matched nothing: <pattern>` for each unused pattern, then `mutator diff: <n> differences, <a> allowed, <u> unused allowances`. Download lines are dropped. A unit both sides drop loses its reason, its FBI lines, its menu lines and the build-button lines of a GUI section whose `name` is that unit. An allow file ignores blank lines, treats a `#` line as a reason and every other line as a whole-line pattern (`*` any run, `?` one character). Each pattern needs a reason above it in its block. `--dump` writes `path`, a tab, the source, a tab and the SHA-256, then one indented field line. Exit 0 when the report was written, or a comparison has nothing left and no unused pattern. |
 | `catalogue keygen --id ID --out FILE [--passphrase-file FILE]` | Makes a new Ed25519 key, seals its seed with a passphrase and writes FILE. The file is created only when that name is new, and on macOS and Linux its mode is 0600. The passphrase is read from the terminal with echo off, twice, and has to be at least 12 bytes. `--passphrase-file` reads the file's first line instead. Prints `key:`, `public: ed25519:` and `fingerprint:`. |
 | `catalogue public KEY_FILE` | Prints the same three lines. The passphrase is not used. |
 | `catalogue sign --key KEY_FILE CATALOGUE [--out SIG] [--passphrase-file FILE]` | Signs CATALOGUE's exact bytes and writes CATALOGUE.sig, or SIG. The line is the one a catalogue check reads: `ed25519`, the key id and the signature. A catalogue this build would refuse is refused before the key is opened. The written pair is checked before the command reports success. Prints `signed <file> with <id>`. |
@@ -111,6 +112,12 @@ given, so a test can capture every line.
 - `interface-words --json` prints one JSON array of the texts the modules
   export for the interface catalogue. The array is sorted and holds each
   text once. Any other arguments exit 2.
+- `mutator diff` prints the same bytes for the same inputs. The header is
+  not sorted with the change lines. Change lines are sorted by their bytes,
+  including the tab and the `by` suffix. Values are the text the file or the
+  formatter wrote.
+- `mutator diff --versus` exits 0 only when no difference remains and every
+  pattern matched a difference. The comparison is the text before a tab.
 
 ## Adding a command
 
@@ -163,6 +170,17 @@ it, replaces a folder with `--force`, and checks the usage errors. One
 refused mutator leaves the others written. A companion that is a link is
 not read, on a system that can make a link.
 
+`tools-oa-tool-mutator-diff` (`oa-tool-mutator-diff-test`) runs `mutator diff`
+against a stand-in game and made-up package folders. It checks the report,
+a second run with the same bytes, a relative path after changing directory,
+a dump that does not change the report, two ways of dropping a unit, a
+masked file and a build menu, a map profile, an allow file and the usage
+errors.
+
+`tools-oa-tool-mutator-diff-data` runs the same program with `--data` against
+the installed game. A doubling loadout's change lines are worker-time fields,
+and the same loadout written as rules matches it.
+
 `tools-oa-tool-check-map` (`oa-tool-check-map-test`) checks a made-up map
 pack against a stand-in game and a made-up mod. `tools-oa-tool-check-map-data`
 runs the same program with `--data` against the installed game.
@@ -209,4 +227,7 @@ not sign anything, and it posts no install result. A mirror folder is a copy
 of the registry. It is served as a direct registry: the files and signatures
 stand on their own, and the origin's key API stays the origin's policy. The
 macOS package does not ship `oa-tool`. `interface-words` takes only
-`--json`.
+`--json`. `mutator diff` reads package folders by path. An installed id is
+refused. It does not pack a `.oamut`, and it does not check a package's
+integrity. A comparison folds removals and where a build menu names a unit,
+and it does not fold anything else.
