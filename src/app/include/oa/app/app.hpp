@@ -295,6 +295,9 @@ struct Options {
     fs::path mod_dir;
     // Plays the game folder without the remembered mod folder (--base-game).
     bool base_game = false;
+    // Mutators for this run (--mutator PATH|ID[:OPTION=VALUE,...]), each
+    // value as written, in the order given. Empty applies none.
+    std::vector<std::string> mutators;
     /// The base game and expansions for this run (--content
     /// GAME[:EXPANSION,...]). Empty when the run uses the remembered choice.
     /// It is not written to the preferences, and the mounted files change

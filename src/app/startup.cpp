@@ -3,6 +3,7 @@
 
 // Command-line parsing for oa-game.
 #include "oa/app/app.hpp"
+#include "oa/data/mutators/choice.hpp"
 #include "oa/app/extension.hpp"
 #include "oa/app/game_directory.hpp"
 #include "net_options.hpp"
@@ -1259,6 +1260,14 @@ take_recording_option(std::string_view argument, ArgumentCursor& cursor, Options
 /// @return true when the option is one of these
 [[nodiscard]] bool
 take_engine_option(std::string_view argument, ArgumentCursor& cursor, Options& options) {
+    if (argument == "--mutator") {
+        const std::string value{option_value(cursor)};
+        std::string error;
+        if (!oa::data::mutators::parse_choice(value, &error))
+            throw std::runtime_error("--mutator: " + error);
+        options.mutators.push_back(value);
+        return true;
+    }
     if (argument == "--content") {
         options.content = std::string(option_value(cursor));
         return true;
@@ -1409,6 +1418,7 @@ void write_startup_line(std::string_view text) {
             usage << "usage: open-annihilation [--version] [--game-dir PATH | --choose-game-dir] "
                      "[--archive PATH]... "
                      "[--mod FILE] [--mod-dir PATH | --base-game] "
+                     "[--mutator PATH|ID[:OPTION=VALUE,...]] "
                      "[--content GAME[:EXPANSION,...]] [--print-profile] "
                      "[--accept-unimplemented-hacks] "
                      "[--skip-intro] [--first-run] [--frames N] [--headless-check] "
