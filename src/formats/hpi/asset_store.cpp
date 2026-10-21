@@ -994,6 +994,8 @@ struct ResourceFile {
     uint32_t position = 0;
     // Decoded 64 KiB block of a chunked entry, dropped on crossing a block.
     std::vector<uint8_t> block;
+    // Where a chunked entry's chunks are stored, read with its first block.
+    std::optional<formats::hpi::ChunkTable> chunks;
     // The pack layer this handle was opened from, kept until close.
     std::shared_ptr<const AssetStore::PackLayer> pack_layer;
     // A zip pack entry, read whole when the handle was opened, or a file the
@@ -1904,8 +1906,19 @@ int32_t AssetStore::read(ResourceFile* file, std::span<uint8_t> output) {
     while (copied < wanted) {
         const uint32_t base = file->position & ~(formats::hpi::BlockBytes - 1U);
         if (file->block.empty()) {
+            if (!file->chunks) {
+                auto table = file->archive->read_chunk_table(file->node);
+                // A table that cannot be read ends the read, as a chunk does.
+                if (!table.ok()) {
+                    if (table.error.code == base::bytes::DecodeCode::truncated)
+                        return -1;
+                    fail_entry_read(table.error, *file->archive_path, node);
+                }
+                file->chunks = std::move(*table.value);
+            }
             file->block.assign(std::min<uint32_t>(formats::hpi::BlockBytes, file->size - base), 0);
-            const auto read = file->archive->read_node_range(file->node, base, file->block);
+            const auto read =
+                file->archive->read_node_range(file->node, base, file->block, *file->chunks);
             if (!read.ok()) {
                 file->block.clear();
                 // A chunk that cannot be read ends the read; one that fails
