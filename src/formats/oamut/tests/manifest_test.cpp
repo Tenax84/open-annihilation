@@ -1190,10 +1190,10 @@ void test_refusals() {
     expect_one(with_options("options: []\n"), "options", "options: []", "must be an object", 0, 9);
     expect_one(
         with_options(
-            "options:\n  factor-x:\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+            "options:\n  Factor:\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
         ),
-        "options.factor-x",
-        "factor-x",
+        "options.Factor",
+        "Factor",
         "Lua name"
     );
     expect_one(
@@ -1745,16 +1745,34 @@ void test_reserved_option_ids() {
         "repeat",   "return", "then", "true", "until",  "while",
     };
     for (const std::string_view word : reserved) {
+        const std::string quoted = "\"" + std::string{word} + "\":";
         const std::string yaml = with_options(
-            "options:\n  " + std::string{word} +
-            ":\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+            "options:\n  " + quoted +
+            "\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
         );
         const std::string key = "options." + std::string{word};
-        const std::string marker = "\n  " + std::string{word} + ":";
+        const std::string marker = "\n  " + quoted;
         expect_one(yaml, key, marker, "is a word Lua reserves", 0, 3);
     }
 
-    for (const char* name : {"format", "ends", "For", "for_"}) {
+    expect_one(
+        with_options(
+            "options:\n  true:\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+        ),
+        "document",
+        "true:",
+        "mapping keys must be strings or integers"
+    );
+    expect_one(
+        with_options(
+            "options:\n  For:\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+        ),
+        "options.For",
+        "For",
+        "Lua name"
+    );
+
+    for (const char* name : {"format", "ends", "for_"}) {
         Manifest manifest;
         OA_CHECK(read_ok(
             with_options(

@@ -1088,10 +1088,9 @@ bool read_option(const oamod::Node& entry, Option& option, std::vector<Problem>&
             problems,
             entry.key.position,
             block,
-            reserved
-                ? block + " is a word Lua reserves"
-                : "an option id is a Lua name, [A-Za-z][A-Za-z0-9_]*, of 1 to " +
-                      std::to_string(most_option_id_bytes) + " bytes, and not a word Lua reserves"
+            reserved ? "is a word Lua reserves"
+                     : "an option id is a Lua name, [a-z][a-z0-9_]*, of 1 to " +
+                           std::to_string(most_option_id_bytes) + " bytes"
         );
         return false;
     }
@@ -1868,15 +1867,12 @@ bool lua_reserved_word(std::string_view text) noexcept {
 bool option_id(std::string_view text) noexcept {
     if (text.empty() || text.size() > most_option_id_bytes || lua_reserved_word(text))
         return false;
-    const auto first = static_cast<unsigned char>(text.front());
-    const bool starts = (first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z');
-    if (!starts)
+    if (text.front() < 'a' || text.front() > 'z')
         return false;
     for (std::size_t index = 1; index < text.size(); ++index) {
-        const auto character = static_cast<unsigned char>(text[index]);
-        const bool word = (character >= 'a' && character <= 'z') ||
-                          (character >= 'A' && character <= 'Z') ||
-                          digit(static_cast<char>(character)) || character == '_';
+        const char character = text[index];
+        const bool word =
+            (character >= 'a' && character <= 'z') || digit(character) || character == '_';
         if (!word)
             return false;
     }

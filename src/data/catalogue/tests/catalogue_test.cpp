@@ -1272,7 +1272,6 @@ void test_mutator() {
                 "\"options\":["
                 "{\"id\":\"format\",\"label\":\"Format\",\"type\":\"toggle\"},"
                 "{\"id\":\"ends\",\"label\":\"Ends\",\"type\":\"toggle\"},"
-                "{\"id\":\"For\",\"label\":\"For\",\"type\":\"toggle\"},"
                 "{\"id\":\"for_\",\"label\":\"For underscore\",\"type\":\"toggle\"}]"
             ) +
             "," + bare("oamod", "keeper")
@@ -1281,16 +1280,23 @@ void test_mutator() {
         OA_CHECK(kept.problems.empty());
         if (kept.packages.size() == 2) {
             OA_CHECK(kept.packages[0].id == "steady-hands");
-            OA_CHECK(kept.packages[0].options.size() == 4);
-            if (kept.packages[0].options.size() == 4) {
+            OA_CHECK(kept.packages[0].options.size() == 3);
+            if (kept.packages[0].options.size() == 3) {
                 OA_CHECK(kept.packages[0].options[0].id == "format");
                 OA_CHECK(kept.packages[0].options[1].id == "ends");
-                OA_CHECK(kept.packages[0].options[2].id == "For");
-                OA_CHECK(kept.packages[0].options[3].id == "for_");
+                OA_CHECK(kept.packages[0].options[2].id == "for_");
             }
             OA_CHECK(kept.packages[1].id == "keeper");
         }
     }
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"For\",\"label\":\"For\",\"type\":\"toggle\"}]"
+        ),
+        "options[0].id is not an option id"
+    );
     skips_one(
         bare(
             "oamut",
