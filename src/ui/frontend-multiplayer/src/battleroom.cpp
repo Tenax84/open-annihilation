@@ -30,8 +30,10 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <iostream>
 #include <iterator>
 #include <optional>
+#include <ostream>
 #include <span>
 #include <string>
 #include <utility>
@@ -1258,6 +1260,17 @@ bool presence_keep(Lobby& lobby, const LobbyEvent& event) noexcept {
     records.peer_size[slot] = event.size;
     records.peer_id[slot] = event.player_id;
     take_computer_presence(lobby, slot);
+    // The host's record carries the room's list. A guest keeps it as far as
+    // the records have brought it, including a part that continues the head.
+    if (slot == static_cast<int32_t>(lobby_host_slot(lobby))) {
+        try {
+            netgame::PresenceRecord decoded;
+            if (netgame::decode_presence(records.peer[slot], records.peer_size[slot], &decoded) ==
+                netgame::WireError::ok)
+                (void)netgame::presence_assembly_take(records.host_loadout, decoded);
+        } catch (const std::exception&) {
+        }
+    }
     return true;
 }
 
@@ -1338,9 +1351,11 @@ bool lobby_rules_differ_from_host(Lobby& lobby, int32_t slot) noexcept {
     const auto host = lobby_host_slot(lobby);
     if (host == kNoSlot || host == slot)
         return false;
-    return netgame::presence_content_match(
-               lobby_presence_record(lobby, slot), lobby_presence_record(lobby, host)
-           ) == netgame::PresenceContentMatch::differs;
+    if (netgame::presence_content_match(
+            lobby_presence_record(lobby, slot), lobby_presence_record(lobby, host)
+        ) == netgame::PresenceContentMatch::differs)
+        return true;
+    return lobby_mutators_differ_from_host(lobby, slot);
 }
 
 bool lobby_content_allows_start(Lobby& lobby) noexcept {
@@ -1366,6 +1381,207 @@ bool lobby_content_allows_start(Lobby& lobby) noexcept {
     return true;
 }
 
+namespace {
+
+/// Tells whether a slot is an Open Annihilation player of another machine.
+///
+/// @param lobby Lobby state.
+/// @param player_slot Player slot.
+/// @return True when that player is remote, playing and carries the signature.
+bool remote_oa_player(Lobby& lobby, int32_t player_slot) noexcept {
+    if (lobby.game == nullptr || player_slot < 0 || player_slot >= kSlotCount)
+        return false;
+    const auto& player = slot_player(lobby, player_slot);
+    if (!slot_remote_playing(lobby, player))
+        return false;
+    const auto* info = player_info(lobby, player);
+    return info != nullptr &&
+           netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(info));
+}
+
+/// Appends one mutator part when at least one mutator fits.
+///
+/// @param[in,out] record Presence record being composed.
+/// @param[in,out] size Its length so far.
+/// @param capacity Bytes available at record.
+/// @param loadout The full list the part is drawn from.
+/// @param first The position of the first mutator.
+/// @return True when a part was appended.
+bool append_mutator_part(
+    uint8_t* record,
+    std::size_t& size,
+    std::size_t capacity,
+    const netgame::PresenceMutators& loadout,
+    uint8_t first
+) noexcept {
+    if (size >= capacity || capacity - size <= netgame::presence_field_header_bytes)
+        return false;
+    const auto value_room = capacity - size - netgame::presence_field_header_bytes;
+    uint8_t value[netgame::presence_record_max_bytes];
+    std::size_t written = 0;
+    uint8_t sent = 0;
+    if (netgame::encode_presence_mutator_part(
+            loadout, first, value, value_room, &written, &sent
+        ) != netgame::WireError::ok)
+        return false;
+    std::size_t grown = 0;
+    if (netgame::append_presence_field(
+            record,
+            size,
+            capacity,
+            netgame::PresenceTag::mutator_part,
+            std::span<const uint8_t>(value, written),
+            &grown
+        ) != netgame::WireError::ok)
+        return false;
+    size = grown;
+    return true;
+}
+
+/// The smallest held of an Open Annihilation peer still taking this list.
+///
+/// @param lobby Lobby state.
+/// @param host_state The host source's mutator field.
+/// @param[out] first That held.
+/// @return True when some peer names this digest and holds less than total.
+bool smallest_held(
+    Lobby& lobby, const netgame::PresenceMutatorsState& host_state, uint8_t* first
+) noexcept {
+    const auto host = lobby_host_slot(lobby);
+    bool behind = false;
+    uint8_t smallest = 0;
+    for (int32_t player_slot = 0; player_slot < kSlotCount; ++player_slot) {
+        if (player_slot == static_cast<int32_t>(host) || !remote_oa_player(lobby, player_slot))
+            continue;
+        const auto row = lobby_presence_record(lobby, player_slot);
+        const auto row_state = netgame::presence_mutators_state(row.data(), row.size());
+        // A peer with no mutator field is not part of this exchange.
+        if (!row_state || row_state->digest != host_state.digest ||
+            row_state->held >= host_state.total)
+            continue;
+        if (!behind || row_state->held < smallest)
+            smallest = row_state->held;
+        behind = true;
+    }
+    if (behind)
+        *first = smallest;
+    return behind;
+}
+
+/// Rewrites the source smaller until the map pack and one part both fit.
+///
+/// The bound source is left as it is. The composed record is replaced.
+///
+/// @param lobby Lobby state.
+/// @param[out] composed The record being composed.
+/// @param[out] size Its length.
+/// @param loadout The full list the part is drawn from.
+/// @param first The position of the first mutator.
+/// @return True when a part was appended.
+bool shrink_source_for_part(
+    Lobby& lobby,
+    uint8_t* composed,
+    std::size_t& size,
+    const netgame::PresenceMutators& loadout,
+    uint8_t first
+) {
+    auto& records = lobby.presence_records;
+    netgame::PresenceRecord decoded;
+    if (netgame::decode_presence(records.source, records.source_size, &decoded) !=
+        netgame::WireError::ok)
+        return false;
+    std::size_t capacity = records.source_size;
+    while (capacity > netgame::presence_record_header_bytes) {
+        --capacity;
+        uint8_t shrunk[netgame::presence_record_max_bytes];
+        std::size_t shrunk_size = 0;
+        if (netgame::encode_presence(decoded, shrunk, capacity, &shrunk_size) !=
+            netgame::WireError::ok)
+            continue;
+        if (records.pack_size != 0) {
+            std::size_t packed = 0;
+            if (netgame::append_presence_field(
+                    shrunk,
+                    shrunk_size,
+                    sizeof shrunk,
+                    netgame::PresenceTag::map_pack,
+                    {records.pack, records.pack_size},
+                    &packed
+                ) != netgame::WireError::ok)
+                continue;
+            shrunk_size = packed;
+        }
+        if (!append_mutator_part(shrunk, shrunk_size, sizeof shrunk, loadout, first))
+            continue;
+        std::memcpy(composed, shrunk, shrunk_size);
+        size = shrunk_size;
+        return true;
+    }
+    return false;
+}
+
+/// Appends one part of the host's list, shrinking the head when the pack leaves no room.
+///
+/// @param[in,out] lobby Lobby state.
+/// @param[in,out] composed The record being composed, source and pack already copied.
+/// @param[in,out] size Its length.
+void append_room_mutator_part(Lobby& lobby, uint8_t* composed, std::size_t& size) noexcept {
+    auto& records = lobby.presence_records;
+    try {
+        const auto host_state =
+            netgame::presence_mutators_state(records.source, records.source_size);
+        if (!host_state || !records.part_source ||
+            records.part_source->digest != host_state->digest ||
+            records.part_source->total != host_state->total)
+            return;
+        uint8_t first = 0;
+        if (!smallest_held(lobby, *host_state, &first))
+            return;
+        const auto& loadout = *records.part_source;
+        if (append_mutator_part(
+                composed, size, netgame::presence_record_max_bytes, loadout, first
+            ) ||
+            shrink_source_for_part(lobby, composed, size, loadout, first)) {
+            records.part_refused_digest.reset();
+            return;
+        }
+        if (records.part_refused_digest && *records.part_refused_digest == host_state->digest)
+            return;
+        std::cerr << "multiplayer: no room for the mutator list after the map pack\n";
+        std::cerr.flush();
+        records.part_refused_digest = host_state->digest;
+    } catch (const std::exception&) {
+    }
+}
+
+/// Tells whether a guest has not built the host's list.
+///
+/// The host is never waiting on itself. No mutator field on the host means
+/// the room has no mutators. The guest waits when its own record has no
+/// field, names another list, or is not built.
+///
+/// @param lobby Lobby state.
+/// @return True when READY stays off.
+bool guest_awaits_mutators(Lobby& lobby) noexcept {
+    if (host_is_local(lobby) || lobby.game == nullptr)
+        return false;
+    const auto host = lobby_host_slot(lobby);
+    if (host == kNoSlot)
+        return false;
+    const auto host_record = lobby_presence_record(lobby, static_cast<int32_t>(host));
+    const auto host_state =
+        netgame::presence_mutators_state(host_record.data(), host_record.size());
+    if (!host_state)
+        return false;
+    const auto own = lobby_presence_record(lobby, lobby.game->local_player_index);
+    const auto own_state = netgame::presence_mutators_state(own.data(), own.size());
+    if (!own_state || own_state->digest != host_state->digest)
+        return true;
+    return !own_state->built;
+}
+
+} // namespace
+
 void presence_refresh(Lobby& lobby) noexcept {
     auto& records = lobby.presence_records;
     const bool host = host_is_local(lobby);
@@ -1388,6 +1604,8 @@ void presence_refresh(Lobby& lobby) noexcept {
                 &written
             ) == netgame::WireError::ok)
             size = written;
+        if (host)
+            append_room_mutator_part(lobby, composed, size);
         append_computer_presence(lobby, composed, size, sizeof composed);
     }
     if (size == records.local_size && std::memcmp(composed, records.local, size) == 0)
@@ -1771,6 +1989,11 @@ void lobby_reset(Lobby& lobby, Game& game) noexcept {
     lobby.computer_command_kind = 0;
     lobby.computer_command_value = 0;
     lobby.presence_records.plain_sim_hash = plain_baseline_sim_hash();
+    // A new game does not keep the previous host's list. This machine's
+    // outgoing list stays, as the source record does.
+    lobby.presence_records.host_loadout = {};
+    lobby.presence_records.part_refused_digest.reset();
+    lobby.mutators_hold_seen = false;
     // The recorder's session starts again; the line it answers with stays.
     char program[sizeof lobby.recorder.program];
     std::memcpy(program, lobby.recorder.program, sizeof program);
@@ -2357,6 +2580,15 @@ void lobby_update_status(Lobby& lobby, Panel& panel) noexcept {
         }
     }
 
+    // A guest that has not built the host's list is not ready, whether or
+    // not the map label is on this panel. Said once, when the bit was on.
+    if (guest_awaits_mutators(lobby) && (info_of(lobby, me).options & option::ready) != 0) {
+        info_of(lobby, me).options =
+            static_cast<uint16_t>(info_of(lobby, me).options & ~option::ready);
+        set_group(panel, "READY%d", local, 0);
+        lobby_send_player_info(lobby);
+    }
+
     for (int32_t slot = 0; slot < kSlotCount; ++slot) {
         auto& player = slot_player(lobby, slot);
         if (local_or_computer(player)) {
@@ -2514,7 +2746,8 @@ void lobby_update_status(Lobby& lobby, Panel& panel) noexcept {
         if (auto* ready = row_control(panel, "READY%d", slot)) {
             ready->active = 1;
             ready->value = static_cast<int16_t>((info.options >> 5) & 1);
-            ready->grayed = !occupied_by(player, kSlotLocal);
+            const bool own = occupied_by(player, kSlotLocal);
+            ready->grayed = !own || (own && guest_awaits_mutators(lobby));
         }
     }
     panel.dirty = true;
@@ -2698,7 +2931,8 @@ void lobby_enter_battleroom(Lobby& lobby, Panel& panel) noexcept {
     panel_set_grayed(
         panel,
         "START",
-        !(host && lobby_ready_to_start(lobby) && lobby_content_allows_start(lobby) && synced)
+        !(host && lobby_ready_to_start(lobby) && lobby_content_allows_start(lobby) &&
+          lobby_mutators_allow_start(lobby) && synced)
     );
     panel_set_grayed(panel, "RESTRICTIONS", false);
     panel_set_text(panel, "METALTEXT", "0");
@@ -3030,7 +3264,7 @@ LobbyAction handle_panel_event(Lobby& lobby, Panel& panel) noexcept {
         format(name, "READY%d", slot);
         if (panel_selected_is(panel, name) && occupied_by(player, kSlotLocal)) {
             play(lobby, "Multi");
-            if (!lobby_has_host_map(lobby)) {
+            if (!lobby_has_host_map(lobby) || guest_awaits_mutators(lobby)) {
                 panel_set_value(panel, name, 0);
             } else {
                 const auto* ready = panel_control(panel, name);
@@ -3164,7 +3398,7 @@ LobbyAction handle_panel_event(Lobby& lobby, Panel& panel) noexcept {
         return action;
     }
     if (panel_selected_is(panel, "START")) {
-        if (!lobby_content_allows_start(lobby)) {
+        if (!lobby_content_allows_start(lobby) || !lobby_mutators_allow_start(lobby)) {
             panel.selected = kNoControl;
             return action;
         }
@@ -3307,6 +3541,7 @@ LobbyAction lobby_tick(Lobby& lobby, Panel& panel, LobbyFront front, Panel* view
     // has not had it.
     presence_refresh(lobby);
     presence_send_due(lobby);
+    lobby_log_mutators_hold(lobby);
     if ((game.gui_flags & 1U) != 0) {
         if (!lobby.rows_built)
             lobby_build_rows(lobby, panel);
@@ -3349,7 +3584,9 @@ LobbyAction lobby_tick(Lobby& lobby, Panel& panel, LobbyFront front, Panel* view
         if (front == LobbyFront::battleroom) {
             if (host_is_local(lobby)) {
                 const bool synced = unit_sync_complete(lobby);
-                const bool ready = lobby_ready_to_start(lobby) && lobby_content_allows_start(lobby);
+                const bool ready = lobby_ready_to_start(lobby) &&
+                                   lobby_content_allows_start(lobby) &&
+                                   lobby_mutators_allow_start(lobby);
                 const auto tick = now(lobby);
                 panel_set_grayed(panel, "SYNCHING", true);
                 if (lobby.start_frame > 0 && lobby_clock_passed(tick, lobby.start_frame_tick)) {
