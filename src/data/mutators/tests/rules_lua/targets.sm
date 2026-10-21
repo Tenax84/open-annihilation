@@ -1,0 +1,34 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+folder=weapons;
+extension=tdf;
+[*All*]
+{
+range=*2;
+}
+folder=features/corpses;
+extension=tdf;
+[*All*]
+{
+metal=7;
+}
+folder=gamedata;
+extension=sidedata.tdf;
+[ARM]
+{
+commander="RIDGECOM";
+}
+folder=weapons;
+extension=tdf;
+[*Group*]
+{
+[Needs]
+{
+range=1,200;
+}
+[Changes]
+{
+reloadtime=9;
+}
+}

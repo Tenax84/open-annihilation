@@ -8,7 +8,9 @@
 # The ^ operator calls this library, so it has to follow the Lua archive on a
 # link line. H05 adds its number text here as well. libm supplies sqrt and
 # frexp; a Linux link drops an earlier libm once those references appear.
-add_library(oa-data-script-host-numbers STATIC src/deterministic_math.cpp)
+add_library(oa-data-script-host-numbers STATIC
+  src/deterministic_math.cpp
+  src/number_text.cpp)
 add_library(oa::data::script_host_numbers ALIAS oa-data-script-host-numbers)
 target_include_directories(oa-data-script-host-numbers PUBLIC include)
 target_compile_features(oa-data-script-host-numbers PUBLIC cxx_std_20)
@@ -123,4 +125,11 @@ if(BUILD_TESTING)
     oa-data-script-host oa-test-support oa-options)
   add_test(NAME data-script-host-iteration COMMAND oa-data-script-host-iteration-test)
   set_tests_properties(data-script-host-iteration PROPERTIES TIMEOUT 30)
+
+  # One number spelling, no place in memory, and no binary pack.
+  add_executable(oa-data-script-host-text-test tests/text_test.cpp)
+  target_link_libraries(oa-data-script-host-text-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-text COMMAND oa-data-script-host-text-test)
+  set_tests_properties(data-script-host-text PROPERTIES TIMEOUT 30)
 endif()

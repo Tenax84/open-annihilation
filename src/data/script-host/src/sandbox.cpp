@@ -9,6 +9,7 @@
 #include "internal.hpp"
 
 #include <chrono>
+#include <clocale>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -700,6 +701,22 @@ bool Sandbox::enter(std::string_view phase, ScriptError& error) {
 std::optional<Sandbox> Sandbox::open(const OpenOptions& options, ScriptError& error) {
     try {
         error = {};
+        // String order follows LC_COLLATE. The process starts in C, and nothing
+        // in the engine changes that. Another collation would sort script text
+        // differently on each machine.
+        const char* collation = std::setlocale(LC_COLLATE, nullptr);
+        const bool collation_is_c = collation != nullptr && (std::strcmp(collation, "C") == 0 ||
+                                                             std::strcmp(collation, "POSIX") == 0);
+        if (!collation_is_c) {
+            const char* name = collation != nullptr && collation[0] != '\0' ? collation : "unknown";
+            error.kind = ErrorKind::runtime;
+            error.phase = "open";
+            error.package_id = options.package_id;
+            error.message =
+                std::string("the C library's collation locale is ") + name + "; scripts need C";
+            return std::nullopt;
+        }
+
         std::unique_ptr<Control> control;
         try {
             control = std::make_unique<Control>();

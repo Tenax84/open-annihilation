@@ -261,15 +261,16 @@ void open_libraries(lua_State* state);
 /// @param state the sandbox state, with the `string` table on top
 void install_patterns(lua_State* state);
 
-/// Replaces `string.format`, `pack`, `packsize` and `unpack` in the table on
-/// top of the stack with the counted copies of Lua 5.4.9's.
+/// Replaces `string.format` in the table on top of the stack with the
+/// counted copy of Lua 5.4.9's.
 ///
-/// They take the same arguments and give the same results and messages as
-/// Lua's own. Past the allowance they raise the budget message and mark the
-/// allowance spent.
+/// It takes the same arguments and gives the same results and messages as
+/// Lua's own, except that it refuses `%p`, and `%a`, `%e`, `%f` and `%g` of
+/// a NaN or an infinity, at the calling line. Past the allowance it raises
+/// the budget message and marks the allowance spent.
 ///
 /// @param state the sandbox state, with the `string` table on top
-void install_format_and_pack(lua_State* state);
+void install_format(lua_State* state);
 
 /// Opens the math library. May raise.
 ///
