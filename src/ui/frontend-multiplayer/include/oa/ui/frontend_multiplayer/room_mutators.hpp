@@ -132,15 +132,15 @@ struct MutatorsBlock {
 /// @return True when nothing about mutators holds START.
 [[nodiscard]] bool lobby_mutators_allow_start(Lobby& lobby) noexcept;
 
-/// Slots of seated 3.1c humans and watchers while the host plays mutators.
+/// Slots of seated 3.1c humans and watchers, in slot order.
 ///
-/// Slot order. A player counts when its own setup block has arrived and
-/// lacks the engine signature. Empty when the host's record carries no
-/// mutator field, so a room without mutators names nobody. The picker reads
-/// this before the host turns a list on.
+/// A player counts when its own setup block has arrived and lacks the
+/// engine signature. The picker reads this before the host turns a list on.
+/// START waits for these players (`classic_player`) only while the host's
+/// record carries mutators.
 ///
 /// @param lobby Lobby state.
-/// @return The slots. Empty when mutators are off.
+/// @return The slots.
 [[nodiscard]] std::vector<int32_t> lobby_classic_players(Lobby& lobby);
 
 /// Posts one local line per seated 3.1c player when mutators turn on.
@@ -165,15 +165,15 @@ void lobby_note_classic_room(Lobby& lobby) noexcept;
 /// @param player_slot The player the line names.
 void lobby_post_classic_line(Lobby& lobby, const char* words, int32_t player_slot) noexcept;
 
-/// Tells whether one slot alone would hold START.
+/// Tells whether a row's rules dot is on for mutators.
 ///
-/// The host's own row does not. A 3.1c player and this machine's computer
-/// players do not. Another slot's problem does not hide this one.
-/// Allocates nothing.
+/// The host's own row does not, and neither does a computer player. A 3.1c
+/// player holds START as `classic_player` while mutators are on, but it has
+/// no dot. Another slot's problem does not hide this one. Allocates nothing.
 ///
 /// @param lobby Lobby state.
 /// @param slot Player slot, 0..9; any other gives false.
-/// @return True when this slot's mutators would hold START.
+/// @return True when this slot's mutators put a dot on its row.
 [[nodiscard]] bool lobby_mutators_differ_from_host(Lobby& lobby, int32_t slot) noexcept;
 
 /// Logs a change of the host's mutator hold, including the first one seen.

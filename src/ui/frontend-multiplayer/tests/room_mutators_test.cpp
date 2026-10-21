@@ -1269,7 +1269,11 @@ void test_classic_seated() {
     );
     room.seat_computer(2);
     bind_source(room.lobby, plain);
-    expect(mp::lobby_classic_players(room.lobby).empty(), "no mutators names no 3.1c player");
+    expect(
+        mp::lobby_classic_players(room.lobby).size() == 1 &&
+            mp::lobby_classic_players(room.lobby)[0] == 1,
+        "the picker names a 3.1c player before mutators are on"
+    );
     expect(room_lines(room.lobby).empty(), "turning no list on posts nothing");
 
     bind_source(room.lobby, listed);
@@ -1294,7 +1298,10 @@ void test_classic_seated() {
 
     bind_source(room.lobby, plain);
     expect(mp::lobby_mutators_allow_start(room.lobby), "START waits only while mutators are on");
-    expect(mp::lobby_classic_players(room.lobby).empty(), "mutators off names nobody");
+    expect(
+        mp::lobby_classic_players(room.lobby).size() == 1,
+        "mutators off still names the seated 3.1c player"
+    );
     bind_source(room.lobby, listed);
     expect(
         joined_lines(room_lines(room.lobby)) == seated + " " + seated,

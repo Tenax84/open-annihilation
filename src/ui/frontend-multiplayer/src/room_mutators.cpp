@@ -301,12 +301,6 @@ std::vector<int32_t> lobby_classic_players(Lobby& lobby) {
     std::vector<int32_t> slots;
     if (lobby.game == nullptr)
         return slots;
-    const auto host = lobby_host_slot(lobby);
-    if (host == kNoSlot)
-        return slots;
-    const auto host_record = lobby_presence_record(lobby, static_cast<int32_t>(host));
-    if (!netgame::presence_mutators_state(host_record.data(), host_record.size()))
-        return slots;
     for (int32_t player_slot = 0; player_slot < kSlotCount; ++player_slot) {
         if (classic_seated(lobby, player_slot))
             slots.push_back(player_slot);
