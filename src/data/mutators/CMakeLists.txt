@@ -4,6 +4,7 @@
 add_library(
   oa-data-mutators
   src/allow_list.cpp
+  src/choice.cpp
   src/collections.cpp
   src/files_layer.cpp
   src/journal.cpp
@@ -19,13 +20,17 @@ target_link_libraries(
   oa-data-mutators
   PUBLIC oa-base-sha256 oa-data-defs oa-data-mutation-rules oa-data-script-host oa-formats-hpi
          oa-formats-oamut
-  PRIVATE oa-data-defs-assets oa-data-field-schema oa-data-mod-profile oa-formats-json oa-formats-tdf
-          oa-options
+  PRIVATE oa-data-defs-assets oa-data-field-schema oa-data-mod-profile oa-data-mutator-library
+          oa-formats-json oa-formats-tdf oa-options
 )
 if(BUILD_TESTING)
   add_executable(oa-data-mutators-allow-list-test tests/allow_list_test.cpp)
   target_link_libraries(oa-data-mutators-allow-list-test PRIVATE oa-data-mutators oa-test-support)
   add_test(NAME data-mutators-allow-list COMMAND oa-data-mutators-allow-list-test)
+
+  add_executable(oa-data-mutators-choice-test tests/choice_test.cpp)
+  target_link_libraries(oa-data-mutators-choice-test PRIVATE oa-data-mutators oa-test-support)
+  add_test(NAME data-mutators-choice COMMAND oa-data-mutators-choice-test)
 
   add_executable(oa-data-mutators-collections-test tests/collections_test.cpp)
   target_link_libraries(

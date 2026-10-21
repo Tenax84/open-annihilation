@@ -1,0 +1,94 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+// One mutator named on a command line or in a launch file: the text
+// `id-or-path[:option=value,...]`, and the installed package that text
+// names with every option filled in. Nothing here starts a match.
+#pragma once
+
+#include "oa/data/mutators/loadout.hpp"
+
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace oa::data::mutators {
+
+/// One mutator a player named, before it is looked up.
+///
+/// `target` is an id when it holds no `/` and no `\`, and otherwise a path
+/// to an unpacked package folder. `options` are the settings the player
+/// wrote, in the order written. An option the text leaves out takes the
+/// manifest's default when the choice is resolved.
+struct MutatorChoice {
+    /// The id, or the path, as the player wrote it.
+    std::string target{};
+    /// True when `target` is a path. False when it is an id.
+    bool by_path{false};
+    /// The named settings, each a name and the text of its value.
+    std::vector<std::pair<std::string, std::string>> options{};
+};
+
+/// Reads one mutator choice.
+///
+/// An id holds no `/` and no `\`. Anything else is a path to a package
+/// folder. Options follow the last `:` whose remainder is
+/// `name=value[,name=value...]`, so `C:\pkg` and `C:\pkg:factor=4` both
+/// split on the options and a Windows drive letter stays in the path. An
+/// empty text, an empty name or value, a repeated option, and a `,` or `=`
+/// inside a value are refused. The text is not trimmed.
+///
+/// @param text the choice, as written
+/// @param[out] error what is wrong, when the text is not a choice; may be null
+/// @return the choice, or nothing when the text is not one
+[[nodiscard]] std::optional<MutatorChoice>
+parse_choice(std::string_view text, std::string* error = nullptr);
+
+/// Writes a choice as `parse_choice` reads it.
+///
+/// The target comes first. When options were named, `:` and the pairs in
+/// stored order follow, joined by `,`, with no spaces and no escaping.
+///
+/// @param choice the choice
+/// @return its text
+[[nodiscard]] std::string format_choice(const MutatorChoice& choice);
+
+/// One mutator a choice named, with its package and its typed options.
+///
+/// `options` is every option of the manifest, in the manifest's order,
+/// defaults filled and the named ones written over them.
+struct ResolvedMutator {
+    /// The choice that named it, as the player wrote it.
+    MutatorChoice choice{};
+    /// The package folder.
+    std::filesystem::path folder{};
+    /// The package's manifest.
+    oa::formats::oamut::Manifest manifest{};
+    /// Every option, defaults filled, in the manifest's order.
+    std::vector<LoadoutOption> options{};
+};
+
+/// Finds the package a choice names and types its options.
+///
+/// An id is looked up in the installed listing of `mutators_folder`. A path
+/// is the package folder itself, absolute or relative to the working
+/// directory; the listing is not used. The manifest is `oamut.yaml`, matched
+/// without ASCII case, and a symbolic link is not followed. A missing
+/// mutator, an option the manifest does not have, a value of the wrong kind
+/// and a value outside the option's choices are refused. The words name the
+/// player's text.
+///
+/// @param choice the choice
+/// @param mutators_folder the player's Mutators folder, for an id
+/// @param[out] error what is wrong, when the choice cannot be used; may be null
+/// @return the package and its typed options, or nothing when it cannot be used
+[[nodiscard]] std::optional<ResolvedMutator> resolve_choice(
+    const MutatorChoice& choice,
+    const std::filesystem::path& mutators_folder,
+    std::string* error = nullptr
+);
+
+} // namespace oa::data::mutators
