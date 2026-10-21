@@ -654,12 +654,14 @@ a mutator on or downloads one. The graph is ids only (`Need`): the caller
 turns the Library's prerequisite records into needs, and version ranges
 stay with the caller.
 
-- `prerequisite_closure(graph, ids)` returns every id `ids` reach, each
-  after every id it needs. A tie keeps the id met first. An id is met when
-  `ids` names it, or when a need list names it while each id's needs are
-  read from left to right before the next id in `ids`. An id the graph
-  does not hold is a leaf. A cycle keeps each id once, in the order first
-  met, and sets `Closure::cyclic`. A repeated id in `ids` is kept once.
+- `prerequisite_closure(graph, ids)` returns every id `ids` reach. An id
+  is met when `ids` names it, or when a need list names it while each id's
+  needs are read from left to right before the next id in `ids`. The ids
+  of one cycle stay together in that order. Every other id goes after
+  everything it needs. A component goes after the components it needs, and
+  a tie keeps the component whose id was met first. An id the graph does
+  not hold is a leaf. A cycle sets `Closure::cyclic`. A repeated id in
+  `ids` is kept once.
 - `dependants_of(graph, among, id)` returns every id in `among` that needs
   `id`, directly or through other ids, in `among`'s order. `id` itself is
   included only when a cycle leads back to it.
@@ -676,7 +678,8 @@ network, and they hold no words.
 
 `ui-library-prerequisites` closes made-up mutators: one id, a chain of
 three, a diamond, two roots that share a prerequisite, a cycle of two and
-of three, an id the graph does not hold and a repeated id. It takes
+of three, an id the graph does not hold, a repeated id, and an id that
+needs a cycle without being on it. It takes
 dependants direct, through another id and none, in the list's own order,
 and an order that keeps a chain, a diamond and a list naming an outside
 id, and one that does not. A chain of 1,000 closes with the first id at

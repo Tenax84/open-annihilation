@@ -22,8 +22,10 @@ struct Need {
 
 /// The ids a set reaches, in the order they apply, and whether a cycle remains.
 struct Closure {
-    std::vector<std::string> order; ///< each id after every id it needs, or the order first met
-    bool cyclic{};                  ///< a cycle kept each of its ids once
+    /// Each id after everything it needs. The ids of one cycle stay together,
+    /// in the order first met.
+    std::vector<std::string> order;
+    bool cyclic{}; ///< a cycle kept each of its ids once
 };
 
 /// Returns every id `ids` reach, each placed after everything it needs.
@@ -31,9 +33,11 @@ struct Closure {
 /// An id is met when `ids` names it, or when a need list names it. The ids
 /// already met are read in the order they were met, each need list from
 /// left to right, and one id's needs are finished before the next id in
-/// `ids`. Ties keep that order. An id the graph does not hold is a leaf.
-/// A cycle keeps each id once, in the order first met, and sets `cyclic`.
-/// A repeated id in `ids` is kept once. The walk is bounded by the graph.
+/// `ids`. The ids of one cycle stay together in that order. Every other
+/// id goes after everything it needs. A component goes after the components
+/// it needs, and a tie keeps the component whose id was met first. An id
+/// the graph does not hold is a leaf. A cycle sets `cyclic`. A repeated id
+/// in `ids` is kept once. The walk is bounded by the graph.
 ///
 /// @param graph each id and the ids it needs; the first record of an id is the one read
 /// @param ids the ids being switched on or downloaded

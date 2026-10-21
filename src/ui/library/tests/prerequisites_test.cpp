@@ -136,7 +136,8 @@ void outside_id() {
     );
 }
 
-/// A cycle of two and of three keeps each id once, in the order first met.
+/// A cycle of two and of three keeps each id once, in the order first met,
+/// and an id that only needs a cycle stays below that cycle.
 void cycles() {
     const lib::Need pair[]{
         need(gatehouse, {std::string(ridge_walls)}),
@@ -158,6 +159,36 @@ void cycles() {
     check_closure(
         lib::prerequisite_closure(triple, triple_from),
         {std::string(gatehouse), std::string(ridge_walls), std::string(gatehouse_keep)},
+        true
+    );
+
+    const lib::Need above_pair[]{
+        need("x", {std::string("a")}),
+        need("a", {std::string("b")}),
+        need("b", {std::string("a")}),
+    };
+    const std::string above_pair_from[]{std::string("x")};
+    check_closure(
+        lib::prerequisite_closure(above_pair, above_pair_from),
+        {std::string("a"), std::string("b"), std::string("x")},
+        true
+    );
+
+    const lib::Need above_deeper[]{
+        need("keep", {std::string("gate")}),
+        need("gate", {std::string("wall"), std::string("base")}),
+        need("wall", {std::string("tower")}),
+        need("tower", {std::string("wall")}),
+        need("base", {}),
+    };
+    const std::string above_deeper_from[]{std::string("keep")};
+    check_closure(
+        lib::prerequisite_closure(above_deeper, above_deeper_from),
+        {std::string("wall"),
+         std::string("tower"),
+         std::string("base"),
+         std::string("gate"),
+         std::string("keep")},
         true
     );
 }
