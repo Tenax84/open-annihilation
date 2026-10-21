@@ -734,7 +734,11 @@ end
         "map.schemas.surfacemetal must be a whole number from 0 to 255"
     );
     refuse("ridge-type", "map.schemas[1].type = \"Easy\"", "schema.type cannot change");
-    refuse("ridge-scale-ai", "map.schemas:scale { aiprofile = 2 }", "aiprofile cannot be scaled");
+    refuse(
+        "ridge-scale-ai",
+        "map.schemas:scale { aiprofile = 2 }",
+        "map.schemas.aiprofile cannot be scaled"
+    );
 }
 
 void test_placed(

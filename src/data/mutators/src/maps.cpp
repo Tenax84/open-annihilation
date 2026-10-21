@@ -80,9 +80,9 @@ enum class KeyClass : uint8_t {
 };
 
 struct KeyRow {
-    const char* folded;
-    const char* spelling;
-    KeyClass kind;
+    const char* folded{};
+    const char* spelling{};
+    KeyClass kind{};
 };
 
 constexpr KeyRow k_keys[] = {
@@ -580,7 +580,7 @@ bool read_action(
     if (rule_change_at(state, index, &change, &value, &low, &high)) {
         if (change == sm::ChangeKind::scale || change == sm::ChangeKind::scale_clamp) {
             if (row != nullptr && row->kind == KeyClass::schema_profile) {
-                problem = "aiprofile cannot be scaled";
+                problem = "map.schemas.aiprofile cannot be scaled";
                 return false;
             }
             action.kind = ValueKind::scale;
@@ -647,7 +647,9 @@ std::string type_problem(const KeyRow& row) {
     return header_limit_message(row);
 }
 
-bool action_fits(const KeyRow& row, const ValueAction& action, std::string& problem) {
+bool action_fits(
+    const KeyRow& row, const ValueAction& action, std::string& problem, bool scaling = false
+) {
     if (row.kind == KeyClass::header_frozen) {
         problem = "map.header.";
         problem += row.folded;
@@ -661,6 +663,10 @@ bool action_fits(const KeyRow& row, const ValueAction& action, std::string& prob
         return false;
     }
     if (row.kind == KeyClass::schema_profile) {
+        if (scaling || action.kind == ValueKind::scale) {
+            problem = "map.schemas.aiprofile cannot be scaled";
+            return false;
+        }
         if (action.kind != ValueKind::text) {
             problem = type_problem(row);
             return false;
@@ -1146,7 +1152,11 @@ bool map_where_holds(lua_State* state, MapWork* work, int table, bool& holds) {
 }
 
 bool collect_changes(
-    lua_State* state, int table, std::vector<ChangeItem>& items, std::string& problem
+    lua_State* state,
+    int table,
+    std::vector<ChangeItem>& items,
+    std::string& problem,
+    bool scaling = false
 ) {
     table = lua_absindex(state, table);
     lua_pushnil(state);
@@ -1168,7 +1178,7 @@ bool collect_changes(
             return false;
         }
         if (!read_action(state, -1, row, item.action, problem) ||
-            !action_fits(*row, item.action, problem)) {
+            !action_fits(*row, item.action, problem, scaling)) {
             lua_pop(state, 2);
             return false;
         }
@@ -1362,16 +1372,12 @@ int schemas_where(lua_State* state) {
 bool apply_schema_table(lua_State* state, MapWork* work, bool factors) {
     std::vector<ChangeItem> items;
     std::string problem;
-    if (!collect_changes(state, 2, items, problem)) {
+    if (!collect_changes(state, 2, items, problem, factors)) {
         set_error(work, problem);
         return false;
     }
     if (factors) {
         for (ChangeItem& item : items) {
-            if (item.action.kind == ValueKind::text) {
-                set_error(work, "aiprofile cannot be scaled");
-                return false;
-            }
             if (item.action.kind == ValueKind::number)
                 item.action.kind = ValueKind::scale;
         }
