@@ -11,6 +11,7 @@
 #include "oa/app/match_model_draws.hpp"
 #include "presentation_interpolation.hpp"
 #include "world_draws.hpp"
+#include "xrgb_conversion.hpp"
 #include "oa/base/float_precision.hpp"
 #include "oa/present/model/model_draw.hpp"
 #include "oa/present/model/rgb_bridge.hpp"
@@ -1121,10 +1122,7 @@ void Runtime::render_match_surface() {
     scene_layer.height = static_cast<uint32_t>(scene_h);
     scene_layer.rgb.resize(terrain_pixels);
     if (card_world) {
-        const std::array<uint8_t, 3> key = full_overlay_key();
-        uint8_t* pixel = scene_layer.rgb.data();
-        for (std::size_t left = terrain_pixels / 3U; left != 0; --left, pixel += 3)
-            std::memcpy(pixel, key.data(), 3);
+        fill_rgb24(scene_layer.rgb.data(), terrain_pixels / 3U, full_overlay_key());
         note_full_canvas_pixels(scene_layer.rgb.data());
     } else {
         std::memcpy(scene_layer.rgb.data(), match_terrain_cache_.rgb.data(), terrain_pixels);
