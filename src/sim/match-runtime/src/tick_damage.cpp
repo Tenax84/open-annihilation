@@ -171,7 +171,7 @@ void Match::apply_damage_event(
                 sim::unit_movement::cosine_scaled(heading, hit_script_scale),
                 sim::unit_movement::sine_scaled(heading, hit_script_scale)
             };
-            instance->script()->call("HitByWeapon", hit, false);
+            instance->script()->call(ScriptFunction::hit_by_weapon, hit, false);
             auto percent = 0;
             if (unit.type && unit.type->maximum_health) {
                 percent = static_cast<int32_t>(
@@ -184,7 +184,7 @@ void Match::apply_damage_event(
                     percent = 100;
             }
             const std::array<int32_t, 1> taken{percent};
-            instance->script()->call("TakeDamage", taken, false);
+            instance->script()->call(ScriptFunction::take_damage, taken, false);
         }
     }
 }
@@ -537,7 +537,7 @@ void Match::teardown_dead_unit(
     if (settled_elsewhere && outcome.killed_percent > 0)
         if (auto* instance = this->instance(slot.unit_index); instance && instance->script()) {
             const std::array<int32_t, 1> percent{outcome.killed_percent};
-            (void)instance->script()->call("Killed", percent, true);
+            (void)instance->script()->call(ScriptFunction::killed, percent, true);
         }
     record_death_statistics(slot, death, killer);
     assign_squad(slot, 0xffffffffu);
