@@ -5011,6 +5011,15 @@ bool run_pass(
         for (std::size_t entry_index = 0; entry_index < spec.entries.size(); ++entry_index) {
             if (!same_path(spec.entries[entry_index].path, served.path))
                 continue;
+            const std::string& held_by = spec.entries[entry_index].owner;
+            if (!same_text(held_by, served.owner) && index_of(ids, held_by).has_value()) {
+                FileNote note;
+                note.kind = FileNoteKind::add_replaced;
+                note.path = served.path;
+                note.mutator = served.owner;
+                note.other = held_by;
+                report.conflicts.push_back(conflict_from_file(note, ids));
+            }
             spec.entries[entry_index] = served;
             replaced_copy = true;
             break;

@@ -37,8 +37,7 @@ RUNNER = shlex.split(os.environ.get("OA_TEST_RUNNER", ""))
 PREPARED = "Offline match world prepared"
 UNIT_LINE = re.compile(r"^tick=(\d+) slot=\d+ type=\d+ owner=(\d+) .* health=(-?\d+)")
 RUN_TIMEOUT = 300
-# Canonical loadout text for ridge-tough 1.0. The crash record stores this
-# text; the next start names the id and the version and does not resolve it.
+# The first line of a preferences file.
 PREFERENCES_HEADER = "open-annihilation-preferences 1"
 # The preference that sets the clash mode a mutator's manifest leaves unset.
 CLASH_DEFAULT = "mutators.clash-default"
@@ -46,6 +45,8 @@ CLASH_DEFAULT = "mutators.clash-default"
 COPY_HEALTH = 4321
 RENAMED_NOTE = "ridge-commander-copy renamed ARMCOM to ARMCOM_2"
 REPLACED_NOTE = "ridge-commander-copy replaced ARMCOM from the game on "
+# Canonical loadout text for ridge-tough 1.0. The crash record stores this
+# text; the next start names the id and the version and does not resolve it.
 TOUGH_LOADOUT = (
     '{"mutators":[{"clashes":"replace","folder":false,"id":"ridge-tough","options":{},'
     '"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",'
