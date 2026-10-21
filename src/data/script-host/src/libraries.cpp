@@ -415,16 +415,16 @@ void aux_sort(lua_State* state, SortIndex lo, SortIndex up, unsigned salt) {
 ///
 /// The caller's table stays theirs, so a later write to it, including one
 /// through a table shared by several values, cannot make this value weak.
-/// `__index` still points at the table it pointed at. The walk costs
-/// scan_call_charge, as one walk of `pairs` does, since an emptied table can
-/// make it visit every slot it used to hold, and each field copied costs one
-/// unit. No object with a destructor may be alive across this call.
+/// `__index` still points at the table it pointed at. The copy costs
+/// metatable_copy_charge, and each field copied one unit, so a class set on
+/// thousands of values stays cheap. No object with a destructor may be alive
+/// across this call.
 ///
 /// @param state the sandbox state
 /// @param index stack index of the caller's metatable, a table
 void replace_with_guarded_copy(lua_State* state, int index) {
     index = lua_absindex(state, index);
-    charge(state, scan_call_charge);
+    charge(state, metatable_copy_charge);
     lua_newtable(state);
     const int copy = lua_gettop(state);
     lua_pushnil(state);

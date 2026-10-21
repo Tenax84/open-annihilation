@@ -57,6 +57,15 @@ inline constexpr uint64_t argument_unit = 2;
 /// runs for long.
 inline constexpr uint64_t scan_call_charge = 4096;
 
+/// Units for one copy `setmetatable` makes of a metatable, before one unit
+/// per field it copies.
+///
+/// Making and installing the copy takes about as long as a few dozen
+/// instructions. A metatable emptied after holding many fields makes the
+/// walk visit every slot it used to hold; the real-time limit, not this
+/// charge, stops a loop of those.
+inline constexpr uint64_t metatable_copy_charge = 64;
+
 /// Instructions between two reads of the clock in the count hook.
 ///
 /// The hook runs this often, and counts the allowance only on every

@@ -184,8 +184,9 @@ moves that state; the moved-from object has no state.
   A later write to the caller's own table does not change the copy, and the
   copy refuses `__mode`. `rawset` of `__mode` is refused on every table.
   No script can make a weak table. `getmetatable` returns the copy, or the
-  `__metatable` field when the caller set one. Making the copy counts 4096
-  units for the walk, as `pairs` does, and one unit per field copied.
+  `__metatable` field when the caller set one. Making the copy counts 64
+  units, and one unit per field copied, so a class of 21 fields set on 5,000
+  values costs under 1% of the default allowance.
 
 ## Maths
 
@@ -353,8 +354,9 @@ hundreds of thousands of values passed through `...`, a chain of thousands
 of `__index` tables, arithmetic on a long string of spaces (`s + 0`), and a
 table that grows and shrinks its parts again and again. `next` on a table
 emptied after millions of entries does more work than its 4096 units pay
-for. The real-time limit above is what stops a phase that hides its work
-in those steps. A `__gc` entry added to the installed metatable after
+for, and so does `setmetatable` with such a table as the metatable, for
+its 64 units. The real-time limit above is what stops a phase that hides its
+work in those steps. A `__gc` entry added to the installed metatable after
 `setmetatable` is not caught. `instructions_used` counts Lua instructions in
 steps of the check interval, so a short phase can report zero; pattern
 steps, string lengths, scans and table work are counted in the units above.
