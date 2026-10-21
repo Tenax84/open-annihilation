@@ -18,6 +18,8 @@ what is different for mutators and does not repeat those rules.
 - [3. The manifest](#3-the-manifest)
 - [5. The Files layer](#5-the-files-layer)
 - [6. Rules](#6-rules)
+- [10. The sandbox](#10-the-sandbox)
+- [13. Versioning](#13-versioning)
 
 ## 1. Goals and principles
 
@@ -875,3 +877,366 @@ The layout's `gamedata/moveinfo.tdf` is read as movement classes. Units
 and weapons win over that path when the same file could be read both ways.
 A weapon file's `[DAMAGE]` block is reached by `<AllDepth2>`, not as a
 record of its own.
+
+## 10. The sandbox
+
+A mutator script runs as Lua 5.4.9 in one sandbox. The sandbox owns one
+state. Two sandboxes share no modules, no globals and no budgets. The
+mutator profile gives that state the default instruction allowance and
+the default memory cap, and it adds no globals of its own.
+
+A script has no file, no clock, no environment, no process and no
+network. Every chunk is loaded as text. A failure comes back as a value
+that names the package, the phase, the chunk and the line:
+`<package>: <phase>: <chunk>:<line>: <message>`. The chunk and the line
+are left out when the chunk is unknown. A failed phase sticks. Later
+phases return that same error and run nothing.
+
+`pcall` and `xpcall` cannot keep a spent phase alive. Once the
+instruction allowance is spent, the real-time limit is past, or the
+sandbox has failed, `xpcall` returns the error and does not run the
+handler the script passed. An instruction error, a real-time error or a
+memory error is reported even when the script's own `pcall` caught it.
+
+The host's own account of these rules, including the measurement behind
+the time limit, is
+[the script host](../../src/data/script-host/README.md).
+
+### 10.1 Libraries
+
+The libraries a script can call are the base library (`_G`), `string`,
+`table`, `utf8` and `math`. `io`, `os`, `debug`, `package` and
+`coroutine` are not opened.
+
+These names are nil: `load`, `loadfile`, `dofile`, `collectgarbage`,
+`string.dump`, `string.pack`, `string.unpack` and `string.packsize`.
+Pack sizes and alignment differ between the machines the engine builds
+for, so a script cannot pack bytes itself.
+
+`setmetatable` installs a copy of the metatable. The copy keeps every
+field the caller's table had at that moment, including `__index`, so a
+methods table that `__index` points at still sees fields added later. A
+later write to the caller's own table does not change the copy.
+`getmetatable` returns the copy, or the `__metatable` field when the
+caller set one. Making the copy counts 64 instruction units, and one
+unit per field copied.
+
+A metatable that already holds `__gc` or `__mode` is refused:
+`setmetatable: a metatable with __gc is refused` and
+`setmetatable: a metatable with __mode is refused`. A protected
+metatable is refused with `cannot change a protected metatable`.
+`rawset` of `__gc` or `__mode` is refused on every table, with
+`rawset: the key __gc is refused` and `rawset: the key __mode is refused`.
+A later write of `__mode` on the copy is refused with
+`the key __mode is refused`. A script cannot make a weak table. A later
+write of `__gc` on the copy is not refused.
+
+`print` writes nothing to a file. The host keeps at most 256 lines and
+16,384 bytes of that text. A line is cut so the kept text stays inside
+that byte cap. Further lines become the note `1 line left out` or
+`<n> lines left out`.
+
+### 10.2 Loading code
+
+The entry script and every module are source. An empty file is source.
+A file whose first byte is `0x1B` is precompiled and is refused before
+the loader sees it, with
+`<path> is precompiled Lua; packages hold Lua source only`.
+A file longer than 1,048,576 bytes is refused with
+`<path> is <n> bytes of source; the most is 1048576`.
+
+Packing and checking load a chunk in a throwaway state and do not run
+it. A chunk that would fail or print when run is still accepted there.
+Precompiled bytes and a file past the source cap are refused first.
+
+### 10.3 require
+
+`require` takes one name of at most 64 bytes: lower-case letters,
+digits and `_`, in parts joined by dots, with no empty part. `util.grid`
+reads `lua/util/grid.lua` through the package reader. The path is matched
+byte for byte, so a file system that folds case cannot change which file
+loads. A module that has already been loaded in this state is returned
+again and is not read again.
+
+| What went wrong | Message |
+| --- | --- |
+| The name is not a module name | `require: "<name>" is not a module name: lower-case letters, digits and _ in parts joined by dots`. A name longer than 96 bytes is shown as its first 96. |
+| The package has no such file | `require: the package holds no lua/<parts>.lua` |
+| The file is longer than 1,048,576 bytes | `lua/<parts>.lua is <n> bytes of source; the most is 1048576` |
+| The file is precompiled | `lua/<parts>.lua is precompiled Lua; packages hold Lua source only` |
+| Modules are nested more than 32 deep | `require: modules are nested more than 32 deep` |
+| The file could not be read | `require: the package file could not be read` |
+
+A cycle names the chain, for example
+`require: lua/a.lua needs lua/b.lua, which needs lua/a.lua`.
+The first module is joined with ` needs `, and
+each later one with `, which needs `. `require` counts one instruction
+unit for each caller it walks while it looks for that chain.
+
+### 10.4 Budgets
+
+Each phase starts again from the full instruction allowance and the full
+real-time limit. The memory cap is the Lua allocation of the state, and
+it is not handed out again for the next phase. Text the host has copied
+out, including the lines `print` kept, is not part of that allocation.
+
+| Budget | Value |
+| --- | --- |
+| Instructions in one phase | 50,000,000 |
+| Memory | 64 MiB (67,108,864 bytes) |
+| Real time in one phase | 10,000 milliseconds (10 seconds) |
+| One string | 65,536 bytes. `string.rep` uses the same cap, separators included. |
+| One source file | 1,048,576 bytes |
+| A `require` name | 64 bytes |
+| `require` nesting | 32 modules loading in one chain |
+| Lines `print` keeps | 256 |
+| Bytes `print` keeps | 16,384 |
+| One error's stack listing | 2,048 bytes |
+
+The instruction count is read every 1,000 instructions. A short phase
+can report 0. Passing the allowance stops the phase with
+`the script ran past its budget of <n> instructions`.
+Passing the memory cap stops
+it with `the script used more than its <n> MiB of memory`. For the
+default cap that number is 64.
+
+### 10.5 Charged work
+
+Library work that would otherwise run in C is counted against the same
+instruction allowance. One unit is about the time of one or two
+instructions of the interpreter. A new string longer than 40 bytes
+counts one unit per 32 bytes of its length, rounded up. A string of 40
+bytes or fewer is not counted: making one allocates only when no live
+copy exists, which depends on when the collector last ran, and the
+instruction or call that makes it bounds that work. The header in front
+of the bytes is not counted. Freeing a string does not give the units
+back. The same script spends the same count on every build and every run.
+
+Pattern matching counts its own steps. A step is one entry into the
+matcher, one character a `*`, `+` or `-` repetition tries, or one
+character a `%b` pair scans. `string.find`, `string.match`,
+`string.gmatch` and `string.gsub` stop with the instruction-budget error
+when that count reaches the allowance, and a `pcall` around the call
+does not let the phase continue. Within the allowance they return the
+same values, of the same types, and raise the same errors, as Lua
+5.4.9. A call on a string value, such as `("x"):find`, uses the same
+functions.
+
+| Call | Units |
+| --- | --- |
+| `string.byte` | One per byte returned. |
+| `utf8.codepoint` | One per code point returned. |
+| `utf8.char` | One per code point. |
+| `utf8.codes` | One per 32 bytes the iterator walks, continuation bytes included, on every call, including the call that finds the end. |
+| `utf8.len`, `utf8.offset` | One per 32 bytes of the interval they walk. |
+| A plain `string.find` | One per 32 bytes each scan and each comparison examines. |
+| `require` | One per caller walked. |
+| `table.move`, `table.insert`, `table.remove`, `table.concat`, `table.pack`, `table.unpack` | One per element moved or visited. |
+| `table.sort` | Every comparison. Two strings cost one unit per byte of the two lengths, and at least 2. Any other comparison costs 2. A comparison function written in C is counted too. |
+| `next` | 4,096 per call. |
+| `pairs` | 4,096 for the walk that collects the keys, and each ordering of two keys costs the same as a `table.sort` comparison. |
+| `rawequal` of two strings | One per 32 bytes of the two lengths. |
+| `tonumber` of a string | One per 32 bytes of that text. |
+| `string.format` | One per format byte, 2 per value it converts, and one per byte of each text `%s` or `%q` copies. |
+| `math.max`, `math.min` | One comparison, as `table.sort` counts it, for each value after the first. |
+| `warn` | 2 per argument. |
+| `setmetatable` | 64, plus one per field copied. |
+
+A table call whose range is longer than the default memory cap could
+hold, one element per stored value and its tag, is refused before it
+loops. The message is
+`<function>: a range of <n> elements is past the most of <limit>`.
+
+`next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `string.format`,
+the charged `table` and `utf8` calls and `utf8.char` are copies of Lua
+5.4.9's with the count inside. The script calls them directly, so an
+error names the function and starts with the script's chunk and line.
+A method call such as `("%d"):format(x)` numbers its arguments as Lua
+does.
+
+Comparing two strings with `<` or `==` is one instruction of the
+interpreter, and these charges do not see it. Equality of two 65,536-byte
+strings takes about 1.3 microseconds on the machine where this was
+measured. Ordering two such strings of ordinary bytes takes about 3.3
+microseconds. Ordering two strings of that length filled with zero bytes
+takes about 480 microseconds. `table.sort` and `pairs` charge that
+comparison by length, so a sort of those zero-filled strings stops
+inside the default allowance. A bare `<` of two zero-filled strings does
+not. The real-time limit is what stops a phase that hides its work in a
+step the charges do not see.
+
+### 10.6 Strings
+
+No string may be longer than 65,536 bytes. The cap is applied in the
+allocator, because the interpreter has no switch that stops a longer
+string. Each state measures the header in front of the bytes once, from
+one 200-byte string, before the libraries open, so the cap compares the
+string's length. A longer string ends the phase with
+`the script made a string of <n> bytes; the most is 65536`,
+at the line that made it.
+
+`string.rep` refuses earlier with
+`string.rep would make a string of <n> bytes; the most is 65536`.
+`table.concat` refuses with
+`table.concat would make a string of more than 65536 bytes`.
+`string.gsub` refuses with
+`string.gsub would make a string of more than 65536 bytes`
+when it can see the size coming. A `pcall` that
+catches the refusal does not let the phase continue. A value the host
+pushes counts as a string too, so text longer than 65,536 bytes fails
+the script that receives it. A string literal that long fails the chunk
+that contains it. `print` cuts a long value instead of refusing it.
+
+### 10.7 Text, order and numbers
+
+`tostring` of a float is the same characters on every machine. A NaN of
+either sign is `nan`, the infinities are `inf` and `-inf`, and every
+finite value is `%.14g`, with `.0` added to an integral value. Joining a
+float to a string uses that same text.
+
+A table, a function or any other value without `__tostring` prints as
+its kind, a colon and `hidden`, for example `table: hidden`. It does not
+print where the value sits. `__tostring` is used when the metatable has
+one, and `__name` is used as the kind when it has no `__tostring`.
+
+`string.format` refuses `%p`, because it would show where a value sits,
+with `string.format: %p would show a memory address`. `%a`, `%e`, `%f`
+and `%g`, in either case, are refused when the number is a NaN or an
+infinity, with
+`string.format: cannot write nan or an infinity with %<letter>; test the number first, or use tostring`.
+A finite number,
+`%q`, `%s`, `%d`, `%i`, `%x` and `%c` are unchanged. `%q` of an
+infinity is `1e9999` or `-1e9999`, and `%q` of a NaN is `(0/0)`.
+
+A sandbox opens only when the C library's collation, numeric and
+character-type locales are each `C` or `POSIX`. Any other setting is
+refused at open, naming the category and the locale, for example
+`the C library's numeric locale is de_DE.UTF-8; scripts need C`. String
+comparison and `table.sort` on strings then follow byte order, number
+text is read and written with `.`, and `upper`, `lower` and the pattern
+classes such as `%a` treat a byte past 127 the same way on every
+machine. Hexadecimal numbers use Lua's own conversion.
+
+Every string hash uses one constant seed, `0x4F414C55`. `table.sort`
+does not draw a pivot from the clock. The interpreter is built with no
+fused multiply-add and no value-changing optimisation, and the Windows
+build uses strict floating-point mode.
+
+`pairs` visits number keys in ascending order, then string keys in byte
+order, then `false` and then `true`. The key list is taken when `pairs`
+is called. A value changed before the walk reaches it is the value the
+walk sees, and a key whose value became nil is skipped. Keys added
+during the walk are not visited. A table whose keys include a table, a
+function or any other type with no fixed order raises
+`pairs: this table has keys of type <type>, which have no fixed order; keep such values in a sequence and walk it with ipairs`.
+A table with a `__pairs`
+metamethod keeps that metamethod. `ipairs` is unchanged. `next` returns
+the key the interpreter would, so `next(t) == nil` is still the
+emptiness test. Its order depends on the table's history and is not the
+same on every machine. A mutator that lets the last write in a loop
+win, or that joins text in loop order, uses `pairs` or a sequence.
+
+`math` is Lua 5.4's library, with `pi`, `huge`, `maxinteger` and
+`mininteger`. The compatibility names `cosh`, `sinh`, `tanh`, `pow`,
+`frexp`, `ldexp` and `log10` are absent. `sin`, `cos`, `tan`, `asin`,
+`acos`, `atan`, `exp` and `log` (every base), and the `^` operator, are
+computed by the engine, so a script gets the same bits on every machine.
+Sine, cosine and tangent are rounded once to a double. An angle at or
+above 2,147,483,648 in magnitude, infinity included, is refused:
+`sin: the angle must be below 2147483648 in magnitude`, and the same
+sentence for `cos` and `tan`. A NaN comes back as a NaN. `log` of a
+power of two, and of `10^k` for k from 0 to 22, is the exact integer.
+An exponent of 2 is an IEEE multiply, and an exponent of 0.5 is an IEEE
+square root. An integer exponent of magnitude at most 256 is repeated
+squaring. A larger integer exponent is `exp(y · log x)`, and a negative
+base keeps the sign an odd integer calls for. `sqrt`, `floor`, `ceil`,
+`fmod` and the four basic operations are the IEEE results.
+
+`math.random` is Lua 5.4's generator. It starts from the game's seed.
+`math.randomseed()` with no argument returns to that seed. It does not
+read a clock. Zero is a defined sequence. A call with one integer, or
+two, sets a new seed from those integers.
+
+### 10.8 The time limit
+
+Each phase stops when it has run longer than its real-time limit. The
+default is 10 seconds. A steady clock is read when the phase starts and
+checked in the instruction hook, every 100 instructions, and in every
+library charge. The hook counts the allowance on every tenth of those
+calls, so the count still steps by 1,000 instructions. There is no
+thread and no signal.
+
+The default message is
+`<phase> ran for more than 10 seconds; its work is too large or never ends`.
+A limit of one second says `second`. A
+limit that is not a whole number of seconds names that length in
+milliseconds, and one millisecond says `millisecond`. A `pcall` or
+`xpcall` cannot keep the phase going. A phase that finishes inside the
+limit has the same results, the same charges and the same messages as
+it would with no clock. The limit only stops the script. A result that
+comes back is unchanged.
+
+The check lands at the next hook or the next charge, so a phase can run
+past the limit by the work of 100 instructions, or of one charge. Most
+instructions take well under a microsecond. The slowest step found is
+an assignment that makes a table rebuild itself: 10 to 30 milliseconds
+of processor time for a table of a million keys, about the largest
+whose rebuild fits the default memory cap. A loop can do that every 4
+instructions, 25 times between two reads of the clock, so it can run a
+quarter to three quarters of a second of processor time past the limit,
+and longer in real time on a machine busy with other work. On the
+machine where this was measured (10 cores, load averages of 20 to 80),
+loops that rebuild such a table stopped 0.01 to 0.9 seconds after a 2
+second limit, and in three runs at the busiest 2.4 to 2.9 seconds after
+it. A loop of 64 KiB zero-filled comparisons stopped within 60
+milliseconds of a 300 millisecond limit, and a tight loop within the
+same millisecond.
+
+A script near the limit can pass on one machine and fail on another. In
+multiplayer the loadout digest refuses a match whose machines disagree,
+so the two outcomes cannot run as one match. A dry run records
+`time_limit` like any other failure.
+
+## 13. Versioning
+
+`oamut` is the format version. The only value the reader accepts is the
+integer `1`, written `oamut: 1`. `1.0` and `"1"` are refused, and so is
+any other number, with `oamut must be 1`. A package of another format
+is not read with the keys of this one left out.
+
+`version` is the mutator's own version, not the format. Its grammar,
+and the grammar of a condition's range, are
+[3.1 Versions, ranges and conditions](#31-versions-ranges-and-conditions).
+
+`requires.engine` is optional. It is a string of at most 64 bytes, one
+to four comparisons of a three-part release `MAJOR.MINOR.PATCH`. Each
+part is a decimal from 0 to 65535 with no leading zero. The comparisons
+are `>=`, `>`, `<=`, `<` and `=`, separated by commas that spaces may
+surround. Every comparison has to hold. A value that starts with `>`
+is a block scalar unless it is quoted, and the manifest reader refuses
+that before the range is read, so the value is written in quotes:
+
+```yaml
+requires:
+  engine: ">= 0.8.0"
+```
+
+Reading the manifest does not ask whether this build meets the range.
+Opening the package does, which is what the installer does and what
+`oa-tool mutator pack` and `oa-tool mutator check` do. The build's
+version is the three-part release that build was made with.
+
+When the range is read and this build misses it, the player sees
+`needs Open Annihilation <range>; this is Open Annihilation <build>`.
+The range is one phrase for each comparison, joined with `, `:
+
+| Comparison | Phrase |
+| --- | --- |
+| `>= 0.8.0` | `0.8.0 or later` |
+| `> 0.8.0` | `later than 0.8.0` |
+| `<= 0.9.0` | `0.9.0 or earlier` |
+| `< 0.9.0` | `before 0.9.0` |
+| `= 0.8.0` | `exactly 0.8.0` |
+
+A stored requirement the range reader cannot read is refused with
+`Its engine requirement cannot be read.`
