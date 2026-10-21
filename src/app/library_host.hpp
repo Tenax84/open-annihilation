@@ -21,6 +21,7 @@
 #include "oa/ui/library/library.hpp"
 #include "oa/ui/library/screen.hpp"
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -122,6 +123,19 @@ struct KeptUpdate {
     std::string to{};   ///< what the update installs
 };
 
+/// What the Library showed when a switch of the mod from it ended a run.
+/// The next run opens it again with them.
+struct Runtime::LibraryReturn {
+    oa::ui::library::Tab tab{oa::ui::library::Tab::active}; ///< the tab shown
+    /// Each tab's own filter, by Tab's order.
+    std::array<oa::ui::library::Filter, oa::ui::library::tab_total> filters{};
+    std::string tag{};                                  ///< the tag shown; empty for every tag
+    std::string query{};                                ///< the search
+    std::optional<oa::ui::library::EntryId> selected{}; ///< the entry selected; none for none
+    bool details_open{};                                ///< the selected entry's details were open
+    bool details_page{};                                ///< they showed as their own page
+};
+
 /// The Library's host: its model and screen state, its feed, the pictures
 /// it holds, the updates it keeps for the queue and its worker.
 struct Runtime::LibraryHost {
@@ -164,6 +178,17 @@ struct Runtime::LibraryHost {
     /// packages no longer lets that item hide its update.
     std::map<uint64_t, uint64_t> finished_scans{};
     LibraryWork work{}; ///< the worker and what it found
+    /// The entry a Library opened again after a soft restart selects once
+    /// its feed lists it, while the player has not selected another; none
+    /// for none (select_kept).
+    std::optional<oa::ui::library::EntryId> kept_selection{};
+    /// The selection the Library showed as kept_selection was last applied.
+    std::optional<oa::ui::library::EntryId> kept_selection_shown{};
+
+    /// Selects kept_selection when it shows, and forgets it then. Until it
+    /// shows, the visible mod with the same key is selected, when there is
+    /// one: the catalogue that names its registry may not have arrived yet.
+    void select_kept();
 
     /// Starts the worker when it has not started.
     ///

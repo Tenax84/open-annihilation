@@ -481,6 +481,30 @@ void Runtime::check_library_install() {
         }
         require(oa_layer().top() == nullptr, "a screen stayed over the main menu");
     };
+    // A run PLAY NOW in the Library began: the Library opens again over the
+    // main menu as it showed, on Mods, and selects the mod played once its
+    // feed lists it. A notice nobody asked for is closed.
+    const auto reopened_on = [&](std::string_view key) {
+        for (int count = 0; count < 12 && !top_is(library_screen_name); ++count) {
+            frame();
+            const LayerScreen* top = oa_layer().top();
+            if (top != nullptr && dynamic_cast<const NoticeScreen*>(top) != nullptr)
+                tap(SDLK_RETURN);
+        }
+        const library::EntryId played{std::string(kBuiltIn), library::Kind::mod, std::string(key)};
+        require(
+            top_is(library_screen_name) && host.model.tab == library::Tab::mods &&
+                host.model.selected != played,
+            "the Library did not open again on Mods before its feed listed the mod played"
+        );
+        list_installed();
+        frames();
+        require(
+            top_is(library_screen_name) && host.model.tab == library::Tab::mods &&
+                host.model.selected == played,
+            "the Library did not open again on Mods with the mod played selected"
+        );
+    };
     const auto open_the_library = [&] {
         list_installed();
         open_library(library::Tab::mods);
@@ -946,7 +970,7 @@ void Runtime::check_library_install() {
     case 1: {
         // 10. ROLL BACK's question over the Library says the game reloads
         // for the mod played; CANCEL changes nothing.
-        settle();
+        reopened_on(kRidge);
         require(
             playing(ridge) && mod_profile() != nullptr && mod_profile()->id == kRidge &&
                 revision_in(ridge) == 4,
@@ -1080,6 +1104,7 @@ void Runtime::check_library_install() {
     case 2: {
         // The update was put in place as the mod was switched, and is told.
         require(playing(mods / std::string(kLattice)), "the run does not play Lattice");
+        reopened_on(kLattice);
         require(
             revision_in(ridge) == 5 && recorded_from(ridge, kBuiltIn, 2) &&
                 revision_in(kept) == 4 && recorded_from(kept, kBuiltIn, 1) &&
