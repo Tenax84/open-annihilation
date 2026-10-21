@@ -8,9 +8,11 @@ The game plays two commanders. With no mutator their health is neither 4000
 nor 1234 nor 2000. ridge-tough sets both to 4000, and ridge-tough:health=2000
 sets both to 2000, the number the option writes (1234 is not on that
 option's step). ridge-tough then ridge-tougher leaves 5000, and the reverse
-order leaves 4000. A missing id and an option the package does not have end
-with status 2, one refusal line and no match. ridge-boom ends with a
-non-zero status, a line naming the mutator and its error, and no match.
+order leaves 4000. A missing id, an option the package does not have, a
+mutator listed twice, a prerequisite that is not above it and two mutators
+that conflict end with status 2, one refusal line and no match.
+ridge-commander-boom ends with a non-zero status, a line naming the mutator
+and its error, and no match.
 """
 import argparse
 import os
@@ -148,22 +150,23 @@ def expect_refused(native, game_dir, workdir, name, mutators, phrase, status_cod
 
 
 def expect_boom(native, game_dir, workdir, package):
-    """A mutator whose script stops, with no match prepared."""
-    status, lines, _units = run(native, game_dir, workdir, "boom", [str(package / "ridge-boom")])
+    """A mutator whose script stops after a write, with no match prepared."""
+    mutator_id = "ridge-commander-boom"
+    status, lines, _units = run(native, game_dir, workdir, "boom", [str(package / mutator_id)])
     if status == 0:
         print("\n".join(lines))
-        raise ScriptFailure("ridge-boom exited with status 0")
+        raise ScriptFailure(f"{mutator_id} exited with status 0")
     if any(PREPARED in line for line in lines):
         print("\n".join(lines))
-        raise ScriptFailure("ridge-boom prepared a match")
+        raise ScriptFailure(f"{mutator_id} prepared a match")
     named = False
     for line in lines:
-        at = line.find("ridge-boom")
-        if at >= 0 and "boom" in line[at + len("ridge-boom"):]:
+        at = line.find(mutator_id)
+        if at >= 0 and "boom" in line[at + len(mutator_id):]:
             named = True
     if not named:
         print("\n".join(lines))
-        raise ScriptFailure("ridge-boom was not named with its error")
+        raise ScriptFailure(f"{mutator_id} was not named with its error")
 
 
 def main():
@@ -203,6 +206,33 @@ def main():
                 "speed",
                 [tough + ":speed=2"],
                 "has no option speed",
+                2,
+            )
+            expect_refused(
+                native,
+                game_dir,
+                workdir,
+                "twice",
+                [tough, tough],
+                "is listed twice",
+                2,
+            )
+            expect_refused(
+                native,
+                game_dir,
+                workdir,
+                "needs",
+                [str(packages / "ridge-needs-swift")],
+                "needs ridge-swift >= 1.0 above it",
+                2,
+            )
+            expect_refused(
+                native,
+                game_dir,
+                workdir,
+                "conflict",
+                [str(packages / "ridge-swift"), str(packages / "ridge-against-swift")],
+                "conflicts with ridge-swift",
                 2,
             )
             expect_boom(native, game_dir, workdir, packages)

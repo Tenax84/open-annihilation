@@ -1736,13 +1736,13 @@ if(OA_BUILD_PLATFORM)
         ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
       # Mutators at match start: none, then ridge-tough's commanders at 4000
       # with the layer mounted, then none again with the first health back,
-      # then ridge-boom stopping the start and leaving no layer.
+      # then ridge-commander-boom stopping the start and leaving no layer.
       set(oa_mutator_layer_dir "${CMAKE_CURRENT_BINARY_DIR}/native-checks/mutator-layer")
       file(MAKE_DIRECTORY "${oa_mutator_layer_dir}")
       add_test(NAME native-mutator-layer COMMAND oa-game --game-dir "${OA_GAME_DIR}"
         --skip-intro --mute --check-mutator-layer
         --mutator "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-tough"
-        --mutator "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-boom"
+        --mutator "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-commander-boom"
         --preferences-file "${oa_mutator_layer_dir}/mutator-layer.conf")
       set_tests_properties(native-mutator-layer PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
         WORKING_DIRECTORY "${oa_mutator_layer_dir}"

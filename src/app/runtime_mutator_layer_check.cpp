@@ -26,6 +26,19 @@ namespace {
     throw std::runtime_error("mutator layer check: " + what);
 }
 
+/// Tells whether a line names ridge-commander-boom and then its own error.
+///
+/// The error is the script's `boom`, after the id, so a failure that stops
+/// before the write does not pass.
+///
+/// @param text the status or the thrown message
+/// @return true when both are there, in that order
+bool names_commander_boom(const std::string& text) {
+    const std::string id = "ridge-commander-boom";
+    const std::size_t at = text.find(id);
+    return at != std::string::npos && text.find("boom", at + id.size()) != std::string::npos;
+}
+
 } // namespace
 
 void Runtime::check_mutator_layer() {
@@ -39,11 +52,11 @@ void Runtime::check_mutator_layer() {
     for (const oa::data::mutators::ResolvedMutator& one : supplied) {
         if (one.manifest.id == "ridge-tough")
             tough = one;
-        else if (one.manifest.id == "ridge-boom")
+        else if (one.manifest.id == "ridge-commander-boom")
             boom = one;
     }
     if (!tough.has_value() || !boom.has_value())
-        fail("the command line must name ridge-tough and ridge-boom");
+        fail("the command line must name ridge-tough and ridge-commander-boom");
 
     // The two commanders' MaxDamage, lower one first.
     const auto commander_health = [this] {
@@ -116,14 +129,10 @@ void Runtime::check_mutator_layer() {
     } catch (const std::exception& error) {
         thrown = error.what();
     }
-    const bool named = status_.find("ridge-boom") != std::string::npos ||
-                       status_.find("Ridge Boom") != std::string::npos ||
-                       thrown.find("ridge-boom") != std::string::npos ||
-                       thrown.find("Ridge Boom") != std::string::npos;
-    if (entered || !named)
-        fail("ridge-boom did not stop the start (" + thrown + "; " + status_ + ")");
+    if (entered || (!names_commander_boom(status_) && !names_commander_boom(thrown)))
+        fail("ridge-commander-boom did not stop the start (" + thrown + "; " + status_ + ")");
     if (assets_.mutator_layer_mounted())
-        fail("ridge-boom left a mutator layer mounted");
+        fail("ridge-commander-boom left a mutator layer mounted");
     while (oa::ui::frontend_dialogs::dialog_count() != 0)
         oa::ui::frontend_dialogs::close_dialog();
     std::cout << "mutator layer check: passed\n";

@@ -11998,10 +11998,11 @@ class Runtime final : public menu::Host,
 
     /// Plays skirmishes with the mutators the command line named.
     ///
-    /// None, then ridge-tough alone, then none again, then ridge-boom alone.
-    /// The commanders return to the health the first match recorded, ridge-tough
-    /// leaves both at 4000 with a mutator layer mounted, and ridge-boom stops
-    /// the start with its name and leaves no layer. Prints
+    /// None, then ridge-tough alone, then none again, then ridge-commander-boom
+    /// alone. The commanders return to the health the first match recorded,
+    /// ridge-tough leaves both at 4000 with a mutator layer mounted, and
+    /// ridge-commander-boom stops the start with its own error and leaves no
+    /// layer. Prints
     /// "mutator layer check: passed". Throws std::runtime_error on a failure.
     void check_mutator_layer();
 
