@@ -371,6 +371,11 @@ void Runtime::release_room_mutators() noexcept {
     RoomMutatorState* state = room_mutator_state_.get();
     if (state == nullptr)
         return;
+    // The host's list and its resolve belong to the room left; the next
+    // follow copies the lobby's list again, whatever its generation.
+    state->assembly = {};
+    state->assembly_known = false;
+    state->resolve.valid = false;
     if (state->mounted && !drop_room_layer())
         return;
     state->phase = mp::RoomMutatorPhase::none;

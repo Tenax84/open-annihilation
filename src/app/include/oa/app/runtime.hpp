@@ -4395,8 +4395,10 @@ class Runtime final : public menu::Host,
     /// Unmounts the battle room's mutator layer.
     ///
     /// The match's layer is left where it is. The chosen list is kept, so
-    /// the next follow can build it again. A mounted layer that cannot be
-    /// dropped stays mounted.
+    /// the next follow can build it again. A guest's copy of the host's
+    /// list and its resolve are dropped, so the next follow copies the
+    /// lobby's list again. A mounted layer that cannot be dropped stays
+    /// mounted.
     void release_room_mutators() noexcept;
 
     /// Returns the running match's mutator result.

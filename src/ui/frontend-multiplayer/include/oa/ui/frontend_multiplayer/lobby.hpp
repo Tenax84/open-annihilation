@@ -401,8 +401,8 @@ struct PresenceRecords {
     /// arrived before the host slot was known is folded when it is.
     uint16_t host_fed_size{};
     uint64_t host_fed_hash{};
-    /// Counts the changes of host_loadout, from 0. A guest copies the
-    /// assembly when this changes.
+    /// Counts the changes of host_loadout, from 0, lobby_reset's emptying
+    /// among them. A guest copies the assembly when this changes.
     uint32_t host_loadout_generation{};
     /// The full mutator field this machine sends parts from. The bound
     /// source may be cut to leave room for a map pack; a part is drawn from
@@ -598,6 +598,8 @@ struct StartedOptions {
 /// No player is stalled, and a game with no player timeout gets
 /// kDefaultPlayerTimeoutSeconds. The presence records other players sent
 /// and what was sent to them are forgotten; this machine's own record stays.
+/// The previous host's mutator list is emptied as a change of it, and the
+/// next host's record is folded even when its bytes are the same.
 /// The plain baseline's sim hash is set (PresenceRecords::plain_sim_hash),
 /// resolved the first time a lobby is reset and kept for the run.
 ///

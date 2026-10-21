@@ -2035,8 +2035,13 @@ void lobby_reset(Lobby& lobby, Game& game) noexcept {
     lobby.computer_command_value = 0;
     lobby.presence_records.plain_sim_hash = plain_baseline_sim_hash();
     // A new game does not keep the previous host's list. This machine's
-    // outgoing list stays, as the source record does.
+    // outgoing list stays, as the source record does. The generation moves
+    // so a guest's copy empties even under a host that sends no list, and
+    // the next host's record is folded even when its bytes are the same.
     lobby.presence_records.host_loadout = {};
+    ++lobby.presence_records.host_loadout_generation;
+    lobby.presence_records.host_fed_size = 0;
+    lobby.presence_records.host_fed_hash = 0;
     lobby.presence_records.part_refused_digest.reset();
     lobby.mutators_hold_seen = false;
     // The recorder's session starts again; the line it answers with stays.

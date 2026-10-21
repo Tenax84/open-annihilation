@@ -4335,8 +4335,10 @@ The battle room builds the host's mutator list on each machine
 starts as the run's `--mutator` choice. A guest uses only the list the
 host's records are carrying now, and only once every mutator of it has
 arrived; it never builds from a list of its own or from a list it hosted
-before. The build runs on the calling thread when the wanted digest or
-this machine's sim hash changes, on the live mod data, with no map. It
+before. Joining a room and leaving the screens forget the previous host's
+list, even when the next host's records carry none. The build runs on the
+calling thread when the wanted digest or this machine's sim hash changes,
+on the live mod data, with no map. It
 judges the list as the match start does: the same hack check and the same
 blocking judgement, against this machine's own Developer Mode. It does not
 play the hacks into the profile, so the room's sim hash stays the

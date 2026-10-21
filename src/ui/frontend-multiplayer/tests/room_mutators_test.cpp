@@ -673,11 +673,12 @@ void test_parts() {
     std::memcpy(event.data, head.data(), head.size());
     expect(mp::lobby_apply_event(late.lobby, event), "the record is kept before the host is known");
     expect(late.lobby.presence_records.host_loadout.total == 0, "an unknown host is not assembled");
+    const uint32_t unfolded = late.lobby.presence_records.host_loadout_generation;
     host_info->role = static_cast<uint8_t>(host_info->role | mp::kRoleHost);
     mp::presence_refresh(late.lobby);
     expect(
         late.lobby.presence_records.host_loadout.total == 2 &&
-            late.lobby.presence_records.host_loadout_generation == 1,
+            late.lobby.presence_records.host_loadout_generation == unfolded + 1,
         "the stored host record is folded when the host slot is known"
     );
 }
