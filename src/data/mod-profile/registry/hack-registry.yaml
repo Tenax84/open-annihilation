@@ -42,7 +42,7 @@
 # key, value its type and 3.1c baseline. Script extensions: direction and the default-index a list-form
 # mount uses. Data keys: file (unit | weapon), standard-key (the usual spelling of the key), value
 # (type; absent = what applies without the key), overrides (the parameter it replaces per unit) and
-# requires (the hack that must be on).
+# requires (the hack that must be on). mutator: true lets a mutator's hacks block set this entry's match parameters for one game; refused on install-scoped entries and on entries that touch the interface.
 #
 # Resolution, lowest to highest: baseline (entry absent) -> default (entry on) -> preset -> profile file ->
 # settings binding -> match option -> per-unit or per-weapon data key.
@@ -220,6 +220,7 @@ entries:
     summary: "Per-player unit cap: the registry default, clamp test and clamp value (3.1c 250/500/500) all become 1500."
     ownership: host + all-machines
     scope: sim
+    mutator: true
     params:
       default: {type: int, min: 1, max: 6553, unit: units, baseline: 250, default: 1500, adjustable: match, scope: sim, setting: {registry: UnitLimit}, clamp-between: [min, max]}
       min: {type: int, min: 1, max: 6553, unit: units, baseline: 20, default: 20, adjustable: fixed, scope: sim}
@@ -1129,6 +1130,7 @@ entries:
     summary: "Every speed change (keys, options slider, received speed packet) is clamped to [min, max]; .syncon lo hi sets [lo+10, hi+10] for all recorders, .syncoff restores 0..20."
     ownership: all-machines
     scope: sim
+    mutator: true
     params:
       min: {type: int, min: 0, max: 20, unit: speed steps (10 = normal), baseline: 1, default: 0, adjustable: match, scope: sim}
       max: {type: int, min: 0, max: 20, unit: speed steps (10 = normal), baseline: 20, default: 20, adjustable: match, scope: sim}

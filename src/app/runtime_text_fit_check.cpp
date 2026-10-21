@@ -392,16 +392,28 @@ void Runtime::check_text_fit() {
         hold_library();
     };
 
+    /// The injected mutator `key`, injected again when the feed has rebuilt
+    /// the Library since. A holding frame keeps out what the feed changed
+    /// before it, but a picture or a minimap that arrives during the frame
+    /// moves the feed on, and a slow build sees that often.
+    const auto injected = [&](std::string_view key) -> const library::Entry* {
+        const library::EntryId id{"fit-core", library::Kind::mutator, std::string(key)};
+        if (library::find_entry(library_host().model, id) == nullptr)
+            inject_mutators();
+        return library::find_entry(library_host().model, id);
+    };
+
     /// The details of one injected mutator, scrolled, at the window's size.
     /// Compact shows the details page. Regular and Large show the pane.
     const auto show_mutator = [&](std::string_view key) {
         LibraryHost& host = library_host();
-        library::select(host.model, {"fit-core", library::Kind::mutator, std::string(key)});
-        library::open_details(host.model);
         host.state.details_page = width <= 640;
         host.state.menu = library::MenuKind::none;
         const std::string screen = std::string("library/mutators/") + std::string(key);
         for (const int32_t scroll : kScrolls) {
+            require(injected(key) != nullptr, screen + " has no " + std::string(key));
+            library::select(host.model, {"fit-core", library::Kind::mutator, std::string(key)});
+            library::open_details(host.model);
             host.state.details_scroll = scroll;
             host.state.list_scroll = 0;
             ++host.model_revision;
@@ -605,9 +617,7 @@ void Runtime::check_text_fit() {
             // The question is built while the injected model is still held.
             const auto paint_get_with = [&](std::string_view key, std::string_view screen) {
                 LibraryHost& host = library_host();
-                const library::Entry* entry = library::find_entry(
-                    host.model, {"fit-core", library::Kind::mutator, std::string(key)}
-                );
+                const library::Entry* entry = injected(key);
                 require(entry != nullptr, std::string(screen) + " has no " + std::string(key));
                 oa_layer().push(
                     std::make_unique<QuestionScreen>(
