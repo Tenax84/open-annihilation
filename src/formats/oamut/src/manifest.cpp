@@ -114,7 +114,7 @@ constexpr std::size_t most_email_bytes = 254;
 /// The most bytes of an option id.
 constexpr std::size_t most_option_id_bytes = 32;
 
-/// The most bytes of a label or a choice string.
+/// The most bytes of a label.
 constexpr std::size_t most_label_bytes = 64;
 
 /// The most bytes of one legacy original's name.
@@ -844,8 +844,7 @@ bool read_choice_value(
         value.text = oamod::canonical_number_text(item.number);
         return true;
     }
-    if (item.kind == oamod::NodeKind::string && !item.text.empty() &&
-        item.text.size() <= most_label_bytes && !has_control(item.text, false)) {
+    if (item.kind == oamod::NodeKind::string && choice_value_text(item.text)) {
         value.text = item.text;
         return true;
     }
@@ -853,8 +852,8 @@ bool read_choice_value(
         problems,
         item.position,
         path,
-        path + " must be a number or a string of 1 to " + std::to_string(most_label_bytes) +
-            " bytes"
+        path + " must be a number or 1 to " + std::to_string(most_choice_value_bytes) +
+            " letters, digits, _, - or ."
     );
     return false;
 }
@@ -1866,6 +1865,19 @@ std::string cut_summary(std::string_view description) {
 }
 
 } // namespace
+
+bool choice_value_text(std::string_view text) noexcept {
+    if (text.empty() || text.size() > most_choice_value_bytes)
+        return false;
+    for (const char unit : text) {
+        const auto byte = static_cast<unsigned char>(unit);
+        const bool letter = (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z');
+        const bool digit = byte >= '0' && byte <= '9';
+        if (!letter && !digit && byte != '_' && byte != '-' && byte != '.')
+            return false;
+    }
+    return true;
+}
 
 const char* layer_name(Layer layer) noexcept {
     return layer_names[static_cast<std::size_t>(layer)].data();

@@ -26,6 +26,26 @@ namespace host = oa::data::script_host;
 
 namespace {
 
+// The address sanitizer makes every call several times slower, so its builds
+// get the suite's timeout scale on the time bounds.
+//
+// A loop the budget stops spends at most `budget_stop_seconds` of processor
+// time. Before the libraries were charged these loops ran for hours; a slow
+// Windows machine needs about 7 seconds for the heaviest now.
+#if defined(__SANITIZE_ADDRESS__)
+constexpr int time_scale = 6;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+constexpr int time_scale = 6;
+#else
+constexpr int time_scale = 1;
+#endif
+#else
+constexpr int time_scale = 1;
+#endif
+
+constexpr double budget_stop_seconds = 20.0;
+
 struct Case {
     std::string name;
     std::string body;
@@ -94,6 +114,10 @@ open_with(Package& package, host::ScriptError& error, host::Profile profile) {
     host::OpenOptions options;
     options.package_id = "sample";
     options.profile = profile;
+    // These cases are about the instruction budget; the real-time limit has
+    // its own test, and a busy machine must not turn a budget stop into a
+    // time stop here.
+    options.time_limit = std::chrono::minutes(10);
     options.sources.context = &package;
     options.sources.read = read_package;
     auto sandbox = host::Sandbox::open(options, error);
@@ -319,40 +343,6 @@ void add_cases(std::vector<Case>& cases) {
         {"warn-table", "return show(warn(\"a\", {}))"},
         {"warn-values", "return show(warn(\"@off\"), warn(\"a\", 1, 2.5))"},
 
-        {"pack-size-limit", "return show(string.pack(\"i17\", 1))"},
-        {"pack-option", "return show(string.pack(\"w\", 1))"},
-        {"pack-missing-size", "return show(string.pack(\"c\", \"x\"))"},
-        {"pack-x-next", "return show(string.pack(\"X\", 1))"},
-        {"pack-alignment", "return show(string.pack(\"!3i4\", 1))"},
-        {"pack-overflow", "return show(string.pack(\"i1\", 200))"},
-        {"pack-unsigned-overflow", "return show(string.pack(\"I1\", -1))"},
-        {"pack-long-text", "return show(string.pack(\"c2\", \"abc\"))"},
-        {"pack-zeros", "return show(string.pack(\"z\", \"a\\0\"))"},
-        {"pack-count-size", "return show(string.pack(\"s1\", string.rep(\"x\", 300)))"},
-        {"pack-method", "return show((\"i4\"):pack(\"x\"))"},
-        {"pack-no-value", "return show(string.pack(\"i4i4\", 1))"},
-        {"pack-values",
-         "return show(string.byte(string.pack(\"<i4>I2!8xXi8bzs1c3d\", -2, 513, 7, \"hi\", "
-         "\"abc\", \"de\", 1.5), 1, -1))"},
-        {"pack-numbers", "return show(string.byte(string.pack(\"fnj\", 0.5, -2, -3), 1, -1))"},
-
-        {"packsize-variable", "return show(string.packsize(\"s\"))"},
-        {"packsize-too-large",
-         "return show(string.packsize(\"c1000000000c1000000000c1000000000\"))"},
-        {"packsize-values",
-         "return show(string.packsize(\"i4i8!8xXi8bc3d\"), string.packsize(\"\"))"},
-
-        {"unpack-short", "return show(string.unpack(\"i4\", \"ab\"))"},
-        {"unpack-position", "return show(string.unpack(\"b\", \"ab\", 5))"},
-        {"unpack-unfinished", "return show(string.unpack(\"z\", \"abc\"))"},
-        {"unpack-wide-integer",
-         "return show(string.unpack(\"i9\", string.rep(\"\\255\", 8) .. \"\\1\"))"},
-        {"unpack-method", "return show((\"i4\"):unpack(\"ab\"))"},
-        {"unpack-values",
-         "return show(string.unpack(\"<i4zs1c2\", string.pack(\"<i4zs1c2\", -5, \"ab\", \"xyz\", "
-         "\"qq\")))"},
-        {"unpack-from-end", "return show(string.unpack(\"b\", \"abc\", -1))"},
-
         {"char-range", "return show(utf8.char(-1))"},
         {"char-type", "return show(utf8.char(\"x\"))"},
         {"char-second", "return show(utf8.char(65, 2^31))"},
@@ -497,7 +487,7 @@ void expect_budget(const char* source) {
     OA_CHECK(error.kind == host::ErrorKind::instruction_budget);
     OA_CHECK(message_has(error, "50000000"));
     OA_CHECK(sandbox->instructions_used() >= host::default_instruction_budget);
-    OA_CHECK(processor_seconds < 5.0);
+    OA_CHECK(processor_seconds < budget_stop_seconds * time_scale);
 }
 
 void expect_range(const char* source, const char* function, const char* count) {
@@ -515,7 +505,7 @@ void expect_range(const char* source, const char* function, const char* count) {
     OA_CHECK(message_has(error, function));
     OA_CHECK(message_has(error, "past the most of"));
     OA_CHECK(message_has(error, count));
-    OA_CHECK(elapsed < std::chrono::seconds(5));
+    OA_CHECK(elapsed < std::chrono::seconds(5 * time_scale));
 }
 
 void review_and_replaced_calls_stop() {
@@ -533,7 +523,7 @@ void review_and_replaced_calls_stop() {
         OA_CHECK(error.kind == host::ErrorKind::string_length);
         OA_CHECK(message_has(error, "1048576"));
         OA_CHECK(message_has(error, "65536"));
-        OA_CHECK(elapsed < std::chrono::seconds(5));
+        OA_CHECK(elapsed < std::chrono::seconds(5 * time_scale));
     }
 
     expect_budget(
@@ -617,32 +607,8 @@ void review_and_replaced_calls_stop() {
 // The copied base, string, utf8 and table calls, each in a loop that does a
 // lot of work per call.
 void copied_calls_stop() {
-    // string.pack copies 400 texts of 65,000 bytes, then fails on its last
+    // string.format copies 400 texts of 65,000 bytes, then fails on its last
     // argument, which the script catches.
-    expect_budget(
-        "local big = string.rep(\"x\", 65000)\n"
-        "local args = {}\n"
-        "for i = 1, 400 do\n"
-        "  args[i] = big\n"
-        "end\n"
-        "args[401] = \"not a number\"\n"
-        "local format = string.rep(\"s4\", 400) .. \"i\"\n"
-        "while true do\n"
-        "  pcall(string.pack, format, table.unpack(args))\n"
-        "end\n"
-    );
-    // The same with fixed-size texts that pack fills with padding.
-    expect_budget(
-        "local args = {}\n"
-        "for i = 1, 100 do\n"
-        "  args[i] = \"\"\n"
-        "end\n"
-        "args[101] = \"x\"\n"
-        "local format = string.rep(\"c60000\", 100) .. \"i\"\n"
-        "while true do\n"
-        "  pcall(string.pack, format, table.unpack(args))\n"
-        "end\n"
-    );
     expect_budget(
         "local big = string.rep(\"x\", 65000)\n"
         "local args = {}\n"
@@ -666,12 +632,6 @@ void copied_calls_stop() {
         "  end\n"
         "end\n"
         "f(table.unpack(t))\n"
-    );
-    expect_budget(
-        "local s = string.rep(\"a\", 65000)\n"
-        "while true do\n"
-        "  pcall(string.unpack, \"z\", s)\n"
-        "end\n"
     );
     expect_budget(
         "local a = string.rep(\"x\", 65536)\n"
@@ -728,9 +688,18 @@ void copied_calls_stop() {
         "  end\n"
         "end\n"
     );
-    expect_budget("local f = string.rep(\" \", 65536)\nwhile true do\n  string.pack(f)\nend\n");
     expect_budget(
         "local s = string.rep(\" \", 65000) .. \"1\"\nwhile true do\n  tonumber(s)\nend\n"
+    );
+    // setmetatable installs a copy of the metatable, walking every field.
+    expect_budget(
+        "local mt = {}\n"
+        "for i = 1, 30000 do\n"
+        "  mt[i] = i\n"
+        "end\n"
+        "while true do\n"
+        "  setmetatable({}, mt)\n"
+        "end\n"
     );
 }
 
@@ -862,6 +831,41 @@ void unit_workloads_stay_cheap() {
     OA_CHECK(sorted < host::default_instruction_budget / 100);
 }
 
+// setmetatable charges 64 units for making the copy and one unit per field
+// it copies. Both phases run fewer instructions than one count step, so the
+// difference is the second call's charge alone. A class of 21 fields set on
+// 5,000 values stays a small part of the allowance.
+void setmetatable_charge_stays_small() {
+    const char* once = "local mt = {__index = {}, a = 1, b = 2}\n"
+                       "setmetatable({}, mt)\n";
+    const char* twice = "local mt = {__index = {}, a = 1, b = 2}\n"
+                        "setmetatable({}, mt)\n"
+                        "setmetatable({}, mt)\n";
+    const uint64_t one = workload_charge(once);
+    const uint64_t two = workload_charge(twice);
+    OA_CHECK(one == 64 + 3);
+    OA_CHECK(two - one == 64 + 3);
+
+    const char* instances = "local Class = {}\n"
+                            "Class.__index = Class\n"
+                            "for m = 1, 20 do\n"
+                            "  Class[\"method\" .. m] = function(self) return self.id + m end\n"
+                            "end\n"
+                            "local made = {}\n"
+                            "for i = 1, 5000 do\n"
+                            "  made[i] = setmetatable({id = i}, Class)\n"
+                            "end\n"
+                            "return made[5000]:method20()\n";
+    const uint64_t many = workload_charge(instances);
+    std::printf(
+        "setmetatable: %llu units for one call, %llu for 5000 values of a 21-field class\n",
+        static_cast<unsigned long long>(one),
+        static_cast<unsigned long long>(many)
+    );
+    OA_CHECK(many >= 5000 * (64 + 21));
+    OA_CHECK(many < host::default_instruction_budget / 50);
+}
+
 void utf8_codes_is_one_function() {
     Package package;
     host::ScriptError error;
@@ -874,6 +878,32 @@ void utf8_codes_is_one_function() {
     lua_State* state = sandbox->state();
     lua_getglobal(state, "same");
     OA_CHECK(lua_toboolean(state, -1) == 1);
+}
+
+// string.pack, string.packsize and string.unpack are removed, because their
+// sizes and alignment differ between builds. Neither the library nor a method
+// call on a string reaches them.
+void pack_family_is_absent() {
+    Package package;
+    host::ScriptError error;
+    auto sandbox = open_with(package, error, host::mutator_profile());
+    if (!sandbox)
+        return;
+    put(package,
+        "mutator.lua",
+        "absent = string.pack == nil and string.packsize == nil and string.unpack == nil\n"
+        "local ok, message = pcall(function() return (\"i4\"):pack(1) end)\n"
+        "method_absent = not ok and string.find(message, \"nil value\", 1, true) ~= nil\n");
+    const bool ran = sandbox->run_file("mutator.lua", "tick", nullptr, error);
+    OA_CHECK(ran);
+    if (!ran)
+        return;
+    lua_State* state = sandbox->state();
+    lua_getglobal(state, "absent");
+    OA_CHECK(lua_toboolean(state, -1) == 1);
+    lua_getglobal(state, "method_absent");
+    OA_CHECK(lua_toboolean(state, -1) == 1);
+    lua_pop(state, 2);
 }
 
 struct TextResult {
@@ -937,7 +967,9 @@ int main() {
     copied_calls_stop();
     short_strings_cost_the_same();
     unit_workloads_stay_cheap();
+    setmetatable_charge_stays_small();
     utf8_codes_is_one_function();
+    pack_family_is_absent();
     a_mutator_rewrites_tables();
     return oa::test::check_exit_status();
 }

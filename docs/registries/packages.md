@@ -127,7 +127,9 @@ JSON object. The keys, in order, are `check`, `ok`, `problems`, `warnings`,
 `conflicts_with` are objects with `id` and, when a range was written,
 `version` holding that range. `works_with` and `layers` are the manifest's
 strings. `options` lists `id`, `label`, `type` and `default`, and a choice's
-`values` and `labels` or a number's `min`, `max` and `step`. `icon` gives
+`values` and `labels` or a number's `min`, `max` and `step`. A string choice
+value is an identifier of 1 to 32 bytes of letters, digits, `_`, `-` and `.`;
+its label stays 1 to 64 bytes. `icon` gives
 the icon's `path`, `sha256`, `size`, `width` and `height`. `scripts` is how
 many Lua files compiled. `rules` lists the `.sm` paths in byte order.
 `legacy` lists each original's `name`, `prefix`, `compatibility` and

@@ -225,10 +225,8 @@ for `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `table.move`,
 `table.unpack`, `table.sort`, `utf8.char`, `utf8.len`, `utf8.codepoint`,
 `utf8.offset` and `utf8.codes`, and in
 [`src/data/script-host/src/string_format.cpp`](src/data/script-host/src/string_format.cpp)
-for `string.format`, `string.pack`, `string.packsize` and `string.unpack`,
-counting the bytes, elements or comparisons those calls perform. The
-licence is the MIT
-licence. The licence text is in
+for `string.format`, counting the bytes, elements or comparisons those
+calls perform. The licence is the MIT licence. The licence text is in
 [`licenses/lua-LICENSE.txt`](licenses/lua-LICENSE.txt).
 
 > Copyright (C) 1994-2026 Lua.org, PUC-Rio.

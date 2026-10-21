@@ -130,7 +130,8 @@ tad::WriteResult recording_write(const DemoRecording& recording) {
     demo.map_name = setup.map_name;
     // The views below point into storage that lives until the write returns.
     std::vector<std::vector<uint8_t>> storage;
-    storage.reserve(setup.players.size() * 2 + 2);
+    // Recorder text, date, the loadout sector, then an address and a status per player.
+    storage.reserve(setup.players.size() * 2 + 3);
     const auto keep = [&](std::vector<uint8_t> bytes) -> std::span<const uint8_t> {
         storage.push_back(std::move(bytes));
         return storage.back();
@@ -143,6 +144,15 @@ tad::WriteResult recording_write(const DemoRecording& recording) {
         {static_cast<uint32_t>(tad::SectorType::recording_date),
          keep({setup.date_text.begin(), setup.date_text.end()})}
     );
+    // One sector chunk holds the length word, the type word and the text.
+    const std::size_t sector_room =
+        tad::limit::chunk_bytes - tad::layout::chunk_length_bytes - tad::layout::sector_type_bytes;
+    if (!setup.loadout_text.empty() && setup.loadout_text.size() <= sector_room) {
+        demo.sectors.push_back(
+            {static_cast<uint32_t>(tad::SectorType::mutators),
+             keep({setup.loadout_text.begin(), setup.loadout_text.end()})}
+        );
+    }
     for (std::size_t i = 0; i < setup.players.size(); ++i) {
         const auto& player = setup.players[i];
         std::vector<uint8_t> address(player.address.begin(), player.address.end());

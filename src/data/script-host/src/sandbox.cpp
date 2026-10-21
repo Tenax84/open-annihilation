@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The state, its allocator, the instruction hook and the one protected entry
-// every phase uses. A spent allowance makes xpcall return the error unchanged,
-// so a script message handler cannot keep running after the budget is gone.
+// every phase uses. A spent allowance, or a phase past its real-time limit,
+// makes xpcall return the error unchanged, so a script message handler cannot
+// keep running after the phase has stopped.
 
 #include "internal.hpp"
 
+#include <chrono>
+#include <clocale>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -21,9 +25,27 @@ namespace {
 extern "C" {
 static void script_count_hook(lua_State* state, lua_Debug* /*activation*/) {
     HostDetail::Control* control = control_from(state);
+    // At the clock interval, nine calls in ten only read the clock. The tenth
+    // counts the allowance as one call per budget_check_interval did, so the
+    // count, the charges and where a spent allowance stops the phase are the
+    // same. Scripts have no coroutines, so every instruction runs on this one
+    // state. Once armed at one instruction, every call takes the full check.
+    if (lua_gethookcount(state) == clock_check_interval) {
+        ++control->clock_checks;
+        if (control->clock_checks < clock_checks_per_budget_check) {
+            if (phase_past_time_limit(control)) {
+                raise_time_limit(state);
+            }
+            return;
+        }
+        control->clock_checks = 0;
+    }
     if (control->string_refused) {
         lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
         luaL_error(state, "%s", control->string_message);
+    }
+    if (control->time_expired) {
+        raise_time_limit(state);
     }
     if (control->allowance_spent) {
         lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
@@ -34,6 +56,9 @@ static void script_count_hook(lua_State* state, lua_Debug* /*activation*/) {
         control->allowance_spent = true;
         lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
         luaL_error(state, "%s", control->instruction_message);
+    }
+    if (phase_past_time_limit(control)) {
+        raise_time_limit(state);
     }
 }
 } // extern "C"
@@ -58,6 +83,33 @@ void write_budget_messages(Control& control) {
     cursor = append_text(cursor, end, "the script used more than its ");
     cursor = append_text(cursor, end, mebibytes);
     append_text(cursor, end, " MiB of memory");
+}
+
+// Names the phase and the limit it was given. Whole seconds use the default
+// sentence's unit; any other limit is named in milliseconds.
+void write_time_message(Control& control) {
+    const int64_t milliseconds = control.time_limit.count();
+    const bool whole_seconds = milliseconds > 0 && milliseconds % 1000 == 0;
+    uint64_t number = 0;
+    const char* unit = "milliseconds";
+    if (milliseconds > 0)
+        number = static_cast<uint64_t>(milliseconds);
+    if (whole_seconds) {
+        number = static_cast<uint64_t>(milliseconds / 1000);
+        unit = number == 1 ? "second" : "seconds";
+    } else if (number == 1) {
+        unit = "millisecond";
+    }
+    char digits[32]{};
+    append_u64(digits, digits + sizeof digits, number);
+    char* cursor = control.time_message;
+    char* end = control.time_message + sizeof control.time_message;
+    cursor = append_text(cursor, end, control.phase.c_str());
+    cursor = append_text(cursor, end, " ran for more than ");
+    cursor = append_text(cursor, end, digits);
+    cursor = append_text(cursor, end, " ");
+    cursor = append_text(cursor, end, unit);
+    append_text(cursor, end, "; its work is too large or never ends");
 }
 
 // Strips one leading "chunk:line: " prefix. The chunk is the text before the
@@ -307,6 +359,12 @@ static int trampoline(lua_State* state) {
     Control* control = control_from(state);
     control->instructions_used = 0;
     control->allowance_spent = false;
+    control->clock_checks = 0;
+    control->time_expired = false;
+    // The phase's start. Later reads of the clock are in the count hook and
+    // in charge(), and only those reads can stop the phase.
+    control->phase_started = std::chrono::steady_clock::now();
+    write_time_message(*control);
     control->string_refused = false;
     control->string_refused_length = 0;
     control->string_message[0] = '\0';
@@ -319,7 +377,7 @@ static int trampoline(lua_State* state) {
     control->error_chunk[0] = '\0';
     control->traceback_text[0] = '\0';
     control->loading_count = 0;
-    lua_sethook(state, script_count_hook, LUA_MASKCOUNT, budget_check_interval);
+    lua_sethook(state, script_count_hook, LUA_MASKCOUNT, clock_check_interval);
 
     switch (control->mode) {
     case PhaseMode::open_libraries: {
@@ -426,6 +484,23 @@ void note_string_place(HostDetail::Control* control) {
     control->error_chunk[0] = '\0';
     control->error_line = 0;
     control->location_locked = true;
+}
+
+// A locale category whose setting changes what a script computes, and the
+// words that name it in the refusal.
+struct LocaleNeed {
+    int category{};
+    const char* words{};
+};
+
+const LocaleNeed locale_needs[] = {
+    {LC_COLLATE, "collation"},
+    {LC_NUMERIC, "numeric"},
+    {LC_CTYPE, "character-type"},
+};
+
+bool locale_is_c(const char* name) {
+    return name != nullptr && (std::strcmp(name, "C") == 0 || std::strcmp(name, "POSIX") == 0);
 }
 
 } // namespace
@@ -614,7 +689,8 @@ bool Sandbox::enter(std::string_view phase, ScriptError& error) {
         const bool too_long = control_->string_refused;
         const bool memory = control_->allocation_refused || status == LUA_ERRMEM;
         const bool instructions = control_->allowance_spent;
-        if (status == LUA_OK && !too_long && !memory && !instructions) {
+        const bool timed_out = control_->time_expired;
+        if (status == LUA_OK && !too_long && !memory && !instructions && !timed_out) {
             error = {};
             return true;
         }
@@ -635,6 +711,9 @@ bool Sandbox::enter(std::string_view phase, ScriptError& error) {
         } else if (instructions) {
             result.kind = ErrorKind::instruction_budget;
             result.message = control_->instruction_message;
+        } else if (timed_out) {
+            result.kind = ErrorKind::time_limit;
+            result.message = control_->time_message;
         } else if (control_->pending_kind != ErrorKind::none) {
             result.kind = control_->pending_kind;
         } else if (status == LUA_ERRSYNTAX) {
@@ -655,11 +734,29 @@ bool Sandbox::enter(std::string_view phase, ScriptError& error) {
 std::optional<Sandbox> Sandbox::open(const OpenOptions& options, ScriptError& error) {
     try {
         error = {};
+        // String order follows LC_COLLATE, reading and writing number text
+        // LC_NUMERIC, and upper, lower and the pattern classes LC_CTYPE. The
+        // process starts in C, and nothing in the engine changes that. Another
+        // locale would give a script different results on each machine.
+        for (const LocaleNeed& need : locale_needs) {
+            const char* current = std::setlocale(need.category, nullptr);
+            if (locale_is_c(current))
+                continue;
+            const char* name = current != nullptr && current[0] != '\0' ? current : "unknown";
+            error.kind = ErrorKind::runtime;
+            error.phase = "open";
+            error.package_id = options.package_id;
+            error.message = std::string("the C library's ") + need.words + " locale is " + name +
+                            "; scripts need C";
+            return std::nullopt;
+        }
+
         std::unique_ptr<Control> control;
         try {
             control = std::make_unique<Control>();
             control->memory_cap = options.profile.budget.memory_bytes;
             control->instruction_allowance = options.profile.budget.instructions;
+            control->time_limit = options.time_limit;
             control->sources = options.sources;
             control->package_id = options.package_id;
             control->random_seed = options.random_seed;

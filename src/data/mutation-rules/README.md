@@ -83,10 +83,13 @@ Across mutators the algebra is:
   mutators that supplied a meta value are listed on the write.
 - Otherwise the base is the mean of the assignments, or the field's current
   value when there is none, times the product of the factors, then clamped
-  to the lowest low and the highest high of every clamp. Sums and products
-  run in mutator list order. A mean is the sum divided by the count. The
-  clamp is applied to the combined product, not to each mutator before the
-  product.
+  to the lowest low and the highest high of every clamp. Sums run in mutator
+  list order. Each mutator multiplies its own factors in file order. Those
+  products then multiply in a fixed order: the exact bits of the factor,
+  smaller first, and, when the bits match, the rule text of the scales (the
+  source name and line of each one, in file order). A mean is the sum
+  divided by the count. The clamp is applied to the combined product, not
+  to each mutator before the product.
 - A factor on a field that is absent, and that no assignment creates, does
   nothing. An assignment or a meta value creates the field, and other
   mutators' factors then apply to that base.
@@ -156,7 +159,9 @@ current value and is therefore not written.
   mutator do too.
 - One field is written at most once. The mutators on that write are the ones
   whose contribution is in the value, in list order.
-- Numeric results do not depend on mutator order. Appends do, and follow the
+- Numeric results do not depend on mutator order. Stacked factors multiply
+  in the fixed bit order above, so twenty factors on one field spell the
+  same number in every list order. Appends do depend on order, and follow the
   list. A key the record does not hold is written with the spelling that
   sorts first by raw bytes among the changes that name it, so the file's
   bytes do not depend on list order either. `EnergyStorage` precedes
@@ -168,7 +173,9 @@ current value and is therefore not written.
 ## Tests
 
 `oa-data-mutation-rules-test` builds small documents and rule texts. It
-checks the written text, the writes and the notes for stacked factors, meta
+checks the written text, the writes and the notes for stacked factors
+(including twenty-four factors in several list orders, and three scales
+inside one mutator kept in file order), meta
 values and the fields they create, a widened clamp, text cancellation and
 append order, the within-mutator rule, needs on fields a record leaves out
 (including a movement class and a key no schema holds), targets and folders,

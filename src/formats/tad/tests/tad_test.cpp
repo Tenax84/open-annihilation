@@ -381,6 +381,55 @@ void test_malformed() {
     }
 }
 
+void test_mutators_sector_round_trips() {
+    Fixture fixture;
+    const std::string text = "ridge-pace 1";
+    const Bytes loadout(text.begin(), text.end());
+    fixture.demo.sectors.push_back({static_cast<uint32_t>(tad::SectorType::mutators), loadout});
+    const Bytes bytes = encoded(fixture.demo);
+    const auto result = tad::parse(bytes);
+    require(result.ok(), "mutators sector parses");
+    const auto* sector = tad::find_sector(*result.demo, tad::SectorType::mutators);
+    require(sector != nullptr && tad::sector_text(*sector) == text, "mutators sector text");
+    require(sector != nullptr && same(sector->data, loadout), "mutators sector bytes");
+    require(encoded(*result.demo) == bytes, "mutators sector round trip");
+}
+
+void test_recording_without_mutators_sector() {
+    const Fixture fixture;
+    const auto result = tad::parse(encoded(fixture.demo));
+    require(result.ok(), "recording without the mutators sector parses");
+    require(result.demo->sectors.size() == 3, "no extra sector");
+    require(
+        tad::find_sector(*result.demo, tad::SectorType::mutators) == nullptr,
+        "mutators sector absent"
+    );
+}
+
+void test_unknown_sector_is_kept() {
+    Fixture fixture;
+    const Bytes extra{0x10, 0x20, 0x30};
+    const uint32_t unknown = 0x51525354U;
+    fixture.demo.sectors.insert(fixture.demo.sectors.begin() + 1, {unknown, extra});
+    const Bytes bytes = encoded(fixture.demo);
+    const auto result = tad::parse(bytes);
+    require(result.ok(), "unknown sector parses");
+    require(result.demo->sectors.size() == 4, "unknown sector kept");
+    require(
+        result.demo->sectors[1].type == unknown && same(result.demo->sectors[1].data, extra),
+        "unknown sector bytes"
+    );
+    require(
+        tad::find_sector(*result.demo, tad::SectorType::recording_date) != nullptr,
+        "a later sector is kept"
+    );
+    require(
+        result.demo->packets.size() == 2 && result.demo->players.size() == 2,
+        "the recording continues after the unknown sector"
+    );
+    require(encoded(*result.demo) == bytes, "unknown sector round trip");
+}
+
 } // namespace
 
 int main() {
@@ -388,6 +437,9 @@ int main() {
         test_round_trip();
         test_split_records();
         test_malformed();
+        test_mutators_sector_round_trips();
+        test_recording_without_mutators_sector();
+        test_unknown_sector_is_kept();
         std::cout << "tad-format: ok\n";
         return 0;
     } catch (const std::exception& error) {
