@@ -7,6 +7,7 @@
 #include "oa/ui/frontend_multiplayer/lobby.hpp"
 #include "oa/ui/frontend_multiplayer/lobby_net.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -169,6 +170,9 @@ struct Room {
         if (oa) {
             info->engine_signature[0] = ng::engine_signature_first;
             info->engine_signature[1] = ng::engine_signature_second;
+        } else {
+            info->engine_signature[0] = 0;
+            info->engine_signature[1] = 0;
         }
         lobby.presence_records.block_player[player_slot] = id;
     }
@@ -201,7 +205,8 @@ ng::PresenceMutators field_of(bool built, bool failed, uint8_t index, uint8_t to
     field.total = total;
     field.held = held;
     field.digest.fill(0x11);
-    field.layer_digest.fill(0x22);
+    if (built)
+        field.layer_digest.fill(0x22);
     return field;
 }
 
@@ -212,9 +217,8 @@ ng::PresenceMutators field_of(bool built, bool failed, uint8_t index, uint8_t to
 /// @param mark the byte the sim hash is filled with
 /// @param capacity the most bytes the record may take
 /// @return the record; empty when it does not encode
-std::vector<uint8_t> encode_field(
-    const ng::PresenceMutators& field, bool sim, uint8_t mark, std::size_t capacity
-) {
+std::vector<uint8_t>
+encode_field(const ng::PresenceMutators& field, bool sim, uint8_t mark, std::size_t capacity) {
     ng::PresenceRecord record;
     record.mutators = field;
     if (sim) {
@@ -236,7 +240,9 @@ void put_local(mp::Lobby& lobby, const std::vector<uint8_t>& bytes) {
 }
 
 /// Stores a record as the one a remote slot sent.
-void put_peer(mp::Lobby& lobby, int32_t player_slot, uint32_t id, const std::vector<uint8_t>& bytes) {
+void put_peer(
+    mp::Lobby& lobby, int32_t player_slot, uint32_t id, const std::vector<uint8_t>& bytes
+) {
     std::memcpy(lobby.presence_records.peer[player_slot], bytes.data(), bytes.size());
     lobby.presence_records.peer_size[player_slot] = static_cast<uint16_t>(bytes.size());
     lobby.presence_records.peer_id[player_slot] = id;
@@ -255,7 +261,9 @@ Room hosted(const ng::PresenceMutators& field, bool sim = false, uint8_t mark = 
     return room;
 }
 
-void expect_hold(const mp::MutatorsBlock& block, mp::MutatorsHold hold, int32_t slot, int position) {
+void expect_hold(
+    const mp::MutatorsBlock& block, mp::MutatorsHold hold, int32_t slot, int position
+) {
     expect(block.hold == hold, "the hold");
     expect(block.slot == slot, "the slot the hold names");
     expect(block.position == static_cast<uint8_t>(position), "the position the hold names");
@@ -315,6 +323,7 @@ void test_each_hold() {
         Room room = hosted(host_ready());
         auto peer = host_ready();
         peer.built = false;
+        peer.layer_digest = {};
         put_peer(room.lobby, 1, 0x200, encode_field(peer, false, 0, ng::presence_record_max_bytes));
         const auto block = mp::lobby_mutators_block(room.lobby);
         expect_hold(block, mp::MutatorsHold::building, 1, ng::presence_mutator_index_none);
@@ -323,25 +332,68 @@ void test_each_hold() {
         Room room = hosted(host_ready(), true, 0x5a);
         auto peer = host_ready();
         peer.layer_digest.fill(0x33);
-        put_peer(room.lobby, 1, 0x200, encode_field(peer, true, 0x5a, ng::presence_record_max_bytes));
+        put_peer(
+            room.lobby, 1, 0x200, encode_field(peer, true, 0x5a, ng::presence_record_max_bytes)
+        );
         const auto block = mp::lobby_mutators_block(room.lobby);
         expect_hold(block, mp::MutatorsHold::other_result, 1, ng::presence_mutator_index_none);
     }
     {
         Room room = hosted(host_ready(), true, 0x5a);
         auto peer = host_ready();
-        put_peer(room.lobby, 1, 0x200, encode_field(peer, true, 0x6b, ng::presence_record_max_bytes));
+        put_peer(
+            room.lobby, 1, 0x200, encode_field(peer, true, 0x6b, ng::presence_record_max_bytes)
+        );
         const auto block = mp::lobby_mutators_block(room.lobby);
         expect_hold(block, mp::MutatorsHold::other_sim_hash, 1, ng::presence_mutator_index_none);
     }
     {
         Room room = hosted(host_ready(), true, 0x5a);
         put_peer(
-            room.lobby, 1, 0x200, encode_field(host_ready(), true, 0x5a, ng::presence_record_max_bytes)
+            room.lobby,
+            1,
+            0x200,
+            encode_field(host_ready(), true, 0x5a, ng::presence_record_max_bytes)
         );
         const auto block = mp::lobby_mutators_block(room.lobby);
         expect_hold(block, mp::MutatorsHold::none, -1, ng::presence_mutator_index_none);
         expect(mp::lobby_mutators_allow_start(room.lobby), "a matching room allows START");
+    }
+    {
+        Room room = hosted(host_ready(), true, 0x5a);
+        auto peer = host_ready();
+        peer.index = 1;
+        peer.layer_digest.fill(0x33);
+        put_peer(
+            room.lobby, 1, 0x200, encode_field(peer, true, 0x5a, ng::presence_record_max_bytes)
+        );
+        const auto block = mp::lobby_mutators_block(room.lobby);
+        expect_hold(block, mp::MutatorsHold::other_result, 1, 1);
+    }
+    {
+        auto host = field_of(true, false, 0, 2, 2);
+        Room room = hosted(host, true, 0x5a);
+        auto peer = host;
+        peer.index = ng::presence_mutator_index_none;
+        peer.layer_digest.fill(0x33);
+        put_peer(
+            room.lobby, 1, 0x200, encode_field(peer, true, 0x5a, ng::presence_record_max_bytes)
+        );
+        const auto block = mp::lobby_mutators_block(room.lobby);
+        expect_hold(block, mp::MutatorsHold::other_result, 1, 0);
+    }
+    {
+        auto host = field_of(true, false, 1, 2, 2);
+        Room room = hosted(host, true, 0x5a);
+        put_peer(
+            room.lobby, 1, 0x200, encode_field(host, true, 0x5a, ng::presence_record_max_bytes)
+        );
+        const auto block = mp::lobby_mutators_block(room.lobby);
+        expect_hold(block, mp::MutatorsHold::none, -1, ng::presence_mutator_index_none);
+        expect(
+            mp::lobby_mutators_allow_start(room.lobby),
+            "a mutator dropped on both machines does not hold START"
+        );
     }
 }
 
@@ -369,19 +421,27 @@ void test_slot_order_and_who_is_skipped() {
     put_peer(plain.lobby, 1, 0x200, encode_field(missing, false, 0, ng::presence_record_max_bytes));
     expect(mp::lobby_mutators_allow_start(plain.lobby), "a 3.1c row does not hold START");
     expect(!mp::lobby_mutators_differ_from_host(plain.lobby, 1), "a 3.1c row has no mutator dot");
-    expect(!mp::lobby_mutators_differ_from_host(plain.lobby, 2), "a computer row has no mutator dot");
+    expect(
+        !mp::lobby_mutators_differ_from_host(plain.lobby, 2), "a computer row has no mutator dot"
+    );
     expect(!mp::lobby_mutators_differ_from_host(plain.lobby, 0), "the host row has no mutator dot");
 
     Room dotted = hosted(host_ready());
     dotted.seat(3, 0x300, true, false);
-    put_peer(dotted.lobby, 1, 0x200, encode_field(host_ready(), false, 0, ng::presence_record_max_bytes));
-    put_peer(dotted.lobby, 3, 0x300, encode_field(missing, false, 0, ng::presence_record_max_bytes));
-    expect(mp::lobby_rules_differ_from_host(dotted.lobby, 3), "the dot follows the player who lacks one");
+    put_peer(
+        dotted.lobby, 1, 0x200, encode_field(host_ready(), false, 0, ng::presence_record_max_bytes)
+    );
+    put_peer(
+        dotted.lobby, 3, 0x300, encode_field(missing, false, 0, ng::presence_record_max_bytes)
+    );
+    expect(
+        mp::lobby_rules_differ_from_host(dotted.lobby, 3),
+        "the dot follows the player who lacks one"
+    );
     expect(!mp::lobby_rules_differ_from_host(dotted.lobby, 1), "a player who matches has no dot");
     expect(!mp::lobby_rules_differ_from_host(dotted.lobby, 0), "the host's own row has no dot");
     expect(
-        mp::lobby_mutators_differ_from_host(dotted.lobby, 3),
-        "the later slot is named on its own"
+        mp::lobby_mutators_differ_from_host(dotted.lobby, 3), "the later slot is named on its own"
     );
 }
 
@@ -394,7 +454,9 @@ void test_have_codes() {
     put_peer(room.lobby, 1, 0x200, encode_field(field, false, 0, ng::presence_record_max_bytes));
     expect(mp::lobby_mutator_have(room.lobby, 1, 0) == mp::MutatorHave::has, "has");
     expect(mp::lobby_mutator_have(room.lobby, 1, 1) == mp::MutatorHave::missing, "missing");
-    expect(mp::lobby_mutator_have(room.lobby, 1, 2) == mp::MutatorHave::other_release, "other release");
+    expect(
+        mp::lobby_mutator_have(room.lobby, 1, 2) == mp::MutatorHave::other_release, "other release"
+    );
     expect(mp::lobby_mutator_have(room.lobby, 1, 3) == mp::MutatorHave::unknown, "unknown");
     expect(mp::lobby_mutator_have(room.lobby, 1, 4) == mp::MutatorHave::unknown, "past the list");
     expect(mp::lobby_mutator_have(room.lobby, 3, 0) == mp::MutatorHave::unknown, "no record");
@@ -406,9 +468,28 @@ void test_have_codes() {
     );
 }
 
+void test_empty_host_holds_a_guest_still_sending() {
+    Room room(true);
+    put_peer(
+        room.lobby, 1, 0x200, encode_field(host_ready(), false, 0, ng::presence_record_max_bytes)
+    );
+    const auto block = mp::lobby_mutators_block(room.lobby);
+    expect_hold(block, mp::MutatorsHold::receiving, 1, ng::presence_mutator_index_none);
+    expect(!mp::lobby_mutators_allow_start(room.lobby), "a lingering mutator field holds START");
+
+    Room plain(true);
+    plain.seat(1, 0x200, false, false);
+    put_peer(
+        plain.lobby, 1, 0x200, encode_field(host_ready(), false, 0, ng::presence_record_max_bytes)
+    );
+    expect(mp::lobby_mutators_allow_start(plain.lobby), "a 3.1c field does not hold a plain room");
+}
+
 void test_block_allocates_nothing() {
     Room room = hosted(host_ready());
-    put_peer(room.lobby, 1, 0x200, encode_field(host_ready(), true, 0x5a, ng::presence_record_max_bytes));
+    put_peer(
+        room.lobby, 1, 0x200, encode_field(host_ready(), true, 0x5a, ng::presence_record_max_bytes)
+    );
     g_allocations.store(0);
     g_count_allocations.store(true);
     const auto block = mp::lobby_mutators_block(room.lobby);
@@ -448,8 +529,47 @@ std::vector<uint8_t> held_record(uint8_t held) {
     auto field = wide_loadout();
     field.mutators.clear();
     field.built = false;
+    field.layer_digest = {};
     field.held = held;
     return encode_field(field, false, 0, ng::presence_record_max_bytes);
+}
+
+/// The map pack a refresh asks for. `bytes` is the encoded value's length.
+struct PackAsk {
+    std::size_t bytes = 0;
+};
+
+/// Grows one string toward `most`, spending `extra` bytes.
+void grow_pack_text(std::string& field, std::size_t most, char mark, std::size_t& extra) {
+    if (extra == 0 || field.size() >= most)
+        return;
+    const std::size_t add = std::min(extra, most - field.size());
+    field.append(add, mark);
+    extra -= add;
+}
+
+/// Returns a pack whose encoded value is PackAsk::bytes.
+bool answer_pack(void* context, ng::PresenceMapPack* out) {
+    const auto* ask = static_cast<const PackAsk*>(context);
+    ng::PresenceMapPack pack;
+    pack.key = "k";
+    pack.registry = "r";
+    // One-character key and registry, and empty url, name and version: 43 bytes.
+    std::size_t extra = ask->bytes > 43 ? ask->bytes - 43 : 0;
+    grow_pack_text(pack.descriptor_url, 255, 'u', extra);
+    grow_pack_text(pack.name, 64, 'n', extra);
+    grow_pack_text(pack.key, 64, 'k', extra);
+    grow_pack_text(pack.version, 32, 'v', extra);
+    grow_pack_text(pack.registry, 32, 'r', extra);
+    *out = std::move(pack);
+    return extra == 0;
+}
+
+/// Binds answer_pack and asks again on the next refresh.
+void bind_pack(Room& room, PackAsk& ask) {
+    room.lobby.maps.pack_context = &ask;
+    room.lobby.maps.pack = answer_pack;
+    room.lobby.presence_records.pack_rebound = true;
 }
 
 /// Binds the wide list as the host's source, cut at 533 bytes, and the full list for parts.
@@ -489,9 +609,11 @@ void test_parts() {
 
     room.lobby.presence_records.peer_size[3] = 0;
     put_peer(room.lobby, 1, 0x200, held_record(11));
-    room.lobby.presence_records.pack_size = 150;
-    std::memset(room.lobby.presence_records.pack, 0xab, 150);
+    PackAsk ask;
+    ask.bytes = 150;
+    bind_pack(room, ask);
     const auto beside = sent_part(room);
+    expect(room.lobby.presence_records.pack_size == 150, "the map pack value is 150 bytes");
     expect(
         beside && beside->first == 11 && beside->mutators.size() == 7,
         "eleven already held, then seven, beside a 150-byte map pack"
@@ -508,11 +630,17 @@ void test_parts() {
         expect(mp::lobby_apply_event(guest.lobby, event), "the guest keeps the host's record");
     };
     take(room);
-    expect(guest.lobby.presence_records.host_loadout.mutators.size() == 18, "the head and the first part");
+    expect(
+        guest.lobby.presence_records.host_loadout.mutators.size() == 18,
+        "the head and the first part"
+    );
     put_peer(room.lobby, 1, 0x200, held_record(18));
     expect(sent_part(room) && sent_part(room)->mutators.size() == 7, "the second part is seven");
     take(room);
-    expect(guest.lobby.presence_records.host_loadout.mutators.size() == 25, "twenty-five after the second part");
+    expect(
+        guest.lobby.presence_records.host_loadout.mutators.size() == 25,
+        "twenty-five after the second part"
+    );
     put_peer(room.lobby, 1, 0x200, held_record(25));
     expect(sent_part(room) && sent_part(room)->mutators.size() == 7, "the third part is seven");
     take(room);
@@ -523,11 +651,35 @@ void test_parts() {
     );
 
     // A full map pack leaves no room until the head is shortened.
-    room.lobby.presence_records.pack_size = 488;
-    std::memset(room.lobby.presence_records.pack, 0xcd, 488);
+    ask.bytes = 488;
+    bind_pack(room, ask);
     put_peer(room.lobby, 1, 0x200, held_record(11));
     const auto packed = sent_part(room);
-    expect(packed && packed->first == 11 && !packed->mutators.empty(), "a full map pack still carries a part");
+    expect(room.lobby.presence_records.pack_size == 488, "the map pack value is 488 bytes");
+    expect(
+        packed && packed->first == 11 && !packed->mutators.empty(),
+        "a full map pack still carries a part"
+    );
+
+    // A record that arrives before the host slot is known is folded once it is.
+    Room late(false);
+    auto* host_info = mp::slot_info(late.lobby, 1);
+    host_info->role = static_cast<uint8_t>(host_info->role & ~mp::kRoleHost);
+    const auto head = encode_field(host_ready(), false, 0, ng::presence_record_max_bytes);
+    mp::LobbyEvent event{};
+    event.kind = mp::LobbyEventKind::record;
+    event.player_id = 0x100;
+    event.size = head.size();
+    std::memcpy(event.data, head.data(), head.size());
+    expect(mp::lobby_apply_event(late.lobby, event), "the record is kept before the host is known");
+    expect(late.lobby.presence_records.host_loadout.total == 0, "an unknown host is not assembled");
+    host_info->role = static_cast<uint8_t>(host_info->role | mp::kRoleHost);
+    mp::presence_refresh(late.lobby);
+    expect(
+        late.lobby.presence_records.host_loadout.total == 2 &&
+            late.lobby.presence_records.host_loadout_generation == 1,
+        "the stored host record is folded when the host slot is known"
+    );
 }
 
 void test_part_refused_once() {
@@ -568,9 +720,12 @@ void add_ready(mp::Panel& panel) {
 
 void test_ready() {
     Room guest(false);
-    put_peer(guest.lobby, 1, 0x100, encode_field(host_ready(), false, 0, ng::presence_record_max_bytes));
+    put_peer(
+        guest.lobby, 1, 0x100, encode_field(host_ready(), false, 0, ng::presence_record_max_bytes)
+    );
     auto own = host_ready();
     own.built = false;
+    own.layer_digest = {};
     own.mutators.clear();
     put_local(guest.lobby, encode_field(own, false, 0, ng::presence_record_max_bytes));
     mp::local_info(guest.lobby).options =
@@ -586,11 +741,14 @@ void test_ready() {
     guest.panel.selected = 1;
     (void)mp::lobby_handle_event(guest.lobby, guest.panel);
     expect(guest.panel.controls[1].value == 0, "a click does not turn READY on");
-    expect((mp::local_info(guest.lobby).options & mp::option::ready) == 0, "the ready bit stays off");
+    expect(
+        (mp::local_info(guest.lobby).options & mp::option::ready) == 0, "the ready bit stays off"
+    );
 
     Room host(true);
     auto unbuilt = host_ready();
     unbuilt.built = false;
+    unbuilt.layer_digest = {};
     put_local(host.lobby, encode_field(unbuilt, false, 0, ng::presence_record_max_bytes));
     mp::local_info(host.lobby).options =
         static_cast<uint16_t>(mp::local_info(host.lobby).options | mp::option::ready);
@@ -631,15 +789,6 @@ mp::LobbyUnit test_units[3] = {
 void use_units(Room& room) {
     room.lobby.units = test_units;
     room.lobby.unit_count = 3;
-}
-
-/// Tells whether a greeting was sent to a player.
-bool sent_greeting_to(const Room& room, uint32_t id) {
-    for (int32_t index = 0; index < room.loopback.sent_count; ++index)
-        if (room.loopback.sent[index][0] == 0x1a && room.loopback.sent[index][1] == 0 &&
-            room.loopback.sent_to[index] == id)
-            return true;
-    return false;
 }
 
 /// The last handshake the loopback sent, or nothing.
@@ -687,8 +836,10 @@ void test_greeting_restarts_the_guest() {
     }
 }
 
-/// Feeds one peer's count, checksums and acknowledgement.
-void report_units(Room& room, int32_t player_slot, uint32_t id) {
+/// Feeds one peer's count and checksums. The acknowledgement waits until every
+/// peer has reported, because one peer's checksums make the host send the
+/// other more verdicts.
+void report_units(Room& room, int32_t player_slot) {
     uint8_t count[14] = {0x1a, 1};
     const uint32_t expected = static_cast<uint32_t>(room.lobby.unit_count - 1);
     std::memcpy(count + 10, &expected, 4);
@@ -701,19 +852,40 @@ void report_units(Room& room, int32_t player_slot, uint32_t id) {
         std::memcpy(checksum + 10, &sum, 4);
         mp::unit_sync_receive(room.lobby, checksum, static_cast<uint8_t>(player_slot));
     }
-    const mp::UnitSyncPeer* peer = nullptr;
-    for (int32_t index = 0; index < room.lobby.sync.peer_count; ++index)
-        if (room.lobby.sync.peers[index].player_id == id)
-            peer = &room.lobby.sync.peers[index];
-    uint8_t ack[14] = {0x1a, 4};
-    const uint32_t sent = peer != nullptr ? peer->sent : 0;
-    std::memcpy(ack + 10, &sent, 4);
-    mp::unit_sync_receive(room.lobby, ack, static_cast<uint8_t>(player_slot));
+}
+
+/// Acknowledges each peer's current sent count, as its next tick would.
+void acknowledge_sent(Room& room) {
+    for (int32_t index = 0; index < room.lobby.sync.peer_count; ++index) {
+        const auto& peer = room.lobby.sync.peers[index];
+        int32_t player_slot = -1;
+        for (int32_t slot = 0; slot < mp::kSlotCount; ++slot) {
+            if (mp::slot_player(room.lobby, slot).player_id == peer.player_id)
+                player_slot = slot;
+        }
+        if (player_slot < 0)
+            continue;
+        uint8_t ack[14] = {0x1a, 4};
+        const uint32_t sent = peer.sent;
+        std::memcpy(ack + 10, &sent, 4);
+        mp::unit_sync_receive(room.lobby, ack, static_cast<uint8_t>(player_slot));
+    }
 }
 
 bool both_complete(Room& room) {
+    acknowledge_sent(room);
     return mp::unit_sync_peer_complete(room.lobby, 0x200) &&
            mp::unit_sync_peer_complete(room.lobby, 0x300);
+}
+
+/// How many greetings the loopback has sent to one player.
+int greetings_to(const Room& room, uint32_t id) {
+    int count = 0;
+    for (int32_t index = 0; index < room.loopback.sent_count; ++index)
+        if (room.loopback.sent[index][0] == 0x1a && room.loopback.sent[index][1] == 0 &&
+            room.loopback.sent_to[index] == id)
+            ++count;
+    return count;
 }
 
 void test_rebuild_keeps_a_finished_legacy_peer() {
@@ -723,46 +895,145 @@ void test_rebuild_keeps_a_finished_legacy_peer() {
     use_units(host);
     mp::unit_sync_create(host.lobby, true);
     mp::unit_sync_tick(host.lobby);
-    report_units(host, 1, 0x200);
-    report_units(host, 3, 0x300);
+    report_units(host, 1);
+    report_units(host, 3);
     expect(both_complete(host), "both peers finish before the list changes");
 
+    const int greeted_before = greetings_to(host, 0x300);
     mp::unit_sync_rebuild(host.lobby);
+    acknowledge_sent(host);
     expect(
-        host.lobby.sync.peer_count == 1 && host.lobby.sync.peers[0].player_id == 0x200 &&
-            mp::unit_sync_peer_complete(host.lobby, 0x200),
+        host.lobby.sync.peer_count == 2 && mp::unit_sync_peer_complete(host.lobby, 0x200),
         "a finished 3.1c peer stays complete"
     );
-    expect(!mp::unit_sync_peer_complete(host.lobby, 0x300), "the OA peer is dropped");
-    bool remote_kept = host.lobby.sync.record_count == 2;
+    expect(!mp::unit_sync_peer_complete(host.lobby, 0x300), "the greeted OA peer has not reported");
+    expect(
+        greetings_to(host, 0x300) == greeted_before + 1, "the OA peer is greeted at the rebuild"
+    );
+    bool waiting = host.lobby.sync.record_count == 2;
     for (int32_t index = 0; index < host.lobby.sync.record_count; ++index)
-        remote_kept = remote_kept && host.lobby.sync.records[index].remote == 1;
-    expect(remote_kept, "every unit the table kept still counts the 3.1c peer");
+        waiting = waiting && host.lobby.sync.records[index].remote == 0;
+    expect(waiting, "units stay unagreed until the greeted peer reports");
 
-    host.loopback.sent_count = 0;
-    mp::unit_sync_tick(host.lobby);
-    expect(sent_greeting_to(host, 0x300), "the OA peer is greeted again");
-    report_units(host, 3, 0x300);
+    report_units(host, 3);
     expect(both_complete(host), "both peers finish with the new units");
 
+    const int greeted = greetings_to(host, 0x300);
     mp::unit_sync_regreet(host.lobby, 0x300);
     expect(!mp::unit_sync_peer_complete(host.lobby, 0x300), "regreet drops that peer");
-    host.loopback.sent_count = 0;
-    mp::unit_sync_tick(host.lobby);
-    expect(sent_greeting_to(host, 0x300), "the next tick greets the dropped peer");
-    report_units(host, 3, 0x300);
+    expect(greetings_to(host, 0x300) == greeted + 1, "regreet greets that peer at once");
+    report_units(host, 3);
     expect(both_complete(host), "the greeted peer finishes again");
 
-    // Mutators off: the same rebuild, and the 3.1c peer still does not report again.
+    // Mutators off: the same rebuild greets the OA peer at once.
     mp::unit_sync_rebuild(host.lobby);
+    acknowledge_sent(host);
     expect(
         mp::unit_sync_peer_complete(host.lobby, 0x200) &&
-            !mp::unit_sync_peer_complete(host.lobby, 0x300),
-        "turning mutators off keeps the 3.1c peer and drops the OA peer"
+            !mp::unit_sync_peer_complete(host.lobby, 0x300) &&
+            greetings_to(host, 0x300) == greeted + 2,
+        "turning mutators off keeps the 3.1c peer and greets the OA peer"
     );
-    mp::unit_sync_tick(host.lobby);
-    report_units(host, 3, 0x300);
+    report_units(host, 3);
     expect(both_complete(host), "after mutators on and off every peer is complete");
+}
+
+/// A 1.2 peer is compared by checksum. A peer that reports no checksums is not.
+void test_legacy_checksum_is_compared() {
+    Room host(true);
+    host.seat(1, 0x200, false, false);
+    auto* info = mp::slot_info(host.lobby, 1);
+    info->version_major = 1;
+    info->version_minor = 2;
+    use_units(host);
+    mp::unit_sync_create(host.lobby, true);
+    mp::unit_sync_tick(host.lobby);
+    report_units(host, 1);
+    acknowledge_sent(host);
+    expect(mp::unit_sync_peer_complete(host.lobby, 0x200), "the 1.2 peer finishes");
+
+    mp::UnitSyncPeer* peer = nullptr;
+    for (int32_t index = 0; index < host.lobby.sync.peer_count; ++index)
+        if (host.lobby.sync.peers[index].player_id == 0x200)
+            peer = &host.lobby.sync.peers[index];
+    expect(peer != nullptr && peer->received >= 1, "the 1.2 peer stored a checksum");
+    if (peer != nullptr && peer->received >= 1)
+        peer->checksums[0] = 0x9999;
+    mp::unit_sync_rebuild(host.lobby);
+    bool first_disagrees = false;
+    bool second_agrees = false;
+    for (int32_t index = 0; index < host.lobby.sync.record_count; ++index) {
+        const auto& record = host.lobby.sync.records[index];
+        if (record.key == 11)
+            first_disagrees = record.remote == 0;
+        if (record.key == 22)
+            second_agrees = record.remote == 1;
+    }
+    expect(first_disagrees, "a stored checksum that differs disagrees");
+    expect(second_agrees, "a stored checksum that matches agrees");
+
+    Room plain(true);
+    plain.seat(1, 0x200, false, false);
+    use_units(plain);
+    mp::unit_sync_create(plain.lobby, true);
+    mp::unit_sync_tick(plain.lobby);
+    report_units(plain, 1);
+    peer = nullptr;
+    for (int32_t index = 0; index < plain.lobby.sync.peer_count; ++index)
+        if (plain.lobby.sync.peers[index].player_id == 0x200)
+            peer = &plain.lobby.sync.peers[index];
+    if (peer != nullptr && peer->received >= 1)
+        peer->checksums[0] = 0x9999;
+    mp::unit_sync_rebuild(plain.lobby);
+    bool presence = plain.lobby.sync.record_count == 2;
+    for (int32_t index = 0; index < plain.lobby.sync.record_count; ++index)
+        presence = presence && plain.lobby.sync.records[index].remote == 1;
+    expect(presence, "a peer without checksums still agrees by presence");
+}
+
+/// The field a guest publishes follows the phase, including a return to an earlier list.
+void test_field_follows_the_phase() {
+    ng::PresenceDigest x{};
+    x.fill(0x11);
+    ng::PresenceDigest y{};
+    y.fill(0x44);
+    ng::PresenceDigest folded{};
+    folded.fill(0x22);
+    ng::PresenceMutators field;
+    expect(
+        mp::lobby_room_mutator_field(
+            mp::RoomMutatorPhase::built,
+            x,
+            folded,
+            ng::presence_mutator_index_none,
+            1,
+            1,
+            {},
+            &field
+        ) && field.built &&
+            field.digest == x && field.layer_digest == folded,
+        "a built list publishes its mutator digest"
+    );
+    expect(
+        mp::lobby_room_mutator_field(
+            mp::RoomMutatorPhase::receiving,
+            y,
+            folded,
+            ng::presence_mutator_index_none,
+            2,
+            1,
+            {},
+            &field
+        ) && !field.built &&
+            field.digest == y && field.layer_digest == ng::PresenceDigest{} &&
+            field.failed == false,
+        "a list that is not whole publishes receiving"
+    );
+    expect(
+        mp::lobby_room_mutator_field(mp::RoomMutatorPhase::built, x, folded, 1, 2, 2, {}, &field) &&
+            field.built && field.digest == x && field.layer_digest == folded && field.index == 1,
+        "returning to the first list publishes that list again"
+    );
 }
 
 } // namespace
@@ -772,12 +1043,15 @@ int main() {
     test_each_hold();
     test_slot_order_and_who_is_skipped();
     test_have_codes();
+    test_empty_host_holds_a_guest_still_sending();
     test_block_allocates_nothing();
     test_parts();
     test_part_refused_once();
     test_ready();
     test_greeting_restarts_the_guest();
     test_rebuild_keeps_a_finished_legacy_peer();
+    test_legacy_checksum_is_compared();
+    test_field_follows_the_phase();
     if (g_failures != 0)
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;
