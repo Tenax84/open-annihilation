@@ -32,19 +32,24 @@
 // its folder, the question for a built-in registry's mod, CANCEL removing
 // nothing and UNINSTALL its folder with the copy ROLL BACK keeps, its row
 // staying not installed, and a mod of the player's own leaving the Library.
-// The fourth is
-// a run nobody watches, on SDL's dummy video driver without the prompts the
-// other runs show: a built-in registry's update waits in the inbox while the
-// Library is closed, then installs with no prompt once the Library shows,
-// the folder it drops deleted; an added registry's copy asks REPLACE MOD
-// over the Library, which waits for its answer, and REPLACE installs it; and
-// a file opened outside the game stays in the inbox.
+// The fourth plays No Mod and installs a made-up mutator, Fast Builders:
+// GET queues it, the package installs under Mutators with its origin record,
+// CHECK WITH THIS MOD runs the fixture's fake checker and shows its verdict,
+// OPEN FOLDER and HOMEPAGE reach the recorders, and UNINSTALL asks and
+// removes the folder. The fifth is a run nobody watches, on SDL's dummy
+// video driver without the prompts the other runs show: a built-in registry's
+// update waits in the inbox while the Library is closed, then installs with
+// no prompt once the Library shows, the folder it drops deleted; an added
+// registry's copy asks REPLACE MOD over the Library, which waits for its
+// answer, and REPLACE installs it; and a file opened outside the game stays
+// in the inbox.
 
 #include "library_host.hpp"
 #include "mod_install_state.hpp"
 #include "oa_layer.hpp"
 #include "oa_layer_check.hpp"
 #include "user_folder_state.hpp"
+#include "web_link_state.hpp"
 
 #include "oa/app/content/downloads.hpp"
 #include "oa/app/content/updates.hpp"
@@ -52,7 +57,9 @@
 #include "oa/app/package_install.hpp"
 #include "oa/app/package_install/inbox.hpp"
 #include "oa/app/package_install/oamod.hpp"
+#include "oa/app/package_install/oamut.hpp"
 #include "oa/app/package_install/origin.hpp"
+#include "oa/data/mutators/verdicts.hpp"
 #include "oa/app/runtime.hpp"
 #include "oa/app/user_folder.hpp"
 #include "oa/base/sha256.hpp"
@@ -61,24 +68,30 @@
 #include "oa/ui/engine_settings/dialog.hpp"
 #include "oa/ui/engine_settings/prompt.hpp"
 #include "oa/ui/library/library.hpp"
+#include "oa/ui/library/text.hpp"
 #include "oa/ui/library/uninstall.hpp"
 #include "oa/ui/library/update_question.hpp"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <ostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -118,12 +131,14 @@ constexpr std::string_view kScree = "scree";
 constexpr std::string_view kArchipelago = "archipelago";
 /// A made-up language pack of the built-in registry, the one in use.
 constexpr std::string_view kPseudo = "en-XA";
+/// A made-up mutator the fourth run gets, checks and uninstalls.
+constexpr std::string_view kFast = "fast-builders";
 /// The most frames a step of the check runs before it gives up.
 constexpr int kMostFrames = 400;
 /// The frames a step runs to show that something waits: nothing comes of it.
 constexpr int kWaitingFrames = 30;
-/// The run of the check that nobody watches, the last: the fourth.
-constexpr uint32_t kUnwatchedRun = 3;
+/// The run of the check that nobody watches, the last: the fifth.
+constexpr uint32_t kUnwatchedRun = 4;
 /// What the download queue says of a package the installer refused, which
 /// the installer's own reason replaces in the Library.
 constexpr std::string_view kQueueRefused = "The package was refused";
@@ -153,6 +168,13 @@ struct InstallFeed {
     library::Inputs inputs{};         ///< what the Library is built from
     uint64_t generation{1};           ///< moves whenever the check changes inputs
     std::vector<FeedQueued> queued{}; ///< what it was asked to queue, in order
+    /// Verdicts `keep_verdict` stored, keyed by the mutator's id.
+    std::map<std::string, oa::data::mutators::VerdictRecord> kept{};
+    int keep_count{0}; ///< how many times `keep_verdict` was called
+    /// The verdict the running check returns once `release` is set.
+    oa::data::mutators::VerdictRecord canned{};
+    std::atomic<bool> release{false};      ///< the check may return `canned`
+    std::atomic<bool> work_started{false}; ///< the worker has entered the check
 };
 
 /// The fixture's inputs.
@@ -201,6 +223,54 @@ bool feed_built_in(void* context, std::string_view registry) {
         if (listed.id == registry)
             return listed.built_in;
     return false;
+}
+
+/// The verdict `keep_verdict` stored for a mutator. Called on the main thread.
+///
+/// @param context the fixture
+/// @param id the mutator's id
+/// @return the record, or nothing when none was kept
+std::optional<oa::data::mutators::VerdictRecord>
+feed_remembered(void* context, std::string_view id) {
+    const InstallFeed& fixture = *static_cast<const InstallFeed*>(context);
+    const auto found = fixture.kept.find(std::string(id));
+    if (found == fixture.kept.end())
+        return std::nullopt;
+    return found->second;
+}
+
+/// Stores a verdict the worker found. Called on the main thread.
+///
+/// @param context the fixture
+/// @param id the mutator's id
+/// @param record the verdict
+void feed_keep(
+    void* context, std::string_view id, const oa::data::mutators::VerdictRecord& record
+) {
+    InstallFeed& fixture = *static_cast<InstallFeed*>(context);
+    fixture.kept.insert_or_assign(std::string(id), record);
+    ++fixture.keep_count;
+}
+
+/// Starts a fake check. The work runs on the Library's worker: it waits until
+/// the fixture releases it, and returns nothing when the check is cancelled.
+///
+/// @param context the fixture
+/// @param id the mutator's id; the canned verdict does not depend on it
+/// @return the work, which reads `canned` once it is released
+std::function<std::optional<oa::data::mutators::VerdictRecord>(const std::atomic<bool>&)>
+feed_start(void* context, std::string_view /*id*/) {
+    auto* fixture = static_cast<InstallFeed*>(context);
+    return [fixture](
+               const std::atomic<bool>& cancel
+           ) -> std::optional<oa::data::mutators::VerdictRecord> {
+        fixture->work_started.store(true);
+        while (!fixture->release.load() && !cancel.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (cancel.load())
+            return std::nullopt;
+        return fixture->canned;
+    };
 }
 
 /// Returns one of the fixture's registries.
@@ -265,6 +335,43 @@ void write_package(const fs::path& file, const std::string& profile, int revisio
         reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size())
     );
     require(static_cast<bool>(out), "a package could not be written");
+}
+
+/// Writes Fast Builders as a small .oamut: its manifest, its entry and a note.
+///
+/// @param file the package
+void write_mutator(const fs::path& file) {
+    const std::string manifest = "oamut: 1\n"
+                                 "id: fast-builders\n"
+                                 "name: \"Fast Builders\"\n"
+                                 "version: \"1.0\"\n"
+                                 "author:\n"
+                                 "  name: \"Ada\"\n"
+                                 "description: \"Builds faster.\"\n"
+                                 "tags: [\"economy\"]\n"
+                                 "works-with: [\"*\"]\n"
+                                 "layers: [\"units\"]\n"
+                                 "entry: \"mutator.lua\"\n";
+    const std::string script = "return {}\n";
+    const std::string note = "Fast Builders\n";
+    const std::vector<uint8_t> manifest_bytes(manifest.begin(), manifest.end());
+    const std::vector<uint8_t> script_bytes(script.begin(), script.end());
+    const std::vector<uint8_t> note_bytes(note.begin(), note.end());
+    const std::vector<oa::formats::zip::NewEntry> listed{
+        {"oamut.yaml", manifest_bytes},
+        {"mutator.lua", script_bytes},
+        {"README.md", note_bytes},
+    };
+    std::vector<uint8_t> archive;
+    oa::formats::zip::ZipError error{};
+    require(oa::formats::zip::write_archive(listed, archive, error), "a mutator could not be made");
+    std::error_code made;
+    fs::create_directories(file.parent_path(), made);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(
+        reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size())
+    );
+    require(static_cast<bool>(out), "a mutator could not be written");
 }
 
 /// Returns the SHA-256 of a file.
@@ -405,6 +512,38 @@ void Runtime::check_library_install() {
                 shown.kept = library::Kept{backup->version, backup->revision};
             fixture.inputs.installed.push_back(std::move(shown));
         }
+        error.clear();
+        const fs::path mutators_root =
+            user_folder_ / std::string(install::oamut::mutators_folder_name);
+        if (fs::is_directory(mutators_root, error)) {
+            error.clear();
+            for (fs::directory_iterator entry{mutators_root, error}, end; !error && entry != end;
+                 entry.increment(error)) {
+                const fs::path folder = entry->path();
+                if (path_to_utf8(folder.filename()).starts_with('.'))
+                    continue;
+                const install::InstalledPackage held = install::oamut::read_installed(folder);
+                if (held.kind != install::FolderKind::package)
+                    continue;
+                const std::optional<install::Origin> record = install::read_origin(folder);
+                library::Installed shown;
+                shown.kind = library::Kind::mutator;
+                shown.key = held.id;
+                shown.folder = folder;
+                shown.name = held.name;
+                shown.version = held.version;
+                shown.revision = held.revision;
+                shown.author = held.author;
+                shown.description = held.description;
+                shown.mutator = library::MutatorFacts{};
+                if (record && record->kind == install::OriginKind::catalogue) {
+                    shown.key = record->catalogue_id;
+                    shown.registry = record->registry;
+                    shown.release = record->release;
+                }
+                fixture.inputs.installed.push_back(std::move(shown));
+            }
+        }
         fixture.inputs.installed.insert(
             fixture.inputs.installed.end(), beside_mods.begin(), beside_mods.end()
         );
@@ -520,7 +659,8 @@ void Runtime::check_library_install() {
                                     std::string_view registry,
                                     std::string_view key,
                                     std::string_view name,
-                                    int64_t release) {
+                                    int64_t release,
+                                    library::Kind kind = library::Kind::mod) {
         install::Origin origin{};
         origin.kind = install::OriginKind::catalogue;
         origin.registry = std::string(registry);
@@ -541,7 +681,7 @@ void Runtime::check_library_install() {
         );
         library::QueueItem item;
         item.registry = std::string(registry);
-        item.kind = library::Kind::mod;
+        item.kind = kind;
         item.key = std::string(key);
         item.name = std::string(name);
         item.phase = library::QueueItem::Phase::installing;
@@ -1639,6 +1779,237 @@ void Runtime::check_library_install() {
         request_soft_restart();
         std::cout << "library install check: run 2 found the held update made and queued the "
                      "updates\n";
+        return;
+    }
+    case 3: {
+        // 12. No Mod is played. GET on Fast Builders queues it, the package
+        // installs under Mutators with its origin record, CHECK WITH THIS MOD
+        // runs the fixture's fake checker, OPEN FOLDER and HOMEPAGE reach the
+        // recorders, and UNINSTALL asks and removes the folder. Ridge stays
+        // as the previous run left it.
+        settle();
+        require(options_.layered_mod_folder.empty(), "the mutator run plays a mod");
+        require(revision_in(ridge) == 5, "the mutator run does not find Ridge's fifth revision");
+        const fs::path mutators_root =
+            user_folder_ / std::string(install::oamut::mutators_folder_name);
+        const fs::path fast_folder = mutators_root / std::string(kFast);
+        std::error_code fast_error;
+        fs::remove_all(fast_folder, fast_error);
+
+        {
+            library::Listing listed;
+            listed.registry = std::string(kBuiltIn);
+            listed.kind = library::Kind::mutator;
+            listed.key = std::string(kFast);
+            listed.name = "Fast Builders";
+            listed.version = "2.0";
+            listed.revision = 1;
+            listed.release = 1;
+            listed.author = "Ada";
+            listed.summary = "Builds faster.";
+            listed.homepage = "https://example.test/fast-builders";
+            listed.size = 1024;
+            library::MutatorFacts facts;
+            facts.works_with.push_back({"*", {}, {}});
+            facts.layers.push_back("units");
+            facts.tags.push_back("economy");
+            listed.mutator = std::move(facts);
+            fixture.inputs.listings.push_back(std::move(listed));
+            ++fixture.generation;
+        }
+        list_installed();
+        open_library(library::Tab::mutators);
+        frames();
+        require(top_is(library_screen_name), "the Library did not open on Mutators");
+        show_entry("oa.library.row.check-builtin.fast-builders");
+        const std::size_t queued_before = fixture.queued.size();
+        press_action("get");
+        require(
+            fixture.queued.size() == queued_before + 1 &&
+                fixture.queued.back().registry == kBuiltIn && fixture.queued.back().key == kFast &&
+                fixture.queued.back().reason == content::DownloadReason::install,
+            "GET did not queue Fast Builders"
+        );
+        std::cout << "library install check: mutator queued\n";
+
+        const fs::path fast_file = packages / "fast-builders.oamut";
+        write_mutator(fast_file);
+        post_catalogue(fast_file, kBuiltIn, kFast, "Fast Builders", 1, library::Kind::mutator);
+        installs_quietly("Fast Builders", kBuiltIn, kFast);
+        {
+            const std::optional<install::Origin> record = install::read_origin(fast_folder);
+            require(
+                fs::exists(fast_folder) && record &&
+                    record->kind == install::OriginKind::catalogue &&
+                    record->registry == kBuiltIn && record->catalogue_id == kFast &&
+                    record->release == 1,
+                "Fast Builders is not under Mutators with its origin record"
+            );
+        }
+        std::cout << "library install check: mutator installed\n";
+
+        host.feed.remembered_verdict = feed_remembered;
+        host.feed.start_check = feed_start;
+        host.feed.keep_verdict = feed_keep;
+        ++fixture.generation;
+        frames();
+
+        const auto fast_entry = [&]() -> const library::Entry* {
+            return library::find_entry(
+                host.model, {std::string(kBuiltIn), library::Kind::mutator, std::string(kFast)}
+            );
+        };
+        const auto checked_value = [&]() -> std::string {
+            const library::Entry* shown_entry = fast_entry();
+            if (shown_entry == nullptr)
+                return {};
+            for (const library::Fact& fact : library::facts(host.model, *shown_entry))
+                if (fact.long_label == library::words::fact_checked)
+                    return fact.long_value;
+            return {};
+        };
+        const auto offers_check = [&]() -> bool {
+            const library::Entry* shown_entry = fast_entry();
+            if (shown_entry == nullptr)
+                return false;
+            for (const library::ActionButton& button :
+                 library::entry_actions(host.model, *shown_entry))
+                if (button.action == library::Action::check_with_mod)
+                    return true;
+            return false;
+        };
+        {
+            const library::Entry* shown_entry = fast_entry();
+            require(
+                shown_entry != nullptr && shown_entry->installed != nullptr && offers_check() &&
+                    library::status_line(host.model, *shown_entry) ==
+                        library::words::status_installed,
+                "CHECK WITH THIS MOD is not offered for the installed mutator"
+            );
+        }
+
+        const auto wait_until = [&](const auto& ready, std::string_view what) {
+            for (int count = 0; count < kMostFrames && !ready(); ++count)
+                frame();
+            require(ready(), what);
+        };
+
+        fixture.release.store(false);
+        fixture.work_started.store(false);
+        fixture.canned = {};
+        fixture.canned.verdict = oa::data::mutators::Verdict::compatible;
+        fixture.canned.counts.units_changed = 2u;
+        press_action("check-with-mod");
+        wait_until(
+            [&] { return fixture.work_started.load(); }, "the check did not start on the worker"
+        );
+        require(
+            checked_value().find("Checking with No Mod") != std::string::npos,
+            "the Checked fact did not say the check was running"
+        );
+        fixture.release.store(true);
+        wait_until([&] { return fixture.keep_count >= 1; }, "keep_verdict was not called");
+        require(
+            checked_value().find("changes 2 units") != std::string::npos,
+            "the Checked fact does not say changes 2 units"
+        );
+        std::cout << "library install check: mutator checked (fake verdict)\n";
+
+        fixture.release.store(false);
+        fixture.work_started.store(false);
+        fixture.canned = {};
+        fixture.canned.verdict = oa::data::mutators::Verdict::incompatible;
+        fixture.canned.reason = "needs a unit";
+        press_action("check-with-mod");
+        wait_until([&] { return fixture.work_started.load(); }, "the second check did not start");
+        fixture.release.store(true);
+        wait_until([&] { return fixture.keep_count >= 2; }, "the second verdict was not kept");
+        {
+            const library::Entry* shown_entry = fast_entry();
+            require(
+                shown_entry != nullptr && shown_entry->not_compatible &&
+                    checked_value().find("needs a unit") != std::string::npos,
+                "an incompatible verdict did not mark the row"
+            );
+        }
+
+        host.feed.remembered_verdict = nullptr;
+        host.feed.start_check = nullptr;
+        host.feed.keep_verdict = nullptr;
+        ++fixture.generation;
+        frames();
+        require(
+            checked_value().empty() && !offers_check(),
+            "null verdict entries still show Checked or CHECK WITH THIS MOD"
+        );
+
+        require(web_links_ != nullptr, "the run keeps no record of web links");
+        const std::size_t opened = user_folder_state().opened.size();
+        press_action("open-folder");
+        require(
+            user_folder_state().opened.size() == opened + 1 &&
+                kept_path(user_folder_state().opened.back()) == kept_path(fast_folder),
+            "OPEN FOLDER did not show Fast Builders' folder"
+        );
+        const std::size_t links = web_links_->requests.size();
+        press_action("homepage");
+        require(
+            web_links_->requests.size() == links + 1 &&
+                web_links_->requests.back() == "https://example.test/fast-builders",
+            "HOMEPAGE did not record Fast Builders' homepage"
+        );
+
+        press_action("uninstall");
+        {
+            const auto* asked = dynamic_cast<const QuestionScreen*>(oa_layer().top());
+            require(
+                asked != nullptr && oa_layer().find(library_screen_name) != nullptr,
+                "UNINSTALL did not ask over the Library"
+            );
+            const settings::Prompt& shown = asked->question();
+            require(shown.title == "Uninstall Fast Builders", "the question's title is wrong");
+            require(
+                shown.paragraphs.size() == 2 &&
+                    shown.paragraphs[0].text == "Uninstall Fast Builders? Its folder, "
+                                                "Mutators/fast-builders, is removed." &&
+                    shown.paragraphs[1].text == "GET installs it again.",
+                "the question does not say what it removes"
+            );
+            require(
+                shown.buttons.size() == 2 &&
+                    shown.buttons[0].id == library::uninstall_cancel_button_id &&
+                    shown.buttons[1].id == library::uninstall_button_id &&
+                    shown.buttons[1].accent && shown.marked == 0,
+                "the question is not CANCEL, marked, then UNINSTALL, primary"
+            );
+        }
+        frame();
+        require(
+            named("oa.prompt.uninstall").has_value(), "automation does not list oa.prompt.uninstall"
+        );
+        click_named("oa.prompt.uninstall");
+        for (int count = 0; count < kMostFrames &&
+                            (state.discarder.busy() || fs::exists(fs::symlink_status(fast_folder)));
+             ++count)
+            frame();
+        require(
+            !fs::exists(fs::symlink_status(fast_folder)),
+            "UNINSTALL did not remove Fast Builders' folder"
+        );
+        list_installed();
+        frames();
+        {
+            const library::Entry* shown_entry = fast_entry();
+            require(
+                shown_entry != nullptr && shown_entry->installed == nullptr &&
+                    shown_entry->state == library::State::get,
+                "Fast Builders is not shown as not installed"
+            );
+        }
+        std::cout << "library install check: mutator uninstalled\n";
+        require(revision_in(ridge) == 5, "the mutator run changed Ridge");
+        // The worker has finished: both checks returned before this restart.
+        request_soft_restart();
         return;
     }
     default: {

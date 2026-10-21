@@ -340,6 +340,7 @@ std::optional<data::catalogue::Kind> kind_from_name(std::string_view text) noexc
         data::catalogue::Kind::oalang,
         data::catalogue::Kind::oamod,
         data::catalogue::Kind::oamap,
+        data::catalogue::Kind::oamut,
         data::catalogue::Kind::expansion,
     };
     for (const data::catalogue::Kind kind : kinds) {

@@ -297,8 +297,8 @@ bool designed_name(const std::string& name) {
         "filter\\.(all|new|installed|updates|tag-[a-z0-9-]+)|tag\\.[a-z0-9-]+|tags|tags\\.[a-z0-9-]"
         "+|detail\\.tag\\.[a-z0-9-]+|"
         "list|row\\.[a-z0-9-]+(\\.[a-z0-9-]+)?(\\.(get|update))?|action|"
-        "action\\.(get|update|update-all|cancel|retry|roll-back|play-now|switch-off|uninstall|"
-        "open-folder|homepage)|"
+        "action\\.(get|update|update-all|cancel|retry|roll-back|play-now|switch-off|"
+        "check-with-mod|uninstall|open-folder|homepage)|"
         "details|back|refresh|close-x|close|status|queue|note|from|rules|"
         "active\\.(mod|language|base|expansions|lock|unload|change|search|map\\.[1-9][0-9]*|"
         "from\\.[1-9][0-9]*|expansion\\.[a-z0-9-]+(\\.(get|cancel|retry))?)|"
@@ -466,6 +466,8 @@ std::string_view word_of(lib::Action action) {
         return "homepage";
     case lib::Action::use_now:
         return "use-now";
+    case lib::Action::check_with_mod:
+        return "check-with-mod";
     default:
         return "other";
     }
@@ -4620,13 +4622,11 @@ void mutator_rows_show_badges_chips_and_icons() {
         OA_EXPECT_NONE(
             fixture::texts_not_fitting(detail_list, fonts()), named.name + " mutator details"
         );
-        // The Compact details are a page of their own whose header carries the
-        // name and no badge; the other size classes show the 40-point badge.
-        if (!compact) {
-            const kit::BadgeLook* badge = detail_tag_badge(detail_list);
-            OA_CHECK(badge != nullptr && badge->tag == kit::TagIcon::economy);
-            OA_CHECK(badge == nullptr || badge->face == kit::colour::hint);
-        }
+        // Every size class shows the 40-point tag badge, Compact's details
+        // page included, beside the name.
+        const kit::BadgeLook* badge = detail_tag_badge(detail_list);
+        OA_CHECK(badge != nullptr && badge->tag == kit::TagIcon::economy);
+        OA_CHECK(badge == nullptr || badge->face == kit::colour::hint);
         const kit::PillLook* detail_economy = pill_named(detail_list, "library.detail.tag.economy");
         OA_CHECK(detail_economy != nullptr && detail_economy->tag == kit::TagIcon::economy);
         const kit::PillLook* detail_statistics =
@@ -4778,10 +4778,152 @@ void mutator_rows_show_badges_chips_and_icons() {
     OA_CHECK(quarry != nullptr && !quarry->badge_tag.has_value());
 }
 
+/// An installed, updatable mutator whose check came back incompatible.
+///
+/// @return the Library, on Mutators, with Fast Builders selected
+lib::Library fast_builders_library() {
+    lib::Inputs inputs;
+    lib::Registry registry;
+    registry.id = std::string(fixture::core);
+    registry.name = "Fixture Core";
+    registry.built_in = true;
+    inputs.registries.push_back(std::move(registry));
+    inputs.engine = {0, 8, 0};
+    inputs.version_text = "v0.8.0";
+    lib::Listing made = fixture::listing(
+        fixture::core,
+        lib::Kind::mutator,
+        "fast-builders",
+        "Fast Builders",
+        "2.0",
+        1024,
+        "Builds faster.",
+        {"economy"}
+    );
+    made.homepage = "https://example.test/fast";
+    lib::MutatorFacts facts;
+    facts.works_with.push_back({"*", {}, {}});
+    facts.layers = {"units"};
+    made.mutator = facts;
+    lib::Installed copy = fixture::installed(made, "1.0", 1);
+    copy.mutator = facts;
+    lib::Verdict verdict;
+    verdict.state = lib::Verdict::State::incompatible;
+    verdict.reason = "clashes";
+    copy.mutator->verdict = std::move(verdict);
+    inputs.listings.push_back(std::move(made));
+    inputs.installed.push_back(std::move(copy));
+    lib::UpdateNote note;
+    note.registry = std::string(fixture::core);
+    note.kind = lib::Kind::mutator;
+    note.key = "fast-builders";
+    note.to_release = 2;
+    note.to_version = "2.0";
+    note.to_revision = 1;
+    note.size = 1024;
+    inputs.updates.push_back(std::move(note));
+    lib::Library library;
+    lib::refresh(library, std::move(inputs));
+    lib::set_tab(library, lib::Tab::mutators);
+    lib::select(library, {std::string(fixture::core), lib::Kind::mutator, "fast-builders"});
+    lib::open_details(library);
+    return library;
+}
+
+/// Tells whether a layout draws the incompatible reason in the danger colour.
+///
+/// @param list the display list
+/// @param reason the verdict's reason
+/// @return true when a text in the danger colour contains it
+bool shows_danger(const kit::DisplayList& list, std::string_view reason) {
+    for (const kit::Item& item : list.items)
+        if (item.colour == kit::colour::danger && item.text.find(reason) != std::string::npos)
+            return true;
+    return false;
+}
+
+/// Every action of an updatable mutator is a control at each class. Compact
+/// shows them on the details page, the rest inside MORE ▾. The Rules fact is
+/// whole, and the incompatible verdict is drawn in the danger colour.
+void mutator_actions_rules_and_danger() {
+    const lib::Library library = fast_builders_library();
+    const lib::Entry* fast = lib::selected_entry(library);
+    OA_CHECK(fast != nullptr);
+    if (fast == nullptr)
+        return;
+    const std::vector<lib::ActionButton> actions = lib::entry_actions(library, *fast);
+    OA_CHECK(actions.size() == 5);
+    if (actions.size() != 5)
+        return;
+    for (const fixture::NamedFrame& named : fixture::frames()) {
+        const kit::Frame& frame = named.frame;
+        const bool compact = frame.size_class == kit::SizeClass::compact;
+        const kit::Point window = lib::window_size(frame);
+        if (!compact) {
+            lib::ScreenState state;
+            const kit::DisplayList list = laid_out(library, state, frame);
+            OA_EXPECT_NONE(fixture::outside_window(list, window), named.name + " mutator actions");
+            OA_EXPECT_NONE(meeting_controls(list), named.name + " mutator actions");
+            OA_EXPECT_NONE(name_problems(list), named.name + " mutator actions");
+            OA_EXPECT_NONE(
+                fixture::texts_not_fitting(list, fonts()), named.name + " mutator actions"
+            );
+            OA_EXPECT_NONE(
+                whole_fact_problems(library, list, true), named.name + " mutator actions"
+            );
+            for (const lib::ActionButton& action : actions)
+                OA_CHECK(
+                    fixture::named(list, "library.action." + std::string(word_of(action.action))) !=
+                    nullptr
+                );
+            OA_CHECK(shows_danger(list, "clashes"));
+        } else {
+            lib::ScreenState page_state;
+            page_state.details_page = true;
+            const kit::DisplayList page = laid_out(library, page_state, frame);
+            OA_EXPECT_NONE(
+                fixture::outside_window(page, window), named.name + " mutator details page"
+            );
+            OA_EXPECT_NONE(meeting_controls(page), named.name + " mutator details page");
+            OA_EXPECT_NONE(name_problems(page), named.name + " mutator details page");
+            OA_EXPECT_NONE(
+                fixture::texts_not_fitting(page, fonts()), named.name + " mutator details page"
+            );
+            OA_EXPECT_NONE(
+                whole_fact_problems(library, page, false), named.name + " mutator details page"
+            );
+            OA_CHECK(shows_danger(page, "clashes"));
+            for (std::size_t index = 0; index < 3; ++index)
+                OA_CHECK(
+                    fixture::named(
+                        page, "library.action." + std::string(word_of(actions[index].action))
+                    ) != nullptr
+                );
+            OA_CHECK(fixture::named(page, "library.action") != nullptr);
+            page_state.menu = lib::MenuKind::more;
+            const kit::DisplayList more = laid_out(library, page_state, frame);
+            for (const lib::ActionButton& action : actions)
+                OA_CHECK(
+                    fixture::named(more, "library.action." + std::string(word_of(action.action))) !=
+                    nullptr
+                );
+            OA_EXPECT_NONE(
+                fixture::outside_window(more, window), named.name + " mutator details, MORE open"
+            );
+            OA_EXPECT_NONE(name_problems(more), named.name + " mutator details, MORE open");
+            OA_EXPECT_NONE(
+                fixture::texts_not_fitting(more, fonts()),
+                named.name + " mutator details, MORE open"
+            );
+        }
+    }
+}
+
 int main() {
     every_frame_holds_its_invariants();
     mutators_tab_holds_its_invariants();
     mutator_rows_show_badges_chips_and_icons();
+    mutator_actions_rules_and_danger();
     wordy_tabs_take_the_row_over_the_search();
     larger_classes_show_more();
     built_in_languages_show_on_the_list();
