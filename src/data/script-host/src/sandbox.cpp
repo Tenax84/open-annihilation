@@ -486,6 +486,23 @@ void note_string_place(HostDetail::Control* control) {
     control->location_locked = true;
 }
 
+// A locale category whose setting changes what a script computes, and the
+// words that name it in the refusal.
+struct LocaleNeed {
+    int category{};
+    const char* words{};
+};
+
+const LocaleNeed locale_needs[] = {
+    {LC_COLLATE, "collation"},
+    {LC_NUMERIC, "numeric"},
+    {LC_CTYPE, "character-type"},
+};
+
+bool locale_is_c(const char* name) {
+    return name != nullptr && (std::strcmp(name, "C") == 0 || std::strcmp(name, "POSIX") == 0);
+}
+
 } // namespace
 
 void rearm_count_hook(lua_State* state) {
@@ -717,19 +734,20 @@ bool Sandbox::enter(std::string_view phase, ScriptError& error) {
 std::optional<Sandbox> Sandbox::open(const OpenOptions& options, ScriptError& error) {
     try {
         error = {};
-        // String order follows LC_COLLATE. The process starts in C, and nothing
-        // in the engine changes that. Another collation would sort script text
-        // differently on each machine.
-        const char* collation = std::setlocale(LC_COLLATE, nullptr);
-        const bool collation_is_c = collation != nullptr && (std::strcmp(collation, "C") == 0 ||
-                                                             std::strcmp(collation, "POSIX") == 0);
-        if (!collation_is_c) {
-            const char* name = collation != nullptr && collation[0] != '\0' ? collation : "unknown";
+        // String order follows LC_COLLATE, reading and writing number text
+        // LC_NUMERIC, and upper, lower and the pattern classes LC_CTYPE. The
+        // process starts in C, and nothing in the engine changes that. Another
+        // locale would give a script different results on each machine.
+        for (const LocaleNeed& need : locale_needs) {
+            const char* current = std::setlocale(need.category, nullptr);
+            if (locale_is_c(current))
+                continue;
+            const char* name = current != nullptr && current[0] != '\0' ? current : "unknown";
             error.kind = ErrorKind::runtime;
             error.phase = "open";
             error.package_id = options.package_id;
-            error.message =
-                std::string("the C library's collation locale is ") + name + "; scripts need C";
+            error.message = std::string("the C library's ") + need.words + " locale is " + name +
+                            "; scripts need C";
             return std::nullopt;
         }
 

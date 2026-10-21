@@ -164,16 +164,20 @@ moves that state; the moved-from object has no state.
 - The sources in `third_party/lua` are unchanged. Every string hash uses one
   constant seed, `0x4F414C55` (the letters OALU), so two states walk the same
   table in the same order wherever they sit. `table.sort` does not draw a
-  pivot from the clock. Numbers are read and written with `.`, whatever the
-  machine's locale. Hexadecimal numbers are converted by Lua's own code on
-  every platform. The interpreter is one C translation unit, with the
-  engine's floating-point options: no fused multiply-add and no
-  value-changing optimisation, and Visual Studio's strict floating-point
-  mode.
-- A sandbox opens only when the C library's collation locale is `C` or
-  `POSIX`. String comparison and `table.sort` on strings then follow byte
-  order on every machine. Any other collation is refused at open, with the
-  locale's name in the error.
+  pivot from the clock. Numbers are read and written with `.`: a sandbox
+  opens only in the C numeric locale (below). Hexadecimal numbers are
+  converted by Lua's own code on every platform. The interpreter is one C
+  translation unit, with the engine's floating-point options: no fused
+  multiply-add and no value-changing optimisation, and Visual Studio's
+  strict floating-point mode.
+- A sandbox opens only when the C library's collation, numeric and
+  character-type locales (`LC_COLLATE`, `LC_NUMERIC` and `LC_CTYPE`) are each
+  `C` or `POSIX`. String comparison and `table.sort` on strings then follow
+  byte order, number text is read and written with `.`, and `upper`, `lower`
+  and the pattern classes such as `%a` treat a byte past 127 the same way on
+  every machine. Any other setting is refused at open, naming the category
+  and the locale: `the C library's numeric locale is de_DE.UTF-8; scripts
+  need C`.
 - `setmetatable` installs a copy of the metatable. The copy keeps every
   field the caller's table had at that moment, including `__index`, so a
   methods table that `__index` points at still sees fields added later.
@@ -329,7 +333,8 @@ memory with shorter strings is still a memory error.
 
 `data-script-host-text` checks the float spellings, `hidden` in place of
 where a value sits, the `string.format` refusals, the absent pack functions,
-C collation, and that no route makes a weak table.
+C collation, the refusal to open under another collation, numeric or
+character-type locale, and that no route makes a weak table.
 
 ## Limitations
 
