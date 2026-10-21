@@ -98,10 +98,11 @@ Optional:
   `label` (1 to 64 bytes, no control character) and `default`, plus the
   keys of its type. Any other key is refused.
   - A toggle's `default` is `true` or `false`.
-  - A choice has `values` (2 to 16, all numbers or all strings of 1 to 64
-    bytes, none repeated) and `default` equal to one of them. `labels`, when
-    written, lists one label of 1 to 64 bytes for each value, in the same
-    order.
+  - A choice has `values` (2 to 16, all numbers or all identifiers, none
+    repeated) and `default` equal to one of them. An identifier is 1 to 32
+    bytes of ASCII letters, digits, `_`, `-` and `.`. The words a player
+    reads are the label, not the value. `labels`, when written, lists one
+    label of 1 to 64 bytes for each value, in the same order.
   - A number has `min`, `max` and `step`, exact numbers. `min` is below
     `max`, `step` is above 0, and `(max - min) / step` is a whole number of
     at most 1,000 steps. `default` lies on a step, including an endpoint.

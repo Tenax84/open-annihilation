@@ -31,6 +31,12 @@
 // chat (".sharelos") as bare text, and short recorder messages whose second
 // and third bytes are not a length. Each fills its packet.
 //
+// Open Annihilation adds a sector of type 0x4f414d31 (the bytes 1 M A O on
+// disk) when a game was played with mutators. It holds the loadout as text
+// and is absent otherwise, so a recording without it is unchanged. Readers
+// that do not know the type skip it; this parser keeps every sector and
+// continues.
+//
 // Only version 5 has been checked against recordings; other versions are rejected.
 
 #include <cstddef>
@@ -78,6 +84,9 @@ enum class SectorType : uint32_t {
     recorder_version = 3, // ASCII, not terminated
     recording_date = 4,   // ASCII, not terminated
     player_address = 6,   // one per player; masked text, not decoded here
+    /// Loadout of a game played with mutators, as text. Open Annihilation's
+    /// own type, the bytes 1 M A O on disk. Other readers skip it.
+    mutators = 0x4f414d31,
 };
 
 enum class RecordedSide : uint8_t { arm = 0, core = 1 };

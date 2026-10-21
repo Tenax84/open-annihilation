@@ -58,6 +58,20 @@ inline constexpr std::size_t most_options = 16;
 /// The most values a choice option lists.
 inline constexpr std::size_t most_choice_values = 16;
 
+/// The most bytes of a string choice value.
+///
+/// The value is an identifier. The words a player reads are its label.
+inline constexpr std::size_t most_choice_value_bytes = 32;
+
+/// Tells whether text is a string choice value.
+///
+/// A value is 1 to 32 bytes of ASCII letters, digits, `_`, `-` and `.`.
+/// Callers accept a number before they ask this.
+///
+/// @param text the value's text
+/// @return true when the length is in range and every byte is one of those
+[[nodiscard]] bool choice_value_text(std::string_view text) noexcept;
+
 /// The most steps a number option's range may hold.
 inline constexpr std::size_t most_number_steps = 1000;
 

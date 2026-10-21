@@ -12,8 +12,9 @@ sentence chosen from the rule, which is not this module's to write.
 
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
-`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp` and
-`oa/data/mutators/rules_lua.hpp`.
+`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/loadout.hpp`, `oa/data/mutators/rules_lua.hpp` and
+`oa/data/mutators/verdicts.hpp`.
 
 - `check_mutable_path` judges one file path.
 - `check_mutable_mask` judges one mask. The pattern's shape is
@@ -29,7 +30,8 @@ None kept. The two checks are pure: they do not read files, the asset store
 or the preferences. A null `PathContext::layout` means `data_layout()`. An
 empty `is_unit_name` knows no unit. `build_files_layer` reads the package
 folders it is given while it builds the layer, and it keeps nothing after
-it returns.
+it returns. `folder_digest` reads one folder and does not write. The other
+loadout functions read nothing.
 
 ## Invariants
 
@@ -310,6 +312,90 @@ mutator has made too many notes".
 `data-mutators-collections` builds a small Ridge document set and runs
 the fixtures in `tests/collections`, including the `fixed_` scripts.
 
+## Loadouts
+
+`loadout.hpp` is the record a game, a recording and a save name their
+mutators by, before a match start fills it. A `LoadoutEntry` names one
+mutator by id, version and package SHA-256. `folder` says the package was
+a folder named by path, and then the SHA-256 is that folder's digest
+rather than a package file's. `options` is every option of the manifest,
+defaults filled by `default_option`, in id byte order. A toggle's value is
+`toggle`. A choice keeps the manifest's `ChoiceValue` (a number or a
+string). A number option keeps its number and that number's canonical
+text.
+
+`canonical_loadout` writes one text through the engine's canonical JSON:
+`{"mutators":[...],"oaloadout":1}`, entries in list order. Each entry's
+members are `folder`, `id`, `options`, `sha256` and `version`. `sha256` is
+64 lower-case hex digits. Options are members of one object, so their
+order in the record does not change the text and none is left out. A
+toggle is a boolean, a number is a number, and a choice is a number or a
+string as the manifest types it. `parse_loadout` accepts only that text.
+The limits are `loadout_most_entries` (32) and `loadout_text_most_bytes`
+(64 KiB). A wrong `oaloadout`, an unknown key, upper-case hex, a 33rd
+mutator, 64 KiB plus one byte, trailing text and any spacing or key order
+the writer would not produce are refused, and the error names what.
+A JSON number reads back as a number option. A numeric choice is written
+as a JSON number too, so it reads back as a number option with that
+number; the manifest tells the two apart, and this text does not repeat
+the manifest.
+
+Records compare equal exactly when their canonical texts are equal, so a
+record read back with `parse_loadout` equals the one written. Two options
+are equal when their ids are equal and their values are the same JSON
+value: toggles by `toggle`, string choices by their text, and anything
+holding a number (a number option or a numeric choice) by the number's
+canonical text. So a default written `1.0` in the manifest equals the `1`
+read back, and a numeric choice equals the number option it reads back as.
+An entry's options compare as members of one object, whatever order they
+are listed in.
+
+`loadout_digest` is the SHA-256 of the canonical text.
+
+`folder_digest` hashes each regular file under the folder, sorted by its
+relative path compared bytewise. The path is the UTF-8 spelling, with `/`
+between its parts, of the names as the file system stores them, on every
+system; there is no Unicode normalisation, so a name stored composed and
+the same name stored decomposed give different digests. Each file is that
+path, a NUL, its size as eight little-endian bytes, and the SHA-256 of its
+bytes. A symbolic link, anything that is not a regular file or a folder (a
+pipe, a socket or a device), or a file that cannot be read refuses the
+digest, and the error names the path in UTF-8. An empty folder hashes the
+empty message.
+
+`layer_digest` hashes `oa-mutator-layer-1` and a line feed, then each path
+the layer answers for, sorted by its lower-case `/` form. The message
+carries that form, a NUL, `F` and the SHA-256 of the bytes the layer
+serves for the path as stored, or `H` for a hidden entry. The served bytes
+are not read for a hidden entry. Then each mask pattern, lower-cased with
+`/` separators and sorted: `M`, the pattern and a NUL. Owners, archives,
+the label and the table's order are not hashed.
+
+`mutator_digest` hashes `oa-mutators-1` and a line feed, the canonical
+loadout and the layer digest. `fold_sim_hash` returns the simulation hash
+unchanged when no mutator digest is given. Otherwise it hashes
+`oa-sim-hash-mutators-1` and a line feed, the simulation hash and the
+mutator digest.
+
+`option_text` writes one option's value on its own: a toggle is `true`
+or `false`, anything holding a number is the number's canonical text (the
+digits the canonical loadout writes), and a string choice is its text.
+`options_text` joins `name=value` pairs with `,`, names in byte order,
+each value `option_text` of the option. No options write nothing. This is
+the text that follows `id:` on `--mutator`.
+
+The match start fills this record from the mutators that play and folds
+the mutator digest into the simulation hash. Nothing in this header runs
+during a match.
+
+`data-mutators-loadout` pins the canonical text, the four digests against
+values computed outside the engine, the refusals, the folder and layer
+digests, the unchanged simulation hash and the options text. It reads
+records back equal (a `1.0` number default, a numeric choice and a string
+choice among them), compares records by their text, digests a folder
+holding a name outside ASCII, and refuses a pipe where the system has
+pipes.
+
 ## Rules in Lua
 
 `install_rule_forms` publishes the rule forms in a sandbox, and
@@ -391,3 +477,43 @@ is an error. An unfinished block in the list refuses the plan.
 `data-mutators-rules-lua` checks each Lua fixture against the rule file
 beside it, both as records and as the writes those records make on one
 Ridge document set. `fixed_set` and `fixed_scale` pass fixed values.
+
+## Verdicts
+
+A dry run's answer for one list of mutators against one mod is a
+`Verdict`: `compatible`, `no_effect`, `incompatible` or `failed`. The
+file and the log spell `no_effect` as `no-effect`. A compatible verdict
+carries `ChangeCounts`, twelve counts per collection (units, weapons and
+features changed, added and removed, then menu entries, files added and
+files hidden). `any` says whether one of them is above zero. `incompatible`
+and `failed` carry a reason; the other two do not. `mod_label` is the
+mod's name and version, empty for the base game. `one_line_reason` turns
+a reason or a label into one line of at most 200 bytes, with the ends
+trimmed again when the cut lands on a space.
+
+A verdict is remembered under a `VerdictKey`: the loadout digest of the
+whole checked list (prerequisites included), the mod key, and the engine
+version text. `RememberedVerdict` pairs that key with a `VerdictRecord`.
+
+The file is named `mutator-verdicts.tsv`. Each line is UTF-8, ends with
+a line feed, and is tab-separated: `1`, the loadout digest as 64
+lower-case hex digits, the mod key likewise, the engine version
+(printable ASCII, no space, 1 to 64 bytes), the verdict word, the twelve
+counts as unsigned decimals without leading zeros joined by `,`, the mod
+label, the reason. The label and the reason are written through
+`one_line_reason`. A line is dropped when it has another field count,
+another form than `1`, a digest that is not 64 lower-case hex digits, a
+bad engine version, an unknown verdict word, a count that is not a
+decimal within `uint32_t`, a reason on a compatible or no-effect verdict,
+more than 2048 bytes, a carriage return, or bytes that are not UTF-8.
+When two lines share a key, the later record wins and keeps the earlier
+line's place. `read_verdicts` then keeps at most the newest 1024 of those
+verdicts; the oldest past that are dropped. The file is at most 4 MiB. A
+longer span reads as empty. `remember_verdict` drops every excess oldest
+verdict in one step.
+
+`read_verdicts` and `write_verdicts` are the codec. `remember_verdict`
+replaces a key and moves it to the newest place. `find_verdict` looks a
+key up. The dry run fills the records. The Library and the picker show
+them. Nothing here decides which outcome is which verdict, and nothing
+here opens the file.
