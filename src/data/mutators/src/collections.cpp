@@ -11,6 +11,7 @@
 // limit fails.
 #include "oa/data/mutators/collections.hpp"
 
+#include "clone.hpp"
 #include "oa/data/field_schema.hpp"
 #include "oa/data/script_host/fixed.hpp"
 #include "oa/data/script_host/sorted.hpp"
@@ -1929,6 +1930,7 @@ static int record_call_set(lua_State* state);
 static int record_call_keys(lua_State* state);
 static int record_call_fixed(lua_State* state);
 static int collection_index(lua_State* state);
+static int collection_call_clone(lua_State* state);
 static int collection_newindex(lua_State* state);
 static int collection_len(lua_State* state);
 static int view_pairs(lua_State* state);
@@ -2078,6 +2080,10 @@ static int collection_index(lua_State* state) {
         lua_pushcfunction(state, collection_each);
         return 1;
     }
+    if (key == "clone" && collection->kind != Kind::features) {
+        lua_pushcfunction(state, collection_call_clone);
+        return 1;
+    }
     Collections& owner = *collection->owner;
     const Rec* found = nullptr;
     bool failed = false;
@@ -2099,6 +2105,36 @@ static int collection_index(lua_State* state) {
         return 1;
     }
     push_record(state, &owner, collection->kind, false, found->slot, found->name);
+    return 1;
+}
+
+static int collection_call_clone(lua_State* state) {
+    const ViewBox* collection = view_at(state, 1, kCollectionMeta);
+    if (collection == nullptr || collection->owner == nullptr)
+        return luaL_error(state, "expected a collection");
+    std::string error;
+    int result = -1;
+    bool failed = false;
+    try {
+        result =
+            clone_collection(state, *collection->owner, collection->kind == Kind::weapons, error);
+    } catch (const std::bad_alloc&) {
+        pending_of(*collection->owner) = "out of memory";
+        failed = true;
+    }
+    if (failed)
+        return raise_pending(state, *collection->owner);
+    if (result < 0) {
+        pending_of(*collection->owner) = std::move(error);
+        return raise_pending(state, *collection->owner);
+    }
+    try {
+        mark_dirty(*collection->owner, collection->kind);
+    } catch (const std::bad_alloc&) {
+        pending_of(*collection->owner) = "out of memory";
+        return raise_pending(state, *collection->owner);
+    }
+    lua_pushboolean(state, 1);
     return 1;
 }
 

@@ -24,6 +24,10 @@
 
 struct lua_State;
 
+namespace oa {
+class AssetStore;
+}
+
 namespace oa::data::mutators {
 
 /// Reaches the records from Lua. The bindings are defined with the
@@ -77,6 +81,33 @@ enum class HookNoteKind : uint8_t {
     hook_overwrote,               ///< a later hook replaced an earlier hook's value
     download_first_entry_changed, ///< removing the first download entry left a different unit first
     not_a_number,                 ///< a scale skipped a value that is not a number
+};
+
+/// One unit or weapon a hook cloned.
+///
+/// `sentence` is the journal line: "added unit NEW (copy of SRC)" or
+/// "added weapon NEW (copy of SRC) at id N". `weapon_id` is that id, and 0
+/// for a unit.
+struct CloneRecord {
+    std::string mutator;  ///< mutator whose hook cloned it
+    bool weapon{};        ///< true for a weapon section, false for a unit
+    std::string name;     ///< the new record's name, as the script wrote it
+    std::string source;   ///< the record it was copied from, as the script wrote it
+    int weapon_id{};      ///< free weapon id, from 1 to 255; 0 for a unit
+    std::string path;     ///< document path the copy was written to
+    std::string sentence; ///< the journal line for this clone
+};
+
+/// One binary file a clone serves under the new name.
+///
+/// `sentence` is "added path <new>, copy of <source>". The bytes are the
+/// source file as the store held it when the clone ran.
+struct ServedCopy {
+    std::string mutator;                               ///< mutator whose clone served it
+    std::string path;                                  ///< path the layer serves
+    std::string source_path;                           ///< path the bytes were read from
+    std::string sentence;                              ///< the journal line for this copy
+    std::shared_ptr<const std::vector<uint8_t>> bytes; ///< the served bytes
 };
 
 /// One note a hook produced, for the change journal.
@@ -198,9 +229,31 @@ class Collections {
     /// @return the notes
     [[nodiscard]] std::span<const HookNote> notes() const;
 
+    /// Remembers the store a clone reads while a hook runs.
+    ///
+    /// The store must outlive the hooks. Null clears it.
+    ///
+    /// @param store the layered store, or null
+    void bind_store(oa::AssetStore* store) { store_ = store; }
+
+    /// Returns the clones made so far, in the order the hooks made them.
+    ///
+    /// The span is invalidated by the next clone.
+    ///
+    /// @return the clones
+    [[nodiscard]] std::span<const CloneRecord> clones() const { return clones_; }
+
+    /// Returns the binary copies served so far, in the order they were read.
+    ///
+    /// The span is invalidated by the next copy.
+    ///
+    /// @return the copies
+    [[nodiscard]] std::span<const ServedCopy> served_copies() const { return served_; }
+
   private:
 
     friend struct CollectionsAccess;
+    friend struct CloneAccess;
 
     oa::data::mutation_rules::DocumentSet* documents_;
     const oa::data::defs::DataLayout* layout_;
@@ -211,6 +264,9 @@ class Collections {
     std::vector<RecordRemoval> removals_;
     std::vector<HookNote> notes_;
     std::unique_ptr<CollectionsState> state_;
+    oa::AssetStore* store_{};         ///< store a clone reads; not owned
+    std::vector<CloneRecord> clones_; ///< clones made during the hooks
+    std::vector<ServedCopy> served_;  ///< binary copies those clones serve
 };
 
 } // namespace oa::data::mutators

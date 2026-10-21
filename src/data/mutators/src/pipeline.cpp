@@ -1892,6 +1892,7 @@ bool run_pass(
     // below a failure the files layer found are not run: they cannot change
     // which failure is first.
     collections.emplace(documents, &layout);
+    collections->bind_store(&store);
     bool hooks_done = true;
     for (std::size_t slot = 0; slot < count && slot < first.slot; ++slot) {
         if (active[slot] == 0)
@@ -2000,6 +2001,24 @@ bool run_pass(
     }
     for (const HookNote& note : collections->notes())
         report.conflicts.push_back(conflict_from_hook(note, ids));
+    for (const CloneRecord& clone : collections->clones()) {
+        JournalEntry entry;
+        const std::optional<uint16_t> mutator = index_of(ids, clone.mutator);
+        if (mutator.has_value())
+            entry.mutators.push_back(*mutator);
+        entry.phase = Phase::hooks;
+        entry.change = Change::added;
+        entry.collection = clone.weapon ? Collection::weapons : Collection::units;
+        entry.record = clone.name;
+        entry.path = clone.path;
+        entry.new_text = clone.sentence;
+        if (mutator.has_value()) {
+            note_writer(
+                documents, writers, menus, clone.path, *mutator, Phase::hooks, entry.collection
+            );
+        }
+        journal.entries.push_back(std::move(entry));
+    }
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
         const std::optional<uint16_t> mutator = index_of(ids, entry.owner);
@@ -2080,6 +2099,39 @@ bool run_pass(
         }
         if (!replaced)
             spec.entries.push_back(std::move(entry));
+    }
+    // A clone's build pages and page art are served here, not through
+    // check_mutable_path. guis/ is menus-only, and anims/<unit><digits>.gaf
+    // is allowed only for a unit name captured before the hooks ran. The
+    // bytes are the source file, under the new unit's name. The script and
+    // the picture use the same path so one clone publishes every copy.
+    for (const ServedCopy& copy : collections->served_copies()) {
+        JournalEntry added;
+        const std::optional<uint16_t> mutator = index_of(ids, copy.mutator);
+        if (mutator.has_value())
+            added.mutators.push_back(*mutator);
+        added.phase = Phase::hooks;
+        added.collection = Collection::files;
+        added.change = Change::added;
+        added.path = copy.path;
+        added.new_text = copy.sentence;
+        journal.entries.push_back(std::move(added));
+
+        oa::MutatorLayerEntry served;
+        served.path = copy.path;
+        served.owner = copy.mutator;
+        served.kind = oa::MutatorSourceKind::contents;
+        served.contents = copy.bytes;
+        bool replaced_copy = false;
+        for (std::size_t entry_index = 0; entry_index < spec.entries.size(); ++entry_index) {
+            if (!same_path(spec.entries[entry_index].path, served.path))
+                continue;
+            spec.entries[entry_index] = served;
+            replaced_copy = true;
+            break;
+        }
+        if (!replaced_copy)
+            spec.entries.push_back(std::move(served));
     }
     sandboxes.clear();
     collections.reset();
