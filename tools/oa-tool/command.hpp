@@ -196,6 +196,26 @@ class Failure : public std::runtime_error {
 /// @throws Failure when a folder cannot be written
 [[nodiscard]] int run_mutator_import(std::span<const std::string> arguments, Output& output);
 
+/// Reports what a loadout changes, or compares two loadouts.
+///
+/// `--game-dir` is the game folder, mounted the way the game mounts it.
+/// `--mod-dir` is a mod folder over that game. Each `--mutator` is a package
+/// folder, with options after the last colon. An id with no path is refused.
+/// `--versus` is a second loadout. `--allow` is a file of differences that
+/// may remain, and it needs `--versus`. `--map` names the map whose maps
+/// hooks run. `--seed` is the match seed, and it is 0 when left out.
+/// `--dump` writes the mutated file list and does not change the report.
+///
+/// @param arguments the options
+/// @param[in,out] output receives the report or the comparison, and a usage
+///        line when the arguments are not the command's
+/// @return exit_done when the report was written, or a comparison has no
+///         remaining difference and no unused allowance; exit_failed when a
+///         mutator fails, the folder is not a usable game, or a comparison
+///         does not match; exit_usage when the arguments are not the command's
+/// @throws Failure when a mutator fails or the folder is not a usable game
+[[nodiscard]] int run_mutator_diff(std::span<const std::string> arguments, Output& output);
+
 // The catalogue commands, defined in catalogue.cpp.
 
 /// Makes a sealed publisher key.
