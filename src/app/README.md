@@ -4466,6 +4466,54 @@ lists the platform and architecture on a Platform line under Engine, leaving
 out a field the record leaves empty and the line when both are, and the mark
 by its title is the same icon.
 
+### Fetching the host's mutators
+
+A guest whose host plays a mutator this machine lacks can fetch that
+release (`runtime_host_mutators.cpp`). What can be fetched is decided
+without drawing anything (`mutator_fetch_state` in
+`oa/ui/frontend_multiplayer/host_mutators.hpp`), from the host's list
+(each mutator's id, version and the first eight bytes of its package
+SHA-256), the release installed in the Mutators folder, and the
+catalogues in effect. The list names no registry, so every registry this
+machine uses is considered, in the snapshot's order. The battle room's
+screen reads `host_mutators_fetch` and queues with `fetch_host_mutators`
+when the player asks. Nothing in this path draws a button, a line or a bar.
+
+| State | When |
+|---|---|
+| have | an installed package's SHA-256 starts with the host's prefix |
+| get | a registry offers that release, and none is installed |
+| other_release_get | another release is installed, and a registry offers the host's |
+| other_release_gone | another release is installed, and no registry offers the host's |
+| gone | no registry this machine uses offers the host's release |
+| downloads_off | the registry is off, or downloads from it are |
+| waiting_for_catalogue | a usable registry's catalogue has not been read yet |
+| downloading | that release is on its way |
+| failed | the last try failed, and says why |
+
+`host_mutators_fetch` is empty on the host and while the list is still
+arriving. It reads the list, the installed mutators, the catalogues and
+the download queue, and it never starts a download. The battle room asks
+every frame, so the Mutators folder is read again only when its last
+write moves; the installer reads it again after each mutator it installs.
+`fetch_host_mutators`
+queues every row in `get` or `other_release_get`, and a press of it tries
+a failed row again. A catalogue entry is refused unless its SHA-256 starts
+with the host's prefix (`not_offered`); the queue then checks the file
+against that catalogue SHA-256 (`queue_download`, reason
+`offered-in-lobby`). The package installs as the Library installs a
+mutator. A prerequisite is fetched only as its own row of the host's
+list, at the release the host named, never as whatever release is newest.
+A refusal, a failure or a cancellation is not tried again by itself. The
+failure is kept in English, for the screen to translate. The log says what
+happened:
+
+```
+open-annihilation: host mutators: downloading <id> release <release> from <registry>
+open-annihilation: host mutators: installed <id>
+open-annihilation: host mutators: couldn't get <id>: <why>
+```
+
 ## The automation endpoint
 
 `automation/` is the automation endpoint's extension, `oa-app-automation`,

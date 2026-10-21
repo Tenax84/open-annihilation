@@ -15,7 +15,8 @@ add_library(oa-ui-frontend-multiplayer
   src/map_list.cpp
   src/screens.cpp
   src/presence_card.cpp
-  src/get_map.cpp)
+  src/get_map.cpp
+  src/host_mutators.cpp)
 add_library(oa::ui::frontend_multiplayer ALIAS oa-ui-frontend-multiplayer)
 target_include_directories(oa-ui-frontend-multiplayer PUBLIC include)
 target_link_libraries(oa-ui-frontend-multiplayer
@@ -67,6 +68,14 @@ if(BUILD_TESTING)
   add_test(NAME ui-multiplayer-get-map-data COMMAND oa-ui-frontend-multiplayer-get-map-test --data)
   set_tests_properties(ui-multiplayer-get-map ui-multiplayer-get-map-data PROPERTIES TIMEOUT 30)
   oa_game_data_tests(ui-multiplayer-get-map-data)
+  # Whether a guest can fetch one mutator of the host's list: every state
+  # over one hand-made mutator, the 16-digit prefix and a release the
+  # catalogue lists at another SHA-256.
+  add_executable(oa-ui-frontend-multiplayer-host-mutators-test tests/host_mutators_test.cpp)
+  target_link_libraries(oa-ui-frontend-multiplayer-host-mutators-test PRIVATE
+    oa-ui-frontend-multiplayer oa-netgame)
+  add_test(NAME ui-multiplayer-host-mutators COMMAND oa-ui-frontend-multiplayer-host-mutators-test)
+  set_tests_properties(ui-multiplayer-host-mutators PROPERTIES TIMEOUT 30)
   add_executable(oa-ui-frontend-multiplayer-team-rules-test tests/team_rules_test.cpp)
   target_link_libraries(oa-ui-frontend-multiplayer-team-rules-test PRIVATE oa-ui-frontend-multiplayer)
   add_test(NAME ui-multiplayer-team-rules COMMAND oa-ui-frontend-multiplayer-team-rules-test)

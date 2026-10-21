@@ -76,6 +76,7 @@
 #include "oa/app/content/downloads.hpp"
 #include "oa/app/content/settings.hpp"
 #include "oa/app/renderer_records.hpp"
+#include "oa/ui/frontend_multiplayer/host_mutators.hpp"
 #include "oa/ui/frontend_renderer/scroll_bars.hpp"
 #include "oa/present/world_renderer/world_radar.hpp"
 #include "oa/sim/messages.hpp"
@@ -4381,6 +4382,36 @@ class Runtime final : public menu::Host,
     /// the multiplayer screens while no match runs releases the layer.
     void follow_room_mutators();
 
+    /// One mutator of the host's list, and whether this machine can fetch that release.
+    struct HostMutatorFetch {
+        oa::ui::frontend_multiplayer::HostMutator mutator;  ///< the host's id, version and prefix
+        oa::ui::frontend_multiplayer::MutatorFetch state{}; ///< what a guest can do about it
+        oa::ui::frontend_multiplayer::MutatorOffer offer;   ///< the registry the decision used
+        uint64_t done{}; ///< bytes of a download still running; 0 when none is
+        /// Why the last try failed, in English as the queue says it. Empty when
+        /// the last try did not fail. The battle room translates it.
+        std::string failure;
+    };
+
+    /// Returns what this machine can fetch of the host's mutator list.
+    ///
+    /// Empty on the host, and empty while the host's list has not all
+    /// arrived. Each call reads that list, the installed mutators, the
+    /// catalogues and the download queue. A download is never started here.
+    /// A failure stays until fetch_host_mutators is called again.
+    ///
+    /// @return one row per mutator, in the host's order
+    [[nodiscard]] std::vector<HostMutatorFetch> host_mutators_fetch();
+
+    /// Queues every mutator of the host's list whose release this machine can fetch.
+    ///
+    /// A row is queued only when a catalogue entry's SHA-256 starts with the
+    /// host's prefix. The queue checks the file against that entry's
+    /// SHA-256. A failure, a refusal or a cancelled download is not tried
+    /// again until this is called. Prerequisites are the host's own list
+    /// entries, each at the release the host named.
+    void fetch_host_mutators();
+
     /// Returns the mutators field this machine sends, or null when it plays none.
     ///
     /// The host's names every mutator. A guest's carries the host's digest
@@ -4716,6 +4747,19 @@ class Runtime final : public menu::Host,
     ///
     /// @return the state
     RoomMutatorState& ensure_room_mutators();
+
+    /// Downloads this machine started for the host's mutators, and why one failed.
+    struct HostMutatorFetchState;
+
+    /// Frees the host-mutator downloads.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_host_mutator_fetch_state(HostMutatorFetchState* state) noexcept;
+
+    /// The host-mutator downloads, made on first use.
+    ///
+    /// @return the state
+    HostMutatorFetchState& ensure_host_mutator_fetches();
 
     /// Unmounts the battle room's layer. A layer it did not mount stays.
     ///
@@ -17387,6 +17431,9 @@ class Runtime final : public menu::Host,
     std::unique_ptr<RoomMutatorState, void (*)(RoomMutatorState*) noexcept> room_mutator_state_{
         nullptr, destroy_room_mutator_state
     };
+    // Downloads started for the host's mutators; null until a guest asks.
+    std::unique_ptr<HostMutatorFetchState, void (*)(HostMutatorFetchState*) noexcept>
+        host_mutator_fetch_state_{nullptr, destroy_host_mutator_fetch_state};
 
     /// The player's mutators while a replay or a saved game plays another list; null until then.
     std::unique_ptr<LoadoutOnceHold, void (*)(LoadoutOnceHold*) noexcept> loadout_once_hold_{
