@@ -153,6 +153,17 @@ int letter_rows_above_baseline(const oa::present::TextLayers& layers) {
     return 0;
 }
 
+/// Gives how far a line must be lowered so that none of its letters rises
+/// above a row.
+///
+/// @param top_row the paint row no letter may rise above
+/// @param baseline the paint row of the line's baseline
+/// @param layers the line
+/// @return paint rows; 0 or less for a line that keeps its place
+int rows_below(int top_row, int baseline, const oa::present::TextLayers& layers) {
+    return top_row - (baseline - letter_rows_above_baseline(layers));
+}
+
 } // namespace
 
 int Runtime::builder_gui_page_count() const {
@@ -490,7 +501,21 @@ void Runtime::paint_text(
             laid[index] = oa::present::modern_text(
                 runs[index].text, face, scale, painted_text_size(runs[index]), allow_background
             );
-    const int drop = panel_text_drop(font, y, text, scale);
+    // Lowered as panel_text_drop gives, from the layers already built: the
+    // rows a line's letters rise above its baseline are the same with or
+    // without its background box.
+    int drop = 0;
+    if (text_place_ == TextPlace::panel && panel_top_row_)
+        for (std::size_t index = 0; index < runs.size(); ++index)
+            if (const auto& layers = laid[index])
+                drop = std::max(
+                    drop,
+                    rows_below(
+                        *panel_top_row_,
+                        y + painted_baseline(font_baseline, painted_text_size(runs[index])) * scale,
+                        *layers
+                    )
+                );
     int pen = x;
     for (std::size_t index = 0; index < runs.size(); ++index) {
         const auto& run = runs[index];
@@ -528,8 +553,9 @@ int Runtime::panel_text_drop(
         if (const auto layers = oa::present::modern_text(run.text, face, scale, size, false))
             drop = std::max(
                 drop,
-                *panel_top_row_ - (y + painted_baseline(font_baseline, size) * scale -
-                                   letter_rows_above_baseline(*layers))
+                rows_below(
+                    *panel_top_row_, y + painted_baseline(font_baseline, size) * scale, *layers
+                )
             );
     }
     return drop;
@@ -545,10 +571,10 @@ int Runtime::match_text_width(
     for (const auto& run :
          renderer::split_game_text(text, renderer::fnt_font_characters(font), true)) {
         if (run.modern)
-            if (const auto layers = oa::present::modern_text(
+            if (const auto advance = oa::present::modern_text_advance(
                     run.text, renderer::fnt_font_face(font), scale, painted_text_size(run)
                 )) {
-                width += layers->advance;
+                width += *advance;
                 continue;
             }
         const std::string bytes =
