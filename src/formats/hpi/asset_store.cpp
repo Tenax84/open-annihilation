@@ -10,12 +10,14 @@
 #include <atomic>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -1013,12 +1015,30 @@ struct AssetStore::LooseIndex {
         bool regular = false;       // a regular file, following links, when listed
         bool directory = false;     // a folder, following links, when listed
         bool ambiguous = false;     // several entries fold to this name
+        // Neither a plain file nor a plain folder when listed: a link, or an
+        // entry whose kind the listing could not tell. A path through one is
+        // checked to stay inside its root.
+        bool link = false;
+    };
+
+    // Hashes a folded name, so that a part of a key finds it without a copy.
+    struct NameHash {
+        using is_transparent = void;
+
+        /// Hashes a name.
+        ///
+        /// @param name the folded name
+        /// @return its hash
+        std::size_t operator()(std::string_view name) const noexcept {
+            return std::hash<std::string_view>{}(name);
+        }
     };
 
     // One folder's listing.
     struct Folder {
-        std::size_t entry_count = 0;                     // entries the listing held
-        std::unordered_map<std::string, Child> children; // keyed by folded name
+        std::size_t entry_count = 0; // entries the listing held
+        // Keyed by folded name.
+        std::unordered_map<std::string, Child, NameHash, std::equal_to<>> children;
     };
 
     explicit LooseIndex(std::size_t limit) : entry_limit(limit) {}
@@ -1062,6 +1082,10 @@ AssetStore::LooseIndex::listing(const std::string& key, const std::filesystem::p
         slot->second.path = item.path();
         slot->second.regular = item.is_regular_file(status_error);
         slot->second.directory = item.is_directory(status_error);
+        std::error_code link_error;
+        const auto own = item.symlink_status(link_error).type();
+        slot->second.link = link_error || (own != std::filesystem::file_type::regular &&
+                                           own != std::filesystem::file_type::directory);
     }
     if (error)
         return nullptr;
@@ -1365,17 +1389,24 @@ AssetStore::loose_path_in(std::size_t root, const std::string& key) const {
     if (!loose_index_ || !loose_index_->enabled.load())
         return loose_path_listed_in(root, key);
     const base::threads::LockGuard guard(loose_index_->lock);
-    auto loose = loose_roots_[root];
+    // The folder listed next. It points into a kept listing, which the next
+    // listing drops only after it has finished reading the folder.
+    const std::filesystem::path* loose = &loose_roots_[root];
     // Each folder's listings are kept under its own index, so that layered
     // folders never answer for each other.
-    const std::string tag = std::to_string(root) + '|';
-    std::string folder = tag;
+    std::string folder = std::to_string(root) + '|';
+    const std::size_t tag = folder.size();
+    // A path with no link on it lies inside its root, as it names it; one
+    // through a link is resolved to check where the link leads.
+    bool through_link = false;
     for (std::size_t begin = 0; begin < key.size();) {
         const auto end = key.find('/', begin);
-        const auto part = key.substr(begin, end == std::string::npos ? end : end - begin);
+        const auto part = std::string_view(key).substr(
+            begin, end == std::string::npos ? std::string_view::npos : end - begin
+        );
         if (part == "." || part == "..")
             fail("asset path contains traversal");
-        const auto* listing = loose_index_->listing(folder, loose);
+        const auto* listing = loose_index_->listing(folder, *loose);
         if (listing == nullptr)
             return loose_index_->enabled.load() ? std::nullopt : loose_path_listed_in(root, key);
         const auto child = listing->children.find(part);
@@ -1383,14 +1414,17 @@ AssetStore::loose_path_in(std::size_t root, const std::string& key) const {
             return std::nullopt;
         if (child->second.ambiguous)
             fail("ambiguous loose asset case: " + key);
+        through_link = through_link || child->second.link;
         if (end == std::string::npos)
-            return child->second.regular && stays_inside(loose_roots_[root], child->second.path)
+            return child->second.regular &&
+                           (!through_link || stays_inside(loose_roots_[root], child->second.path))
                        ? std::optional(child->second.path)
                        : std::nullopt;
         if (!child->second.directory)
             return std::nullopt;
-        loose = child->second.path;
-        folder = tag + key.substr(0, end);
+        loose = &child->second.path;
+        folder.resize(tag);
+        folder.append(key, 0, end);
         begin = end + 1;
     }
     return std::nullopt;
