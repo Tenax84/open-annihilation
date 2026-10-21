@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+folder=units;
+extension=fbi;
+[*All*]
+{
+maxvelocity=1;
+}
+folder=maps;
+extension=ota;
+[*All*]
+{
+minwindspeed=0;
+}
+folder=maps;
+extension=tnt;
+[*All*]
+{
+minwindspeed=1;
+}
