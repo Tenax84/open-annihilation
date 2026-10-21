@@ -1,15 +1,15 @@
 # Mutation rules
 
 `oa-data-mutation-rules` holds the parsed documents of one pipeline run and
-applies every mutator's rule records to them in one pass. Needs choose the
-records. Each mutator's changes to one field become one contribution. The
-contributions combine into one write per field. The result does not depend
-on the order of the mutators, except text appends, which follow the list.
+applies one mutator's rule records to them as a step. The caller runs
+mutators one after another and passes the same step state each time, so a
+later mutator reads the documents the earlier one left. Needs choose the
+records. Each change is written before the next change is read.
 
-Every write names the mutators that produced it and the old and new text.
-A clamp another mutator widened, text changes that cancelled, a factor on a
-field that is not there, a value that is not a number or not finite, and a
-block that matched nothing are noted.
+Every write names the mutator that produced it and the old and new text.
+A value a later mutator replaced, a locked field a later mutator left alone,
+a factor on a field that is not there, a value that is not a number or not
+finite, and a block that matched nothing are noted.
 
 ## Entry points
 
@@ -28,10 +28,13 @@ block that matched nothing are noted.
   or no schema. The five-argument form also treats the layout's
   `gamedata/moveinfo.tdf` as a movement class. Units and weapons win over
   that path.
-- `apply_rules` runs the pass. A null layout uses the layout in force. The
-  field check, when set, sees each new text or removal before it is written.
-  This module does not know the typed field checks; a later pass passes them
-  in.
+- `apply_step` applies one mutator. It reads the documents and the step
+  state, writes the documents its changes reach, and adds lock marks and
+  last-writer marks to that state. A null layout uses the layout in force.
+  The field check, when set, sees each new text or removal before it is
+  written. This module does not know the typed field checks; a later pass
+  passes them in. The caller keeps one `ApplyState` for the whole run and
+  passes it to each step. A step does not clear a mark an earlier step made.
 
 ## Targets and records
 
@@ -64,56 +67,54 @@ newest, and the change is applied once.
 
 ## Combination
 
-Within one mutator, sources in plan order and blocks and changes in file
-order, the last change of a field decides its kind. An assignment resets
-that mutator's factors and clamps. Factors then multiply onto whatever is
-current. Clamps join, taking the lower low and the higher high. A meta
-value replaces the numeric state and survives later numeric changes; a later
-meta value replaces the earlier one. Text assignments replace, appends
-extend, and a removal clears. An append after a removal becomes an
-assignment of the appended text, and an append after an assignment extends
-that assignment, so the mutator still fully determines the text. A change of
-the other kind discards what came before. That discard inside one mutator
-is not noted; the notes below are about mutators combined.
+There is no combining step. Rules are applied in sequence.
 
-Across mutators the algebra is:
+One mutator's sources run in plan order. Each source's blocks and changes
+run in file order. A block's needs read the records as the rules before that
+block left them, and each change is written before the next change is read.
+A later block of the same mutator sees an earlier block's write. The caller
+runs the next mutator as another step on those documents.
 
-- If any contribution is a meta value, the result is the mean of the meta
-  values and every other change, numeric or text, is dropped. Only the
-  mutators that supplied a meta value are listed on the write.
-- Otherwise the base is the mean of the assignments, or the field's current
-  value when there is none, times the product of the factors, then clamped
-  to the lowest low and the highest high of every clamp. Sums run in mutator
-  list order. Each mutator multiplies its own factors in file order. Those
-  products then multiply in a fixed order: the exact bits of the factor,
-  smaller first, and, when the bits match, the rule text of the scales (the
-  source name and line of each one, in file order). A mean is the sum
-  divided by the count. The clamp is applied to the combined product, not
-  to each mutator before the product.
-- A factor on a field that is absent, and that no assignment creates, does
-  nothing. An assignment or a meta value creates the field, and other
-  mutators' factors then apply to that base.
-- Text changes apply only when no numeric change touches the field. Appends
-  add in list order, including when the field is absent. An assignment or a
-  removal takes effect only when it is the only text change. Two
-  assignments, two removals, or one of each, cancel, and the field stays as
-  it was. Appends alongside an assignment or a removal still append; the
-  assignment or removal is noted and does not write. A mutator that
-  contributed nothing to the value actually written is not listed on it.
+A factor multiplies the current number. An assignment replaces it. A clamp
+bounds only the result of its own scale; it does not bound a later scale.
+A text change or a removal acts on the current text. An append extends the
+current text, or the empty text when the field is absent. A later rule sees
+the text the earlier rule wrote.
 
-A number is written only with the TDF number spelling, and only when it is
-finite and different from the field's current number. The current text has
-to start, after spaces or tabs, with a sign and a digit before it counts as
-that number: a factor does not treat a word as zero. A result that is not
-finite is not written, and a clamp is not allowed to pull an infinite result
-back into range. A combined value that is written outside the clamp one
-mutator gave on its own is noted, naming that mutator, its range, and the
-range that was used.
+A lock sets the value and marks the field for the rest of the run. A later
+mutator's change to a locked field is not written. The step notes that, and
+the note names the mutator that locked the field and the mutator that tried
+to change it. A later change of the mutator that locked the field still
+applies, and the lock mark stays for the mutators after it.
+
+A later assignment, text change, removal or lock that replaces a value an
+earlier mutator wrote is noted, naming both mutators. A factor or an append
+builds on the current value and is not that note. The first write, over the
+documents as they were loaded, is not a replacement. A removal of a field
+that is already absent does nothing and is not noted.
+
+A factor on a field that is absent does nothing, and the step notes it. A
+factor on text that is not a number is noted and does not write. A number
+is written only with the TDF number spelling, and only when it is finite and
+different from the field's current number. The current text has to start,
+after spaces or tabs, with a sign and a digit before it counts as that
+number: a factor does not treat a word as zero. A result that is not finite
+is not written, and a clamp is not allowed to pull that result back into
+range. A lock of a number the field already holds writes nothing and still
+marks the field.
+
+A key the record does not hold is written with the spelling of the change
+that creates it. A later change of that field keeps the spelling the reader
+already has. Two spellings of one key that differ only in ASCII case are one
+field.
+
+The order of the mutators matters, and so does the order of the changes.
 
 ## Needs on fields left out
 
-A need is decided on the record as the pass found it, before any write, so
-one rule's change cannot decide which records another rule selects.
+A block's needs read the record as the rules before that block left it. A
+field an earlier block wrote is read as that write left it. A field this
+block has not written yet is read as it stands.
 
 When the field is written, a range need holds when the text's number is
 inside the bounds, inclusive. Text that is not a number reads as zero, the
@@ -145,54 +146,62 @@ the lowest band.
 
 ## State
 
-The pass edits the `DocumentSet` it is given and no other store. Paths are
-kept with `/` separators, in the order the documents were added, and a
-removed document stays in the set so its index does not move. This module
-does not add or remove documents and does not set those flags. It only
-changes keys inside the trees, through the TDF editor. A document no write
-touched is left unmarked, including when a computed number matches the
+A step edits the `DocumentSet` it is given and the `ApplyState` the caller
+passes, and no other store. `ApplyState::locks` holds the fields a lock
+marked, and `ApplyState::writers` holds the mutator that last wrote each
+field, so a later step can name both mutators on a replacement. The caller
+starts from an empty state and passes the same value to each step. A step
+adds marks and does not clear one an earlier step made.
+
+Paths are kept with `/` separators, in the order the documents were added,
+and a removed document stays in the set so its index does not move. This
+module does not add or remove documents and does not set those flags. It
+only changes keys inside the trees, through the TDF editor. A document no
+write touched is left unmarked, including when a computed number matches the
 current value and is therefore not written.
+
+A lock mark names a field by its folded path, record, block and key. ASCII
+capitals are folded, and a path treats `\` as `/`. Two sections of the same
+name in one file share a lock.
 
 ## Invariants
 
-- Needs read the records from before the pass. Later blocks of the same
-  mutator do too.
-- One field is written at most once. The mutators on that write are the ones
-  whose contribution is in the value, in list order.
-- Numeric results do not depend on mutator order. Stacked factors multiply
-  in the fixed bit order above, so twenty factors on one field spell the
-  same number in every list order. Appends do depend on order, and follow the
-  list. A key the record does not hold is written with the spelling that
-  sorts first by raw bytes among the changes that name it, so the file's
-  bytes do not depend on list order either. `EnergyStorage` precedes
-  `energystorage`.
-- A value that is not finite is never written. Numbers become text only
-  through the TDF number spelling.
-- Two text assignments, or two removals, never pick a silent winner.
+- A block's needs read the records as the rules before that block left them.
+  Later blocks, and later mutators, see those writes.
+- Two changes apply one after the other. A factor multiplies the current
+  number, an assignment replaces it, and a clamp bounds only that scale.
+  The same two changes in two steps leave the same text.
+- A lock marks the field after it sets the value. A later mutator does not
+  write a locked field, and the note names both mutators.
+- A value that is not finite is never written. A clamp does not pull such a
+  result back into range. Numbers become text only through the TDF number
+  spelling.
+- The spelling of a key a record does not hold is the spelling of the change
+  that creates it. List order decides which change creates it.
 
 ## Tests
 
 `oa-data-mutation-rules-test` builds small documents and rule texts. It
-checks the written text, the writes and the notes for stacked factors
-(including twenty-four factors in several list orders, and three scales
-inside one mutator kept in file order), meta
-values and the fields they create, a widened clamp, text cancellation and
-append order, the within-mutator rule, needs on fields a record leaves out
-(including a movement class and a key no schema holds), targets and folders,
-a layout that renames `units`, the spelling of a key a record does not
-hold, a depth change applied once when a block has two case variants of a
-key, and the notes for a block that matched
-nothing, a field that is not a number, a result that is not finite, and a
+checks the written text, the writes and the notes for factors stacked in
+both list orders, three scales kept in file order, storage factors, a later
+assignment replacing an earlier one, two removals, a later text assignment,
+two bands in one mutator, a clamp that bounds only its own scale, a lock
+held against a later scale and a later set, two clamps applied one after
+another, text appends, the within-mutator sequence, needs that see a field
+an earlier block changed, needs on fields a record leaves out (including a
+movement class and a key no schema holds), targets and folders, a layout
+that renames `units`, the spelling of a key a record does not hold, a depth
+change applied once when a block has two case variants of a key, and the
+notes for a block that matched nothing, a field that is not a number, a
+result that is not finite (including a clamp that does not rescue it), and a
 check that warns or refuses.
 
 ## Limitations
 
 Needs in one group are all required. There is no or between them.
 
-When two mutators both assign a field, or both remove it, neither wins and
-the field stays. Two removals of the same unit therefore leave that unit in
-the game. The pass notes that cancellation every time it happens. Appends
-follow the mutator list, so that one result does depend on order.
+A lock is one mark for a folded path, record, block and key. Two sections
+of the same name in one file share that mark.
 
 Whether a target folder may be written at all is decided by a later pass.
 This module will edit any document it was given.

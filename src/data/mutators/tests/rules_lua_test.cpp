@@ -319,9 +319,8 @@ rules::ApplyResult apply_file(const sm::RuleFile& file, const std::string& sourc
     source.name = source_name;
     source.rules = file;
     mutator.sources.push_back(std::move(source));
-    std::vector<rules::MutatorRules> list;
-    list.push_back(std::move(mutator));
-    return rules::apply_rules(list, documents, {});
+    rules::ApplyState state;
+    return rules::apply_step(mutator, documents, state, {});
 }
 
 void dump_rules(const char* label, const sm::RuleFile& file) {
