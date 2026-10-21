@@ -6,6 +6,7 @@
 // names with every option filled in. Nothing here starts a match.
 #pragma once
 
+#include "oa/base/sha256.hpp"
 #include "oa/data/mutators/loadout.hpp"
 
 #include <filesystem>
@@ -62,16 +63,23 @@ parse_choice(std::string_view text, std::string* error = nullptr);
 /// One mutator a choice named, with its package and its typed options.
 ///
 /// `options` is every option of the manifest, in the manifest's order,
-/// defaults filled and the named ones written over them.
+/// defaults filled and the named ones written over them. `package` is the
+/// package file's SHA-256 from the installer's origin record, or, when
+/// `folder` is set, the digest of the package folder.
 struct ResolvedMutator {
     /// The choice that named it, as the player wrote it.
     MutatorChoice choice{};
     /// The package folder.
-    std::filesystem::path folder{};
+    std::filesystem::path package_folder{};
     /// The package's manifest.
     oa::formats::oamut::Manifest manifest{};
     /// Every option, defaults filled, in the manifest's order.
     std::vector<LoadoutOption> options{};
+    /// The package file's SHA-256, or the folder digest when `folder` is set.
+    /// All zero when an installed mutator records no SHA-256.
+    base::sha256::Digest package{};
+    /// True when the package was a folder named by path, not a package file.
+    bool folder{false};
 };
 
 /// Finds the package a choice names and types its options.
@@ -79,10 +87,14 @@ struct ResolvedMutator {
 /// An id is looked up in the installed listing of `mutators_folder`. A path
 /// is the package folder itself, absolute or relative to the working
 /// directory; the listing is not used. The manifest is `oamut.yaml`, matched
-/// without ASCII case, and a symbolic link is not followed. A missing
-/// mutator, an option the manifest does not have, a value of the wrong kind
-/// and a value outside the option's choices are refused. The words name the
-/// player's text.
+/// without ASCII case, and a symbolic link is not followed. An id keeps the
+/// SHA-256 the origin record stored, or an all-zero digest when that record
+/// names none; a recorded SHA-256 that is not 64 hexadecimal digits is
+/// refused. A path keeps the folder digest, and sets `folder`, and the
+/// folder digest's refusal is the choice's refusal. A missing mutator, an
+/// option the manifest does not have, a value of the wrong kind and a value
+/// outside the option's choices are refused. The words name the player's
+/// text.
 ///
 /// @param choice the choice
 /// @param mutators_folder the player's Mutators folder, for an id

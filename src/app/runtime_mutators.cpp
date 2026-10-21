@@ -301,7 +301,7 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     input.mutators.reserve(listed.size());
     for (const mutators::ResolvedMutator& one : listed) {
         mutators::PipelineMutator item;
-        item.package = one.folder;
+        item.package = one.package_folder;
         item.manifest = one.manifest;
         item.options = one.options;
         input.mutators.push_back(std::move(item));

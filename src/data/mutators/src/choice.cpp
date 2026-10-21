@@ -4,6 +4,7 @@
 // The text of one --mutator value, and the installed package it names.
 #include "oa/data/mutators/choice.hpp"
 
+#include "oa/base/sha256.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/formats/oamod.hpp"
 #include "oa/formats/oamut/manifest.hpp"
@@ -603,9 +604,21 @@ resolve_choice(const MutatorChoice& choice, const fs::path& mutators_folder, std
     ResolvedMutator resolved;
     resolved.choice = choice;
     if (choice.by_path) {
-        resolved.folder = choice.target;
-        if (!read_package(resolved.folder, choice.target, resolved.manifest, error))
+        resolved.package_folder = choice.target;
+        if (!read_package(resolved.package_folder, choice.target, resolved.manifest, error))
             return std::nullopt;
+        std::string digest_error;
+        const std::optional<base::sha256::Digest> digest =
+            folder_digest(resolved.package_folder, &digest_error);
+        if (!digest) {
+            return refuse_resolved(
+                error,
+                digest_error.empty() ? in_quotes(choice.target) + " is not a mutator package"
+                                     : digest_error
+            );
+        }
+        resolved.package = *digest;
+        resolved.folder = true;
     } else {
         const oa::data::mutator_library::Listing listing =
             oa::data::mutator_library::list_installed(mutators_folder);
@@ -615,8 +628,15 @@ resolve_choice(const MutatorChoice& choice, const fs::path& mutators_folder, std
             return refuse_resolved(
                 error, in_quotes(choice.target) + " is not an installed mutator"
             );
-        resolved.folder = installed->folder;
+        resolved.package_folder = installed->folder;
         resolved.manifest = installed->manifest;
+        if (!installed->package_sha256.empty()) {
+            const std::optional<base::sha256::Digest> digest =
+                base::sha256::parse_hex(installed->package_sha256);
+            if (!digest)
+                return refuse_resolved(error, in_quotes(choice.target) + " has no package SHA-256");
+            resolved.package = *digest;
+        }
     }
     if (!type_options(resolved.manifest, choice.options, resolved.options, error))
         return std::nullopt;

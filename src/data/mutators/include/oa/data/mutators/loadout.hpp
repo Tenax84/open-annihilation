@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -230,5 +231,48 @@ mutator_digest(const Loadout& loadout, const base::sha256::Digest& layer);
 /// @param entry the entry
 /// @return the text, or empty when the entry has no options
 [[nodiscard]] std::string options_text(const LoadoutEntry& entry);
+
+struct ResolvedMutator;
+struct PipelineResult;
+
+/// Builds the loadout a chosen list names.
+///
+/// Every mutator is listed, in the list's order. Each option is that
+/// mutator's typed value, defaults already filled, stored in id byte order.
+/// The package digest and the folder mark are copied from the resolved
+/// mutator. No file is read.
+///
+/// @param chosen the mutators, top first
+/// @return the loadout
+[[nodiscard]] Loadout loadout_of(std::span<const ResolvedMutator> chosen);
+
+/// Keeps the mutators a pipeline run applied.
+///
+/// The result lists one outcome per mutator of `chosen`, in the same order.
+/// An applied mutator stays, in that order. One that failed, was
+/// incompatible or was excluded is left out.
+///
+/// @param chosen the loadout the run was given
+/// @param result what the run decided
+/// @return the applied mutators
+[[nodiscard]] Loadout applied_loadout(const Loadout& chosen, const PipelineResult& result);
+
+/// Finds the installed packages a loadout names.
+///
+/// Each entry is looked up in `mutators_folder` by id. The installed
+/// manifest's version text and the origin record's package SHA-256 must be
+/// the entry's. The options are typed as `resolve_choice` types them from
+/// `options_text`. A folder entry, a missing package, another version and
+/// another SHA-256 are refused, and the error names the entry.
+///
+/// @param loadout the loadout
+/// @param mutators_folder the player's Mutators folder
+/// @param[out] error what was refused, naming the entry; may be null
+/// @return the packages, in the loadout's order, or nothing when one entry is refused
+[[nodiscard]] std::optional<std::vector<ResolvedMutator>> resolve_loadout(
+    const Loadout& loadout,
+    const std::filesystem::path& mutators_folder,
+    std::string* error = nullptr
+);
 
 } // namespace oa::data::mutators

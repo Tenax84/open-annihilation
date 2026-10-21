@@ -7,6 +7,8 @@
 #include "oa/data/mutators/loadout.hpp"
 
 #include "oa/base/sha256.hpp"
+#include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamod.hpp"
 #include "oa/test/check.hpp"
 #include "oa/test/scratch_directory.hpp"
@@ -906,3 +908,354 @@ int main() {
         std::puts("loadout: ok");
     return status;
 }
+
+namespace {
+
+/// One numeric choice value.
+///
+/// @param text the number, as the manifest writes it
+/// @return the value
+oamut::ChoiceValue number_choice(std::string_view text) {
+    oamut::ChoiceValue value;
+    value.number = true;
+    value.number_value = number_of(text);
+    value.text = oamod::canonical_number_text(value.number_value);
+    return value;
+}
+
+/// One string choice value.
+///
+/// @param text the identifier
+/// @return the value
+oamut::ChoiceValue text_choice(std::string text) {
+    oamut::ChoiceValue value;
+    value.text = std::move(text);
+    return value;
+}
+
+/// A manifest with one toggle, one number, one numeric choice and one string choice.
+///
+/// @param id the mutator's id
+/// @param version the version text
+/// @return the manifest
+oamut::Manifest pace_manifest(std::string id, std::string_view version) {
+    oamut::Manifest manifest;
+    manifest.format = oamut::format_version;
+    manifest.id = std::move(id);
+    manifest.name = "Ridge Pace";
+    const std::optional<oamut::Version> parsed = oamut::parse_version(version);
+    if (!parsed)
+        throw std::runtime_error("not a version");
+    manifest.version = *parsed;
+    manifest.author.name = "Ridge Maker";
+    manifest.tags = {"gameplay"};
+    manifest.works_with.push_back(oamut::Condition{"*", {}, {}});
+    manifest.layers = {oamut::Layer::units};
+
+    oamut::Option boost;
+    boost.id = "boost";
+    boost.type = oamut::OptionType::toggle;
+    boost.label = "Boost";
+    boost.toggle_default = false;
+    manifest.options.push_back(std::move(boost));
+
+    oamut::Option health;
+    health.id = "health";
+    health.type = oamut::OptionType::number;
+    health.label = "Health";
+    health.minimum = number_of("0");
+    health.maximum = number_of("30000");
+    health.step = number_of("1000");
+    health.number_default = number_of("4000");
+    manifest.options.push_back(std::move(health));
+
+    oamut::Option pace;
+    pace.id = "pace";
+    pace.type = oamut::OptionType::choice;
+    pace.label = "Pace";
+    pace.values = {number_choice("1.5"), number_choice("4")};
+    pace.default_index = 0;
+    manifest.options.push_back(std::move(pace));
+
+    oamut::Option temper;
+    temper.id = "temper";
+    temper.type = oamut::OptionType::choice;
+    temper.label = "Temper";
+    temper.values = {text_choice("hot"), text_choice("cold")};
+    temper.default_index = 0;
+    manifest.options.push_back(std::move(temper));
+    return manifest;
+}
+
+/// A manifest with no options.
+///
+/// @param id the mutator's id
+/// @param version the version text
+/// @return the manifest
+oamut::Manifest plain_manifest(std::string id, std::string_view version) {
+    oamut::Manifest manifest;
+    manifest.format = oamut::format_version;
+    manifest.id = std::move(id);
+    manifest.name = "Ridge Kit";
+    const std::optional<oamut::Version> parsed = oamut::parse_version(version);
+    if (!parsed)
+        throw std::runtime_error("not a version");
+    manifest.version = *parsed;
+    manifest.author.name = "Ridge Maker";
+    manifest.tags = {"gameplay"};
+    manifest.works_with.push_back(oamut::Condition{"*", {}, {}});
+    manifest.layers = {oamut::Layer::units};
+    return manifest;
+}
+
+/// Writes a package folder and, when `sha` is set, a file origin naming it.
+///
+/// @param folder the package folder
+/// @param manifest the manifest
+/// @param sha the package file's SHA-256, or empty when the package is named by path
+void write_package(const fs::path& folder, const oamut::Manifest& manifest, std::string_view sha) {
+    write_text(folder / "oamut.yaml", oamut::write_manifest(manifest));
+    write_text(folder / "mutator.lua", "return {}\n");
+    if (sha.empty())
+        return;
+    write_text(
+        folder / ".oa-origin.yaml",
+        "oa-origin: 1\n"
+        "origin: file\n"
+        "sha256: \"" +
+            std::string(sha) +
+            "\"\n"
+            "installed: \"2000-01-01\"\n"
+    );
+}
+
+/// Resolves a choice that must be accepted.
+///
+/// @param text the choice
+/// @param mutators the Mutators folder
+/// @return the package
+mutators::ResolvedMutator resolved_text(std::string_view text, const fs::path& mutators) {
+    std::string error;
+    const std::optional<mutators::MutatorChoice> choice = mutators::parse_choice(text, &error);
+    expect(choice.has_value(), "the choice parses: " + error);
+    if (!choice)
+        return {};
+    const std::optional<mutators::ResolvedMutator> resolved =
+        mutators::resolve_choice(*choice, mutators, &error);
+    expect(resolved.has_value(), "the choice resolves: " + error);
+    if (!resolved)
+        return {};
+    return *resolved;
+}
+
+/// The option of an id, or null.
+///
+/// @param options the options
+/// @param id the option's id
+/// @return the option
+const mutators::LoadoutOption*
+find_option(const std::vector<mutators::LoadoutOption>& options, std::string_view id) {
+    for (const mutators::LoadoutOption& option : options) {
+        if (option.id == id)
+            return &option;
+    }
+    return nullptr;
+}
+
+/// Tells whether both options are the same member.
+///
+/// @param left one option
+/// @param right the other
+/// @return true when LoadoutOption compares them equal
+bool same_option(const mutators::LoadoutOption& left, const mutators::LoadoutOption& right) {
+    return left == right;
+}
+
+/// Checks that a resolved list becomes the canonical loadout, and that a path
+/// carries the folder digest.
+///
+/// @param scratch the scratch directory
+void chosen_list(const Scratch& scratch) {
+    constexpr std::string_view pace_sha =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const fs::path mutators = scratch.root / "Mutators";
+    write_package(mutators / "ridge-pace", pace_manifest("ridge-pace", "1.2"), pace_sha);
+    const fs::path kit = scratch.root / "loose" / "ridge-kit";
+    write_package(kit, plain_manifest("ridge-kit", "3"), {});
+
+    const mutators::ResolvedMutator pace = resolved_text("ridge-pace:temper=cold", mutators);
+    const mutators::ResolvedMutator by_path = resolved_text(fs::absolute(kit).string(), mutators);
+    expect(by_path.folder, "a package folder named by path sets folder");
+    std::string digest_error;
+    const std::optional<sha::Digest> folder = mutators::folder_digest(kit, &digest_error);
+    expect(folder.has_value() && by_path.package == *folder, "the path carries the folder digest");
+    expect(!pace.folder, "an installed id is not a folder");
+    expect(pace.package == digest_of_hex(pace_sha), "an installed id keeps the recorded SHA-256");
+
+    const std::vector<mutators::ResolvedMutator> list{pace, by_path};
+    const mutators::Loadout made = mutators::loadout_of(list);
+    expect(made.entries.size() == 2, "loadout_of lists every mutator");
+    expect(
+        made.entries.size() == 2 && made.entries[0].id == "ridge-pace" &&
+            made.entries[1].id == "ridge-kit",
+        "loadout_of keeps the list's order"
+    );
+    if (made.entries.size() == 2) {
+        const std::vector<mutators::LoadoutOption>& options = made.entries[0].options;
+        expect(options.size() == 4, "loadout_of fills every option");
+        expect(
+            options.size() == 4 && options[0].id == "boost" && options[1].id == "health" &&
+                options[2].id == "pace" && options[3].id == "temper",
+            "options are stored in id byte order"
+        );
+        const oamut::Manifest manifest = pace_manifest("ridge-pace", "1.2");
+        for (const oamut::Option& option : manifest.options) {
+            const mutators::LoadoutOption* found = find_option(options, option.id);
+            const mutators::LoadoutOption fallback = mutators::default_option(option);
+            expect(found != nullptr, "every manifest option is in the loadout");
+            if (found == nullptr)
+                continue;
+            if (option.id == "temper") {
+                expect(found->value.text == "cold", "the named option keeps the player's value");
+            } else {
+                expect(same_option(*found, fallback), "an unnamed option keeps its default");
+            }
+        }
+    }
+
+    const std::string literal =
+        std::string(
+            R"({"mutators":[{"folder":false,"id":"ridge-pace","options":{"boost":false,"health":4000,"pace":1.5,"temper":"cold"},"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"1.2"},{"folder":true,"id":"ridge-kit","options":{},"sha256":")"
+        ) +
+        hex_of(by_path.package) + R"(","version":"3"}],"oaloadout":1})";
+    const std::string canonical = mutators::canonical_loadout(made);
+    if (canonical != literal)
+        std::fprintf(stderr, "loadout canonical: %s\n", canonical.c_str());
+    expect(canonical == literal, "the canonical form equals the literal");
+
+    if (!made.entries.empty()) {
+        const std::string options = mutators::options_text(made.entries[0]);
+        const mutators::ResolvedMutator again = resolved_text("ridge-pace:" + options, mutators);
+        expect(again.options.size() == pace.options.size(), "options_text resolves every option");
+        for (const mutators::LoadoutOption& option : pace.options) {
+            const mutators::LoadoutOption* found = find_option(again.options, option.id);
+            expect(
+                found != nullptr && same_option(*found, option),
+                "options_text reads back " + option.id
+            );
+        }
+    }
+}
+
+/// Checks that only the mutators a result applied stay, in order.
+void applied_only() {
+    mutators::Loadout chosen;
+    for (const char* id : {"ridge-one", "ridge-two", "ridge-three"}) {
+        mutators::LoadoutEntry entry;
+        entry.id = id;
+        entry.version = "1";
+        chosen.entries.push_back(std::move(entry));
+    }
+    mutators::PipelineResult result;
+    const auto outcome = [](const char* id, mutators::Outcome kind) {
+        mutators::MutatorResult made;
+        made.id = id;
+        made.version = "1";
+        made.outcome = kind;
+        return made;
+    };
+    result.mutators.push_back(outcome("ridge-one", mutators::Outcome::applied));
+    result.mutators.push_back(outcome("ridge-two", mutators::Outcome::failed));
+    result.mutators.push_back(outcome("ridge-three", mutators::Outcome::applied));
+    const mutators::Loadout kept = mutators::applied_loadout(chosen, result);
+    expect(kept.entries.size() == 2, "applied_loadout drops the mutator that did not apply");
+    expect(
+        kept.entries.size() == 2 && kept.entries[0].id == "ridge-one" &&
+            kept.entries[1].id == "ridge-three",
+        "applied_loadout keeps the applied mutators in order"
+    );
+}
+
+/// Checks that a loadout finds its installed packages, and refuses the rest.
+///
+/// @param scratch the scratch directory
+void resolves_installed(const Scratch& scratch) {
+    constexpr std::string_view pace_sha =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    constexpr std::string_view plain_sha =
+        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    const fs::path mutators = scratch.root / "installed";
+    write_package(mutators / "ridge-pace", pace_manifest("ridge-pace", "1.2"), pace_sha);
+    write_package(mutators / "ridge-plain", plain_manifest("ridge-plain", "3"), plain_sha);
+
+    const mutators::ResolvedMutator pace = resolved_text("ridge-pace:health=2000", mutators);
+    const mutators::ResolvedMutator plain = resolved_text("ridge-plain", mutators);
+    const mutators::Loadout made =
+        mutators::loadout_of(std::vector<mutators::ResolvedMutator>{pace, plain});
+    std::string error;
+    const std::optional<std::vector<mutators::ResolvedMutator>> found =
+        mutators::resolve_loadout(made, mutators, &error);
+    expect(found.has_value(), "resolve_loadout finds the installed packages: " + error);
+    if (found && found->size() == 2) {
+        expect(
+            (*found)[0].manifest.id == "ridge-pace" && (*found)[1].manifest.id == "ridge-plain",
+            "resolve_loadout keeps the loadout's order"
+        );
+        expect(
+            !(*found)[0].folder && (*found)[0].package == digest_of_hex(pace_sha),
+            "resolve_loadout keeps the package SHA-256"
+        );
+        const mutators::LoadoutOption* health = find_option((*found)[0].options, "health");
+        const mutators::LoadoutOption* original = find_option(pace.options, "health");
+        expect(
+            health != nullptr && original != nullptr && same_option(*health, *original),
+            "resolve_loadout types the options"
+        );
+    } else {
+        expect(false, "resolve_loadout returned both packages");
+    }
+
+    mutators::Loadout missing = made;
+    missing.entries[0].id = "ridge-missing";
+    expect(!mutators::resolve_loadout(missing, mutators, &error), "a missing id is refused");
+    expect(
+        error == "\"ridge-missing\" is not an installed mutator",
+        "the missing id is named: " + error
+    );
+
+    mutators::Loadout other_version = made;
+    other_version.entries[0].version = "9";
+    expect(
+        !mutators::resolve_loadout(other_version, mutators, &error), "another version is refused"
+    );
+    expect(
+        error == "\"ridge-pace\" is version 1.2, not 9",
+        "the other version names the entry: " + error
+    );
+
+    mutators::Loadout other_sha = made;
+    other_sha.entries[0].package = filled_digest(0xab);
+    expect(!mutators::resolve_loadout(other_sha, mutators, &error), "another SHA-256 is refused");
+    expect(
+        error == "\"ridge-pace\" is a different package",
+        "the other SHA-256 names the entry: " + error
+    );
+
+    mutators::Loadout folder = made;
+    folder.entries[1].folder = true;
+    expect(!mutators::resolve_loadout(folder, mutators, &error), "a folder entry is refused");
+    expect(error == "\"ridge-plain\" is a package folder", "the folder entry is named: " + error);
+}
+
+struct ChosenLoadoutTests {
+    ChosenLoadoutTests() {
+        applied_only();
+        const Scratch scratch;
+        chosen_list(scratch);
+        resolves_installed(scratch);
+    }
+};
+
+const ChosenLoadoutTests chosen_loadout_tests{};
+
+} // namespace
