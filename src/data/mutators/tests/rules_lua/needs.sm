@@ -1,0 +1,24 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+[*Group*]
+{
+[Needs]
+{
+plain=1,1;
+words="CMDCK";
+flag=1,1;
+off=!1,1;
+band=1,100;
+exact="RIDGECOM";
+part="CMD"*;
+missing=!""*;
+flipped=!2,4;
+flipped_text=!"no";
+flipped_has=!"zz"*;
+}
+[Changes]
+{
+workertime=4;
+}
+}
