@@ -1037,6 +1037,72 @@ void test_field_follows_the_phase() {
     );
 }
 
+/// Hands the guest a record from the host in slot 1.
+///
+/// @param guest the guest's room
+/// @param bytes the host's record
+/// @return true when the guest kept it
+bool host_record_to(Room& guest, const std::vector<uint8_t>& bytes) {
+    mp::LobbyEvent event{};
+    event.kind = mp::LobbyEventKind::record;
+    event.player_id = 0x100;
+    event.size = bytes.size();
+    std::memcpy(event.data, bytes.data(), bytes.size());
+    return mp::lobby_apply_event(guest.lobby, event);
+}
+
+/// Resets the guest's lobby and seats it in the next host's room, as a join does.
+///
+/// @param guest the guest's room
+void join_again(Room& guest) {
+    mp::lobby_reset(guest.lobby, *guest.game);
+    guest.game->players[0].player_id = 0x200u;
+    mp::lobby_seat_local(guest.lobby, 0, false, "Guest");
+    guest.seat(1, 0x100u, true, true);
+}
+
+/// A new room forgets the previous host's list, under a host that sends none
+/// and under one whose records are the same bytes as before.
+void test_new_room_forgets_the_host_list() {
+    const auto listed = encode_field(host_ready(), false, 0, ng::presence_record_max_bytes);
+    std::vector<uint8_t> plain(ng::presence_record_max_bytes);
+    std::size_t written = 0;
+    expect(
+        ng::encode_presence(ng::PresenceRecord{}, plain.data(), plain.size(), &written) ==
+            ng::WireError::ok,
+        "a record without a mutator field encodes"
+    );
+    plain.resize(written);
+
+    Room guest(false);
+    expect(host_record_to(guest, listed), "the guest keeps the first host's record");
+    const auto& records = guest.lobby.presence_records;
+    expect(records.host_loadout.total == 2, "the first host's list is held");
+    const uint32_t first_room = records.host_loadout_generation;
+
+    join_again(guest);
+    expect(records.host_loadout_generation != first_room, "a new room moves the list's generation");
+    expect(
+        records.host_loadout.total == 0 && records.host_loadout.mutators.empty(),
+        "a new room empties the list"
+    );
+    expect(host_record_to(guest, plain), "the guest keeps a host record without a list");
+    expect(
+        records.host_loadout_generation != first_room && records.host_loadout.total == 0 &&
+            records.host_loadout.mutators.empty(),
+        "a host that sends no list leaves the guest none"
+    );
+
+    Room again(false);
+    expect(host_record_to(again, listed), "the guest keeps the host's record");
+    join_again(again);
+    expect(host_record_to(again, listed), "the guest keeps the same bytes after joining again");
+    expect(
+        again.lobby.presence_records.host_loadout.total == 2,
+        "the same bytes are folded again in the new room"
+    );
+}
+
 } // namespace
 
 int main() {
@@ -1053,6 +1119,7 @@ int main() {
     test_rebuild_keeps_a_finished_legacy_peer();
     test_legacy_checksum_is_compared();
     test_field_follows_the_phase();
+    test_new_room_forgets_the_host_list();
     if (g_failures != 0)
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;
