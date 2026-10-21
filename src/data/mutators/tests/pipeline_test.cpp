@@ -2591,6 +2591,69 @@ void test_replace_clone_overwrites_the_existing_unit() {
     fs::remove_all(scratch);
 }
 
+/// A Replace clone onto a unit with a script of its own serves the source's
+/// script and picture under that name, so the script matches the model.
+void test_replace_clone_brings_the_source_script() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-clone-script");
+    std::vector<std::pair<std::string, std::string>> art;
+    art.emplace_back("scripts/RGBOT.cob", "BOT-COB");
+    art.emplace_back("scripts/RGCOM.cob", "COM-COB");
+    art.emplace_back("unitpics/RGBOT.pcx", "BOT-PCX");
+    art.emplace_back("unitpics/RGCOM.pcx", "COM-PCX");
+    constexpr std::string_view lua = "function mutate(ctx)\n"
+                                     "  return {\n"
+                                     "    units = function(units, ctx)\n"
+                                     "      units:clone(\"RGBOT\", \"RGCOM\", {})\n"
+                                     "    end\n"
+                                     "  }\n"
+                                     "end\n";
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(
+        make_package(scratch, "ridge-art-first", "replace", "\"files\"", k_files_lua, art)
+    );
+    list.push_back(make_package(scratch, "ridge-clone-onto", "replace", "\"units\"", lua, {}));
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable()) {
+        note_failures(result);
+        release(store);
+        fs::remove_all(scratch);
+        return;
+    }
+    const std::string commander = text_of(store.read("units/RGCOM.fbi").bytes);
+    OA_CHECK(has_assignment(commander, "UnitName", "RGCOM"));
+    OA_CHECK(has_assignment(commander, "Objectname", "RGBOT"));
+    OA_CHECK(text_of(store.read("scripts/RGCOM.cob").bytes) == "BOT-COB");
+    OA_CHECK(text_of(store.read("unitpics/RGCOM.pcx").bytes) == "BOT-PCX");
+    OA_CHECK(text_of(store.read("scripts/RGBOT.cob").bytes) == "BOT-COB");
+    OA_CHECK(text_of(store.read("unitpics/RGBOT.pcx").bytes) == "BOT-PCX");
+    const mutators::JournalEntry* clone = entry_named(result, mutators::Collection::units, "RGCOM");
+    OA_CHECK(clone != nullptr);
+    if (clone != nullptr) {
+        OA_CHECK(clone->old_text.has_value() && *clone->old_text == "RGCOM");
+        OA_CHECK(
+            clone->new_text.has_value() && *clone->new_text == "replaced unit RGCOM (copy of RGBOT)"
+        );
+    }
+    bool saw_script = false;
+    for (const mutators::JournalEntry& entry : result.journal.entries) {
+        if (entry.new_text.has_value() &&
+            *entry.new_text == "added path scripts/RGCOM.COB, copy of scripts/RGBOT.COB")
+            saw_script = entry.mutators.size() == 1 && entry.mutators.front() == 1;
+    }
+    OA_CHECK(saw_script);
+    std::size_t notes = 0;
+    for (const mutators::Conflict& conflict : result.report.conflicts) {
+        if (conflict.kind == mutators::ConflictKind::value_replaced && conflict.record == "RGCOM")
+            ++notes;
+    }
+    OA_CHECK(notes == 1);
+    release(store);
+    fs::remove_all(scratch);
+}
+
 /// A section name used by another download file is not a clash.
 void test_download_section_name_is_per_file() {
     const fs::path scratch = oa::test::make_scratch_directory("V14-menu-file");
@@ -2858,6 +2921,7 @@ int main() {
     test_renamed_builder_keeps_its_menu_and_list();
     test_add_clone_onto_an_existing_name();
     test_replace_clone_overwrites_the_existing_unit();
+    test_replace_clone_brings_the_source_script();
     test_download_section_name_is_per_file();
     test_sixth_download_button_spills();
     test_menus_hook_reaches_the_private_records();

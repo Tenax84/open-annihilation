@@ -298,8 +298,11 @@ the manifest's `clashes`, then the preference `mutators.clash-default`
 records the mode in force on the match loadout. A guest that resolves
 that loadout plays the recorded mode, not its own preference.
 Replace puts the new record in place of the old one, by a record file or
-by a clone onto that name. The clone keeps the existing file and does not
-copy that name's script, picture or model. Add shares a record only when
+by a clone onto that name. The clone keeps the existing file, takes the
+source's model, and serves the source's script, build picture, build
+pages and page art under that name in place of its own, so the script
+always matches the model. A replaced unit's own build pages past the
+source's last page are still served. Add shares a record only when
 it is the same after this mutator's weapon names have been rewritten, and
 stores a different one under a private name: the name, `_`, and the first
 free number from 2, shortened so the name stays within 31 characters and
@@ -548,15 +551,17 @@ served copy. A unit clone is refused, naming the path, when any path it
 would serve already exists. While clash mode is active, a clone onto a
 name that exists follows that mode. Replace puts the clone in place of
 the existing record and journals a replacement. The existing file stays,
-and collateral files are not copied. Add stores the clone under a private
-name, notes the rename, and charges every candidate lookup, including the
-path check, against the hook's allowance. While clash mode is not active,
-that clone is still refused with "the new name already exists". In Add
-mode, `units.NAME`, `weapons.NAME` and a clone's source name a record this
-mutator renamed as the private record. A clone's work (its name lookups,
-the bytes it reads and writes and, for a weapon, each section the id
-search visits) is charged in one step when the clone returns, so a
-refused clone pays too.
+and the unit takes the source's model, script, build picture, build pages
+and page art, served under the existing name in place of its own as for a
+clone under a new name, and charged the same way. Add stores the clone
+under a private name, notes the rename, and charges every candidate
+lookup, including the path check, against the hook's allowance. While
+clash mode is not active, that clone is still refused with "the new name
+already exists". In Add mode, `units.NAME`, `weapons.NAME` and a clone's
+source name a record this mutator renamed as the private record. A
+clone's work (its name lookups, the bytes it reads and writes and, for a
+weapon, each section the id search visits) is charged in one step when
+the clone returns, so a refused clone pays too.
 
 `install_selection_forms` publishes `range`, `is`, `has`, `absent` and
 `not_`. `need_from_lua` reads one need: a number `n` is `range(n, n)`,

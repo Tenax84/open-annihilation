@@ -1960,7 +1960,9 @@ bool served_path_exists(
 }
 
 /// A build page a unit clone may serve: `guis/<unit><digits>.gui` for a unit
-/// cloned this pass, and only when that path is not already present.
+/// cloned this pass, and only when that path is not already present, or
+/// when `may_exist` says a Replace clone serves it in place of the replaced
+/// unit's own page.
 bool fresh_clone_page(
     std::string_view path,
     const Collections& collections,
@@ -1968,7 +1970,8 @@ bool fresh_clone_page(
     const oa::AssetStore& store,
     rules::DocumentSet& documents,
     const oa::MutatorLayerSpec& spec,
-    const PathVerdict& verdict
+    const PathVerdict& verdict,
+    bool may_exist
 ) {
     if (verdict.rule != PathRule::menus_only)
         return false;
@@ -1993,7 +1996,7 @@ bool fresh_clone_page(
     }
     if (!matches)
         return false;
-    return !served_path_exists(store, documents, spec, path);
+    return may_exist || !served_path_exists(store, documents, spec, path);
 }
 
 /// The step state's id for one hook write, folded the way a rule step folds it.
@@ -4536,9 +4539,11 @@ bool run_pass(
     };
     for (const ServedCopy& copy : collections->served_copies()) {
         const PathVerdict verdict = check_mutable_path(copy.path, copy_paths);
-        const bool exists = served_path_exists(store, documents, spec, copy.path);
-        const bool fresh_page =
-            fresh_clone_page(copy.path, *collections, layout, store, documents, spec, verdict);
+        // A Replace clone's copy takes the place of the replaced unit's own file.
+        const bool exists = !copy.replaces && served_path_exists(store, documents, spec, copy.path);
+        const bool fresh_page = fresh_clone_page(
+            copy.path, *collections, layout, store, documents, spec, verdict, copy.replaces
+        );
         if (exists || (!verdict.allowed() && !fresh_page)) {
             std::string message = verdict.message;
             if (exists) {

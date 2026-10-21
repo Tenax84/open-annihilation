@@ -122,6 +122,9 @@ struct ServedCopy {
     std::string source_path;                           ///< path the bytes were read from
     std::string sentence;                              ///< the journal line for this copy
     std::shared_ptr<const std::vector<uint8_t>> bytes; ///< the served bytes
+    /// True when a Replace clone serves the copy in place of the replaced
+    /// unit's own file, so the path may already exist.
+    bool replaces{};
 };
 
 /// One note a hook produced, for the change journal.

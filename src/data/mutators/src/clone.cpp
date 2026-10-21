@@ -656,7 +656,8 @@ std::string join_path(std::string_view folder, std::string_view name) {
 /// Bills the bytes, then keeps the copy when the destination is free and
 /// `check_mutable_path` allows it. A build page is the menus-only exception:
 /// `guis/<name><digits>.gui` is served only when that path does not exist.
-/// A taken path refuses the clone and names the path. Returns false when the
+/// A taken path refuses the clone and names the path, unless `may_exist`
+/// says the path is the replaced record's own file. Returns false when the
 /// source has no bytes (nothing to serve).
 bool take_copy(
     uint64_t& units,
@@ -666,6 +667,7 @@ bool take_copy(
     std::string path,
     std::string source_path,
     const std::shared_ptr<const std::vector<uint8_t>>& bytes,
+    bool may_exist,
     std::vector<PendingCopy>& pending,
     std::string& error
 ) {
@@ -680,7 +682,7 @@ bool take_copy(
     };
     const PathVerdict verdict = check_mutable_path(path, context);
     const bool page = clone_build_page(path, folder_of(self, defs::DataDirectory::guis), name);
-    const bool taken = path_taken(self, path);
+    const bool taken = !may_exist && path_taken(self, path);
     const bool gui_ok = page && verdict.rule == PathRule::menus_only && !taken;
     if (taken || (!verdict.allowed() && !gui_ok)) {
         if (taken) {
@@ -698,11 +700,14 @@ bool take_copy(
 
 /// Reads the script, picture and build pages the game would, under the new name.
 /// A refusal sets `error` and returns false. A missing source file is skipped.
+/// With `may_exist` the destination paths are the replaced record's own
+/// files, so a path that exists is taken over instead of refusing the clone.
 bool collect_unit_copies(
     uint64_t& units,
     Collections& self,
     std::string_view source,
     std::string_view name,
+    bool may_exist,
     std::vector<PendingCopy>& pending,
     std::string& error
 ) {
@@ -718,6 +723,7 @@ bool collect_unit_copies(
             new_script,
             source_script,
             lookup_bytes(self, source_script),
+            may_exist,
             pending,
             error
         ) &&
@@ -733,6 +739,7 @@ bool collect_unit_copies(
             new_pic,
             source_pic,
             lookup_bytes(self, source_pic),
+            may_exist,
             pending,
             error
         ) &&
@@ -751,6 +758,7 @@ bool collect_unit_copies(
             new_page,
             source_page,
             lookup_bytes(self, source_page),
+            may_exist,
             pending,
             error
         );
@@ -778,6 +786,7 @@ bool collect_unit_copies(
                 new_gaf,
                 source_gaf,
                 lookup_bytes(self, source_gaf),
+                may_exist,
                 pending,
                 error
             ) &&
@@ -958,6 +967,7 @@ void publish(
         served.path = std::move(copy.path);
         served.source_path = std::move(copy.source_path);
         served.bytes = std::move(copy.bytes);
+        served.replaces = replaced;
         const std::string key = fold_path(served.path);
         const std::size_t index = CloneAccess::served(self).size();
         CloneAccess::served(self).push_back(std::move(served));
@@ -1012,14 +1022,19 @@ bool empty_section(tdf::Document* document, tdf::Block* block, std::string& erro
 
 /// Puts the source section in place of the existing record.
 ///
-/// The existing file stays. Collateral files stay with that name, so none
-/// are copied. A weapon keeps the id it already had. The source section is
-/// not emptied when it is the destination: cloning a record onto itself
-/// only applies the fields.
+/// The existing file stays. A unit takes the source's model through
+/// `Objectname`, and the source's script, build picture, build pages and
+/// page art are served under the existing name in place of that unit's
+/// own, as a clone under a new name serves them, so the script always
+/// matches the model. A weapon keeps the id it already had. The source
+/// section is not emptied when it is the destination: cloning a record
+/// onto itself only applies the fields and copies nothing.
 bool replace_existing(
+    uint64_t& units,
     Collections& collections,
     bool weapons,
     const std::string& source,
+    const std::string& source_sought,
     const std::string& name,
     const CloneHit& found,
     const CloneHit& existing,
@@ -1039,6 +1054,12 @@ bool replace_existing(
         return false;
     }
     const bool same = dest == source_section;
+    std::vector<PendingCopy> pending;
+    if (!weapons && !same &&
+        !collect_unit_copies(
+            units, collections, source_sought, existing.name, true, pending, error
+        ))
+        return false;
     const char* saved_id = weapons ? tdf::find_value(dest, "ID") : nullptr;
     const bool had_id = saved_id != nullptr;
     const std::string kept_id = had_id ? std::string{saved_id} : std::string{};
@@ -1086,7 +1107,17 @@ bool replace_existing(
         if (parsed > 0 && parsed <= 255)
             weapon_id = static_cast<int>(parsed);
     }
-    publish(collections, weapons, existing.name, source, weapon_id, existing.path, {}, true, {});
+    publish(
+        collections,
+        weapons,
+        existing.name,
+        source,
+        weapon_id,
+        existing.path,
+        {},
+        true,
+        std::move(pending)
+    );
     return true;
 }
 
@@ -1144,7 +1175,16 @@ int clone_collection(
             if (!precheck_fields(weapons, source, name, held_now, error))
                 return -1;
             if (!replace_existing(
-                    collections, weapons, source, name, found, existing, held_now, error
+                    units,
+                    collections,
+                    weapons,
+                    source,
+                    source_sought,
+                    name,
+                    found,
+                    existing,
+                    held_now,
+                    error
                 ))
                 return -1;
             return 0;
@@ -1210,7 +1250,7 @@ int clone_collection(
 
     std::vector<PendingCopy> pending;
     if (!weapons &&
-        !collect_unit_copies(units, collections, source_sought, stored_name, pending, error))
+        !collect_unit_copies(units, collections, source_sought, stored_name, false, pending, error))
         return -1;
 
     rules::DocumentSet& documents = CloneAccess::documents(collections);
