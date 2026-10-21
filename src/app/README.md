@@ -4477,7 +4477,10 @@ when the player asks. Nothing in this path draws a button, a line or a bar.
 
 `host_mutators_fetch` is empty on the host and while the list is still
 arriving. It reads the list, the installed mutators, the catalogues and
-the download queue, and it never starts a download. `fetch_host_mutators`
+the download queue, and it never starts a download. The battle room asks
+every frame, so the Mutators folder is read again only when its last
+write moves; the installer reads it again after each mutator it installs.
+`fetch_host_mutators`
 queues every row in `get` or `other_release_get`, and a press of it tries
 a failed row again. A catalogue entry is refused unless its SHA-256 starts
 with the host's prefix (`not_offered`); the queue then checks the file

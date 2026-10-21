@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -24,6 +25,7 @@
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -404,6 +406,9 @@ void keep_listed(std::vector<TrackedFetch>& tracks, const std::vector<mp::HostMu
 
 struct Runtime::HostMutatorFetchState {
     std::vector<TrackedFetch> tracks{}; ///< one followed download per mutator of the list
+    /// The Mutators folder's last write when the listing was last read again;
+    /// nothing before that, or while the folder cannot be read.
+    std::optional<std::filesystem::file_time_type> listing_stamp{};
 };
 
 void Runtime::destroy_host_mutator_fetch_state(HostMutatorFetchState* state) noexcept {
@@ -425,13 +430,26 @@ std::vector<Runtime::HostMutatorFetch> Runtime::host_mutators_fetch() {
     if (!mp::multiplayer_room_mutators(&assembly) || !netgame::presence_assembly_whole(assembly))
         return {};
 
-    reload_installed_mutators();
+    HostMutatorFetchState& held = ensure_host_mutator_fetches();
+    // The battle room asks every frame. The installer reads the listing
+    // again after each mutator it installs; a folder changed by hand is read
+    // again when its last write moves, not on every call.
+    std::error_code stamp_error;
+    const std::filesystem::file_time_type stamp = std::filesystem::last_write_time(
+        user_folder_ / std::string(oa::data::mutator_library::mutators_folder_name), stamp_error
+    );
+    if (stamp_error || !held.listing_stamp || *held.listing_stamp != stamp) {
+        reload_installed_mutators();
+        if (stamp_error)
+            held.listing_stamp.reset();
+        else
+            held.listing_stamp = stamp;
+    }
     const oa::data::mutator_library::Listing& listing = installed_mutators();
     content::Service& service = content_service();
     const std::shared_ptr<const content::Snapshot> snapshot = service.snapshot();
     const bool downloads_folder = !service.content_folder().empty();
     const std::vector<content::DownloadView> items = content_downloads().view();
-    HostMutatorFetchState& held = ensure_host_mutator_fetches();
     follow_tracks(held.tracks, items);
 
     std::vector<HostMutatorFetch> rows;
