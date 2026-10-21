@@ -14,6 +14,7 @@
 #include "oa/data/mutators/rules_lua.hpp"
 
 #include "oa/data/mutators/collections.hpp"
+#include "oa/data/script_host/fixed.hpp"
 #include "oa/data/script_host/sorted.hpp"
 
 #include "lua.hpp"
@@ -780,9 +781,29 @@ static int form_change(lua_State* state) {
     return place_change(state, plan);
 }
 
+/// A fixed value as `count / 65536`, or a finite Lua number.
+static bool rule_number(lua_State* state, int slot, double* number) {
+    int64_t count = 0;
+    if (host::to_fixed(state, slot, &count)) {
+        *number = static_cast<double>(count) / 65536.0;
+        return true;
+    }
+    if (lua_type(state, slot) != LUA_TNUMBER)
+        return false;
+    *number = lua_tonumber(state, slot);
+    return std::isfinite(*number);
+}
+
 static int form_set(lua_State* state) {
     if (empty_at(state, 1)) {
         push_change(state, sm::ChangeKind::assign_text, 0, 0, 0, "", 0);
+        return 1;
+    }
+    int64_t count = 0;
+    if (host::to_fixed(state, 1, &count)) {
+        push_change(
+            state, sm::ChangeKind::assign, static_cast<double>(count) / 65536.0, 0, 0, nullptr, 0
+        );
         return 1;
     }
     const int type = lua_type(state, 1);
@@ -816,17 +837,18 @@ static int form_scale(lua_State* state) {
     const int count = lua_gettop(state);
     if (count != 1 && count != 3)
         return luaL_error(state, "scale expects a factor, or a factor and two bounds");
+    double numbers[3] = {};
     for (int slot = 1; slot <= count; ++slot) {
-        if (lua_type(state, slot) != LUA_TNUMBER || !std::isfinite(lua_tonumber(state, slot)))
+        if (!rule_number(state, slot, &numbers[slot - 1]))
             return luaL_error(state, "scale expects a finite number");
     }
-    const double factor = lua_tonumber(state, 1);
+    const double factor = numbers[0];
     if (count == 1) {
         push_change(state, sm::ChangeKind::scale, factor, 0, 0, nullptr, 0);
         return 1;
     }
-    const double low = lua_tonumber(state, 2);
-    const double high = lua_tonumber(state, 3);
+    const double low = numbers[1];
+    const double high = numbers[2];
     if (low > high)
         return luaL_error(state, "scale bounds are out of order");
     push_change(state, sm::ChangeKind::scale_clamp, factor, low, high, nullptr, 0);
@@ -834,9 +856,10 @@ static int form_scale(lua_State* state) {
 }
 
 static int form_lock(lua_State* state) {
-    if (lua_type(state, 1) != LUA_TNUMBER || !std::isfinite(lua_tonumber(state, 1)))
+    double number = 0;
+    if (!rule_number(state, 1, &number))
         return luaL_error(state, "lock expects a number");
-    push_change(state, sm::ChangeKind::meta, lua_tonumber(state, 1), 0, 0, nullptr, 0);
+    push_change(state, sm::ChangeKind::meta, number, 0, 0, nullptr, 0);
     return 1;
 }
 

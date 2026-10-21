@@ -1246,6 +1246,57 @@ void test_mutator() {
         ),
         "options[0].id is not an option id"
     );
+    {
+        constexpr std::array<std::string_view, 22> reserved{
+            "and",      "break",  "do",   "else", "elseif", "end",   "false", "for",
+            "function", "goto",   "if",   "in",   "local",  "nil",   "not",   "or",
+            "repeat",   "return", "then", "true", "until",  "while",
+        };
+        for (const std::string_view word : reserved) {
+            skips_one(
+                bare(
+                    "oamut",
+                    "steady-hands",
+                    "\"options\":[{\"id\":\"" + std::string{word} +
+                        "\",\"label\":\"Sway\",\"type\":\"toggle\"}]"
+                ),
+                "options[0].id is a word Lua reserves"
+            );
+        }
+    }
+    {
+        const auto kept = read_ok(catalogue_of(
+            bare(
+                "oamut",
+                "steady-hands",
+                "\"options\":["
+                "{\"id\":\"format\",\"label\":\"Format\",\"type\":\"toggle\"},"
+                "{\"id\":\"ends\",\"label\":\"Ends\",\"type\":\"toggle\"},"
+                "{\"id\":\"for_\",\"label\":\"For underscore\",\"type\":\"toggle\"}]"
+            ) +
+            "," + bare("oamod", "keeper")
+        ));
+        OA_CHECK(kept.packages.size() == 2);
+        OA_CHECK(kept.problems.empty());
+        if (kept.packages.size() == 2) {
+            OA_CHECK(kept.packages[0].id == "steady-hands");
+            OA_CHECK(kept.packages[0].options.size() == 3);
+            if (kept.packages[0].options.size() == 3) {
+                OA_CHECK(kept.packages[0].options[0].id == "format");
+                OA_CHECK(kept.packages[0].options[1].id == "ends");
+                OA_CHECK(kept.packages[0].options[2].id == "for_");
+            }
+            OA_CHECK(kept.packages[1].id == "keeper");
+        }
+    }
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"For\",\"label\":\"For\",\"type\":\"toggle\"}]"
+        ),
+        "options[0].id is not an option id"
+    );
     skips_one(
         bare(
             "oamut",

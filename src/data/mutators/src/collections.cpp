@@ -12,6 +12,7 @@
 #include "oa/data/mutators/collections.hpp"
 
 #include "oa/data/field_schema.hpp"
+#include "oa/data/script_host/fixed.hpp"
 #include "oa/data/script_host/sorted.hpp"
 #include "oa/formats/tdf/edit.hpp"
 #include "oa/formats/tdf/number.hpp"
@@ -42,7 +43,7 @@ struct CollectionsState {
     enum class Kind : uint8_t { units, weapons, features };
 
     /// A value a script asked to store.
-    enum class StoredKind : uint8_t { nil_value, boolean, number, text };
+    enum class StoredKind : uint8_t { nil_value, boolean, number, text, fixed_value };
 
     /// One section a handle can name: its document and its block.
     struct Identity {
@@ -131,6 +132,7 @@ struct CollectionsState {
         StoredKind kind = StoredKind::nil_value;
         bool flag = false;
         double number = 0;
+        int64_t count = 0;
         std::string text;
     };
 
@@ -716,6 +718,14 @@ bool read_stored(lua_State* state, int index, Stored& stored, std::string& reaso
         stored.text.assign(text != nullptr ? text : "", length);
         return true;
     }
+    if (type == LUA_TUSERDATA) {
+        int64_t count = 0;
+        if (host::to_fixed(state, index, &count)) {
+            stored.kind = StoredKind::fixed_value;
+            stored.count = count;
+            return true;
+        }
+    }
     reason = "a ";
     const char* type_name = lua_typename(state, type);
     reason.append(type_name != nullptr ? type_name : "value");
@@ -1053,6 +1063,22 @@ bool write_stored(
             return false;
         }
         text = stored.flag ? "1" : "0";
+    } else if (stored.kind == StoredKind::fixed_value) {
+        const double as_number = static_cast<double>(stored.count) / 65536.0;
+        if (schema.has_value())
+            check = fields::check_number(*schema, trimmed, as_number);
+        if (check.verdict == fields::Verdict::refuse) {
+            reason = prefixed(live.kind, live.name, trimmed, check.reason);
+            return false;
+        }
+        char spelled[host::fixed_text_bytes];
+        if (!host::fixed_text(stored.count, spelled, sizeof spelled)) {
+            reason = prefixed(
+                live.kind, live.name, trimmed, "a value that is not finite cannot be stored"
+            );
+            return false;
+        }
+        text.assign(spelled);
     } else {
         const std::string_view body = trim_view(stored.text);
         if (schema.has_value())
@@ -1345,9 +1371,9 @@ const ViewBox* view_at(lua_State* state, int index, const char* meta) {
     return static_cast<const ViewBox*>(luaL_testudata(state, index, meta));
 }
 
-/// True when `key` is one of the four record methods, spelled exactly.
+/// True when `key` is one of the five record methods, spelled exactly.
 bool record_method(std::string_view key) noexcept {
-    return key == "remove" || key == "get" || key == "set" || key == "keys";
+    return key == "remove" || key == "get" || key == "set" || key == "keys" || key == "fixed";
 }
 
 /// Copies the records of a set, or the one record a method was called on.
@@ -1666,6 +1692,125 @@ bool remove_collected(Collections& self, Kind kind, std::string& reason) {
     return remove_lives(self, kind, scratch.lives, reason);
 }
 
+/// Copies at most `size - 1` bytes of `text` and writes a NUL.
+void copy_capped(const char* text, char* out, std::size_t size) {
+    if (size == 0)
+        return;
+    if (text == nullptr) {
+        out[0] = '\0';
+        return;
+    }
+    const std::size_t length = std::strlen(text);
+    const std::size_t keep = length + 1 <= size ? length : size - 1;
+    if (keep > 0)
+        std::memcpy(out, text, keep);
+    out[keep] = '\0';
+}
+
+/// True when the exponent is not the all-ones pattern of a NaN or an infinity.
+bool finite_bits(double value) noexcept {
+    static_assert(sizeof(uint64_t) == sizeof(double));
+    uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof bits);
+    return ((bits >> 52) & 0x7ffu) != 0x7ffu;
+}
+
+/// The sign bit of `value`.
+bool negative_bits(double value) noexcept {
+    uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof bits);
+    return (bits >> 63) != 0;
+}
+
+/// True when `value` is a NaN.
+bool nan_bits(double value) noexcept {
+    uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof bits);
+    const auto exponent = static_cast<uint32_t>((bits >> 52) & 0x7ffu);
+    const uint64_t fraction = bits & ((uint64_t{1} << 52) - 1u);
+    return exponent == 0x7ffu && fraction != 0;
+}
+
+constexpr char k_fixed_range[] = "(-2147483648 to 2147483647.99998)";
+
+/// Stores the fixed-library message for a value that cannot be a count.
+void assign_fixed_error(Collections& owner, const char* shown, bool finite) {
+    std::string message = "fixed: ";
+    message += shown != nullptr ? shown : "";
+    if (finite) {
+        message += " is outside the range of fixed numbers ";
+        message += k_fixed_range;
+    } else {
+        message += " is not a finite number";
+    }
+    pending_of(owner) = std::move(message);
+}
+
+/// The count for one field. 1 when `count` is set, 0 when the key is absent, -1 on error.
+///
+/// Present text is read with `fixed_from_text`. A key the block leaves out uses
+/// `default_value`, then `fixed_from_number` (or `fixed_from_text` for text).
+int prepare_fixed(const RecordBox* box, std::string_view key, int64_t* count) {
+    std::string reason;
+    Live live;
+    if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
+        pending_of(*box->owner) = std::move(reason);
+        return -1;
+    }
+    const std::optional<fields::RecordKind> schema = schema_of(live);
+    const std::string owned(key);
+    const char* text = nullptr;
+    if (live.block != nullptr)
+        text = tdf::find_value(live.block, owned.c_str());
+    if (text != nullptr) {
+        const std::optional<int64_t> got = host::fixed_from_text(text);
+        if (!got.has_value()) {
+            char shown[160];
+            copy_capped(text, shown, sizeof shown);
+            assign_fixed_error(*box->owner, shown, finite_bits(tdf::parse_double(text)));
+            return -1;
+        }
+        *count = *got;
+        return 1;
+    }
+    if (!schema.has_value())
+        return 0;
+    const fields::Value fallback = fields::default_value(*schema, key, live.block);
+    if (fallback.kind == fields::Value::Kind::absent)
+        return 0;
+    std::optional<int64_t> got;
+    bool finite = true;
+    char shown[160];
+    shown[0] = '\0';
+    if (fallback.kind == fields::Value::Kind::text) {
+        got = host::fixed_from_text(fallback.text.c_str());
+        copy_capped(fallback.text.c_str(), shown, sizeof shown);
+        finite = finite_bits(tdf::parse_double(fallback.text.c_str()));
+    } else {
+        double number = fallback.number;
+        if (fallback.kind == fields::Value::Kind::integer)
+            number = static_cast<double>(fallback.integer);
+        else if (fallback.kind == fields::Value::Kind::boolean)
+            number = fallback.boolean ? 1.0 : 0.0;
+        got = host::fixed_from_number(number);
+        finite = finite_bits(number);
+        if (!finite) {
+            const char* word = nan_bits(number) ? "nan" : (negative_bits(number) ? "-inf" : "inf");
+            copy_capped(word, shown, sizeof shown);
+        } else {
+            const std::optional<std::string> spelled = tdf::format_number(number);
+            if (spelled.has_value())
+                copy_capped(spelled->c_str(), shown, sizeof shown);
+        }
+    }
+    if (!got.has_value()) {
+        assign_fixed_error(*box->owner, shown, finite);
+        return -1;
+    }
+    *count = *got;
+    return 1;
+}
+
 /// Fills the prepared read. The trampoline pushes it after this returns.
 int prepare_read(const RecordBox* box, std::string_view key) {
     std::string reason;
@@ -1782,6 +1927,7 @@ static int record_call_remove(lua_State* state);
 static int record_call_get(lua_State* state);
 static int record_call_set(lua_State* state);
 static int record_call_keys(lua_State* state);
+static int record_call_fixed(lua_State* state);
 static int collection_index(lua_State* state);
 static int collection_newindex(lua_State* state);
 static int collection_len(lua_State* state);
@@ -2280,6 +2426,10 @@ static int record_index(lua_State* state) {
         lua_pushcfunction(state, record_call_keys);
         return 1;
     }
+    if (key == "fixed") {
+        lua_pushcfunction(state, record_call_fixed);
+        return 1;
+    }
     if (box->kind == Kind::weapons && box->damage == 0 && same_text(key, "damage")) {
         if (box->name_size > static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
             return luaL_error(state, "a record name is too long");
@@ -2369,6 +2519,33 @@ static int record_call_set(lua_State* state) {
     if (result < 0)
         return raise_pending(state, *box->owner);
     return 0;
+}
+
+static int record_call_fixed(lua_State* state) {
+    const RecordBox* box = record_at(state, 1);
+    if (box == nullptr || box->owner == nullptr)
+        return luaL_error(state, "fixed expects a record");
+    if (lua_type(state, 2) != LUA_TSTRING)
+        return luaL_error(state, "fixed expects a field name");
+    std::size_t length = 0;
+    const char* text = lua_tolstring(state, 2, &length);
+    const std::string_view key = trim_view(std::string_view(text != nullptr ? text : "", length));
+    int64_t count = 0;
+    int result = 0;
+    try {
+        result = prepare_fixed(box, key, &count);
+    } catch (const std::bad_alloc&) {
+        pending_of(*box->owner) = "out of memory";
+        result = -1;
+    }
+    if (result < 0)
+        return raise_pending(state, *box->owner);
+    if (result == 0) {
+        lua_pushnil(state);
+        return 1;
+    }
+    host::push_fixed(state, count);
+    return 1;
 }
 
 static int record_call_keys(lua_State* state) {

@@ -246,9 +246,10 @@ read as the value the loader uses: a missing flag or number is 0, missing
 text is empty, and a missing `bankscale` is 1. `absent()` asks whether the
 key is written, not what the default would be. A set has `each`, `set`,
 `scale`, `remove`, a length and `pairs`. A record has `remove`, `get`,
-`set` and `keys`. Any other name is a field. A field whose name is one of
-those four is reached only with `get` and `set`. A weapon's `damage` is
-its `[DAMAGE]` block, created on the first write into it. `get("damage")`
+`set`, `keys` and `fixed`. Any other name is a field. A field whose name
+is one of those five is reached only with `get` and `set`. A weapon's
+`damage` is its `[DAMAGE]` block, created on the first write into it.
+`get("damage")`
 reads a field of that name and does not open the block.
 
 A read returns the schema's integer, number, boolean or string, and nil
@@ -265,6 +266,16 @@ check, the read and the write. The journal keeps the spelling already
 stored, or the trimmed name when the key is new. A write that would store
 the text already there changes nothing: the document, the journal and the
 notes stay as they are.
+
+`record:fixed(key)` reads that field as a fixed value. Text that is present
+is read the way `fixed.parse` reads it. A key the record leaves out uses
+the loader's default, so an absent `bankscale` is 1 and an absent
+`moverate1` is twice `maxvelocity`. A key the schema does not hold, and a
+key a feature leaves out, is nil. A weapon's `damage` block has the method
+too. Storing a fixed value, by assignment, by `:set` or by a set's
+`:set { }`, is checked as the number `count / 65536` and written as the
+text `f:text()` gives. A field that is itself named `fixed` stays reachable
+with `get` and `set`. Assigning the method name is refused.
 
 `scale` multiplies each field that is present and numeric. An absent
 field is left absent. Text that is not a number is left as it is and
@@ -319,7 +330,7 @@ The messages are "this mutator has changed too many fields" and "this
 mutator has made too many notes".
 
 `data-mutators-collections` builds a small Ridge document set and runs
-the fixtures in `tests/collections`.
+the fixtures in `tests/collections`, including the `fixed_` scripts.
 
 ## Loadouts
 
@@ -420,8 +431,10 @@ message names the path, and a parse error names the line as well.
 Warnings stay on the result and the source is still kept.
 
 Needs are the same forms the collections use (`need_from_lua`). Changes
-are the forms a rule file writes. `where` and `:change` check their
-table when they are called and keep their own copy of it, so a loop that
+are the forms a rule file writes. `set`, `lock` and `scale` (a factor, or
+a factor and two bounds) take a fixed value as the count divided by
+65536. `where` and `:change` check their table when they are called and
+keep their own copy of it, so a loop that
 reuses one table builds a different block each time, and changing the
 table later changes no block already built. Field names in one block are
 stored in the order of those names after ASCII lower-casing, with the
@@ -483,7 +496,7 @@ is an error. An unfinished block in the list refuses the plan.
 
 `data-mutators-rules-lua` checks each Lua fixture against the rule file
 beside it, both as records and as the writes those records make on one
-Ridge document set.
+Ridge document set. `fixed_set` and `fixed_scale` pass fixed values.
 
 ## Verdicts
 
