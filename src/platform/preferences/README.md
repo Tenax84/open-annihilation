@@ -21,7 +21,9 @@ deletes. Deleting either loses nothing but that record. With
 mutators runs, and a clean match end or a clean exit deletes it. A start
 that finds one keeps what it names and deletes the file, so the next start
 does not ask again. It lives beside whichever preferences file the run
-uses, including one `--preferences-file` names.
+uses, including one `--preferences-file` names. Two runs whose
+preferences files share a folder share this file, so runs at the same
+time use separate folders.
 
 Data the engine keeps for the player, such as game data it unpacks, goes in a
 per-user data folder (`data_directory()`), beside the preferences file on

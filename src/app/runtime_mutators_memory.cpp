@@ -7,6 +7,7 @@
 
 #include "oa/app/runtime.hpp"
 
+#include "oa/app/mutators_memory.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
 #include "oa/data/mutators/loadout.hpp"
@@ -14,6 +15,7 @@
 
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -39,13 +41,16 @@ static_assert(
     settings::key::mutators_campaign
 );
 
-namespace {
+struct Runtime::MutatorMemory {
+    mutators_memory::Sentinel sentinel = mutators_memory::Sentinel::disabled();
+    std::optional<mutators_memory::Crash> crash{};
+};
 
-/// The mutators of a loadout, as a log line names them.
-///
-/// @param loadout the loadout
-/// @return `<id> <version>`, joined by commas
-std::string mutator_names(const mutators::Loadout& loadout) {
+void Runtime::destroy_mutator_memory(MutatorMemory* memory) noexcept {
+    delete memory;
+}
+
+std::string Runtime::mutator_names(const mutators::Loadout& loadout) {
     std::string names;
     for (const mutators::LoadoutEntry& entry : loadout.entries) {
         if (!names.empty())
@@ -57,7 +62,15 @@ std::string mutator_names(const mutators::Loadout& loadout) {
     return names;
 }
 
-} // namespace
+std::string Runtime::mutator_list_text(const std::vector<std::string>& names) {
+    std::string joined;
+    for (const std::string& name : names) {
+        if (!joined.empty())
+            joined += ", ";
+        joined += name;
+    }
+    return joined;
+}
 
 std::optional<mutators::Loadout> Runtime::remembered_mutators(mutators_memory::Setup setup) const {
     if (options_.no_mutators)
@@ -91,9 +104,9 @@ void Runtime::remember_mutators(mutators_memory::Setup setup, const mutators::Lo
 }
 
 void Runtime::forget_mutators(mutators_memory::Setup setup) {
-    // U08 calls this after the crash question, including a run that refused
-    // mutators: the flag keeps a set from being read or remembered, and
-    // FORGET IT still erases one the crash record named.
+    // The crash question calls this after the player answers, including a
+    // run that refused mutators: the flag keeps a set from being read or
+    // remembered, and FORGET IT still erases one the crash record named.
     const std::string key{mutators_memory::preference_key(setup)};
     if (preference_values_.erase(key) == 0)
         return;
@@ -121,8 +134,14 @@ void Runtime::start_with_mutators(mutators_memory::Setup setup, mutators::Loadou
         choose_match_mutators({});
         return;
     }
-    if (loadout.entries.empty())
+    if (loadout.entries.empty()) {
+        // A setup that starts without a set plays the run's own list,
+        // --mutator's or a launch file's, normally none; never an
+        // earlier setup's set.
+        mutator_setup_.reset();
+        take_command_line_mutators();
         return;
+    }
     const fs::path folder =
         user_folder_ / std::string(oa::data::mutator_library::mutators_folder_name);
     std::string error;
@@ -139,8 +158,10 @@ void Runtime::start_with_mutators(mutators_memory::Setup setup, mutators::Loadou
 }
 
 std::optional<mutators_memory::Crash> Runtime::take_mutator_crash() {
-    std::optional<mutators_memory::Crash> taken = std::move(mutator_crash_);
-    mutator_crash_.reset();
+    if (mutator_memory_ == nullptr)
+        return std::nullopt;
+    std::optional<mutators_memory::Crash> taken = std::move(mutator_memory_->crash);
+    mutator_memory_->crash.reset();
     return taken;
 }
 
@@ -149,17 +170,20 @@ bool Runtime::mutators_refused_for_run() const noexcept {
 }
 
 void Runtime::open_mutator_sentinel() {
+    std::unique_ptr<MutatorMemory, void (*)(MutatorMemory*) noexcept> made{
+        new MutatorMemory, destroy_mutator_memory
+    };
     if (preference_path_.empty()) {
-        mutator_sentinel_ = mutators_memory::Sentinel::disabled();
+        mutator_memory_ = std::move(made);
         return;
     }
     try {
         fs::path folder = preference_path_.parent_path();
         if (folder.empty())
             folder = ".";
-        mutator_sentinel_ = mutators_memory::Sentinel::open_folder(folder);
-        if (const std::optional<mutators_memory::Crash>& leftover = mutator_sentinel_.leftover()) {
-            mutator_crash_ = *leftover;
+        made->sentinel = mutators_memory::Sentinel::open_folder(folder);
+        if (const std::optional<mutators_memory::Crash>& leftover = made->sentinel.leftover()) {
+            made->crash = *leftover;
             if (leftover->loadout.entries.empty()) {
                 std::cerr << "open-annihilation: mutators: the last game ended in a crash; its "
                              "mutators could not be read\n";
@@ -167,14 +191,19 @@ void Runtime::open_mutator_sentinel() {
                 std::cerr << "open-annihilation: mutators: the last game ended in a crash with "
                           << mutator_names(leftover->loadout) << '\n';
             }
-            mutator_sentinel_.clear();
+            made->sentinel.clear();
         }
+        mutator_memory_ = std::move(made);
     } catch (const std::exception& error) {
-        mutator_sentinel_ = mutators_memory::Sentinel::disabled();
+        made->sentinel = mutators_memory::Sentinel::disabled();
+        made->crash.reset();
+        mutator_memory_ = std::move(made);
         std::cerr << "open-annihilation: mutators: the crash record could not be read: "
                   << error.what() << '\n';
     } catch (...) {
-        mutator_sentinel_ = mutators_memory::Sentinel::disabled();
+        made->sentinel = mutators_memory::Sentinel::disabled();
+        made->crash.reset();
+        mutator_memory_ = std::move(made);
         std::cerr << "open-annihilation: mutators: the crash record could not be read\n";
     }
 }
@@ -182,16 +211,18 @@ void Runtime::open_mutator_sentinel() {
 void Runtime::arm_mutator_sentinel(
     std::optional<mutators_memory::Setup> setup, const mutators::Loadout& loadout
 ) {
-    if (loadout.entries.empty())
+    if (mutator_memory_ == nullptr || loadout.entries.empty())
         return;
     mutators_memory::Crash crash;
     crash.setup = setup;
     crash.loadout = loadout;
-    mutator_sentinel_.write(crash);
+    mutator_memory_->sentinel.write(crash);
 }
 
 void Runtime::clear_mutator_sentinel() {
-    mutator_sentinel_.clear();
+    if (mutator_memory_ == nullptr)
+        return;
+    mutator_memory_->sentinel.clear();
 }
 
 void Runtime::note_mutators_refused(std::string_view named) {

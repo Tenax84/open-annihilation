@@ -21,8 +21,8 @@ constexpr std::string_view setup_key = "setup";
 /// The crash file's key for the canonical loadout text.
 constexpr std::string_view mutators_key = "mutators";
 
-/// The word `crash_text` writes for a setup, or `none` when no setup started
-/// the match.
+/// The word `crash_values` writes for a setup, or `none` when no setup
+/// started the match.
 ///
 /// @param setup the setup, or nothing
 /// @return `skirmish`, `multiplayer`, `campaign` or `none`
@@ -38,17 +38,6 @@ std::string_view setup_word(std::optional<Setup> setup) noexcept {
         return "campaign";
     }
     return "none";
-}
-
-/// The two values of a crash record, as the file holds them.
-///
-/// @param crash the record
-/// @return `setup` and `mutators`
-preferences::Values crash_values(const Crash& crash) {
-    return preferences::Values{
-        {std::string(setup_key), std::string(setup_word(crash.setup))},
-        {std::string(mutators_key), mutators::canonical_loadout(crash.loadout)},
-    };
 }
 
 /// Reads `setup`'s word.
@@ -74,18 +63,11 @@ bool read_setup_word(std::string_view word, std::optional<Setup>& setup) noexcep
 
 } // namespace
 
-std::string crash_text(const Crash& crash) {
-    const preferences::Values values = crash_values(crash);
-    std::string text;
-    text += setup_key;
-    text += '=';
-    text += values.at(std::string(setup_key));
-    text += '\n';
-    text += mutators_key;
-    text += '=';
-    text += values.at(std::string(mutators_key));
-    text += '\n';
-    return text;
+preferences::Values crash_values(const Crash& crash) {
+    return preferences::Values{
+        {std::string(setup_key), std::string(setup_word(crash.setup))},
+        {std::string(mutators_key), mutators::canonical_loadout(crash.loadout)},
+    };
 }
 
 std::optional<Crash> read_crash(const preferences::Values& values) {
@@ -142,7 +124,7 @@ void Sentinel::write(const Crash& crash) {
     if (!enabled_)
         return;
     try {
-        preferences::overwrite(folder_ / sentinel_file_name, crash_values(crash));
+        preferences::save(folder_ / sentinel_file_name, crash_values(crash));
     } catch (const std::exception& error) {
         log_failure("cannot write " + std::string(sentinel_file_name) + ": " + error.what());
     }

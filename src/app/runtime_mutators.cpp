@@ -384,13 +384,7 @@ std::optional<oa::base::sha256::Digest> Runtime::match_mutator_digest() const no
 
 void Runtime::take_command_line_mutators() {
     if (options_.no_mutators) {
-        std::string named;
-        for (const std::string& value : options_.mutators) {
-            if (!named.empty())
-                named += ", ";
-            named += value;
-        }
-        note_mutators_refused(named);
+        note_mutators_refused(mutator_list_text(options_.mutators));
         choose_match_mutators({});
         return;
     }
@@ -463,13 +457,7 @@ std::string Runtime::take_launch_mutators(
     std::vector<std::string> fields
 ) {
     if (options_.no_mutators) {
-        std::string named;
-        for (const std::string& value : texts) {
-            if (!named.empty())
-                named += ", ";
-            named += value;
-        }
-        note_mutators_refused(named);
+        note_mutators_refused(mutator_list_text(texts));
         choose_match_mutators({});
         return {};
     }
@@ -501,15 +489,7 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         std::exchange(mutator_setup_, std::nullopt);
     if (options_.no_mutators) {
         if (mutator_state_ != nullptr && !mutator_state_->chosen.empty()) {
-            std::string named;
-            for (const mutators::ResolvedMutator& one : mutator_state_->chosen) {
-                if (!named.empty())
-                    named += ", ";
-                named += one.manifest.id;
-                named += ' ';
-                named += oa::formats::oamut::version_text(one.manifest.version);
-            }
-            note_mutators_refused(named);
+            note_mutators_refused(mutator_names(mutators::loadout_of(mutator_state_->chosen)));
         }
         return;
     }
@@ -579,6 +559,8 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         play_latest_profile();
         const std::string reason = failure_text(listed, *mutator_state_->result);
         release_match_mutators();
+        // A refused start is reported, not a crash: nothing is in play.
+        clear_mutator_sentinel();
         throw std::runtime_error(reason);
     }
     // Taken after the hacks were played, so a mutator their check failed is
@@ -589,17 +571,9 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         return;
     }
     arm_mutator_sentinel(pending_setup, applied);
-    // V02's applied line names the same mutators and then the files they
-    // changed. This line is the one a crash report can quote.
-    std::string playing;
-    for (const mutators::LoadoutEntry& entry : applied.entries) {
-        if (!playing.empty())
-            playing += ", ";
-        playing += entry.id;
-        playing += ' ';
-        playing += entry.version;
-    }
-    std::cerr << "open-annihilation: mutators in play: " << playing << '\n';
+    // The applied line above names the same mutators and then the files
+    // they changed. This line is the one a crash report can quote.
+    std::cerr << "open-annihilation: mutators in play: " << mutator_names(applied) << '\n';
     try {
         const oa::base::sha256::Digest layer =
             mutators::layer_digest(mutator_state_->result->layer, [this](std::string_view path) {

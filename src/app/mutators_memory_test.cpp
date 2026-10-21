@@ -56,7 +56,7 @@ struct CapturedError {
 
 /// A scratch folder this test removes when it is done.
 struct Scratch {
-    fs::path folder = oa::test::make_scratch_directory("V08-mutators-memory");
+    fs::path folder = oa::test::make_scratch_directory("mutators-memory");
 
     Scratch() = default;
     Scratch(const Scratch&) = delete;
@@ -172,28 +172,6 @@ std::optional<mutators::Loadout> read_set(const preferences::Values& values, mem
     return mutators::parse_loadout(found->second, nullptr);
 }
 
-/// The two lines of `crash_text` as preference values.
-///
-/// @param text the lines
-/// @return the values
-preferences::Values values_of(std::string_view text) {
-    preferences::Values values;
-    while (!text.empty()) {
-        const std::size_t end = text.find('\n');
-        const std::string_view line =
-            text.substr(0, end == std::string_view::npos ? text.size() : end);
-        if (end == std::string_view::npos)
-            text = {};
-        else
-            text.remove_prefix(end + 1);
-        const std::size_t split = line.find('=');
-        if (split == std::string_view::npos)
-            continue;
-        values.emplace(std::string(line.substr(0, split)), std::string(line.substr(split + 1)));
-    }
-    return values;
-}
-
 /// A stored set reads back with its order, versions, hashes and option kinds.
 void a_set_reads_back() {
     const mutators::Loadout loadout = sample_loadout();
@@ -255,8 +233,8 @@ void the_three_keys_differ() {
     }
 }
 
-/// crash_text and read_crash round-trip each setup and none.
-void crash_text_round_trips() {
+/// crash_values and read_crash round-trip each setup and none.
+void crash_values_round_trip() {
     const std::optional<memory::Setup> setups[] = {
         memory::Setup::skirmish,
         memory::Setup::multiplayer,
@@ -267,16 +245,15 @@ void crash_text_round_trips() {
         memory::Crash crash;
         crash.setup = setup;
         crash.loadout = sample_loadout();
-        const std::string text = memory::crash_text(crash);
-        const std::optional<memory::Crash> read = memory::read_crash(values_of(text));
+        const std::optional<memory::Crash> read = memory::read_crash(memory::crash_values(crash));
         OA_CHECK(read.has_value());
         OA_CHECK(read->setup == setup);
         OA_CHECK(read->loadout == crash.loadout);
     }
     memory::Crash none;
-    const std::string text = memory::crash_text(none);
-    OA_CHECK(text.find("setup=none\n") == 0);
-    const std::optional<memory::Crash> read = memory::read_crash(values_of(text));
+    const preferences::Values values = memory::crash_values(none);
+    OA_CHECK(values.at("setup") == "none");
+    const std::optional<memory::Crash> read = memory::read_crash(values);
     OA_CHECK(read.has_value() && !read->setup.has_value() && read->loadout.entries.empty());
 }
 
@@ -362,7 +339,7 @@ int main() {
         a_set_reads_back();
         text_that_does_not_parse_is_no_set();
         the_three_keys_differ();
-        crash_text_round_trips();
+        crash_values_round_trip();
         the_sentinel_file();
     } catch (const std::exception& error) {
         std::cerr << "mutators memory: " << error.what() << '\n';

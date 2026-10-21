@@ -55,17 +55,17 @@ struct Crash {
     oa::data::mutators::Loadout loadout{};
 };
 
-/// The crash record's two values, one per line.
+/// The crash record's two keys.
 ///
-/// The first line is `setup=` and `skirmish`, `multiplayer`, `campaign` or
-/// `none`. The second is `mutators=` and `canonical_loadout` of the loadout.
-/// `read_crash` reads those two values back.
+/// `setup` is `skirmish`, `multiplayer`, `campaign` or `none`. `mutators`
+/// is `canonical_loadout` of the loadout. `read_crash` requires exactly
+/// these two, and `preferences::save` writes them as the sentinel file.
 ///
 /// @param crash the record
-/// @return the two lines, each ending in a line feed
-[[nodiscard]] std::string crash_text(const Crash& crash);
+/// @return the keys `setup` and `mutators`
+[[nodiscard]] oa::platform::preferences::Values crash_values(const Crash& crash);
 
-/// Reads a crash record from the two values `crash_text` gives.
+/// Reads a crash record from the two values `crash_values` gives.
 ///
 /// `setup` is `skirmish`, `multiplayer`, `campaign` or `none`. `mutators` is
 /// read with `parse_loadout`, which refuses anything other than the canonical
@@ -107,9 +107,10 @@ class Sentinel {
     /// @return the leftover
     [[nodiscard]] const std::optional<Crash>& leftover() const noexcept { return leftover_; }
 
-    /// Rewrites the file in place with the record.
+    /// Replaces the file with the record through a temporary file. A failed
+    /// write keeps the last complete record, and is logged once.
     ///
-    /// A failure is logged once. `disabled` writes nothing.
+    /// `disabled` writes nothing.
     ///
     /// @param crash the record
     void write(const Crash& crash);

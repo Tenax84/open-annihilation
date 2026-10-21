@@ -2398,7 +2398,7 @@ hosts them on the OA layer.
   preferences file while a match with mutators runs. A set is the canonical
   loadout text and nothing else. `preference_key` names the three keys
   `open-annihilation.mutators.skirmish`, `.multiplayer` and `.campaign`.
-  `Sentinel` reads `mutators-sentinel.conf`, rewrites it in place and
+  `Sentinel` reads `mutators-sentinel.conf`, replaces it and
   deletes it; a file that cannot be read is a leftover with no mutators,
   logged once, and is never fatal. `runtime_mutators_memory.cpp` is the
   game's side of it: `remembered_mutators` (the picker), `remember_mutators`
@@ -3802,7 +3802,9 @@ applies the list chosen then, including none.
 The last set each setup started a game with is kept in the preferences:
 one key for skirmish, one for the multiplayer host and one for a campaign.
 A setup's START writes its key through `start_with_mutators`, and only
-when that game has mutators. `--mutator`, a launch file, a replay, a
+when that game has mutators. An empty loadout remembers nothing; the
+next matches play the run's own list (`--mutator`'s or a launch file's),
+normally none. `--mutator`, a launch file, a replay, a
 saved game, a guest's game and a game without mutators do not write it,
 and CANCEL does not erase it. While a match with mutators runs,
 `mutators-sentinel.conf` beside the preferences file names them and the
