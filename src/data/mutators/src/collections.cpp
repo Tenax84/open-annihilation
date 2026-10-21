@@ -473,6 +473,11 @@ void charge_visits(lua_State* state, uint64_t visits) {
 /// and the field check around it.
 constexpr uint64_t record_access_charge = 8;
 
+/// Adds `more` to a bill of units, saturating at UINT64_MAX. Never raises.
+void add_saturated(uint64_t& units, uint64_t more) noexcept {
+    units = more > UINT64_MAX - units ? UINT64_MAX : units + more;
+}
+
 /// Charges the bytes of one key or name. May raise. No C++ destructor is alive.
 void charge_text(lua_State* state, std::size_t bytes) {
     host::charge_work(state, host::units_for_bytes(bytes));
@@ -2478,34 +2483,48 @@ static int collection_call_clone(lua_State* state) {
     const ViewBox* collection = view_at(state, 1, kCollectionMeta);
     if (collection == nullptr || collection->owner == nullptr)
         return luaL_error(state, "expected a collection");
-    int result = -1;
+    Collections& owner = *collection->owner;
+    // Index and charge the collection before any C++ object exists, so the
+    // clone's own lookups build nothing and charge nothing.
     bool failed = false;
+    try {
+        ensure_index(owner, collection->kind, state);
+    } catch (const std::bad_alloc&) {
+        pending_of(owner) = "out of memory";
+        failed = true;
+    }
+    if (failed)
+        return raise_pending(state, owner);
+    uint64_t units = 0;
+    int result = -1;
     {
-        // Destroyed before ensure_index, which may raise through charge_work.
+        // Nothing in this block may raise: the clone bills its work in `units`
+        // and a refusal waits in the pending error.
         std::string error;
         try {
-            result = clone_collection(
-                state, *collection->owner, collection->kind == Kind::weapons, error
-            );
+            result =
+                clone_collection(state, owner, collection->kind == Kind::weapons, error, units);
         } catch (const std::bad_alloc&) {
-            pending_of(*collection->owner) = "out of memory";
+            pending_of(owner) = "out of memory";
             failed = true;
         }
-        if (failed)
-            return raise_pending(state, *collection->owner);
-        if (result < 0) {
-            pending_of(*collection->owner) = std::move(error);
-            return raise_pending(state, *collection->owner);
-        }
+        if (!failed && result < 0)
+            pending_of(owner) = std::move(error);
     }
+    // The block's objects are gone, so the charge may raise. A refused clone pays too.
+    host::charge_work(state, units);
+    if (failed || result < 0)
+        return raise_pending(state, owner);
     // The new document is already in the set. Index the sections it added and
     // charge them as an add. A ready index is not cleared, so this is not a rebuild.
     try {
-        ensure_index(*collection->owner, collection->kind, state);
+        ensure_index(owner, collection->kind, state);
     } catch (const std::bad_alloc&) {
-        pending_of(*collection->owner) = "out of memory";
-        return raise_pending(state, *collection->owner);
+        pending_of(owner) = "out of memory";
+        failed = true;
     }
+    if (failed)
+        return raise_pending(state, owner);
     lua_pushboolean(state, 1);
     return 1;
 }
@@ -3053,10 +3072,19 @@ void push_view(lua_State* state, Collections* owner, Kind kind) {
 } // namespace
 
 bool clone_find(
-    lua_State* state, Collections& collections, bool weapons, std::string_view name, CloneHit& hit
+    Collections& collections, bool weapons, std::string_view name, CloneHit& hit, uint64_t& units
 ) {
     const Kind kind = weapons ? Kind::weapons : Kind::units;
-    const Rec* found = find_named(collections, kind, name, state);
+    // The caller indexed and charged the collection first, so a null state
+    // finds the record without building, charging or raising. The lookup
+    // still checks every document for growth, as `units.NAME` pays for.
+    const Rec* found = find_named(collections, kind, name, nullptr);
+    uint64_t visits = static_cast<uint64_t>(CollectionsAccess::documents(collections).size());
+    if (host::element_charge != 0 && visits > UINT64_MAX / host::element_charge)
+        visits = UINT64_MAX / host::element_charge;
+    add_saturated(units, visits * host::element_charge);
+    add_saturated(units, record_access_charge * host::element_charge);
+    add_saturated(units, host::units_for_bytes(name.size()));
     if (found == nullptr)
         return false;
     hit.doc_index = found->doc_index;

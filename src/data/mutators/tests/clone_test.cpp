@@ -657,6 +657,30 @@ void test_clone_budgets(const fs::path& scratch) {
     );
     expect_budget_stop(unit_game, unit_package, "unit clone loop");
 
+    // Each clone copies a 1 MiB script, so the copy's charge spends the
+    // allowance after a few dozen clones, long before the loop's own Lua does.
+    const fs::path script_game = scratch / "budget-script-game";
+    const fs::path script_package = scratch / "budget-script-package";
+    write_bytes(
+        script_game / "units" / "BULK.FBI",
+        "[UNITINFO]\n{\nUnitName=BULK;\nObjectname=Bulk;\n"
+        "Copyright=Ridge Holds This Line;\nVersion=9.25;\nMaxDamage=10;\n"
+        "FootprintX=1;\nFootprintZ=1;\n}\n"
+    );
+    write_bytes(script_game / "scripts" / "BULK.COB", std::string(std::size_t{1} << 20, 'c'));
+    write_package(
+        script_package,
+        "ridge-clone-script-budget",
+        "units",
+        "function mutate(ctx)\n"
+        "  return { units = function(units, ctx)\n"
+        "    for n = 1, 100000 do\n"
+        "      units:clone(\"BULK\", string.format(\"B%d\", n), {})\n"
+        "    end\n"
+        "  end }\nend\n"
+    );
+    expect_budget_stop(script_game, script_package, "large script clone loop");
+
     const fs::path weapon_game = scratch / "budget-weapons-game";
     const fs::path weapon_package = scratch / "budget-weapons-package";
     std::string text;

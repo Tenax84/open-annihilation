@@ -76,9 +76,9 @@ and that every message starts with the path and every rule has its own name.
 `data-mutators-clone` (`tests/clone_test.cpp`) runs made-up packages
 through `run_pipeline` over a scratch store: a unit's copied definition,
 the files the layer serves under the new name, a weapon's free id, and a
-clone that a later error rolls back. A loop of clones, and a `pcall` loop
-of weapon clones that are refused, each stop on the work budget inside the
-real-time limit. A clone whose build page collides with an existing screen
+clone that a later error rolls back. A loop of clones, a loop of clones
+whose source script is 1 MiB, and a `pcall` loop of weapon clones that are
+refused, each stop on the work budget inside the real-time limit. A clone whose build page collides with an existing screen
 is refused and the layer serves nothing.
 
 `data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
@@ -269,7 +269,9 @@ sections share a name, the copy is the first in collection order (name,
 then path, then position), which may not be the lowest slot the game fires.
 A field named `ID` is refused. The journal records each clone and each
 served copy. A unit clone is refused, naming the path, when any path it
-would serve already exists.
+would serve already exists. A clone's work (its name lookups, the bytes it
+reads and writes and, for a weapon, each section the id search visits) is
+charged in one step when the clone returns, so a refused clone pays too.
 
 `install_selection_forms` publishes `range`, `is`, `has`, `absent` and
 `not_`. `need_from_lua` reads one need: a number `n` is `range(n, n)`,

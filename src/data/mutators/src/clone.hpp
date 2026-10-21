@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -29,18 +30,21 @@ struct CloneHit {
 
 /// The first record of `name` in the collection index.
 ///
-/// Uses the same lookup as a script reading `units.name`: the index is built
-/// once and charged, and a missing name returns false. May raise when the
-/// work budget is spent.
+/// Uses the same lookup as a script reading `units.name`, but charges
+/// nothing and never raises: the caller brings the index up to date and
+/// charges it first. Adds the lookup's units to `units`, saturating: one
+/// element per document for the growth check, the record access and the
+/// name's bytes. A missing name returns false. Throws `std::bad_alloc` when the index
+/// cannot grow.
 ///
-/// @param state sandbox state the charge is counted against
 /// @param collections collections the hook is running on
 /// @param weapons true for weapons, false for units
 /// @param name record name, compared without ASCII case
 /// @param[out] hit the record; unchanged when the call returns false
+/// @param[in,out] units the clone's bill, which the lookup adds to
 /// @return true when a record of that name is indexed
 [[nodiscard]] bool clone_find(
-    lua_State* state, Collections& collections, bool weapons, std::string_view name, CloneHit& hit
+    Collections& collections, bool weapons, std::string_view name, CloneHit& hit, uint64_t& units
 );
 
 /// True when `asked` is the clone's unit name.
@@ -72,15 +76,21 @@ clone_build_page(std::string_view path, std::string_view gui_folder, std::string
 /// `weapons` selects the weapons collection. A refusal returns -1 and sets
 /// `error` to the Lua error, including the mutator's request. Success returns
 /// 0 and leaves the new record in the document set. The caller indexes that
-/// record only after success. The call charges the name lookups, the bytes it
-/// is about to write and, for a weapon, each section the id search visits.
+/// record only after success. The call never raises: it adds to `units` the
+/// name lookups, the bytes it reads or writes and, for a weapon, each section
+/// the id search visits, refused or not, and the caller charges that bill
+/// once its own C++ objects are gone. Throws `std::bad_alloc` when memory
+/// runs out.
 ///
 /// @param state sandbox state; argument 1 is the collection, then source, new
 ///        name and fields
 /// @param collections collections the hook is running on
 /// @param weapons true for weapons, false for units
 /// @param[out] error the Lua error when the call returns -1
+/// @param[in,out] units the clone's bill in instruction units, saturating
 /// @return 0 on success, -1 on refusal
-int clone_collection(lua_State* state, Collections& collections, bool weapons, std::string& error);
+int clone_collection(
+    lua_State* state, Collections& collections, bool weapons, std::string& error, uint64_t& units
+);
 
 } // namespace oa::data::mutators

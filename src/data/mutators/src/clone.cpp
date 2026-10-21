@@ -164,14 +164,21 @@ std::string fold_path(std::string_view path) {
     return folded;
 }
 
-void charge_bytes(lua_State* state, std::size_t bytes) {
-    host::charge_work(state, host::units_for_bytes(bytes));
+/// Adds `more` to the clone's bill, saturating at UINT64_MAX.
+void add_units(uint64_t& units, uint64_t more) noexcept {
+    units = more > UINT64_MAX - units ? UINT64_MAX : units + more;
 }
 
-void charge_elements(lua_State* state, uint64_t count) {
+/// Bills one unit per 32 bytes, as `charge_work` counts a byte length.
+void bill_bytes(uint64_t& units, std::size_t bytes) noexcept {
+    add_units(units, host::units_for_bytes(bytes));
+}
+
+/// Bills `count` elements, saturating the product and the sum.
+void bill_elements(uint64_t& units, uint64_t count) noexcept {
     if (host::element_charge != 0 && count > UINT64_MAX / host::element_charge)
         count = UINT64_MAX / host::element_charge;
-    host::charge_work(state, count * host::element_charge);
+    add_units(units, count * host::element_charge);
 }
 
 std::string request_error(
@@ -645,13 +652,13 @@ std::string join_path(std::string_view folder, std::string_view name) {
     return path;
 }
 
-/// Charges the bytes, then keeps the copy when the destination is free and
+/// Bills the bytes, then keeps the copy when the destination is free and
 /// `check_mutable_path` allows it. A build page is the menus-only exception:
 /// `guis/<name><digits>.gui` is served only when that path does not exist.
 /// A taken path refuses the clone and names the path. Returns false when the
 /// source has no bytes (nothing to serve).
 bool take_copy(
-    lua_State* state,
+    uint64_t& units,
     Collections& self,
     std::string_view source,
     std::string_view name,
@@ -663,7 +670,7 @@ bool take_copy(
 ) {
     if (bytes == nullptr || bytes->empty())
         return false;
-    charge_bytes(state, bytes->size());
+    bill_bytes(units, bytes->size());
     PathContext context;
     context.layout = &layout_now(self);
     const std::string unit(name);
@@ -691,7 +698,7 @@ bool take_copy(
 /// Reads the script, picture and build pages the game would, under the new name.
 /// A refusal sets `error` and returns false. A missing source file is skipped.
 bool collect_unit_copies(
-    lua_State* state,
+    uint64_t& units,
     Collections& self,
     std::string_view source,
     std::string_view name,
@@ -703,7 +710,7 @@ bool collect_unit_copies(
     const std::string source_script = join_path("scripts", std::string(source) + ".COB");
     const std::string new_script = join_path("scripts", std::string(name) + ".COB");
     if (!take_copy(
-            state,
+            units,
             self,
             source,
             name,
@@ -718,7 +725,7 @@ bool collect_unit_copies(
     const std::string source_pic = join_path(pictures, std::string(source) + ".PCX");
     const std::string new_pic = join_path(pictures, std::string(name) + ".PCX");
     if (!take_copy(
-            state,
+            units,
             self,
             source,
             name,
@@ -736,7 +743,7 @@ bool collect_unit_copies(
         const std::string source_page = join_path(pages, std::string(source) + page + ".GUI");
         const std::string new_page = join_path(pages, std::string(name) + page + ".GUI");
         const bool kept = take_copy(
-            state,
+            units,
             self,
             source,
             name,
@@ -763,7 +770,7 @@ bool collect_unit_copies(
         const std::string source_gaf = join_path("anims", std::string(source) + page + ".GAF");
         const std::string new_gaf = join_path("anims", std::string(name) + page + ".GAF");
         if (!take_copy(
-                state,
+                units,
                 self,
                 source,
                 name,
@@ -793,14 +800,14 @@ void note_ids(const tdf::Block* block, bool used[256]) {
         note_ids(tdf::child_at(block, index), used);
 }
 
-/// Charges one element, then reads that section's id. A child block is part of
-/// the section and is not charged again.
-void visit_section(lua_State* state, const tdf::Block* section, bool used[256]) {
-    charge_elements(state, 1);
+/// Bills one element, then reads that section's id. A child block is part of
+/// the section and is not billed again.
+void visit_section(uint64_t& units, const tdf::Block* section, bool used[256]) {
+    bill_elements(units, 1);
     note_ids(section, used);
 }
 
-void note_document_ids(lua_State* state, const rules::LoadedDocument& loaded, bool used[256]) {
+void note_document_ids(uint64_t& units, const rules::LoadedDocument& loaded, bool used[256]) {
     if (loaded.removed)
         return;
     const tdf::Block* root = loaded.document.root();
@@ -808,41 +815,41 @@ void note_document_ids(lua_State* state, const rules::LoadedDocument& loaded, bo
         return;
     const uint32_t count = tdf::child_count(root);
     for (uint32_t index = 0; index < count; ++index)
-        visit_section(state, tdf::child_at(root, index), used);
+        visit_section(units, tdf::child_at(root, index), used);
 }
 
 /// Every id a live weapon section uses, in the document set and in store files
 /// the set does not already hold. An empty or non-numeric id uses 0. An id
-/// outside 0..255 uses none. Each section is charged before it is read.
-void collect_used_ids(lua_State* state, Collections& self, bool used[256]) {
+/// outside 0..255 uses none. Each section is billed before it is read.
+void collect_used_ids(uint64_t& units, Collections& self, bool used[256]) {
     rules::DocumentSet& documents = CloneAccess::documents(self);
     const std::string folder = folder_of(self, defs::DataDirectory::weapons);
     const std::vector<std::size_t> docs = documents.documents_in(folder, "tdf", false);
     for (const std::size_t doc_index : docs)
-        note_document_ids(state, documents.at(doc_index), used);
+        note_document_ids(units, documents.at(doc_index), used);
     oa::AssetStore* store = CloneAccess::store(self);
     if (store == nullptr)
         return;
     const std::vector<std::string> names =
         store->list_effective_in_mount_order(folder, ".tdf", true);
-    charge_elements(state, static_cast<uint64_t>(names.size()));
+    bill_elements(units, static_cast<uint64_t>(names.size()));
     for (const std::string& file_name : names) {
         if (documents.find(file_name) != nullptr)
             continue;
-        charge_elements(state, 1);
+        bill_elements(units, 1);
         const std::optional<std::vector<uint8_t>> bytes = store->load_file_contents(file_name);
         if (!bytes.has_value() || bytes->empty())
             continue;
         if (bytes->size() > static_cast<std::size_t>(tdf::max_input_bytes))
             continue;
-        charge_bytes(state, bytes->size());
+        bill_bytes(units, bytes->size());
         tdf::OwnedDocument parsed;
         const std::string_view text(reinterpret_cast<const char*>(bytes->data()), bytes->size());
         if (!parsed.parse(text, nullptr))
             continue;
         const uint32_t count = tdf::child_count(parsed.root());
         for (uint32_t index = 0; index < count; ++index)
-            visit_section(state, tdf::child_at(parsed.root(), index), used);
+            visit_section(units, tdf::child_at(parsed.root(), index), used);
     }
 }
 
@@ -967,7 +974,9 @@ bool set_text(
 
 } // namespace
 
-int clone_collection(lua_State* state, Collections& collections, bool weapons, std::string& error) {
+int clone_collection(
+    lua_State* state, Collections& collections, bool weapons, std::string& error, uint64_t& units
+) {
     StackTop stack;
     stack.state = state;
     stack.top = lua_gettop(state);
@@ -988,7 +997,7 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
         return -1;
 
     CloneHit found;
-    if (!clone_find(state, collections, weapons, source, found)) {
+    if (!clone_find(collections, weapons, source, found, units)) {
         error = request_error(
             weapons,
             source,
@@ -998,7 +1007,7 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
         return -1;
     }
     CloneHit existing;
-    if (clone_find(state, collections, weapons, name, existing)) {
+    if (clone_find(collections, weapons, name, existing, units)) {
         error = request_error(weapons, source, name, "the new name already exists");
         return -1;
     }
@@ -1018,7 +1027,7 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
     int weapon_id = 0;
     if (weapons) {
         bool used[256] = {};
-        collect_used_ids(state, collections, used);
+        collect_used_ids(units, collections, used);
         weapon_id = lowest_free_id(used);
         if (weapon_id == 0) {
             error = no_free_id(source, name);
@@ -1039,7 +1048,7 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
     }
 
     std::vector<PendingCopy> pending;
-    if (!weapons && !collect_unit_copies(state, collections, source, name, pending, error))
+    if (!weapons && !collect_unit_copies(units, collections, source, name, pending, error))
         return -1;
 
     rules::DocumentSet& documents = CloneAccess::documents(collections);
@@ -1058,7 +1067,7 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
         body.append(name);
         body.append("]\n{\n}\n");
     }
-    charge_bytes(state, body.size());
+    bill_bytes(units, body.size());
     std::string add_error;
     if (!documents.add(path, body, &add_error)) {
         error = request_error(
@@ -1129,7 +1138,7 @@ int clone_collection(lua_State* state, Collections& collections, bool weapons, s
 
     if (const std::optional<std::string> final_text = tdf::write_text(loaded->document.get())) {
         if (final_text->size() > body.size())
-            charge_bytes(state, final_text->size() - body.size());
+            bill_bytes(units, final_text->size() - body.size());
     }
     publish(collections, weapons, name, source, weapon_id, path, std::move(pending));
     return 0;
