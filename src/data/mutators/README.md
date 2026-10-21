@@ -12,8 +12,8 @@ sentence chosen from the rule, which is not this module's to write.
 
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
-`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`
-and `oa/data/mutators/verdicts.hpp`.
+`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/rules_lua.hpp` and `oa/data/mutators/verdicts.hpp`.
 
 - `check_mutable_path` judges one file path.
 - `check_mutable_mask` judges one mask. The pattern's shape is
@@ -298,6 +298,86 @@ mutator has made too many notes".
 
 `data-mutators-collections` builds a small Ridge document set and runs
 the fixtures in `tests/collections`.
+
+## Rules in Lua
+
+`install_rule_forms` publishes the rule forms in a sandbox, and
+`read_plan_rules` reads a plan's rules list into the records the mutation
+pass applies. A list is a sequence of finished blocks and `sm` paths.
+Consecutive blocks become one source, named with the entry the caller
+gives. Each `sm` path is its own source, named with that path after `\`
+is read as `/`. The bytes come only from the reader the caller passes.
+A path that is absolute, has a drive, or has a `..` segment is outside
+the package, and the reader is not called. A file that cannot be read,
+or that the rule parser reports an error in, refuses the plan. The
+message names the path, and a parse error names the line as well.
+Warnings stay on the result and the source is still kept.
+
+Needs are the same forms the collections use (`need_from_lua`). Changes
+are the forms a rule file writes. `where` and `:change` check their
+table when they are called and keep their own copy of it, so a loop that
+reuses one table builds a different block each time, and changing the
+table later changes no block already built. Field names in one block are
+stored in the order of those names after ASCII lower-casing, with the
+raw bytes breaking a tie, so the records do not follow Lua's iteration
+order. Two changes to one field are two blocks, because one table cannot
+hold the same key twice. A block's line is the line the host reports for
+the `where`, `all` or `named` call, or for `on` when `on` is what starts
+the block. Calling `on` on a block that already has a selector keeps
+that line and only replaces the folder and extension. A later `where`,
+`all` or `named` on a block that already has a selector is refused, and
+the message names the line of that call. An unfinished block refuses the
+plan, and the message names the call that started it and that call's
+line.
+
+The blocks of every source together stay within the rule file's block
+limit, and the plan holds at most `max_plan_sources` sources. Passing
+either limit refuses the plan. A path is read and parsed once, however
+many times the list names it. The statement and text limits are the
+rule file's limits. `empty` assigns empty text, the record a rule file
+writes with `field=;`. `""`, `set("")` and `remove()` remove the field.
+
+`on` takes a folder and an extension together. It stores both in lower
+case, turns `\` into `/`, trims spaces, and strips one leading `.` from
+the extension. `on` by itself selects every record of that target. The
+default target, when a block never calls `on`, is the units folder with
+the `fbi` extension. `:change` finishes a block, and a second `:change`
+is an error. An unfinished block in the list refuses the plan.
+
+| Lua | Rule file |
+|---|---|
+| `where { field = n }` | `field=n,n` in `[Needs]` |
+| `where { field = true }` | `field=1,1` |
+| `where { field = false }` | `field=!1,1` |
+| `where { field = "text" }` | `field="text"` |
+| `where { field = range(lo, hi) }` | `field=lo,hi` |
+| `where { field = is("text") }` | `field="text"` |
+| `where { field = has("text") }` | `field="text"*` |
+| `where { field = absent() }` | `field=!""*` |
+| `where { field = not_(...) }` | the same need with a leading `!` |
+| `where { ... }:change { ... }` | `[*Group*]` with `[Needs]` and `[Changes]` |
+| `all():change { ... }` | `[*All*]` |
+| `named("NAME"):change { ... }` | `[NAME]` |
+| `on(folder, extension):change { ... }` | `folder=` and `extension=`, then `[*All*]` |
+| `on(folder, extension):all():change { ... }` | the same folder and extension, then `[*All*]` |
+| `on(folder, extension):named("NAME"):change { ... }` | the same folder and extension, then `[NAME]` |
+| `on(folder, extension):where { ... }:change { ... }` | the same folder and extension, then `[*Group*]` |
+| `change { field = n }` or `set(n)` | `field=n` |
+| `change { field = "text" }` or `set("text")` | `field="text"` |
+| `change { field = "" }` or `set("")` or `remove()` | `field=""` |
+| `change { field = empty }` | `field=;` |
+| `change { field = true }` | `field=1` |
+| `change { field = false }` | `field=0` |
+| `change { field = scale(k) }` | `field=*k` |
+| `change { field = scale(k, lo, hi) }` | `field=*k(lo,hi)` |
+| `change { field = lock(n) }` | `field=^n` |
+| `change { field = append("text") }` | `field="text"+` |
+| `change { ["<AllDepth2>"] = scale(k) }` | `<AllDepth2>=*k`, in any ASCII case |
+| `sm "path"` | that rule file, as its own source |
+
+`data-mutators-rules-lua` checks each Lua fixture against the rule file
+beside it, both as records and as the writes those records make on one
+Ridge document set.
 
 ## Verdicts
 

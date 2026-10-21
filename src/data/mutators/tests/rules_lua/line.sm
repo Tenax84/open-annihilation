@@ -1,0 +1,18 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+[*All*]
+{
+marker=1;
+}
+[*Group*]
+{
+[Needs]
+{
+builder=1,1;
+}
+[Changes]
+{
+workertime=4;
+}
+}

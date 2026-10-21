@@ -3,15 +3,19 @@
 
 // The combination algebra: stacked factors, meta values, clamps, text,
 // needs on fields a record leaves out, and the folders a target names.
-// Expected numbers are written out; this file does not compute them.
+// Expected numbers are written out. The stacked-factor order check is the
+// exception: it multiplies the parsed factors in the same bit order as the pass.
 
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/mutation_rules/apply.hpp"
 #include "oa/formats/soft_mutator.hpp"
 #include "oa/formats/tdf.hpp"
 #include "oa/formats/tdf/edit.hpp"
+#include "oa/formats/tdf/number.hpp"
 #include "oa/test/check.hpp"
 
+#include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -403,6 +407,168 @@ void stacking_factors() {
     };
     run(false);
     run(true);
+}
+
+/// One scale as the pass orders it: exact bits, then the rule text.
+struct OrderedFactor {
+    double value{};
+    uint64_t bits{};
+    std::string rule_text;
+};
+
+/// The tie text `apply` stores for one scale.
+///
+/// @param source the rule source name
+/// @param line the line of the scale
+/// @return source, a colon, and the line
+std::string factor_tie(std::string_view source, uint32_t line) {
+    std::string text(source);
+    text.push_back(':');
+    text += std::to_string(line);
+    return text;
+}
+
+/// A group block whose one change scales WorkerTime, for a builder.
+///
+/// @param factor the scale, decimal digits only (no exponent mark)
+/// @return the rule file
+std::string worker_scale(std::string_view factor) {
+    std::string text = "[*Group*]\n{\n[Needs]\n{\nBuilder=1,1;\n}\n[Changes]\n{\nWorkerTime=*";
+    text += factor;
+    text += ";\n}\n}\n";
+    return text;
+}
+
+/// Orders factors the way the pass multiplies them.
+///
+/// @param left a factor
+/// @param right another factor
+/// @return true when `left` multiplies first
+bool factor_first(const OrderedFactor& left, const OrderedFactor& right) {
+    if (left.bits != right.bits)
+        return left.bits < right.bits;
+    return left.rule_text < right.rule_text;
+}
+
+/// The TDF spelling of a field's factors multiplied in bit order from 1.
+///
+/// @param factors scales, one per mutator, with the tie text the pass uses
+/// @return the spelling, or an empty string when it cannot be written
+std::string spelled_product(std::vector<OrderedFactor> factors) {
+    std::stable_sort(factors.begin(), factors.end(), factor_first);
+    double product = 1;
+    for (const OrderedFactor& factor : factors)
+        product *= factor.value;
+    const std::optional<std::string> spelled = tdf::format_number(product);
+    if (!spelled.has_value())
+        return {};
+    return *spelled;
+}
+
+/// Twenty-four factors in several list orders, and three scales in one mutator.
+///
+/// The stacked product is not the same double in every list order. Every order
+/// must spell the bit-sorted product. One mutator's three scales stay in file
+/// order: sorting those three by their bits spells a different number.
+void factor_product_order() {
+    constexpr const char* k_factors[] = {
+        "0.13",  "83.7",  "0.152", "91.1",  "0.174", "98.5",  "0.196", "105.9",
+        "0.218", "113.3", "0.24",  "120.7", "0.262", "128.1", "0.284", "135.5",
+        "0.306", "142.9", "0.328", "150.3", "0.35",  "157.7", "0.372", "165.1",
+    };
+    constexpr int k_count = 24;
+    constexpr int k_orders[][k_count] = {
+        {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23},
+        {23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
+        {7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6},
+        {12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
+        {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22},
+        {22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 0, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1},
+    };
+    constexpr std::string_view k_source = "rules/legacy.sm";
+    std::vector<OrderedFactor> canonical;
+    canonical.reserve(k_count);
+    for (const char* factor : k_factors) {
+        const std::string text = worker_scale(factor);
+        const sm::ParseResult parsed = parse_sm(text);
+        OA_CHECK(!parsed.has_errors());
+        OA_CHECK(parsed.rules.blocks.size() == 1);
+        OA_CHECK(parsed.rules.blocks[0].changes.size() == 1);
+        if (parsed.has_errors() || parsed.rules.blocks.size() != 1 ||
+            parsed.rules.blocks[0].changes.empty())
+            return;
+        const sm::Change& change = parsed.rules.blocks[0].changes[0];
+        OrderedFactor term;
+        term.value = change.value;
+        term.bits = std::bit_cast<uint64_t>(change.value);
+        term.rule_text = factor_tie(k_source, change.line);
+        canonical.push_back(std::move(term));
+    }
+    const std::string want = spelled_product(canonical);
+    OA_CHECK(!want.empty());
+    std::string first_bytes;
+    for (const auto& order : k_orders) {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs,
+            "units/RIDGEFAB.fbi",
+            "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nBuilder=1;\nWorkerTime=1;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        for (int place = 0; place < k_count; ++place) {
+            const int factor_index = order[place];
+            std::string name = "pile-";
+            if (factor_index < 10)
+                name.push_back('0');
+            name += std::to_string(factor_index);
+            list.push_back(rules_of(std::move(name), worker_scale(k_factors[factor_index])));
+        }
+        const rules::ApplyResult result = rules::apply_rules(list, docs, {});
+        expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", want);
+        const rules::FieldWrite* write = find_write(result, "units/RIDGEFAB.fbi", "", "WorkerTime");
+        OA_CHECK(write != nullptr && write->new_text.has_value());
+        if (write == nullptr || !write->new_text.has_value())
+            return;
+        if (first_bytes.empty())
+            first_bytes = *write->new_text;
+        OA_CHECK(*write->new_text == first_bytes);
+        OA_CHECK(*write->new_text == want);
+    }
+    {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs,
+            "units/RIDGEFAB.fbi",
+            "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nBuilder=1;\nWorkerTime=1;\n}\n"
+        ));
+        const std::string text = "[*Group*]\n{\n[Needs]\n{\nBuilder=1,1;\n}\n[Changes]\n{\n"
+                                 "WorkerTime=*0.000000000001;\nWorkerTime=*1000000000000;\n"
+                                 "WorkerTime=*100000000000;\n}\n}\n";
+        const sm::ParseResult parsed = parse_sm(text);
+        OA_CHECK(!parsed.has_errors());
+        OA_CHECK(parsed.rules.blocks.size() == 1);
+        if (parsed.has_errors() || parsed.rules.blocks.size() != 1)
+            return;
+        double file_order = 1;
+        std::vector<OrderedFactor> by_bits;
+        for (const sm::Change& change : parsed.rules.blocks[0].changes) {
+            file_order *= change.value;
+            OrderedFactor term;
+            term.value = change.value;
+            term.bits = std::bit_cast<uint64_t>(change.value);
+            term.rule_text = factor_tie(k_source, change.line);
+            by_bits.push_back(std::move(term));
+        }
+        const std::optional<std::string> file_spelled = tdf::format_number(file_order);
+        const std::string bit_spelled = spelled_product(by_bits);
+        OA_CHECK(file_spelled.has_value());
+        OA_CHECK(file_spelled.has_value() && *file_spelled != bit_spelled);
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of("wide-steps", text));
+        static_cast<void>(rules::apply_rules(list, docs, {}));
+        if (file_spelled.has_value())
+            expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", *file_spelled);
+    }
 }
 
 void expect_bounty(rules::DocumentSet& docs, const rules::ApplyResult& result, bool with_swift) {
@@ -1157,6 +1323,7 @@ int main() {
     document_set();
     targets();
     stacking_factors();
+    factor_product_order();
     command_bounty();
     widened_clamp();
     text_rules();
