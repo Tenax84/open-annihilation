@@ -272,12 +272,7 @@ std::string default_options_text(const Picker& picker, std::string_view id) {
     const Mutator* mutator = detail::find_mutator(picker, id);
     if (mutator == nullptr)
         return {};
-    Chosen chosen;
-    chosen.id = mutator->id;
-    for (const OptionSpec& spec : mutator->options)
-        chosen.options.emplace_back(spec.id, spec.fallback);
-    chosen.clash = detail::default_clash(*mutator, picker.inputs);
-    return option_lines(picker, *mutator, chosen);
+    return option_lines(picker, *mutator, detail::with_defaults(picker, *mutator));
 }
 
 std::vector<std::string> tags_shown(const Picker& picker) {
