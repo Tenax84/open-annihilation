@@ -308,13 +308,26 @@ collection and on a set. `each` and `pairs` on a collection skip a record
 removed since that walk began. A set keeps the records `where` selected,
 so a later edit does not add a record to it, and it still yields a member
 removed after `where`. Using that member raises. Looking a record up by
-name uses an index. A removal builds it again; writing `unitname` moves
-only that unit's entry. Each entry carries its section's handle slot, so
-a walk or a lookup costs the same however many records were handed out
-before it.
+name uses an index built once for each document. The build walks that
+document's sections once and records each lower-cased name in a map, so
+it stays linear however many sections share a name. A section added later
+is indexed from where the last build stopped, and a removal drops that
+section and shifts the later ones down. It does not build the document
+again. Writing `unitname` moves only that unit's entry. A field is
+resolved through the section index stored on the handle, not by scanning
+the document. Each entry carries its section's handle slot, so a walk or
+a lookup costs the same however many records were handed out before it.
 `keys()` lists the spellings that are present, ordered with `name_less`.
 Nothing in this walk follows Lua
 table order, hash order or pointer order.
+
+A walk of a script table, of records or of keys, a scan of a name or a
+path, building a document's record index, and the field text a read, a
+write or a `where` comparison touches, count against the phase's
+instruction allowance through the script host's `charge_work`. A
+key-collecting walk costs 4096 units. Each section indexed costs one
+unit, and a byte length costs one unit per 32 bytes. A call that stays
+inside the allowance returns the same records and raises the same errors.
 
 `writes()` is every successful field write, in the order it happened:
 the mutator, the path, the record, the block (`""` or `DAMAGE`), the key
@@ -331,6 +344,9 @@ mutator has made too many notes".
 
 `data-mutators-collections` builds a small Ridge document set and runs
 the fixtures in `tests/collections`, including the `fixed_` scripts.
+`data-mutators-charge` checks that a loop of collection walks stops on a
+small instruction allowance, and that one `where` and one `pairs` over two
+Ridge weapons stays inside a bound and spends the same count on two runs.
 
 ## Loadouts
 
@@ -440,7 +456,15 @@ table later changes no block already built. Field names in one block are
 stored in the order of those names after ASCII lower-casing, with the
 raw bytes breaking a tie, so the records do not follow Lua's iteration
 order. Two changes to one field are two blocks, because one table cannot
-hold the same key twice. A block's line is the line the host reports for
+hold the same key twice. Two keys that trim to the same field, such as
+`a` and ` a`, are refused, and the message names both spellings. A
+`where` or `:change` table costs 64 units plus one unit per entry and one
+unit per 32 bytes of each key. Past the entry limit only the entry count
+is charged, so the count does not depend on which key is visited first.
+The byte scans of names and paths count the same way, through the script
+host's `charge_work`. A call that stays inside the allowance builds the
+same blocks and raises the same errors. A block's
+line is the line the host reports for
 the `where`, `all` or `named` call, or for `on` when `on` is what starts
 the block. Calling `on` on a block that already has a selector keeps
 that line and only replaces the folder and extension. A later `where`,
@@ -497,6 +521,10 @@ is an error. An unfinished block in the list refuses the plan.
 `data-mutators-rules-lua` checks each Lua fixture against the rule file
 beside it, both as records and as the writes those records make on one
 Ridge document set. `fixed_set` and `fixed_scale` pass fixed values.
+`data-mutators-charge` checks that repeating `where` on a 4,000-key table
+stops on a small instruction allowance, that a small plan stays inside a
+bound and spends the same count on two runs, and that `where` and
+`:change` refuse two keys which trim to one field.
 
 ## Verdicts
 

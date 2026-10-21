@@ -27,6 +27,12 @@ if(BUILD_TESTING)
   target_link_libraries(oa-data-mutators-allow-list-test PRIVATE oa-data-mutators oa-test-support)
   add_test(NAME data-mutators-allow-list COMMAND oa-data-mutators-allow-list-test)
 
+  add_executable(oa-data-mutators-charge-test tests/charge_test.cpp)
+  target_link_libraries(
+    oa-data-mutators-charge-test PRIVATE oa-data-mutators oa-data-script-host oa-test-support
+  )
+  add_test(NAME data-mutators-charge COMMAND oa-data-mutators-charge-test)
+
   add_executable(oa-data-mutators-collections-test tests/collections_test.cpp)
   target_link_libraries(
     oa-data-mutators-collections-test PRIVATE oa-data-mutators oa-data-script-host oa-test-support
