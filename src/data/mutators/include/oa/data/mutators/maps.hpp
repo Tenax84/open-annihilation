@@ -116,9 +116,11 @@ void install_map_match_forms(lua_State* state);
 /// instruction allowance, at the collections' rates: one field access, the
 /// key's bytes and the value's, each schema a `:set`, `:scale` or list item
 /// writes, and each element a walk or a `where` visits. A refused write is
-/// an error the script can catch. One turn may journal at most
-/// `mutator_write_limit` writes; a further write fails the mutator, even
-/// when the script catches that error. No exception leaves the call.
+/// an error the script can catch. One mutator may journal at most
+/// `mutator_write_limit` writes, counted with the writes its other hooks
+/// made; a further write fails the mutator, even when the script catches
+/// that error. The collections' turn must already name this mutator, so
+/// the tally is the one those hooks used. No exception leaves the call.
 ///
 /// @param sandbox the mutator's sandbox, still holding `ref`
 /// @param function_entry true when the entry is a function

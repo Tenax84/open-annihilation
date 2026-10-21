@@ -74,7 +74,8 @@ class Menus {
     /// that keeps a section past the fifth unread or keeps another unit from
     /// being marked downloadable, and greys the removed unit's buttons on
     /// every builder's authored pages. The writes are journaled to the
-    /// mutator.
+    /// mutator. A script's writes are refused from here until the next
+    /// begin, even through a menus object it kept from this turn.
     ///
     /// @param[out] error the reason, when the call returns false
     /// @return false when a menu could not be written or the journal is full
