@@ -28,6 +28,10 @@ namespace {
 
 // The address sanitizer makes every call several times slower, so its builds
 // get the suite's timeout scale on the time bounds.
+//
+// A loop the budget stops spends at most `budget_stop_seconds` of processor
+// time. Before the libraries were charged these loops ran for hours; a slow
+// Windows machine needs about 7 seconds for the heaviest now.
 #if defined(__SANITIZE_ADDRESS__)
 constexpr int time_scale = 6;
 #elif defined(__has_feature)
@@ -39,6 +43,8 @@ constexpr int time_scale = 1;
 #else
 constexpr int time_scale = 1;
 #endif
+
+constexpr double budget_stop_seconds = 20.0;
 
 struct Case {
     std::string name;
@@ -108,6 +114,10 @@ open_with(Package& package, host::ScriptError& error, host::Profile profile) {
     host::OpenOptions options;
     options.package_id = "sample";
     options.profile = profile;
+    // These cases are about the instruction budget; the real-time limit has
+    // its own test, and a busy machine must not turn a budget stop into a
+    // time stop here.
+    options.time_limit = std::chrono::minutes(10);
     options.sources.context = &package;
     options.sources.read = read_package;
     auto sandbox = host::Sandbox::open(options, error);
@@ -477,7 +487,7 @@ void expect_budget(const char* source) {
     OA_CHECK(error.kind == host::ErrorKind::instruction_budget);
     OA_CHECK(message_has(error, "50000000"));
     OA_CHECK(sandbox->instructions_used() >= host::default_instruction_budget);
-    OA_CHECK(processor_seconds < 5.0 * time_scale);
+    OA_CHECK(processor_seconds < budget_stop_seconds * time_scale);
 }
 
 void expect_range(const char* source, const char* function, const char* count) {
@@ -821,6 +831,41 @@ void unit_workloads_stay_cheap() {
     OA_CHECK(sorted < host::default_instruction_budget / 100);
 }
 
+// setmetatable charges 64 units for making the copy and one unit per field
+// it copies. Both phases run fewer instructions than one count step, so the
+// difference is the second call's charge alone. A class of 21 fields set on
+// 5,000 values stays a small part of the allowance.
+void setmetatable_charge_stays_small() {
+    const char* once = "local mt = {__index = {}, a = 1, b = 2}\n"
+                       "setmetatable({}, mt)\n";
+    const char* twice = "local mt = {__index = {}, a = 1, b = 2}\n"
+                        "setmetatable({}, mt)\n"
+                        "setmetatable({}, mt)\n";
+    const uint64_t one = workload_charge(once);
+    const uint64_t two = workload_charge(twice);
+    OA_CHECK(one == 64 + 3);
+    OA_CHECK(two - one == 64 + 3);
+
+    const char* instances = "local Class = {}\n"
+                            "Class.__index = Class\n"
+                            "for m = 1, 20 do\n"
+                            "  Class[\"method\" .. m] = function(self) return self.id + m end\n"
+                            "end\n"
+                            "local made = {}\n"
+                            "for i = 1, 5000 do\n"
+                            "  made[i] = setmetatable({id = i}, Class)\n"
+                            "end\n"
+                            "return made[5000]:method20()\n";
+    const uint64_t many = workload_charge(instances);
+    std::printf(
+        "setmetatable: %llu units for one call, %llu for 5000 values of a 21-field class\n",
+        static_cast<unsigned long long>(one),
+        static_cast<unsigned long long>(many)
+    );
+    OA_CHECK(many >= 5000 * (64 + 21));
+    OA_CHECK(many < host::default_instruction_budget / 50);
+}
+
 void utf8_codes_is_one_function() {
     Package package;
     host::ScriptError error;
@@ -922,6 +967,7 @@ int main() {
     copied_calls_stop();
     short_strings_cost_the_same();
     unit_workloads_stay_cheap();
+    setmetatable_charge_stays_small();
     utf8_codes_is_one_function();
     pack_family_is_absent();
     a_mutator_rewrites_tables();

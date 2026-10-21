@@ -315,23 +315,6 @@ bool divides_exactly(std::string span, const std::string& step) {
     return remainder == "0";
 }
 
-/// Tells whether an option id is a Lua name of 1 to 32 bytes.
-bool option_id_text(std::string_view text) noexcept {
-    constexpr std::size_t most_option_id_bytes = 32;
-    if (text.empty() || text.size() > most_option_id_bytes)
-        return false;
-    if (text.front() < 'a' || text.front() > 'z')
-        return false;
-    for (std::size_t slot = 1; slot < text.size(); ++slot) {
-        const char character = text[slot];
-        const bool word = (character >= 'a' && character <= 'z') ||
-                          (character >= '0' && character <= '9') || character == '_';
-        if (!word)
-            return false;
-    }
-    return true;
-}
-
 /// Reads a JSON number into a profile number and keeps its text.
 bool read_json_number(const json::Json& value, oamod::Number& number, std::string& written) {
     const std::string* text = value.number_text();
@@ -460,6 +443,22 @@ bool read_works_with(const json::Json& object, Package& package, std::string& re
     return true;
 }
 
+/// Reads `clashes`. Absent stays absent. Any other value refuses the entry.
+bool read_clashes(const json::Json& object, Package& package, std::string& reason) {
+    const json::Json* value = object.find("clashes");
+    if (value == nullptr)
+        return true;
+    const std::string* text = value->string();
+    const std::optional<oamut::ClashMode> mode =
+        text != nullptr ? oamut::parse_clash_mode(*text) : std::nullopt;
+    if (!mode) {
+        reason = "clashes must be add or replace";
+        return false;
+    }
+    package.clashes = *mode;
+    return true;
+}
+
 /// Reads `layers`. A known name is kept once. An unknown name is skipped.
 bool read_layers(const json::Json& object, Package& package, std::string& reason) {
     constexpr std::size_t most_layers = 16;
@@ -496,7 +495,6 @@ bool read_layers(const json::Json& object, Package& package, std::string& reason
 bool read_choice_value(
     const json::Json& element, std::string_view where, ChoiceValueText& out, std::string& reason
 ) {
-    constexpr std::size_t most_label_bytes = 64;
     if (const std::string* written = element.number_text()) {
         oamod::Number number;
         if (oamod::parse_number(*written, number) != oamod::NumberStatus::ok) {
@@ -508,12 +506,9 @@ bool read_choice_value(
         return true;
     }
     const std::string* text = element.string();
-    if (text == nullptr) {
-        reason = std::string(where) + " is not a number or a string of 1 to 64 bytes";
-        return false;
-    }
-    if (text->empty() || text->size() > most_label_bytes) {
-        reason = std::string(where) + " is not 1 to 64 bytes";
+    if (text == nullptr || !oamut::choice_value_text(*text)) {
+        reason = std::string(where) + " is not a number or 1 to " +
+                 std::to_string(oamut::most_choice_value_bytes) + " letters, digits, _, - or .";
         return false;
     }
     out.text = *text;
@@ -660,8 +655,11 @@ bool read_known_option(
     summary.type = type;
     const json::Json* id_value = object.find("id");
     const std::string* id_text = id_value == nullptr ? nullptr : id_value->string();
-    if (id_text == nullptr || !option_id_text(*id_text)) {
-        reason = std::string(where) + ".id is not an option id";
+    if (id_text == nullptr || !oamut::option_id(*id_text)) {
+        if (id_text != nullptr && oamut::lua_reserved_word(*id_text))
+            reason = std::string(where) + ".id is a word Lua reserves";
+        else
+            reason = std::string(where) + ".id is not an option id";
         return false;
     }
     summary.id = *id_text;
@@ -748,6 +746,8 @@ bool read_mutator_facts(const json::Json& object, Package& package, std::string&
         ))
         return false;
     if (!read_layers(object, package, reason))
+        return false;
+    if (!read_clashes(object, package, reason))
         return false;
     return read_options(object, package, reason);
 }

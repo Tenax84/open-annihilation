@@ -35,8 +35,12 @@ struct RecordingPlayer {
 struct RecordingSetup {
     uint16_t max_units{};
     std::string map_name;
-    std::string recorder_text;            ///< sector 3: the recording program's line
-    std::string date_text;                ///< sector 4
+    std::string recorder_text; ///< sector 3: the recording program's line
+    std::string date_text;     ///< sector 4
+    /// The loadout of a game played with mutators, as text. Empty writes no
+    /// sector. A text longer than one sector chunk holds (the chunk limit less
+    /// the length and type words) is left out, and the recording is still written.
+    std::string loadout_text;
     std::vector<RecordingPlayer> players; ///< the recording machine's player first; at most 10
     std::vector<std::array<uint8_t, formats::tad::layout::unit_check_record_bytes>> unit_checks;
     bool compress{}; ///< packets stored compressed (marker 4)

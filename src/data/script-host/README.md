@@ -2,9 +2,10 @@
 
 `oa-data-script-host` runs one package's Lua in a sandbox. A script can use a
 small set of libraries, `require` only the package's own `lua/` files, and
-stop at an instruction allowance or a memory cap. Nothing it does reaches a
-file, a clock, the environment or a network, and a failure comes back as a
-value that names the package, the phase, the chunk and the line.
+stop at an instruction allowance, a memory cap or a real-time limit. Nothing
+it does reaches a file, a clock, the environment or a network, and a failure
+comes back as a value that names the package, the phase, the chunk and the
+line.
 
 The interpreter underneath is Lua 5.4.9, built as the C library
 `oa-data-script-host-lua`. Code that pushes values into a state includes
@@ -25,7 +26,8 @@ The interpreter underneath is Lua 5.4.9, built as the C library
   caller's work on a later phase and calls no script.
 - `run_file` loads a package path as a text chunk and runs it as one phase.
   `call` runs the function `push` placed on the stack, then `read` sees how
-  many results came back. Each phase has a fresh instruction allowance.
+  many results came back. Each phase has a fresh instruction allowance and
+  a fresh real-time limit.
 - A false return fills a `ScriptError`. `describe` prints
   `<package>: <phase>: <chunk>:<line>: <message>`, and leaves the chunk and
   the line out when the chunk is unknown.
@@ -51,16 +53,50 @@ moves that state; the moved-from object has no state.
 - `open`, `run_file`, `call`, `run_host` and `compile_check` do their Lua work
   inside one protected call. A failure marks the sandbox failed, and every
   later phase returns that same error and runs nothing.
-- Once the instruction allowance is spent, or the sandbox has failed,
-  `xpcall` returns the error unchanged and does not run the handler the
-  script passed. A handler that loops, or one that catches errors with
-  `pcall`, cannot keep the phase alive. An instruction error or a memory
-  error is reported even when the script's own `pcall` caught it, including
-  when an allocation spent the allowance.
+- Once the instruction allowance is spent, the real-time limit is past, or
+  the sandbox has failed, `xpcall` returns the error unchanged and does not
+  run the handler the script passed. A handler that loops, or one that
+  catches errors with `pcall`, cannot keep the phase alive. An instruction
+  error, a real-time error or a memory error is reported even when the
+  script's own `pcall` caught it, including when an allocation spent the
+  allowance.
 - No C++ object with a destructor is alive across a Lua raise. `install`,
   `push`, `read` and the `run_host` work may raise and must not throw.
 - The instruction allowance is per phase and is not a clock. The memory cap
   is the Lua allocation only. Passing either one sticks for that phase.
+- Each phase also stops when it has run longer than its real-time limit. The
+  default is `default_time_limit`, 10 seconds. `OpenOptions::time_limit`
+  sets another for that sandbox. A steady clock is read when the phase
+  starts and checked in the instruction hook, every 100 instructions, and in
+  every library charge. The hook counts the allowance on every tenth of
+  those calls, so the count still steps by `budget_check_interval` at the
+  same instructions. There is no thread and no signal. Past the limit the
+  phase ends with `time_limit` and the message `<phase> ran for more than 10
+  seconds; its work is too large or never ends` (a limit that is not a whole
+  number of seconds names that length in milliseconds). A `pcall` or
+  `xpcall` cannot keep the phase going. The charges above are unchanged: the
+  limit sits beside them. A phase that finishes inside the limit has the
+  same results, the same charges and the same messages as it would with no
+  clock.
+- The check lands at the next hook or the next charge, so a phase can run
+  past the limit by the work of 100 instructions, or of one charge. Most
+  instructions take well under a microsecond; the slow ones are the steps
+  Limitations names. The slowest found is an assignment that makes a table
+  rebuild itself: 10 to 30 milliseconds of processor time for a table of a
+  million keys, about the largest whose rebuild fits the default memory cap.
+  A loop can do that every 4 instructions, 25 times between two reads of the
+  clock, so it can run a quarter to three quarters of a second of processor
+  time past the limit, and longer in real time on a machine busy with other
+  work. On the machine where this was measured (10 cores, load averages of
+  20 to 80), loops that rebuild such a table stopped 0.01 to 0.9 seconds
+  after a 2 second limit, and in three runs at the busiest 2.4 to 2.9
+  seconds after it. A loop of 64 KiB zero-filled comparisons stopped within
+  60 milliseconds of a 300 millisecond limit, and a tight loop within the
+  same millisecond. The limit only ever stops a script; it never changes a
+  result. A script near the limit can pass on a fast machine and fail on a
+  slow one. In multiplayer the loadout digest refuses a match whose machines
+  disagree, so the difference cannot desync a match. A dry run records
+  `time_limit` like any other failure.
 - `string.find`, `string.match`, `string.gmatch` and `string.gsub` count
   their work against that allowance. A step is one entry into the matcher,
   one character a `*`, `+` or `-` repetition tries, or one character a `%b`
@@ -105,7 +141,9 @@ moves that state; the moved-from object has no state.
   units per value it converts, and one unit per byte of each text it copies
   with `%s` or `%q`. `utf8.char` counts one unit per code point.
   `math.max` and `math.min` count a comparison, as `table.sort` does, for
-  each value after the first. `warn` counts 2 units per argument.
+  each value after the first. `fixed.min` and `fixed.max` do the same.
+  `fixed.parse`, and `fixed` of a text, count one unit per 32 bytes of that
+  text. `warn` counts 2 units per argument.
 - `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `string.format`,
   the charged `table` and `utf8` calls and `utf8.char` are copies of Lua
   5.4.9's with the count inside. The script calls them directly, so an
@@ -128,24 +166,29 @@ moves that state; the moved-from object has no state.
 - The sources in `third_party/lua` are unchanged. Every string hash uses one
   constant seed, `0x4F414C55` (the letters OALU), so two states walk the same
   table in the same order wherever they sit. `table.sort` does not draw a
-  pivot from the clock. Numbers are read and written with `.`, whatever the
-  machine's locale. Hexadecimal numbers are converted by Lua's own code on
-  every platform. The interpreter is one C translation unit, with the
-  engine's floating-point options: no fused multiply-add and no
-  value-changing optimisation, and Visual Studio's strict floating-point
-  mode.
-- A sandbox opens only when the C library's collation locale is `C` or
-  `POSIX`. String comparison and `table.sort` on strings then follow byte
-  order on every machine. Any other collation is refused at open, with the
-  locale's name in the error.
+  pivot from the clock. Numbers are read and written with `.`: a sandbox
+  opens only in the C numeric locale (below). Hexadecimal numbers are
+  converted by Lua's own code on every platform. The interpreter is one C
+  translation unit, with the engine's floating-point options: no fused
+  multiply-add and no value-changing optimisation, and Visual Studio's
+  strict floating-point mode.
+- A sandbox opens only when the C library's collation, numeric and
+  character-type locales (`LC_COLLATE`, `LC_NUMERIC` and `LC_CTYPE`) are each
+  `C` or `POSIX`. String comparison and `table.sort` on strings then follow
+  byte order, number text is read and written with `.`, and `upper`, `lower`
+  and the pattern classes such as `%a` treat a byte past 127 the same way on
+  every machine. Any other setting is refused at open, naming the category
+  and the locale: `the C library's numeric locale is de_DE.UTF-8; scripts
+  need C`.
 - `setmetatable` installs a copy of the metatable. The copy keeps every
   field the caller's table had at that moment, including `__index`, so a
   methods table that `__index` points at still sees fields added later.
   A later write to the caller's own table does not change the copy, and the
   copy refuses `__mode`. `rawset` of `__mode` is refused on every table.
   No script can make a weak table. `getmetatable` returns the copy, or the
-  `__metatable` field when the caller set one. Making the copy counts 4096
-  units for the walk, as `pairs` does, and one unit per field copied.
+  `__metatable` field when the caller set one. Making the copy counts 64
+  units, and one unit per field copied, so a class of 21 fields set on 5,000
+  values costs under 1% of the default allowance.
 
 ## Maths
 
@@ -170,6 +213,56 @@ basic operations are the IEEE results. The compatibility names `cosh`,
 which the caller sets from the game's seed, and `math.randomseed()` with no
 argument returns to that same seed. It does not read a clock or a place in
 memory. Zero is a defined sequence.
+
+## Fixed-point numbers
+
+`fixed` counts 65536ths, the scale of the engine's 16.16 `oa_fixed`, in a
+signed 64-bit integer. A whole number is that number times 65536. The whole
+part runs from -2147483648 to 2147483647, so a count runs from -2^47 to
+2^47 - 1. A result past either end raises and names the operation. Nothing
+wraps or stops at the end.
+
+`fixed(v)` takes a fixed value (that same value), an integer (times 65536),
+a float or a string. `fixed.parse(text)` reads text the way `get_fixed`
+does: `parse_double`, times 65536, truncated toward zero with
+`truncate_to_int64`, and it keeps the full count rather than the low 32
+bits. Text with no digits reads as 0, and characters after the number are
+ignored, so `fixed("abc")` is 0 and `fixed("1,5")` is 1. `fixed.raw(n)`
+builds a value from an integer count; a fractional count is refused.
+`fixed.min` and `fixed.max` take one or more values, each converted as
+`fixed(v)` is.
+
+`f:raw()` is the count. `f:text()` and `tostring(f)` are `format_number` of
+the count divided by 65536, so the decimal is exact. `f:tonumber()` is that
+quotient as a float. `f:floor()` shifts the count right by 16, toward minus
+infinity. `f:ceil()` moves the other way. `f:round()` takes a half away
+from zero. Those three return integers, not fixed values.
+
+`+`, `-`, `*` and `/` convert a number the way `fixed(v)` does and refuse a
+string. `*` builds the product and shifts it right by 16, so a negative
+product rounds toward minus infinity, as `scale_vector_fixed` does. `/` is
+the dividend times 65536, divided in 64 bits and truncated toward zero.
+Dividing by zero raises. Unary minus negates the count.
+
+Every operation is integer arithmetic. Three conversions touch a
+floating-point value, and each one is exact or is the loader's own. A float
+times 65536 is truncated toward zero. Text goes through `parse_double`, the
+function the loader calls. Text and `tonumber` divide the count by 65536,
+which is exact for every count in range. The same counts come out on every
+build, the 32-bit ones included.
+
+A rule file still computes on the field's text. `MaxVelocity=*1.5` on a
+field written `1.6` stores `2.4`, and the game reads that as 157286.
+`u:fixed("maxvelocity") * fixed("1.5")` multiplies the counts the game
+holds, 104857 and 98304, and the shift leaves 157285. Compute stats with
+`fixed`.
+
+`fixed(1) == 1` is false. Lua calls that comparison only when both values
+are userdata. `<` and `<=` accept a number on either side. `//` has no
+metamethod, so it raises Lua's own arithmetic error. Use `(a / b):floor()`.
+A fixed value is a poor table key: two equal values are two keys, and
+`pairs` refuses a userdata key. Use `f:raw()` as the key. `getmetatable`
+does not hand back the metatable.
 
 ## Iteration
 
@@ -247,12 +340,24 @@ use part of the allowance both pass. Keeping strings stops on the memory
 cap, including inside `pcall`. A required module that loops forever is
 reported at that module's chunk.
 
+`data-script-host-time-limit` gives a phase a short real-time limit and an
+instruction allowance it cannot spend. A tight loop, a loop of 64 KiB
+zero-filled comparisons, a loop of calls with 300,000 arguments, and the
+same tight loop inside `pcall` and inside `xpcall` with a looping handler
+each stop with `time_limit` within a second of the limit. A script that
+finishes inside the limit returns the same value and spends the same
+instruction count as it does under the default limit, and the next phase
+starts its limit again. The protected-metatable error from `setmetatable`
+matches Lua's own text, chunk and line included.
+
 `data-script-host-maths` checks the engine maths against
 `tests/maths_reference.py`, the exact powers of two and ten, and the math
 library's argument rules. `tests/random_reference.py` prints the generator's
 draws. Both scripts are run with `python3 -I` and print the tables the test
-holds. `data-script-host-iteration` checks `pairs`, the refusal of unordered
-keys, and the name helpers.
+holds. `data-script-host-fixed` checks every count against
+`tests/fixed_reference.py` the same way, through the C++ functions and
+through a sandbox. `data-script-host-iteration` checks `pairs`, the refusal
+of unordered keys, and the name helpers.
 
 `data-script-host-patterns` runs each pattern case through the sandbox and
 through Lua's own string functions and compares every returned value, its
@@ -283,7 +388,8 @@ memory with shorter strings is still a memory error.
 
 `data-script-host-text` checks the float spellings, `hidden` in place of
 where a value sits, the `string.format` refusals, the absent pack functions,
-C collation, and that no route makes a weak table.
+C collation, the refusal to open under another collation, numeric or
+character-type locale, and that no route makes a weak table.
 
 ## Limitations
 
@@ -302,8 +408,9 @@ hundreds of thousands of values passed through `...`, a chain of thousands
 of `__index` tables, arithmetic on a long string of spaces (`s + 0`), and a
 table that grows and shrinks its parts again and again. `next` on a table
 emptied after millions of entries does more work than its 4096 units pay
-for. A limit on a phase's real time is still to come for those. A `__gc`
-entry added to the installed metatable after `setmetatable` is not caught.
-`instructions_used` counts Lua instructions in steps of the check interval,
-so a short phase can report zero; pattern steps, string lengths, scans and
-table work are counted in the units above.
+for, and so does `setmetatable` with such a table as the metatable, for
+its 64 units. The real-time limit above is what stops a phase that hides its
+work in those steps. A `__gc` entry added to the installed metatable after
+`setmetatable` is not caught. `instructions_used` counts Lua instructions in
+steps of the check interval, so a short phase can report zero; pattern
+steps, string lengths, scans and table work are counted in the units above.

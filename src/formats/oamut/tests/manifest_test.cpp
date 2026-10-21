@@ -10,6 +10,7 @@
 #include "oa/formats/oamod.hpp"
 #include "oa/test/check.hpp"
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -31,6 +32,7 @@ namespace {
 namespace mut = oa::formats::oamut;
 
 using mut::ChoiceValue;
+using mut::ClashMode;
 using mut::Condition;
 using mut::Layer;
 using mut::Legacy;
@@ -360,7 +362,8 @@ bool same_manifest(const Manifest& first, const Manifest& second) {
         first.author.email != second.author.email || first.description != second.description ||
         first.homepage != second.homepage || first.icon != second.icon ||
         first.tags != second.tags || first.requires_engine != second.requires_engine ||
-        first.layers != second.layers || first.entry != second.entry)
+        first.layers != second.layers || first.clashes != second.clashes ||
+        first.entry != second.entry)
         return false;
     if (first.works_with.size() != second.works_with.size() ||
         first.requires_mutators.size() != second.requires_mutators.size() ||
@@ -662,6 +665,7 @@ options:
     OA_CHECK(manifest.requires_engine == ">= 0.8.5");
     OA_CHECK(manifest.requires_mutators.empty() && manifest.conflicts_with.empty());
     OA_CHECK(manifest.layers.size() == 1 && manifest.layers[0] == Layer::units);
+    OA_CHECK(!manifest.clashes.has_value());
     OA_CHECK(manifest.entry == mut::default_entry);
     OA_CHECK(manifest.options.size() == 1 && manifest.options[0].id == "factor");
     OA_CHECK(manifest.options[0].type == OptionType::choice);
@@ -691,6 +695,7 @@ requires:
   mutators: ["long-shadows >= 1"]
 conflicts-with: ["deep-water"]
 layers: ["files", "units", "weapons", "features", "sides", "tables", "menus", "maps", "hacks"]
+clashes: add
 )"} + sample_options() +
                              R"(strings:
   de:
@@ -724,6 +729,7 @@ legacy:
     OA_CHECK(packed.description == "Hands stay steady.\nThe second line stays in the description.");
     OA_CHECK(packed.layers.size() == 9);
     OA_CHECK(packed.layers[0] == Layer::files && packed.layers[8] == Layer::hacks);
+    OA_CHECK(packed.clashes == ClashMode::add);
     OA_CHECK(mut::layer_name(Layer::hacks) == std::string_view{"hacks"});
     OA_CHECK(mut::parse_layer("sounds") == std::nullopt);
     OA_CHECK(packed.works_with.size() == 2 && packed.works_with[1].id == "ta-3.1c");
@@ -752,6 +758,8 @@ legacy:
     OA_CHECK(read_ok(base_text(), plain));
     OA_CHECK(plain.legacy.size() == 1 && plain.legacy[0].files.size() == 1);
     OA_CHECK(round_trip(plain));
+    OA_CHECK(!plain.clashes.has_value());
+    OA_CHECK(mut::write_manifest(plain).find("clashes:") == std::string::npos);
 
     const std::string wide(64, 'a');
     Manifest wide_id;
@@ -761,6 +769,46 @@ legacy:
     Manifest wide_named;
     OA_CHECK(read_ok(edited("name: \"Steady Hands\"", "name: \"" + wide_name + "\""), wide_named));
     OA_CHECK(wide_named.name == wide_name);
+}
+
+/// Both clash modes, an absent key, and the values the key refuses.
+void test_clashes() {
+    const std::string layers = "layers: [\"units\", \"weapons\"]\n";
+    Manifest adding;
+    OA_CHECK(read_ok(edited(layers, "layers: [\"units\"]\nclashes: \"add\"\n"), adding));
+    OA_CHECK(adding.clashes == ClashMode::add);
+    OA_CHECK(mut::clash_mode_name(ClashMode::add) == std::string_view{"add"});
+    OA_CHECK(round_trip(adding));
+    OA_CHECK(mut::write_manifest(adding).find("clashes: \"add\"\n") != std::string::npos);
+
+    Manifest replacing;
+    OA_CHECK(read_ok(edited(layers, "layers: [\"weapons\"]\nclashes: \"replace\"\n"), replacing));
+    OA_CHECK(replacing.clashes == ClashMode::replace);
+    OA_CHECK(mut::clash_mode_name(ClashMode::replace) == std::string_view{"replace"});
+    OA_CHECK(mut::parse_clash_mode("replace") == ClashMode::replace);
+    OA_CHECK(mut::parse_clash_mode("Add") == std::nullopt);
+    OA_CHECK(round_trip(replacing));
+
+    expect_one(
+        edited(layers, "layers: [\"units\"]\nclashes: \"Add\"\n"),
+        "clashes",
+        "\"Add\"",
+        "clashes must be add or replace"
+    );
+    expect_one(
+        edited(layers, "layers: [\"units\"]\nclashes: merge\n"),
+        "clashes",
+        "merge",
+        "clashes must be add or replace"
+    );
+    expect_one(
+        edited(layers, "layers: [\"units\"]\nclashes: 1\n"),
+        "clashes",
+        "clashes: 1",
+        "clashes must be add or replace",
+        0,
+        9
+    );
 }
 
 /// One broken rule of the manifest, each on its own.
@@ -1329,7 +1377,70 @@ void test_refusals() {
         ),
         "options.factor.values[1]",
         "\"" + std::string(65, 's'),
-        "1 to 64"
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"a b\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"a b\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"a,b\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"a,b\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"a=b\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"a=b\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"a:b\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"a:b\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"é\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"é\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: [\"" +
+            std::string(33, 'q') + "\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"" + std::string(33, 'q'),
+        "1 to 32 letters, digits, _, - or ."
     );
     {
         std::string values = "[0";
@@ -1673,11 +1784,121 @@ void test_document_and_summary() {
 
 } // namespace
 
+/// Refuses each word Lua reserves, and keeps a name that only resembles one.
+void test_reserved_option_ids() {
+    constexpr std::array<std::string_view, 22> reserved{
+        "and",      "break",  "do",   "else", "elseif", "end",   "false", "for",
+        "function", "goto",   "if",   "in",   "local",  "nil",   "not",   "or",
+        "repeat",   "return", "then", "true", "until",  "while",
+    };
+    for (const std::string_view word : reserved) {
+        const std::string quoted = "\"" + std::string{word} + "\":";
+        const std::string yaml = with_options(
+            "options:\n  " + quoted +
+            "\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+        );
+        const std::string key = "options." + std::string{word};
+        const std::string marker = "\n  " + quoted;
+        expect_one(yaml, key, marker, "is a word Lua reserves", 0, 3);
+    }
+
+    expect_one(
+        with_options(
+            "options:\n  true:\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+        ),
+        "document",
+        "true:",
+        "mapping keys must be strings or integers"
+    );
+    expect_one(
+        with_options(
+            "options:\n  For:\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+        ),
+        "options.For",
+        "For",
+        "Lua name"
+    );
+
+    for (const char* name : {"format", "ends", "for_"}) {
+        Manifest manifest;
+        OA_CHECK(read_ok(
+            with_options(
+                "options:\n  " + std::string{name} +
+                ":\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+            ),
+            manifest
+        ));
+        OA_CHECK(manifest.options.size() == 1);
+        if (manifest.options.size() == 1)
+            OA_CHECK(manifest.options[0].id == name);
+    }
+}
+
+/// Reads string identifiers and number choices whose text stays within 32 bytes.
+void test_choice_values() {
+    OA_CHECK(mut::most_choice_value_bytes == 32);
+    OA_CHECK(mut::choice_value_text("low"));
+    OA_CHECK(mut::choice_value_text("x.1"));
+    OA_CHECK(mut::choice_value_text("A_b-2"));
+    OA_CHECK(mut::choice_value_text(std::string(32, 'n')));
+    OA_CHECK(!mut::choice_value_text("a b"));
+    OA_CHECK(!mut::choice_value_text(""));
+    OA_CHECK(!mut::choice_value_text(std::string(33, 'n')));
+
+    const std::string wide(32, 'n');
+    Manifest identifiers;
+    OA_CHECK(read_ok(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Slow, fast.\"\n    values: "
+            "[\"low\", \"x.1\", \"A_b-2\", \"" +
+            wide + "\"]\n    default: \"x.1\"\n"
+        ),
+        identifiers
+    ));
+    OA_CHECK(identifiers.options.size() == 1);
+    if (identifiers.options.size() == 1) {
+        const Option& option = identifiers.options[0];
+        OA_CHECK(option.label == "Slow, fast.");
+        OA_CHECK(option.values.size() == 4);
+        if (option.values.size() == 4) {
+            OA_CHECK(!option.values[0].number && option.values[0].text == "low");
+            OA_CHECK(!option.values[1].number && option.values[1].text == "x.1");
+            OA_CHECK(!option.values[2].number && option.values[2].text == "A_b-2");
+            OA_CHECK(!option.values[3].number && option.values[3].text == wide);
+            OA_CHECK(option.values[3].text.size() == mut::most_choice_value_bytes);
+        }
+        OA_CHECK(option.default_index == 1);
+    }
+
+    Manifest numbers;
+    OA_CHECK(read_ok(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[1e-300, 0.1234567890123]\n    default: 1e-300\n"
+        ),
+        numbers
+    ));
+    OA_CHECK(numbers.options.size() == 1);
+    if (numbers.options.size() == 1) {
+        const Option& option = numbers.options[0];
+        OA_CHECK(option.values.size() == 2);
+        if (option.values.size() == 2) {
+            OA_CHECK(option.values[0].number && option.values[0].text == "1e-300");
+            OA_CHECK(option.values[1].number && option.values[1].text == "0.1234567890123");
+            for (const ChoiceValue& value : option.values)
+                OA_CHECK(value.text.size() <= mut::most_choice_value_bytes);
+        }
+    }
+}
+
 int main() {
     test_versions();
     test_examples();
+    test_clashes();
     test_refusals();
     test_several();
     test_document_and_summary();
+    test_choice_values();
+    test_reserved_option_ids();
     return oa::test::check_exit_status();
 }

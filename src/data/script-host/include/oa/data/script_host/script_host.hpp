@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 // SPDX-License-Identifier: GPL-3.0-only
 
-// One Lua state per package, with a profile, a memory cap and a fresh
-// instruction allowance for every phase. Scripts see only the libraries this
-// host opens, and every error comes back as a value.
+// One Lua state per package, with a profile, a memory cap, a fresh
+// instruction allowance and a fresh real-time limit for every phase. Scripts
+// see only the libraries this host opens, and every error comes back as a value.
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -27,6 +28,15 @@ inline constexpr std::size_t default_memory_budget = std::size_t{64} << 20;
 
 /// Instructions between checks of the running allowance.
 inline constexpr int budget_check_interval = 1000;
+
+/// Real time one phase may run before that phase stops.
+///
+/// A steady clock is read when the phase starts. The count hook and the
+/// library charges compare it with this limit. The limit stops work the
+/// instruction count cannot see. It never changes a result that does come
+/// back, and a script near the limit can pass on one machine and fail on
+/// another.
+inline constexpr std::chrono::milliseconds default_time_limit{10000};
 
 /// Most bytes in one string. A script that would make a longer one stops.
 inline constexpr std::size_t string_length_limit = std::size_t{64} << 10;
@@ -65,7 +75,18 @@ enum class ErrorKind : uint8_t {
     module_missing,
     module_loop,
     /// A string would have passed `string_length_limit`.
-    string_length
+    string_length,
+    /// The phase ran longer than its real-time limit.
+    ///
+    /// The limit is `default_time_limit` unless `OpenOptions::time_limit`
+    /// names another. The hook and the library charges notice it at their
+    /// next check, so the phase can run a little past the limit. A script
+    /// near the limit can pass on one machine and fail on another. The
+    /// limit only stops the script: a result that comes back is unchanged.
+    /// In multiplayer the loadout digest refuses a match whose machines
+    /// disagree, so the two outcomes cannot run as one match. A dry run
+    /// records this failure like any other.
+    time_limit
 };
 
 /// A phase that stopped, naming the package and where in its source.
@@ -129,6 +150,9 @@ struct OpenOptions {
     /// no argument returns to. The caller passes the game's seed. Zero is a
     /// defined sequence, not an extra draw.
     uint64_t random_seed{};
+    /// Real time each phase of this sandbox may run. Each phase starts
+    /// again from the full value. The default is `default_time_limit`.
+    std::chrono::milliseconds time_limit{default_time_limit};
 };
 
 /// Pushes a call and reads it, both inside the protected phase.

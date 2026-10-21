@@ -18,6 +18,7 @@ namespace {
 using oa::data::content_bundles::ContentChoice;
 using oa::data::saves::ContentBlock;
 using oa::data::saves::ContentGap;
+using oa::data::saves::ContentMutator;
 using oa::data::saves::ContentRecord;
 using oa::data::saves::content_gap;
 using oa::data::saves::content_record_from;
@@ -143,6 +144,112 @@ void test_not_copied_and_command_line() {
     OA_CHECK(held.block == ContentBlock::command_line);
 }
 
+std::string hex_fill(char digit) {
+    return std::string(64, digit);
+}
+
+void test_mutators_round_trip() {
+    const std::string on[]{"core-contingency", "campaign"};
+    ContentRecord record = content_record_from("totala", on, "Ridge");
+    record.mutators = {
+        ContentMutator{hex_fill('a'), "ridge-pace", "1.0.0", "Ridge Pace"},
+        ContentMutator{hex_fill('b'), "steady-hands", "2", "Steady Hands"},
+        ContentMutator{hex_fill('c'), "low-metal", "0.3.1", "Low Metal"},
+    };
+    const std::string text = content_record_text(record);
+    OA_CHECK(text.find("\nmod: Ridge\nmutator: ") != std::string::npos);
+    const ContentRecord again = content_record_from_text(text);
+    OA_CHECK(again.present);
+    OA_CHECK(again.base_game == "totala");
+    OA_CHECK(again.mod == "Ridge");
+    OA_CHECK(again.expansions.size() == 2);
+    OA_CHECK(again.mutators.size() == 3);
+    OA_CHECK(again.mutators[0].sha256 == hex_fill('a') && again.mutators[0].id == "ridge-pace");
+    OA_CHECK(again.mutators[0].version == "1.0.0" && again.mutators[0].name == "Ridge Pace");
+    OA_CHECK(again.mutators[1].id == "steady-hands" && again.mutators[1].version == "2");
+    OA_CHECK(again.mutators[1].name == "Steady Hands");
+    OA_CHECK(again.mutators[2].id == "low-metal" && again.mutators[2].name == "Low Metal");
+    OA_CHECK(content_record_text(again) == text);
+}
+
+void test_note_without_mutators_is_unchanged() {
+    const std::string on[]{"core-contingency", "campaign"};
+    const ContentRecord record = content_record_from("totala", on, "Ridge");
+    const std::string text = content_record_text(record);
+    OA_CHECK(text == "base-game: totala\nexpansions: campaign,core-contingency\nmod: Ridge\n");
+    const ContentRecord again = content_record_from_text(text);
+    OA_CHECK(again.present);
+    OA_CHECK(again.mutators.empty());
+    OA_CHECK(again.mod == "Ridge");
+    OA_CHECK(content_record_text(again) == text);
+}
+
+void test_broken_mutator_lines_are_skipped() {
+    const std::string good = hex_fill('c');
+    const std::string kept = hex_fill('e');
+    std::string text = "base-game: totala\nexpansions: campaign\nmod: Ridge\n";
+    text += "mutator-version: orphan\n";
+    text += "mutator-name: Orphan\n";
+    text += "mutator: " + std::string(63, 'd') + " ridge-pace\n";
+    text += "mutator-version: lost-short\n";
+    text += "mutator: " + std::string(64, 'A') + " steady-hands\n";
+    text += "mutator-name: Lost Case\n";
+    text += "mutator: " + hex_fill('a') + " NotKebab\n";
+    text += "mutator-version: lost-id\n";
+    text += "mutator: " + hex_fill('a') + " a--b\n";
+    text += "mutator: " + hex_fill('a') + " -ab\n";
+    text += "mutator: " + hex_fill('a') + " ab-\n";
+    text += "mutator: " + hex_fill('b') + " ridge-pace extra\n";
+    text += "mutator-name: Lost Extra\n";
+    text += "mutator: " + good + " ridge-pace\n";
+    text += "mutator-version: 1.2\n";
+    text += "mutator-name: Ridge Pace\n";
+    text += "other: ignored\n";
+    text += "mutator: " + kept + " steady-hands\n";
+    text += "mutator-name: Steady Hands\n";
+    const ContentRecord record = content_record_from_text(text);
+    OA_CHECK(record.present);
+    OA_CHECK(record.base_game == "totala");
+    OA_CHECK(record.mod == "Ridge");
+    OA_CHECK(record.expansions.size() == 1 && record.expansions[0] == "campaign");
+    OA_CHECK(record.mutators.size() == 2);
+    OA_CHECK(record.mutators[0].sha256 == good && record.mutators[0].id == "ridge-pace");
+    OA_CHECK(record.mutators[0].version == "1.2" && record.mutators[0].name == "Ridge Pace");
+    OA_CHECK(record.mutators[1].sha256 == kept && record.mutators[1].id == "steady-hands");
+    OA_CHECK(record.mutators[1].version.empty() && record.mutators[1].name == "Steady Hands");
+}
+
+void test_thirty_three_mutators_keep_thirty_two() {
+    std::string text = "base-game: totala\nexpansions:\nmod:\n";
+    for (int index = 0; index < 33; ++index) {
+        std::string sha = hex_fill('a');
+        sha[62] = "0123456789abcdef"[index / 16];
+        sha[63] = "0123456789abcdef"[index % 16];
+        text += "mutator: " + sha + " pace-" + std::to_string(index) + "\n";
+        text += "mutator-version: " + std::to_string(index) + "\n";
+        text += "mutator-name: Pace " + std::to_string(index) + "\n";
+    }
+    const ContentRecord record = content_record_from_text(text);
+    OA_CHECK(record.present);
+    OA_CHECK(record.mutators.size() == 32);
+    OA_CHECK(record.mutators.front().id == "pace-0" && record.mutators.front().version == "0");
+    OA_CHECK(record.mutators.back().id == "pace-31" && record.mutators.back().name == "Pace 31");
+    bool saw_last = false;
+    for (const ContentMutator& mutator : record.mutators)
+        saw_last = saw_last || mutator.id == "pace-32";
+    OA_CHECK(!saw_last);
+}
+
+void test_line_break_refuses_the_note() {
+    const std::string on[]{"campaign"};
+    ContentRecord record = content_record_from("totala", on, "Ridge");
+    record.mutators = {ContentMutator{hex_fill('a'), "ridge-pace", "1", "Ridge\nPace"}};
+    OA_CHECK(content_record_text(record).empty());
+    record.mutators[0].name = "Ridge Pace";
+    record.mutators[0].version = "1\r2";
+    OA_CHECK(content_record_text(record).empty());
+}
+
 } // namespace
 
 int main() {
@@ -152,5 +259,10 @@ int main() {
     test_missing_expansion_turns_that_one_on();
     test_other_base_game();
     test_not_copied_and_command_line();
+    test_mutators_round_trip();
+    test_note_without_mutators_is_unchanged();
+    test_broken_mutator_lines_are_skipped();
+    test_thirty_three_mutators_keep_thirty_two();
+    test_line_break_refuses_the_note();
     return oa::test::check_exit_status();
 }

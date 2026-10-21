@@ -9,6 +9,7 @@
 
 #include "lua.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -56,6 +57,31 @@ inline constexpr uint64_t argument_unit = 2;
 /// runs for long.
 inline constexpr uint64_t scan_call_charge = 4096;
 
+/// Units for one copy `setmetatable` makes of a metatable, before one unit
+/// per field it copies.
+///
+/// Making and installing the copy takes about as long as a few dozen
+/// instructions. A metatable emptied after holding many fields makes the
+/// walk visit every slot it used to hold; the real-time limit, not this
+/// charge, stops a loop of those.
+inline constexpr uint64_t metatable_copy_charge = 64;
+
+/// Instructions between two reads of the clock in the count hook.
+///
+/// The hook runs this often, and counts the allowance only on every
+/// `budget_check_interval / clock_check_interval`-th call, so the count
+/// still steps by `budget_check_interval` at the same instructions. One
+/// interpreter step that rebuilds a large table can take tens of
+/// milliseconds, and checking the clock every 100 instructions keeps a loop
+/// of such steps from running far past the limit.
+inline constexpr int clock_check_interval = 100;
+
+static_assert(clock_check_interval > 1);
+static_assert(budget_check_interval % clock_check_interval == 0);
+
+/// Count hook calls that make one step of `budget_check_interval`.
+inline constexpr int clock_checks_per_budget_check = budget_check_interval / clock_check_interval;
+
 /// One Lua value, laid out as the interpreter's own value, plus its tag.
 ///
 /// The header that names that value is private to the interpreter, so the
@@ -101,6 +127,14 @@ struct Sandbox::Control {
     uint64_t instruction_allowance{default_instruction_budget};
     uint64_t instructions_used{};
     bool allowance_spent{};
+    /// Count hook calls since the allowance was last counted. Reset at each phase start.
+    int clock_checks{};
+    /// Real time this phase may run. Copied from `OpenOptions::time_limit`.
+    std::chrono::milliseconds time_limit{default_time_limit};
+    /// Steady time when this phase started. The count hook and `charge()` compare it.
+    std::chrono::steady_clock::time_point phase_started{};
+    /// Set once the phase has run past `time_limit`. Sticky until the next phase.
+    bool time_expired{};
     bool sandbox_failed{};
 
     ErrorKind pending_kind{ErrorKind::none};
@@ -108,6 +142,7 @@ struct Sandbox::Control {
     bool location_locked{};
     int32_t error_line{};
     char instruction_message[budget_message_bytes]{};
+    char time_message[budget_message_bytes]{};
     char memory_message[budget_message_bytes]{};
     char error_message[message_buffer_bytes]{};
     char error_chunk[chunk_buffer_bytes]{};
@@ -269,6 +304,11 @@ void install_format(lua_State* state);
 /// @param state the state being opened
 void open_math_library(lua_State* state);
 
+/// Opens the fixed-point library. May raise.
+///
+/// @param state the state being opened
+void open_fixed_library(lua_State* state);
+
 /// Installs `pairs` for number, string and boolean keys, in a fixed order.
 /// May raise.
 ///
@@ -290,10 +330,35 @@ void remember_load_error(HostDetail::Control* control, lua_State* state);
 ///
 /// A `pcall` can catch the raise. With the hook set to one instruction, the
 /// next check fires outside that `pcall` and the phase ends. The hook itself
-/// stays in the state file.
+/// stays in the state file. A phase past its real-time limit uses the same
+/// arming.
 ///
 /// @param state the sandbox state
 void rearm_count_hook(lua_State* state);
+
+/// Reports whether `control`'s phase has run past its real-time limit.
+///
+/// Reads a steady clock. The count hook and `charge()` are the only callers.
+///
+/// @param control the phase being checked
+/// @return true when the phase's elapsed time has reached its limit
+inline bool phase_past_time_limit(const HostDetail::Control* control) {
+    return std::chrono::steady_clock::now() - control->phase_started >= control->time_limit;
+}
+
+/// Marks the phase past its real-time limit and raises that error.
+///
+/// Arms the count hook at one instruction first, so a `pcall` cannot keep
+/// the phase alive. No object with a destructor may be alive across this call.
+///
+/// @param state the sandbox state
+/// @return does not return
+inline void raise_time_limit(lua_State* state) {
+    HostDetail::Control* control = control_from(state);
+    control->time_expired = true;
+    rearm_count_hook(state);
+    luaL_error(state, "%s", control->time_message);
+}
 
 /// How many instruction units `bytes` cost, one per `bytes_per_charge`, rounded up.
 ///
@@ -350,9 +415,10 @@ inline uint64_t comparison_charge(lua_State* state, int left, int right) {
 
 /// Adds `units` and raises, as the count hook does, when the allowance is spent.
 ///
-/// A string refusal raises the string message instead. Each raise arms the
-/// count hook at one instruction first, so a `pcall` cannot keep the phase
-/// alive. No object with a destructor may be alive across this call.
+/// A string refusal raises the string message instead. Past the phase's
+/// real-time limit it raises that message. Each raise arms the count hook at
+/// one instruction first, so a `pcall` cannot keep the phase alive. No object
+/// with a destructor may be alive across this call.
 ///
 /// @param state the sandbox state
 /// @param units instruction units to add
@@ -362,6 +428,9 @@ inline void charge(lua_State* state, uint64_t units) {
         rearm_count_hook(state);
         luaL_error(state, "%s", control->string_message);
     }
+    if (control->time_expired) {
+        raise_time_limit(state);
+    }
     if (control->allowance_spent) {
         rearm_count_hook(state);
         luaL_error(state, "%s", control->instruction_message);
@@ -370,6 +439,9 @@ inline void charge(lua_State* state, uint64_t units) {
     if (control->allowance_spent) {
         rearm_count_hook(state);
         luaL_error(state, "%s", control->instruction_message);
+    }
+    if (phase_past_time_limit(control)) {
+        raise_time_limit(state);
     }
 }
 

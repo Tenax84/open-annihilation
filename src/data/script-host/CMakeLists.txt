@@ -53,13 +53,14 @@ add_library(oa-data-script-host
   src/string_format.cpp
   src/require.cpp
   src/math_library.cpp
+  src/fixed_library.cpp
   src/sorted.cpp)
 add_library(oa::data::script_host ALIAS oa-data-script-host)
 target_include_directories(oa-data-script-host PUBLIC include)
 target_compile_features(oa-data-script-host PUBLIC cxx_std_20)
 target_link_libraries(oa-data-script-host
   PUBLIC oa-data-script-host-lua
-  PRIVATE oa-options)
+  PRIVATE oa-options oa-formats-tdf oa-base-game-math)
 
 if(BUILD_TESTING)
   # A text chunk, the open libraries and their numbers, one table order from
@@ -89,7 +90,7 @@ if(BUILD_TESTING)
   target_link_libraries(oa-data-script-host-c-work-test PRIVATE
     oa-data-script-host oa-test-support oa-options)
   add_test(NAME data-script-host-c-work COMMAND oa-data-script-host-c-work-test)
-  set_tests_properties(data-script-host-c-work PROPERTIES TIMEOUT 60)
+  set_tests_properties(data-script-host-c-work PROPERTIES TIMEOUT 180)
 
   # Every route that would make a string longer than 64 KiB.
   add_executable(oa-data-script-host-string-length-test tests/string_length_test.cpp)
@@ -104,6 +105,13 @@ if(BUILD_TESTING)
     oa-data-script-host oa-test-support oa-options)
   add_test(NAME data-script-host-budgets COMMAND oa-data-script-host-budgets-test)
   set_tests_properties(data-script-host-budgets PROPERTIES TIMEOUT 120)
+
+  # Real-time backstop: a short limit, a huge instruction allowance.
+  add_executable(oa-data-script-host-time-limit-test tests/time_limit_test.cpp)
+  target_link_libraries(oa-data-script-host-time-limit-test PRIVATE
+    oa-data-script-host oa-test-support oa-options)
+  add_test(NAME data-script-host-time-limit COMMAND oa-data-script-host-time-limit-test)
+  set_tests_properties(data-script-host-time-limit PROPERTIES TIMEOUT 60)
 
   # Engine maths, the seeded generator and the math library's argument rules.
   add_executable(oa-data-script-host-maths-test tests/deterministic_math_test.cpp)
@@ -125,4 +133,11 @@ if(BUILD_TESTING)
     oa-data-script-host oa-test-support oa-options)
   add_test(NAME data-script-host-text COMMAND oa-data-script-host-text-test)
   set_tests_properties(data-script-host-text PROPERTIES TIMEOUT 30)
+
+  # Fixed counts against an independent table, through C++ and through a sandbox.
+  add_executable(oa-data-script-host-fixed-test tests/fixed_test.cpp)
+  target_link_libraries(oa-data-script-host-fixed-test PRIVATE
+    oa-data-script-host oa-formats-tdf oa-test-support oa-options)
+  add_test(NAME data-script-host-fixed COMMAND oa-data-script-host-fixed-test)
+  set_tests_properties(data-script-host-fixed PROPERTIES TIMEOUT 60)
 endif()

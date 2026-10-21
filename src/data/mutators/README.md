@@ -13,7 +13,8 @@ sentence chosen from the rule, which is not this module's to write.
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
 `oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
-`oa/data/mutators/rules_lua.hpp` and `oa/data/mutators/verdicts.hpp`.
+`oa/data/mutators/loadout.hpp`, `oa/data/mutators/rules_lua.hpp` and
+`oa/data/mutators/verdicts.hpp`.
 
 - `check_mutable_path` judges one file path.
 - `check_mutable_mask` judges one mask. The pattern's shape is
@@ -29,7 +30,8 @@ None kept. The two checks are pure: they do not read files, the asset store
 or the preferences. A null `PathContext::layout` means `data_layout()`. An
 empty `is_unit_name` knows no unit. `build_files_layer` reads the package
 folders it is given while it builds the layer, and it keeps nothing after
-it returns.
+it returns. `folder_digest` reads one folder and does not write. The other
+loadout functions read nothing.
 
 ## Invariants
 
@@ -224,9 +226,10 @@ read as the value the loader uses: a missing flag or number is 0, missing
 text is empty, and a missing `bankscale` is 1. `absent()` asks whether the
 key is written, not what the default would be. A set has `each`, `set`,
 `scale`, `remove`, a length and `pairs`. A record has `remove`, `get`,
-`set` and `keys`. Any other name is a field. A field whose name is one of
-those four is reached only with `get` and `set`. A weapon's `damage` is
-its `[DAMAGE]` block, created on the first write into it. `get("damage")`
+`set`, `keys` and `fixed`. Any other name is a field. A field whose name
+is one of those five is reached only with `get` and `set`. A weapon's
+`damage` is its `[DAMAGE]` block, created on the first write into it.
+`get("damage")`
 reads a field of that name and does not open the block.
 
 A read returns the schema's integer, number, boolean or string, and nil
@@ -243,6 +246,16 @@ check, the read and the write. The journal keeps the spelling already
 stored, or the trimmed name when the key is new. A write that would store
 the text already there changes nothing: the document, the journal and the
 notes stay as they are.
+
+`record:fixed(key)` reads that field as a fixed value. Text that is present
+is read the way `fixed.parse` reads it. A key the record leaves out uses
+the loader's default, so an absent `bankscale` is 1 and an absent
+`moverate1` is twice `maxvelocity`. A key the schema does not hold, and a
+key a feature leaves out, is nil. A weapon's `damage` block has the method
+too. Storing a fixed value, by assignment, by `:set` or by a set's
+`:set { }`, is checked as the number `count / 65536` and written as the
+text `f:text()` gives. A field that is itself named `fixed` stays reachable
+with `get` and `set`. Assigning the method name is refused.
 
 `scale` multiplies each field that is present and numeric. An absent
 field is left absent. Text that is not a number is left as it is and
@@ -297,7 +310,91 @@ The messages are "this mutator has changed too many fields" and "this
 mutator has made too many notes".
 
 `data-mutators-collections` builds a small Ridge document set and runs
-the fixtures in `tests/collections`.
+the fixtures in `tests/collections`, including the `fixed_` scripts.
+
+## Loadouts
+
+`loadout.hpp` is the record a game, a recording and a save name their
+mutators by, before a match start fills it. A `LoadoutEntry` names one
+mutator by id, version and package SHA-256. `folder` says the package was
+a folder named by path, and then the SHA-256 is that folder's digest
+rather than a package file's. `options` is every option of the manifest,
+defaults filled by `default_option`, in id byte order. A toggle's value is
+`toggle`. A choice keeps the manifest's `ChoiceValue` (a number or a
+string). A number option keeps its number and that number's canonical
+text.
+
+`canonical_loadout` writes one text through the engine's canonical JSON:
+`{"mutators":[...],"oaloadout":1}`, entries in list order. Each entry's
+members are `folder`, `id`, `options`, `sha256` and `version`. `sha256` is
+64 lower-case hex digits. Options are members of one object, so their
+order in the record does not change the text and none is left out. A
+toggle is a boolean, a number is a number, and a choice is a number or a
+string as the manifest types it. `parse_loadout` accepts only that text.
+The limits are `loadout_most_entries` (32) and `loadout_text_most_bytes`
+(64 KiB). A wrong `oaloadout`, an unknown key, upper-case hex, a 33rd
+mutator, 64 KiB plus one byte, trailing text and any spacing or key order
+the writer would not produce are refused, and the error names what.
+A JSON number reads back as a number option. A numeric choice is written
+as a JSON number too, so it reads back as a number option with that
+number; the manifest tells the two apart, and this text does not repeat
+the manifest.
+
+Records compare equal exactly when their canonical texts are equal, so a
+record read back with `parse_loadout` equals the one written. Two options
+are equal when their ids are equal and their values are the same JSON
+value: toggles by `toggle`, string choices by their text, and anything
+holding a number (a number option or a numeric choice) by the number's
+canonical text. So a default written `1.0` in the manifest equals the `1`
+read back, and a numeric choice equals the number option it reads back as.
+An entry's options compare as members of one object, whatever order they
+are listed in.
+
+`loadout_digest` is the SHA-256 of the canonical text.
+
+`folder_digest` hashes each regular file under the folder, sorted by its
+relative path compared bytewise. The path is the UTF-8 spelling, with `/`
+between its parts, of the names as the file system stores them, on every
+system; there is no Unicode normalisation, so a name stored composed and
+the same name stored decomposed give different digests. Each file is that
+path, a NUL, its size as eight little-endian bytes, and the SHA-256 of its
+bytes. A symbolic link, anything that is not a regular file or a folder (a
+pipe, a socket or a device), or a file that cannot be read refuses the
+digest, and the error names the path in UTF-8. An empty folder hashes the
+empty message.
+
+`layer_digest` hashes `oa-mutator-layer-1` and a line feed, then each path
+the layer answers for, sorted by its lower-case `/` form. The message
+carries that form, a NUL, `F` and the SHA-256 of the bytes the layer
+serves for the path as stored, or `H` for a hidden entry. The served bytes
+are not read for a hidden entry. Then each mask pattern, lower-cased with
+`/` separators and sorted: `M`, the pattern and a NUL. Owners, archives,
+the label and the table's order are not hashed.
+
+`mutator_digest` hashes `oa-mutators-1` and a line feed, the canonical
+loadout and the layer digest. `fold_sim_hash` returns the simulation hash
+unchanged when no mutator digest is given. Otherwise it hashes
+`oa-sim-hash-mutators-1` and a line feed, the simulation hash and the
+mutator digest.
+
+`option_text` writes one option's value on its own: a toggle is `true`
+or `false`, anything holding a number is the number's canonical text (the
+digits the canonical loadout writes), and a string choice is its text.
+`options_text` joins `name=value` pairs with `,`, names in byte order,
+each value `option_text` of the option. No options write nothing. This is
+the text that follows `id:` on `--mutator`.
+
+The match start fills this record from the mutators that play and folds
+the mutator digest into the simulation hash. Nothing in this header runs
+during a match.
+
+`data-mutators-loadout` pins the canonical text, the four digests against
+values computed outside the engine, the refusals, the folder and layer
+digests, the unchanged simulation hash and the options text. It reads
+records back equal (a `1.0` number default, a numeric choice and a string
+choice among them), compares records by their text, digests a folder
+holding a name outside ASCII, and refuses a pipe where the system has
+pipes.
 
 ## Rules in Lua
 
@@ -314,8 +411,10 @@ message names the path, and a parse error names the line as well.
 Warnings stay on the result and the source is still kept.
 
 Needs are the same forms the collections use (`need_from_lua`). Changes
-are the forms a rule file writes. `where` and `:change` check their
-table when they are called and keep their own copy of it, so a loop that
+are the forms a rule file writes. `set`, `lock` and `scale` (a factor, or
+a factor and two bounds) take a fixed value as the count divided by
+65536. `where` and `:change` check their table when they are called and
+keep their own copy of it, so a loop that
 reuses one table builds a different block each time, and changing the
 table later changes no block already built. Field names in one block are
 stored in the order of those names after ASCII lower-casing, with the
@@ -377,7 +476,7 @@ is an error. An unfinished block in the list refuses the plan.
 
 `data-mutators-rules-lua` checks each Lua fixture against the rule file
 beside it, both as records and as the writes those records make on one
-Ridge document set.
+Ridge document set. `fixed_set` and `fixed_scale` pass fixed values.
 
 ## Verdicts
 

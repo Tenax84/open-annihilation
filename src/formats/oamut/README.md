@@ -25,6 +25,7 @@ The text is the strict YAML a mod profile is written in
 - `parse_version`, `version_text`, `parse_version_range`, `version_in_range`,
   `parse_condition` and `condition_met` are the version and condition grammar
   below. `layer_name` and `parse_layer` are the nine layer names.
+  `clash_mode_name` and `parse_clash_mode` are `add` and `replace`.
 
 ## State
 
@@ -81,6 +82,11 @@ Required:
 
 Optional:
 
+- `clashes`: `add` or `replace`, compared byte for byte. `add` brings a unit
+  or weapon in beside one that already has that name. `replace` puts this
+  mutator's record in its place. Absent means the game's default applies;
+  the reader does not fill one in. `Add`, `merge` and a number are refused
+  with `clashes must be add or replace`.
 - `description`: 1 to 2,000 bytes. A line feed is allowed. No other control
   character. The first line is the summary.
 - `homepage`: the shared rule, an `http` or `https` address of 1 to 256 bytes.
@@ -93,15 +99,24 @@ Optional:
 - `conflicts-with`: 1 to 32 conditions on mutator ids, none repeated, not
   this mutator's own id, and not an id `requires.mutators` names.
 - `options`: a mapping of at most 16 option ids. An id is a Lua name,
-  `[a-z][a-z0-9_]*`, of 1 to 32 bytes, so a script reads `ctx.options.<id>`.
+  `[a-z][a-z0-9_]*`, of 1 to 32 bytes, so a script reads
+  `ctx.options.<id>`. Lua 5.4's reserved words are refused (`and`, `break`,
+  `do`, `else`, `elseif`, `end`, `false`, `for`, `function`, `goto`, `if`,
+  `in`, `local`, `nil`, `not`, `or`, `repeat`, `return`, `then`, `true`,
+  `until`, `while`). The message is `is a word Lua reserves`, on the
+  option's path, for example `options.for`. A word that only contains a
+  reserved word (`format`, `ends`, `for_`) is a name. A different case
+  (`For`) is not a name. Write `true` and `false` in quotes: an unquoted
+  `true:` is a boolean key, which the document reader refuses.
   Each option is a mapping of `type` (`toggle`, `choice` or `number`),
   `label` (1 to 64 bytes, no control character) and `default`, plus the
   keys of its type. Any other key is refused.
   - A toggle's `default` is `true` or `false`.
-  - A choice has `values` (2 to 16, all numbers or all strings of 1 to 64
-    bytes, none repeated) and `default` equal to one of them. `labels`, when
-    written, lists one label of 1 to 64 bytes for each value, in the same
-    order.
+  - A choice has `values` (2 to 16, all numbers or all identifiers, none
+    repeated) and `default` equal to one of them. An identifier is 1 to 32
+    bytes of ASCII letters, digits, `_`, `-` and `.`. The words a player
+    reads are the label, not the value. `labels`, when written, lists one
+    label of 1 to 64 bytes for each value, in the same order.
   - A number has `min`, `max` and `step`, exact numbers. `min` is below
     `max`, `step` is above 0, and `(max - min) / step` is a whole number of
     at most 1,000 steps. `default` lies on a step, including an endpoint.
@@ -155,8 +170,10 @@ A range that holds a comma is quoted in YAML.
 versions meet and miss) and conditions (which id and version meet and miss,
 including a mod version `5b`). It reads the example manifest, reads a
 manifest that uses every key, writes it and reads it back, and refuses each
-rule above once, including a profile key, an unknown key, `layers: [sounds]`
-and a bare `legacy` mapping. `summary_of` is checked on a character boundary.
+rule above once, including a profile key, an unknown key, `layers: [sounds]`,
+`clashes` set to `Add`, `merge` or a number, and a bare `legacy` mapping.
+An absent `clashes` stays absent through a round trip. `summary_of` is
+checked on a character boundary.
 The test does not open a package.
 
 Examples use the made-up mutators `steady-hands` and `long-shadows` and the
