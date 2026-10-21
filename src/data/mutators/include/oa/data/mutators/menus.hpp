@@ -2,20 +2,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Build menus a mutator hook reads and writes: download entries and the
-// buttons on a builder's authored pages. The object must outlive every Lua
-// state it is pushed into. The document set and the asset store must outlive
-// the object.
+// buttons on a builder's authored pages. Every call reads the documents as
+// they stand when it runs and changes only the entries and buttons it names.
+// The object must outlive every Lua state it is pushed into. The collections
+// and the asset store must outlive the object.
 #pragma once
 
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/mutators/collections.hpp"
-#include "oa/data/mutation_rules/apply.hpp"
-#include "oa/data/mutation_rules/documents.hpp"
 
 #include <memory>
 #include <span>
 #include <string>
-#include <string_view>
 
 struct lua_State;
 
@@ -25,24 +23,31 @@ class AssetStore;
 
 namespace oa::data::mutators {
 
+/// Working storage of one menus object. Defined with the implementation.
+struct MenusState;
+
+/// One download file the menus created for a unit's new entries.
+struct MenuFile {
+    std::string mutator; ///< mutator whose request created it
+    std::string path;    ///< document path, '/' separated
+};
+
 /// The build menus of one document set, as a Lua collection.
 ///
-/// Slots are resolved as each request is made, in list order, so a later
-/// request cannot move an earlier one. The documents are written once, from
-/// `resolve`, after every mutator's hooks have committed.
+/// A slot is decided when the request is made, in list order, from the
+/// documents as they stand then. Edits go straight into the documents the
+/// collections share and are journaled there, so a later mutator, and a
+/// later call of the same mutator, sees them.
 class Menus {
   public:
 
-    /// Reads builders, authored pages and download files.
+    /// Binds the menus to the collections' documents and journal.
     ///
-    /// Downloadable marks are taken from the files as they stand here, before
-    /// any hook runs. `layout` null uses the layout in force.
-    ///
-    /// @param documents documents the hooks read; download files are already parsed
-    /// @param store layered store the pages and button art are read from
+    /// @param collections collections whose documents, units and journal the menus use
+    /// @param store layered store the authored pages and button art are read from
     /// @param layout layout that names the folders; null uses the layout in force
     Menus(
-        oa::data::mutation_rules::DocumentSet& documents,
+        Collections& collections,
         const oa::AssetStore& store,
         const oa::data::defs::DataLayout* layout = nullptr
     );
@@ -53,23 +58,27 @@ class Menus {
     /// Drops the menus. Every state they were pushed into is already closed.
     ~Menus();
 
-    /// Starts one mutator's turn.
+    /// Starts one mutator's turn, after `Collections::begin_mutator`.
     ///
-    /// Writes until `end_mutator` are journaled to `mutator`. A write is
-    /// refused unless `menus_layer` is set. Reading what a builder offers is
-    /// allowed either way.
+    /// A write is refused unless `menus_layer` is set. Reading what a builder
+    /// offers is allowed either way. The order of every download file is
+    /// noted here, so a unit the hooks remove can be taken out of the menus
+    /// without moving another entry.
     ///
-    /// @param mutator mutator name, as the player list spells it
     /// @param menus_layer true when the manifest declares the menus layer
-    void begin_mutator(std::string mutator, bool menus_layer);
+    void begin_mutator(bool menus_layer);
 
-    /// Greys units and builders this mutator removed, then ends the turn.
+    /// Ends the turn, before `Collections::end_mutator`.
     ///
-    /// Download entries D03 already dropped are not journaled again. Page
-    /// buttons greyed here are.
+    /// Puts a placeholder where a removed unit's download entry was, when
+    /// that keeps a section past the fifth unread or keeps another unit from
+    /// being marked downloadable, and greys the removed unit's buttons on
+    /// every builder's authored pages. The writes are journaled to the
+    /// mutator.
     ///
-    /// @param removals_this_turn removals the collections recorded for this mutator
-    void end_mutator(std::span<const RecordRemoval> removals_this_turn);
+    /// @param[out] error the reason, when the call returns false
+    /// @return false when a menu could not be written or the journal is full
+    [[nodiscard]] bool end_mutator(std::string& error);
 
     /// Pushes the menus collection.
     ///
@@ -82,81 +91,16 @@ class Menus {
     /// @param ctx_index stack index of the context table
     void set_context(lua_State* state, int ctx_index);
 
-    /// Writes every menu document that changed.
+    /// Download files the menus created, in the order they were created.
     ///
-    /// A unit stays downloadable exactly when it was before `Menus` was built,
-    /// except a unit a hook removed and a unit whose every download entry was
-    /// removed. Unchanged files are left untouched.
+    /// The span is invalidated by the next created file.
     ///
-    /// @param[out] error the reason, when the call returns false
-    /// @return false when a document could not be written
-    [[nodiscard]] bool resolve(std::string& error);
-
-    /// The mutator `resolve` failed for, or empty when the failure names none.
-    ///
-    /// @return the mutator id
-    [[nodiscard]] const std::string& failed_mutator() const;
-
-    /// Field writes so far, in the order the hooks made them.
-    ///
-    /// The span is invalidated by the next write.
-    ///
-    /// @return the writes
-    [[nodiscard]] std::span<const oa::data::mutation_rules::FieldWrite> writes() const;
-
-    /// Notes so far, in the order the hooks made them.
-    ///
-    /// The span is invalidated by the next note.
-    ///
-    /// @return the notes
-    [[nodiscard]] std::span<const HookNote> notes() const;
-
-    /// Removals so far, in the order the hooks made them.
-    ///
-    /// The span is invalidated by the next removal. Download entries a unit
-    /// removal already journaled on the collections are not listed again.
-    ///
-    /// @return the removals
-    [[nodiscard]] std::span<const RecordRemoval> removals() const;
+    /// @return the files
+    [[nodiscard]] std::span<const MenuFile> added_files() const;
 
   private:
 
-    struct State;
-    struct LuaBox;
-
-    /// Reads the menus pointer stored for this Lua state.
-    static Menus* from_lua(lua_State* state, int index);
-
-    /// Refuses a read of an unknown field.
-    static int lua_index(lua_State* state);
-
-    /// Refuses a write of a field.
-    static int lua_newindex(lua_State* state);
-
-    /// Implements `menus:add`.
-    static int lua_add(lua_State* state);
-
-    /// Implements `menus:move`.
-    static int lua_move(lua_State* state);
-
-    /// Implements `menus:remove`.
-    ///
-    /// The C++ name is not `remove`, because that word is a macro.
-    static int lua_drop(lua_State* state);
-
-    /// Implements `menus:grey`.
-    static int lua_grey(lua_State* state);
-
-    /// Implements `menus:hide`.
-    static int lua_hide(lua_State* state);
-
-    /// Implements `menus:builds`.
-    static int lua_builds(lua_State* state);
-
-    /// Installs the menus metatable on this state once.
-    static void ensure_meta(lua_State* state);
-
-    std::unique_ptr<State> state_;
+    std::unique_ptr<MenusState> state_;
 };
 
 } // namespace oa::data::mutators

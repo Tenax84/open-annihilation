@@ -2942,7 +2942,7 @@ bool run_pass(
     collections.emplace(documents, &layout);
     collections->bind_store(&store);
     collections->keep_weapon_ids(kept_weapons);
-    build_menus.emplace(documents, store, &layout);
+    build_menus.emplace(*collections, store, &layout);
     std::vector<BroughtWeapon> brought;
     std::vector<RecordTouch> touches;
     bool steps_done = true;
@@ -2981,8 +2981,6 @@ bool run_pass(
             continue;
         const std::size_t notes_before = collections->notes().size();
         const std::size_t writes_before = collections->writes().size();
-        const std::size_t menu_notes_before = build_menus->notes().size();
-        const std::size_t removals_before = collections->removals().size();
         WriteGrant grant;
         grant.units = declares(input.mutators[slot].manifest, oamut::Layer::units);
         grant.weapons = declares(input.mutators[slot].manifest, oamut::Layer::weapons);
@@ -2990,9 +2988,7 @@ bool run_pass(
         grant.sides = declares(input.mutators[slot].manifest, oamut::Layer::sides);
         grant.tables = declares(input.mutators[slot].manifest, oamut::Layer::tables);
         collections->begin_mutator(ids[slot], grant);
-        build_menus->begin_mutator(
-            ids[slot], declares(input.mutators[slot].manifest, oamut::Layer::menus)
-        );
+        build_menus->begin_mutator(declares(input.mutators[slot].manifest, oamut::Layer::menus));
         ContextView context;
         context.mod = &input.mod;
         context.engine = &input.engine_version;
@@ -3047,17 +3043,9 @@ bool run_pass(
             steps_done = false;
             break;
         }
-        try {
-            build_menus->end_mutator(collections->removals().subspan(removals_before));
-        } catch (const std::bad_alloc&) {
-            throw;
-        } catch (const std::exception& ex) {
-            first.offer(
-                slot,
-                Phase::hooks,
-                Cause::engine_error,
-                ex.what() != nullptr ? ex.what() : "the hook stopped"
-            );
+        std::string menu_error;
+        if (!build_menus->end_mutator(menu_error)) {
+            first.offer(slot, Phase::hooks, Cause::engine_error, std::move(menu_error));
             steps_done = false;
             break;
         }
@@ -3065,10 +3053,6 @@ bool run_pass(
         record_hook_turn(
             *collections, apply_state, report, ids, slot, notes_before, writes_before, hook_replaced
         );
-        const std::span<const HookNote> menu_notes = build_menus->notes();
-        for (std::size_t note_index = menu_notes_before; note_index < menu_notes.size();
-             ++note_index)
-            report.conflicts.push_back(conflict_from_hook(menu_notes[note_index], ids));
     }
     if (!steps_done) {
         sandboxes.clear();
@@ -3076,35 +3060,6 @@ bool run_pass(
         collections.reset();
         guard.release();
         fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
-        return false;
-    }
-
-    std::string menu_error;
-    if (!build_menus->resolve(menu_error)) {
-        const std::optional<uint16_t> named = index_of(ids, build_menus->failed_mutator());
-        std::size_t failed_slot = named.has_value() ? static_cast<std::size_t>(*named) : count;
-        if (!named.has_value()) {
-            for (std::size_t candidate = 0; candidate < count; ++candidate) {
-                if (active[candidate] == 0)
-                    continue;
-                failed_slot = candidate;
-                break;
-            }
-        }
-        if (failed_slot < count) {
-            first.offer(
-                failed_slot,
-                Phase::hooks,
-                Cause::engine_error,
-                menu_error.empty() ? std::string("a build menu could not be written") : menu_error
-            );
-        }
-        sandboxes.clear();
-        build_menus.reset();
-        collections.reset();
-        guard.release();
-        if (first.found())
-            fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
         return false;
     }
 
@@ -3178,40 +3133,6 @@ bool run_pass(
         else if (removal.kind == RemovalKind::feature)
             entry.collection = Collection::features;
         else if (removal.kind == RemovalKind::download_entry)
-            entry.collection = Collection::menus;
-        else
-            entry.collection = collection_for_path(removal.path, layout);
-        if (mutator.has_value()) {
-            note_writer(
-                documents, writers, menus, removal.path, *mutator, Phase::hooks, entry.collection
-            );
-        }
-        journal.entries.push_back(std::move(entry));
-    }
-    for (const rules::FieldWrite& write : build_menus->writes()) {
-        journal.entries.push_back(entry_from_write(write, ids, Phase::hooks, layout));
-        for (const uint16_t mutator : journal.entries.back().mutators) {
-            note_writer(
-                documents,
-                writers,
-                menus,
-                write.path,
-                mutator,
-                Phase::hooks,
-                journal.entries.back().collection
-            );
-        }
-    }
-    for (const RecordRemoval& removal : build_menus->removals()) {
-        JournalEntry entry;
-        const std::optional<uint16_t> mutator = index_of(ids, removal.mutator);
-        if (mutator.has_value())
-            entry.mutators.push_back(*mutator);
-        entry.phase = Phase::hooks;
-        entry.change = Change::removed;
-        entry.record = removal.name;
-        entry.path = removal.path;
-        if (removal.kind == RemovalKind::download_entry)
             entry.collection = Collection::menus;
         else
             entry.collection = collection_for_path(removal.path, layout);
