@@ -410,6 +410,25 @@ static missions::CampaignEnv campaign_env(
     return {&state.files, nullptr, static_cast<int32_t>(difficulty), 0, names};
 }
 
+void Runtime::clear_campaign_map_cache() {
+    campaign_runtime().map.mission_name[0] = '\0';
+}
+
+void Runtime::rebind_campaign_mission() {
+    auto& state = campaign_runtime();
+    const auto env = campaign_env(assets_, preferences_.difficulty, difficulty_names());
+    if (!missions::campaign_bind_mission(
+            &state.file, &env, static_cast<int32_t>(selected_mission_index_)
+        )) {
+        std::string message = "the campaign mission could not be bound again";
+        if (!state.events.message.empty()) {
+            message.append(": ");
+            message.append(state.events.message);
+        }
+        throw std::runtime_error(std::move(message));
+    }
+}
+
 // campaign_env for the calls that list the campaigns, whose reports of the
 // files the list leaves out reach the log (list_message).
 static missions::CampaignEnv campaign_list_env(

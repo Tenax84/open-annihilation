@@ -11,6 +11,7 @@
 // its section's handle slot and the section's index in its document. A
 // mutator that passes the write or note limit fails.
 #include "oa/data/mutators/collections.hpp"
+#include "oa/data/mutators/maps.hpp"
 
 #include "clone.hpp"
 #include "oa/data/field_schema.hpp"
@@ -3152,6 +3153,15 @@ bool need_from_lua(
         text_ptr = lua_tolstring(state, index, &text_length);
         have_text = true;
     } else if (type == LUA_TUSERDATA) {
+        if (map_match_value(state, index)) {
+            if (error != nullptr) {
+                try {
+                    *error = std::string(map_match_refusal);
+                } catch (const std::bad_alloc&) {
+                }
+            }
+            return false;
+        }
         bits = static_cast<const NeedBits*>(luaL_testudata(state, index, kNeedMeta));
         if (bits == nullptr)
             return refuse_need(error, field);
@@ -3196,6 +3206,7 @@ bool need_from_lua(
 
 void install_selection_forms(lua_State* state) {
     ensure_all(state);
+    install_map_match_forms(state);
     lua_pushcfunction(state, form_range);
     lua_setglobal(state, "range");
     lua_pushcfunction(state, form_is);
@@ -3276,6 +3287,25 @@ const std::string* Collections::indexed_unit(std::string_view sought, bool* buil
     if (builder != nullptr)
         *builder = oa::formats::tdf::get_int(found->section, "builder", 0) != 0;
     return &found->name;
+}
+
+int Collections::has_record(lua_State* state, bool feature, std::string_view sought) {
+    const CollectionsState::Rec* found = nullptr;
+    try {
+        found = find_named(
+            *this,
+            feature ? CollectionsState::Kind::features : CollectionsState::Kind::units,
+            sought,
+            state
+        );
+    } catch (const std::bad_alloc&) {
+        return -1;
+    }
+    if (found == nullptr || found->section == nullptr)
+        return 0;
+    if (state != nullptr)
+        charge_text(state, found->name.size());
+    return 1;
 }
 
 void Collections::end_mutator() {
