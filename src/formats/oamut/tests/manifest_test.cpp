@@ -1329,7 +1329,70 @@ void test_refusals() {
         ),
         "options.factor.values[1]",
         "\"" + std::string(65, 's'),
-        "1 to 64"
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"a b\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"a b\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"a,b\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"a,b\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"a=b\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"a=b\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"a:b\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"a:b\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"é\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"é\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[\"\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"\"",
+        "1 to 32 letters, digits, _, - or ."
+    );
+    expect_one(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: [\"" +
+            std::string(33, 'q') + "\", \"low\"]\n    default: \"low\"\n"
+        ),
+        "options.factor.values[0]",
+        "\"" + std::string(33, 'q'),
+        "1 to 32 letters, digits, _, - or ."
     );
     {
         std::string values = "[0";
@@ -1673,11 +1736,69 @@ void test_document_and_summary() {
 
 } // namespace
 
+/// Reads string identifiers and number choices whose text stays within 32 bytes.
+void test_choice_values() {
+    OA_CHECK(mut::most_choice_value_bytes == 32);
+    OA_CHECK(mut::choice_value_text("low"));
+    OA_CHECK(mut::choice_value_text("x.1"));
+    OA_CHECK(mut::choice_value_text("A_b-2"));
+    OA_CHECK(mut::choice_value_text(std::string(32, 'n')));
+    OA_CHECK(!mut::choice_value_text("a b"));
+    OA_CHECK(!mut::choice_value_text(""));
+    OA_CHECK(!mut::choice_value_text(std::string(33, 'n')));
+
+    const std::string wide(32, 'n');
+    Manifest identifiers;
+    OA_CHECK(read_ok(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Slow, fast.\"\n    values: "
+            "[\"low\", \"x.1\", \"A_b-2\", \"" +
+            wide + "\"]\n    default: \"x.1\"\n"
+        ),
+        identifiers
+    ));
+    OA_CHECK(identifiers.options.size() == 1);
+    if (identifiers.options.size() == 1) {
+        const Option& option = identifiers.options[0];
+        OA_CHECK(option.label == "Slow, fast.");
+        OA_CHECK(option.values.size() == 4);
+        if (option.values.size() == 4) {
+            OA_CHECK(!option.values[0].number && option.values[0].text == "low");
+            OA_CHECK(!option.values[1].number && option.values[1].text == "x.1");
+            OA_CHECK(!option.values[2].number && option.values[2].text == "A_b-2");
+            OA_CHECK(!option.values[3].number && option.values[3].text == wide);
+            OA_CHECK(option.values[3].text.size() == mut::most_choice_value_bytes);
+        }
+        OA_CHECK(option.default_index == 1);
+    }
+
+    Manifest numbers;
+    OA_CHECK(read_ok(
+        with_options(
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n    values: "
+            "[1e-300, 0.1234567890123]\n    default: 1e-300\n"
+        ),
+        numbers
+    ));
+    OA_CHECK(numbers.options.size() == 1);
+    if (numbers.options.size() == 1) {
+        const Option& option = numbers.options[0];
+        OA_CHECK(option.values.size() == 2);
+        if (option.values.size() == 2) {
+            OA_CHECK(option.values[0].number && option.values[0].text == "1e-300");
+            OA_CHECK(option.values[1].number && option.values[1].text == "0.1234567890123");
+            for (const ChoiceValue& value : option.values)
+                OA_CHECK(value.text.size() <= mut::most_choice_value_bytes);
+        }
+    }
+}
+
 int main() {
     test_versions();
     test_examples();
     test_refusals();
     test_several();
     test_document_and_summary();
+    test_choice_values();
     return oa::test::check_exit_status();
 }

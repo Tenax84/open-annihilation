@@ -496,7 +496,6 @@ bool read_layers(const json::Json& object, Package& package, std::string& reason
 bool read_choice_value(
     const json::Json& element, std::string_view where, ChoiceValueText& out, std::string& reason
 ) {
-    constexpr std::size_t most_label_bytes = 64;
     if (const std::string* written = element.number_text()) {
         oamod::Number number;
         if (oamod::parse_number(*written, number) != oamod::NumberStatus::ok) {
@@ -508,12 +507,9 @@ bool read_choice_value(
         return true;
     }
     const std::string* text = element.string();
-    if (text == nullptr) {
-        reason = std::string(where) + " is not a number or a string of 1 to 64 bytes";
-        return false;
-    }
-    if (text->empty() || text->size() > most_label_bytes) {
-        reason = std::string(where) + " is not 1 to 64 bytes";
+    if (text == nullptr || !oamut::choice_value_text(*text)) {
+        reason = std::string(where) + " is not a number or 1 to " +
+                 std::to_string(oamut::most_choice_value_bytes) + " letters, digits, _, - or .";
         return false;
     }
     out.text = *text;
