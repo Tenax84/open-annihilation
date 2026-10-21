@@ -354,14 +354,30 @@ constexpr std::string_view kKeys[] = {
 };
 
 void expect_facts(
-    const json::Json& report, const std::vector<uint8_t>& icon, std::string_view file
+    const json::Json& report,
+    const std::vector<uint8_t>& icon,
+    std::string_view file,
+    std::optional<std::string_view> clashes = std::nullopt
 ) {
-    const std::span<const std::string> names = report.names();
-    OA_CHECK(names.size() == std::size(kKeys));
-    if (names.size() == std::size(kKeys)) {
-        for (std::size_t index = 0; index < names.size(); ++index)
-            OA_CHECK(names[index] == kKeys[index]);
+    std::vector<std::string_view> keys(std::begin(kKeys), std::end(kKeys));
+    if (clashes.has_value()) {
+        for (std::size_t index = 0; index < keys.size(); ++index) {
+            if (keys[index] == "layers") {
+                keys.insert(keys.begin() + static_cast<std::ptrdiff_t>(index) + 1, "clashes");
+                break;
+            }
+        }
     }
+    const std::span<const std::string> names = report.names();
+    OA_CHECK(names.size() == keys.size());
+    if (names.size() == keys.size()) {
+        for (std::size_t index = 0; index < names.size(); ++index)
+            OA_CHECK(names[index] == keys[index]);
+    }
+    if (clashes.has_value())
+        OA_CHECK(text_of(member(report, "clashes")) == *clashes);
+    else
+        OA_CHECK(member(report, "clashes") == nullptr);
     OA_CHECK(member(report, "ok") != nullptr && member(report, "ok")->boolean() == true);
     OA_CHECK(text_of(member(report, "kind")) == "oamut");
     OA_CHECK(
@@ -588,6 +604,7 @@ void test_pack_and_check(const fs::path& scratch) {
     OA_CHECK(text.out.size() >= std::string("result: ok\n").size());
     if (text.out.size() >= std::string("result: ok\n").size())
         OA_CHECK(text.out.ends_with("result: ok\n"));
+    OA_CHECK(!contains(text.out, "clashes:"));
 
     const fs::path cwd = scratch / "cwd";
     fs::create_directories(cwd);
@@ -670,6 +687,37 @@ void test_top_folder(const fs::path& scratch) {
     OA_CHECK(contains(refused.out + refused.err, "lua/util.lua:3:"));
 }
 
+/// A manifest's clash mode is reported, and a manifest without one leaves it out.
+void test_clash_modes(const fs::path& scratch) {
+    const std::vector<uint8_t> icon = png_image(64);
+    const std::string_view modes[] = {"add", "replace"};
+    for (const std::string_view mode : modes) {
+        const std::string stem = std::string("clash-") + std::string(mode);
+        const fs::path folder = scratch / stem;
+        make_mutator(folder, Fault::none, icon);
+        std::string manifest{kManifest};
+        const std::string layers = "layers: [\"files\", \"units\"]\n";
+        const auto at = manifest.find(layers);
+        OA_CHECK(at != std::string::npos);
+        if (at != std::string::npos) {
+            manifest.insert(at + layers.size(), "clashes: \"" + std::string(mode) + "\"\n");
+        }
+        write_text(folder / "oamut.yaml", manifest);
+        const fs::path out = scratch / (stem + ".oamut");
+        const Captured packed = run({"pack", "--out", out.string(), folder.string()});
+        OA_CHECK(packed.status == oa::tool::exit_done);
+        if (packed.status != oa::tool::exit_done)
+            std::fprintf(stderr, "pack %s: %s\n", stem.c_str(), packed.err.c_str());
+        const Captured checked = run({"mutator", "check", "--json", out.string()});
+        OA_CHECK(checked.status == oa::tool::exit_done);
+        expect_facts(parse_report(checked.out), icon, out.filename().string(), mode);
+        const Captured text = run({"check", out.string()});
+        OA_CHECK(text.status == oa::tool::exit_done);
+        OA_CHECK(contains(text.out, "clashes: " + std::string(mode) + "\n"));
+        OA_CHECK(text.out.ends_with("result: ok\n"));
+    }
+}
+
 void test_mutator_usage(const fs::path& scratch) {
     const fs::path mod = scratch / "mod";
     write_text(mod / "oamod.yaml", "oamod: 1\n");
@@ -700,6 +748,7 @@ int main() {
     run_case("test_pack_and_check", [&] { test_pack_and_check(scratch.path); });
     run_case("test_refusals", [&] { test_refusals(scratch.path); });
     run_case("test_top_folder", [&] { test_top_folder(scratch.path); });
+    run_case("test_clash_modes", [&] { test_clash_modes(scratch.path); });
     run_case("test_mutator_usage", [&] { test_mutator_usage(scratch.path); });
     return oa::test::check_exit_status();
 }
