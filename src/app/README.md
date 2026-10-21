@@ -2398,6 +2398,20 @@ hosts them on the OA layer.
   passes the main menu, waits for it to show again; a run nobody watches
   notes the request and leaves the record untold, and
   `--check-renderer-ladder` notes it and marks it told.
+- `mutators_memory.hpp`, `mutators_memory.cpp` (`oa-app-mutators-memory`):
+  the last mutator set of each setup, and the crash record kept beside the
+  preferences file while a match with mutators runs. A set is the canonical
+  loadout text and nothing else. `preference_key` names the three keys
+  `open-annihilation.mutators.skirmish`, `.multiplayer` and `.campaign`.
+  `Sentinel` reads `mutators-sentinel.conf`, replaces it and
+  deletes it; a file that cannot be read is a leftover with no mutators,
+  logged once, and is never fatal. `runtime_mutators_memory.cpp` is the
+  game's side of it: `remembered_mutators` (the picker), `remember_mutators`
+  and `forget_mutators` (FORGET IT), `start_with_mutators` (a setup's
+  START), `take_mutator_crash` (the crash question) and
+  `mutators_refused_for_run` (`--no-mutators`). The record is opened when
+  the preferences are loaded, including under `--preferences-file`, and a
+  leftover file is deleted once it has been read.
 - `video_capture.hpp`, `video_capture.cpp`: `--capture-video`, the
   developer's capture of the window's frames and the game's sound as an MP4
   video through the `ffmpeg` program; `runtime_showcase.cpp`: the scripted
@@ -3789,6 +3803,24 @@ start, and again when the match ends. A start that fails by an exception
 after the mutators were applied releases the layer too, so a campaign, a
 save, a network game and a replay leave none either. The next match
 applies the list chosen then, including none.
+
+The last set each setup started a game with is kept in the preferences:
+one key for skirmish, one for the multiplayer host and one for a campaign.
+A setup's START writes its key through `start_with_mutators`, and only
+when that game has mutators. An empty loadout remembers nothing; the
+next matches play the run's own list (`--mutator`'s or a launch file's),
+normally none. `--mutator`, a launch file, a replay, a
+saved game, a guest's game and a game without mutators do not write it,
+and CANCEL does not erase it. While a match with mutators runs,
+`mutators-sentinel.conf` beside the preferences file names them and the
+setup that started the match, or none when no setup did. The match start
+also writes `open-annihilation: mutators in play:`, naming each mutator.
+A clean match end (`teardown_match`) or a clean exit deletes the file. A
+fatal error that unwinds leaves it. The next start keeps what it names
+(`take_mutator_crash`) and deletes the file. `--no-mutators` refuses every
+mutator for the run: a list `--mutator` or a launch file names is logged
+once and not applied. `remembered_mutators` returns none and
+`start_with_mutators` remembers nothing. The crash record is still read.
 
 ## Extensions
 

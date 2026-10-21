@@ -3266,6 +3266,29 @@ int Collections::lookup_unit(lua_State* state, std::string_view sought) {
     return 1;
 }
 
+const std::string* Collections::indexed_unit(std::string_view sought, bool* builder) noexcept {
+    if (builder != nullptr)
+        *builder = false;
+    const CollectionsState::Index& index =
+        state_->indexes[static_cast<std::size_t>(CollectionsState::Kind::units)];
+    if (!index.ready)
+        return nullptr;
+    const auto found = std::lower_bound(
+        index.records.begin(),
+        index.records.end(),
+        sought,
+        [](const CollectionsState::Rec& rec, std::string_view key) {
+            return compare_folded(rec.name, key) < 0;
+        }
+    );
+    if (found == index.records.end() || !same_text(found->name, sought) ||
+        found->section == nullptr)
+        return nullptr;
+    if (builder != nullptr)
+        *builder = oa::formats::tdf::get_int(found->section, "builder", 0) != 0;
+    return &found->name;
+}
+
 int Collections::has_record(lua_State* state, bool feature, std::string_view sought) {
     const CollectionsState::Rec* found = nullptr;
     try {

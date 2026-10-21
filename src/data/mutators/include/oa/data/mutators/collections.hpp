@@ -85,7 +85,8 @@ enum class HookNoteKind : uint8_t {
     hook_overwrote,               ///< a later hook replaced an earlier hook's value
     download_first_entry_changed, ///< removing the first download entry left a different unit first
     not_a_number,                 ///< a scale skipped a value that is not a number
-    id_kept, ///< a write of id on a weapon the game already numbered was left undone
+    id_kept,   ///< a write of id on a weapon the game already numbered was left undone
+    menu_note, ///< a moved button, a missing picture or a full AI list
 };
 
 /// One unit or weapon a hook cloned.
@@ -329,6 +330,8 @@ class Collections {
     friend struct CloneAccess;
     /// The sides and tables collections journal through the same writes.
     friend struct SideCollectionsAccess;
+    /// The build menus journal through the same writes and read the units index.
+    friend struct MenusAccess;
 
     /// Keeps one field write, and an overwrite note when an earlier hook wrote it.
     ///
@@ -371,6 +374,16 @@ class Collections {
     /// @param sought the unit name the script wrote
     /// @return 1 when the unit is there, 0 when it is not, -1 on a held error
     int lookup_unit(lua_State* state, std::string_view sought);
+
+    /// Finds a unit in the units index as the last `lookup_unit` left it.
+    ///
+    /// Neither charges nor looks for new documents, so it answers for the
+    /// documents as they stood at that lookup. A caller charges the search.
+    ///
+    /// @param sought the unit name, compared without ASCII case
+    /// @param[out] builder set true when the unit's FBI marks it a builder; may be null
+    /// @return the unit's own spelling, valid until the next lookup; null when there is none
+    [[nodiscard]] const std::string* indexed_unit(std::string_view sought, bool* builder) noexcept;
 
     oa::data::mutation_rules::DocumentSet* documents_;
     const oa::data::defs::DataLayout* layout_;

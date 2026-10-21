@@ -948,4 +948,78 @@ registry_refresh_line(const Registry& registry, const TextHooks& text = {});
 [[nodiscard]] std::string
 registry_note(const std::vector<Registry>& registries, const TextHooks& text = {});
 
+/// The word a layer id shows. An id that is not one of the nine is empty.
+///
+/// @param id the layer id
+/// @return the English word; empty when the id is not known
+[[nodiscard]] inline std::string_view layer_word(std::string_view id) noexcept {
+    if (id == "files")
+        return words::layer_files;
+    if (id == "units")
+        return words::layer_units;
+    if (id == "weapons")
+        return words::layer_weapons;
+    if (id == "features")
+        return words::layer_features;
+    if (id == "sides")
+        return words::layer_sides;
+    if (id == "tables")
+        return words::layer_tables;
+    if (id == "menus")
+        return words::layer_menus;
+    if (id == "maps")
+        return words::tab_maps;
+    if (id == "hacks")
+        return words::fact_hacks;
+    return {};
+}
+
+/// The Checked fact's value and how it is marked.
+struct CheckedWords {
+    std::string value{};   ///< the fact's value, already looked up
+    Mark mark{Mark::none}; ///< how the value is marked
+};
+
+/// The Checked fact for a verdict against the mod being played.
+///
+/// Compatible is good, no effect is a warning, incompatible and failed are
+/// bad, and a check that is running or not started yet has no mark.
+///
+/// @param verdict the check
+/// @param mod the mod's name, as a player reads it
+/// @param text how texts are looked up
+/// @return the value and its mark
+[[nodiscard]] inline CheckedWords
+checked_text(const Verdict& verdict, std::string_view mod, const TextHooks& text) {
+    CheckedWords checked;
+    switch (verdict.state) {
+    case Verdict::State::compatible:
+        checked.value =
+            filled(text, words::checked_good, {{"mod", mod}, {"summary", verdict.summary}});
+        checked.mark = Mark::good;
+        break;
+    case Verdict::State::no_effect:
+        checked.value = filled(text, words::checked_no_effect, {{"mod", mod}});
+        checked.mark = Mark::warn;
+        break;
+    case Verdict::State::incompatible:
+        checked.value =
+            filled(text, words::checked_incompatible, {{"mod", mod}, {"reason", verdict.reason}});
+        checked.mark = Mark::bad;
+        break;
+    case Verdict::State::failed:
+        checked.value =
+            filled(text, words::checked_failed, {{"mod", mod}, {"reason", verdict.reason}});
+        checked.mark = Mark::bad;
+        break;
+    case Verdict::State::checking:
+        checked.value = filled(text, words::checked_running, {{"mod", mod}});
+        break;
+    case Verdict::State::unchecked:
+        checked.value = filled(text, words::checked_not_yet, {{"mod", mod}});
+        break;
+    }
+    return checked;
+}
+
 } // namespace oa::ui::library

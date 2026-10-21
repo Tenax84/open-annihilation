@@ -362,6 +362,7 @@ const std::vector<FlagCase>& flag_cases() {
     static const std::vector<FlagCase> cases{
         {"--choose-game-dir", &Options::choose_game_dir, {}},
         {"--base-game", &Options::base_game, {}},
+        {"--no-mutators", &Options::no_mutators, {}},
         {"--print-profile", &Options::print_profile, {"--game-dir", "ta"}},
         {"--accept-unimplemented-hacks",
          &Options::accept_unimplemented_hacks,

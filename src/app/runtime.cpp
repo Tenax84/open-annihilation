@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -399,6 +400,10 @@ Runtime::Runtime(
     uint32_t phase_began = oa::platform::tick_ms();
     load_preference_file();
     mark_phase("preferences", phase_began);
+    // Beside the preferences file, including one --preferences-file names.
+    // A leftover is kept in memory and the file is deleted, so the next
+    // start does not ask again.
+    open_mutator_sentinel();
     // The player's own folder, and the one-time move of the saved games into
     // it, before the frontend's preferences read the Image Output Directory
     // that defaults to it.
@@ -547,6 +552,22 @@ void Runtime::run_progress(std::string_view line, const std::function<void(LongW
 }
 
 int Runtime::run() {
+    // Deletes the crash record when this call returns with no exception in
+    // flight. A fatal error that unwinds through run() leaves the file, so
+    // the next start can ask. This is not Runtime's destructor, which must
+    // not delete the file: a destructor would run on that unwind too.
+    struct MutatorSentinelOnReturn {
+        Runtime& runtime;
+        int depth = std::uncaught_exceptions();
+
+        ~MutatorSentinelOnReturn() {
+            if (std::uncaught_exceptions() == depth)
+                runtime.clear_mutator_sentinel();
+        }
+    };
+
+    [[maybe_unused]] MutatorSentinelOnReturn mutator_sentinel_on_return{*this};
+
     // The menu draws this window from here. A launch pump must not clear it.
     release_launch_window();
     take_pending_content();

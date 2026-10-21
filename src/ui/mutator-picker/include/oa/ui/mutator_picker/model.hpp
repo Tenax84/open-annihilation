@@ -429,6 +429,28 @@ set_option(Picker& picker, std::string_view id, std::string_view option, std::st
 /// @return how many mutators it keeps
 [[nodiscard]] std::size_t filter_count(const Picker& picker, Filter filter);
 
+/// Counts the mutators the current filter keeps that carry a tag, before the
+/// tag and the search.
+///
+/// On and Off count the same. It counts inputs, not the rows the tag and
+/// the search then leave.
+///
+/// @param picker the picker
+/// @param tag the catalogue id
+/// @return how many
+[[nodiscard]] std::size_t tag_count(const Picker& picker, std::string_view tag);
+
+/// The option line an Off mutator shows, from each option's default.
+///
+/// The same shape as an On row's option line. When the mutator brings units
+/// or weapons, the clash mode is the one `open` would keep before a player
+/// chooses: the manifest's, or the inputs' default.
+///
+/// @param picker the picker
+/// @param id the mutator's id
+/// @return the line; empty when the inputs do not hold it, or it has nothing to show
+[[nodiscard]] std::string default_options_text(const Picker& picker, std::string_view id);
+
 /// Lists the tags of the mutators the filter keeps, before the tag and the search.
 ///
 /// The eight catalogue ids come first, in the kit's order. Any other id

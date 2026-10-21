@@ -802,6 +802,7 @@ struct FlagOption {
 constexpr FlagOption kFlagOptions[] = {
     {"--choose-game-dir", &Options::choose_game_dir},
     {"--base-game", &Options::base_game},
+    {"--no-mutators", &Options::no_mutators},
     {"--print-profile", &Options::print_profile},
     {"--accept-unimplemented-hacks", &Options::accept_unimplemented_hacks},
     {"--force-capable", &Options::force_capable},
@@ -1426,7 +1427,7 @@ void write_startup_line(std::string_view text) {
             usage << "usage: open-annihilation [--version] [--game-dir PATH | --choose-game-dir] "
                      "[--archive PATH]... "
                      "[--mod FILE] [--mod-dir PATH | --base-game] "
-                     "[--mutator PATH|ID[:OPTION=VALUE,...]] "
+                     "[--mutator PATH|ID[:OPTION=VALUE,...]] [--no-mutators] "
                      "[--content GAME[:EXPANSION,...]] [--print-profile] "
                      "[--accept-unimplemented-hacks] "
                      "[--skip-intro] [--first-run] [--frames N] [--headless-check] "
