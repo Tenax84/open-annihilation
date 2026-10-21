@@ -1241,6 +1241,42 @@ uint8_t next_computer_color(Lobby& lobby, const Player& player, uint8_t color) n
     return color;
 }
 
+/// Folds the stored host record into the guest's assembly once per change.
+///
+/// A record that arrives before this machine knows the host slot is folded
+/// when the slot becomes known. The same bytes are not folded twice.
+///
+/// @param[in,out] lobby Lobby state.
+void feed_host_assembly(Lobby& lobby) noexcept {
+    if (host_is_local(lobby) || lobby.game == nullptr)
+        return;
+    const auto host = lobby_host_slot(lobby);
+    if (host == kNoSlot)
+        return;
+    auto& records = lobby.presence_records;
+    const auto slot = static_cast<int32_t>(host);
+    if (records.peer_size[slot] == 0)
+        return;
+    uint64_t hash = 14695981039346656037ull;
+    for (uint16_t index = 0; index < records.peer_size[slot]; ++index) {
+        hash ^= records.peer[slot][index];
+        hash *= 1099511628211ull;
+    }
+    if (records.host_fed_size == records.peer_size[slot] && records.host_fed_hash == hash)
+        return;
+    records.host_fed_size = records.peer_size[slot];
+    records.host_fed_hash = hash;
+    try {
+        netgame::PresenceRecord decoded;
+        if (netgame::decode_presence(records.peer[slot], records.peer_size[slot], &decoded) !=
+            netgame::WireError::ok)
+            return;
+        if (netgame::presence_assembly_take(records.host_loadout, decoded))
+            ++records.host_loadout_generation;
+    } catch (const std::exception&) {
+    }
+}
+
 /// Keeps a presence record a seated remote player sent as that player's.
 ///
 /// @param[in,out] lobby Lobby state.
@@ -1262,15 +1298,7 @@ bool presence_keep(Lobby& lobby, const LobbyEvent& event) noexcept {
     take_computer_presence(lobby, slot);
     // The host's record carries the room's list. A guest keeps it as far as
     // the records have brought it, including a part that continues the head.
-    if (slot == static_cast<int32_t>(lobby_host_slot(lobby))) {
-        try {
-            netgame::PresenceRecord decoded;
-            if (netgame::decode_presence(records.peer[slot], records.peer_size[slot], &decoded) ==
-                netgame::WireError::ok)
-                (void)netgame::presence_assembly_take(records.host_loadout, decoded);
-        } catch (const std::exception&) {
-        }
-    }
+    feed_host_assembly(lobby);
     return true;
 }
 
@@ -1389,14 +1417,7 @@ namespace {
 /// @param player_slot Player slot.
 /// @return True when that player is remote, playing and carries the signature.
 bool remote_oa_player(Lobby& lobby, int32_t player_slot) noexcept {
-    if (lobby.game == nullptr || player_slot < 0 || player_slot >= kSlotCount)
-        return false;
-    const auto& player = slot_player(lobby, player_slot);
-    if (!slot_remote_playing(lobby, player))
-        return false;
-    const auto* info = player_info(lobby, player);
-    return info != nullptr &&
-           netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(info));
+    return lobby_remote_oa_player(lobby, player_slot);
 }
 
 /// Appends one mutator part when at least one mutator fits.
@@ -1420,9 +1441,8 @@ bool append_mutator_part(
     uint8_t value[netgame::presence_record_max_bytes];
     std::size_t written = 0;
     uint8_t sent = 0;
-    if (netgame::encode_presence_mutator_part(
-            loadout, first, value, value_room, &written, &sent
-        ) != netgame::WireError::ok)
+    if (netgame::encode_presence_mutator_part(loadout, first, value, value_room, &written, &sent) !=
+        netgame::WireError::ok)
         return false;
     std::size_t grown = 0;
     if (netgame::append_presence_field(
@@ -1490,34 +1510,58 @@ bool shrink_source_for_part(
     if (netgame::decode_presence(records.source, records.source_size, &decoded) !=
         netgame::WireError::ok)
         return false;
-    std::size_t capacity = records.source_size;
-    while (capacity > netgame::presence_record_header_bytes) {
-        --capacity;
-        uint8_t shrunk[netgame::presence_record_max_bytes];
-        std::size_t shrunk_size = 0;
-        if (netgame::encode_presence(decoded, shrunk, capacity, &shrunk_size) !=
-            netgame::WireError::ok)
-            continue;
-        if (records.pack_size != 0) {
-            std::size_t packed = 0;
-            if (netgame::append_presence_field(
-                    shrunk,
-                    shrunk_size,
-                    sizeof shrunk,
-                    netgame::PresenceTag::map_pack,
-                    {records.pack, records.pack_size},
-                    &packed
-                ) != netgame::WireError::ok)
-                continue;
-            shrunk_size = packed;
+    // The smallest value that carries the mutator at `first`, then one head
+    // that leaves room for the pack and that part.
+    uint8_t probe[netgame::presence_record_max_bytes];
+    std::size_t fit = 0;
+    std::size_t low = 1;
+    std::size_t high = netgame::presence_record_max_bytes;
+    while (low <= high) {
+        const std::size_t mid = low + (high - low) / 2;
+        std::size_t written = 0;
+        uint8_t sent = 0;
+        if (netgame::encode_presence_mutator_part(loadout, first, probe, mid, &written, &sent) ==
+                netgame::WireError::ok &&
+            sent >= 1) {
+            fit = written;
+            if (mid == 0)
+                break;
+            high = mid - 1;
+        } else {
+            low = mid + 1;
         }
-        if (!append_mutator_part(shrunk, shrunk_size, sizeof shrunk, loadout, first))
-            continue;
-        std::memcpy(composed, shrunk, shrunk_size);
-        size = shrunk_size;
-        return true;
     }
-    return false;
+    if (fit == 0)
+        return false;
+    const std::size_t pack_field =
+        records.pack_size == 0 ? 0 : netgame::presence_field_header_bytes + records.pack_size;
+    const std::size_t part_field = netgame::presence_field_header_bytes + fit;
+    if (pack_field >= netgame::presence_record_max_bytes ||
+        part_field >= netgame::presence_record_max_bytes - pack_field)
+        return false;
+    const std::size_t head_cap = netgame::presence_record_max_bytes - pack_field - part_field;
+    uint8_t shrunk[netgame::presence_record_max_bytes];
+    std::size_t shrunk_size = 0;
+    if (netgame::encode_presence(decoded, shrunk, head_cap, &shrunk_size) != netgame::WireError::ok)
+        return false;
+    if (records.pack_size != 0) {
+        std::size_t packed = 0;
+        if (netgame::append_presence_field(
+                shrunk,
+                shrunk_size,
+                sizeof shrunk,
+                netgame::PresenceTag::map_pack,
+                {records.pack, records.pack_size},
+                &packed
+            ) != netgame::WireError::ok)
+            return false;
+        shrunk_size = packed;
+    }
+    if (!append_mutator_part(shrunk, shrunk_size, sizeof shrunk, loadout, first))
+        return false;
+    std::memcpy(composed, shrunk, shrunk_size);
+    size = shrunk_size;
+    return true;
 }
 
 /// Appends one part of the host's list, shrinking the head when the pack leaves no room.
@@ -1583,6 +1627,7 @@ bool guest_awaits_mutators(Lobby& lobby) noexcept {
 } // namespace
 
 void presence_refresh(Lobby& lobby) noexcept {
+    feed_host_assembly(lobby);
     auto& records = lobby.presence_records;
     const bool host = host_is_local(lobby);
     if (host)
@@ -2747,7 +2792,7 @@ void lobby_update_status(Lobby& lobby, Panel& panel) noexcept {
             ready->active = 1;
             ready->value = static_cast<int16_t>((info.options >> 5) & 1);
             const bool own = occupied_by(player, kSlotLocal);
-            ready->grayed = !own || (own && guest_awaits_mutators(lobby));
+            ready->grayed = !own || guest_awaits_mutators(lobby);
         }
     }
     panel.dirty = true;

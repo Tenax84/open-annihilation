@@ -14,6 +14,7 @@
 #include "oa/app/netgame/opened_launch.hpp"
 #include "oa/app/presence_facts.hpp"
 #include "oa/app/runtime.hpp"
+#include "oa/netgame/presence.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -529,9 +530,13 @@ class NetworkPlay {
     // from. They are not part of PresenceFacts. Read through Runtime's
     // public methods only.
     std::string presence_content_key_;
-    // The mutator field the bound record was written from, so a change of
-    // the list refreshes the record when the other facts do not.
-    std::string presence_mutator_key_;
+    // The mutator field the bound record was written from. The generation
+    // skips the copy until that field changes. Both start at 0, so seen
+    // tells a first read from a field that has never been sent.
+    uint32_t presence_mutator_generation_ = 0;
+    bool presence_mutators_seen_ = false;
+    bool presence_mutators_held_ = false;
+    oa::netgame::PresenceMutators presence_mutators_{};
 };
 
 } // namespace oa::app

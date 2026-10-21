@@ -16,11 +16,11 @@
 #include "oa/core/unit_def.h"
 #include "oa/netgame/presence.hpp"
 #include "oa/netgame/recorder_session.hpp"
-#include "oa/ui/frontend_multiplayer/room_mutators.hpp"
 #include "oa/netgame/wire_rules.hpp"
 #include "oa/ui/frontend_multiplayer/launch_block.hpp"
 #include "oa/ui/frontend_multiplayer/lobby_net.hpp"
 #include "oa/ui/frontend_multiplayer/panel.hpp"
+#include "oa/ui/frontend_multiplayer/room_mutators.hpp"
 #include "oa/ui/frontend_multiplayer/team_rules.hpp"
 
 #include <cstddef>
@@ -397,6 +397,13 @@ struct PresenceRecords {
     /// until a host record with a mutator field is kept, and emptied when a
     /// host record carries none.
     netgame::PresenceLoadoutAssembly host_loadout{};
+    /// The host record last folded into host_loadout, so a record that
+    /// arrived before the host slot was known is folded when it is.
+    uint16_t host_fed_size{};
+    uint64_t host_fed_hash{};
+    /// Counts the changes of host_loadout, from 0. A guest copies the
+    /// assembly when this changes.
+    uint32_t host_loadout_generation{};
     /// The full mutator field this machine sends parts from. The bound
     /// source may be cut to leave room for a map pack; a part is drawn from
     /// this, which keeps every mutator. Empty when this machine sends none.

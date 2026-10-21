@@ -613,49 +613,6 @@ bool presence_keeps_rules(const oa::netgame::PresenceRecord& record) {
            oa::netgame::WireError::bad_argument;
 }
 
-/// The bytes follow_presence compares so a mutator change refreshes the record.
-///
-/// @param mutators the mutators field, or nothing when this machine plays none
-/// @return the key
-std::string mutator_presence_key(const std::optional<oa::netgame::PresenceMutators>& mutators) {
-    if (!mutators)
-        return {};
-    std::string key;
-    key.push_back(mutators->built ? '1' : '0');
-    key.push_back(mutators->lacking ? '1' : '0');
-    key.push_back(mutators->failed ? '1' : '0');
-    key.push_back('\n');
-    const auto digest = oa::base::sha256::to_hex(mutators->digest);
-    key.append(digest.data(), digest.size());
-    key.push_back('\n');
-    const auto layer = oa::base::sha256::to_hex(mutators->layer_digest);
-    key.append(layer.data(), layer.size());
-    key.push_back('\n');
-    key += std::to_string(mutators->index);
-    key.push_back('\n');
-    key += std::to_string(static_cast<unsigned>(mutators->total));
-    key.push_back('\n');
-    key += std::to_string(static_cast<unsigned>(mutators->held));
-    key.push_back('\n');
-    key += std::to_string(mutators->states);
-    key.push_back('\n');
-    for (const oa::netgame::PresenceMutator& item : mutators->mutators) {
-        key += item.id;
-        key.push_back('\n');
-        key += item.version;
-        key.push_back('\n');
-        key.append(reinterpret_cast<const char*>(item.sha256_prefix.data()), item.sha256_prefix.size());
-        key.push_back('\n');
-        for (const oa::netgame::PresenceMutatorOption& option : item.options) {
-            key += option.key;
-            key.push_back('=');
-            key += option.value;
-            key.push_back('\n');
-        }
-    }
-    return key;
-}
-
 /// Writes this machine's presence record from its facts, without a map pack.
 ///
 /// A fact that breaks the record's rules is left out: a platform or
@@ -668,13 +625,13 @@ std::string mutator_presence_key(const std::optional<oa::netgame::PresenceMutato
 /// @param facts what this machine is playing
 /// @param[in,out] reported the presence_problem bits already reported
 /// @param played the base game, expansions and language
-/// @param mutators the mutators field, or nothing when this machine plays none
+/// @param mutators the mutators field, or null when this machine plays none
 /// @return the record; empty only when nothing could be written
 std::vector<uint8_t> write_presence_record(
     const PresenceFacts& facts,
     uint32_t& reported,
     const PresencePlayed& played,
-    const std::optional<oa::netgame::PresenceMutators>& mutators
+    const oa::netgame::PresenceMutators* mutators
 ) {
     namespace ng = oa::netgame;
     const auto report = [&](uint32_t problem, const char* what) {
@@ -767,7 +724,7 @@ std::vector<uint8_t> write_presence_record(
     }
     record.sim_hash = facts.sim_hash;
 
-    if (mutators) {
+    if (mutators != nullptr) {
         probe = {};
         probe.mutators = *mutators;
         if (presence_keeps_rules(probe))
@@ -917,6 +874,11 @@ void fill_integrity_identity(
     }
     const auto data_digest = oa::base::sha256::finish(data);
     std::memcpy(identity.game_data, data_digest.data(), sizeof identity.game_data);
+    const auto hex = oa::base::sha256::to_hex(data_digest);
+    std::cerr << "multiplayer: integrity game data ";
+    std::cerr.write(hex.data(), 16);
+    std::cerr << '\n';
+    std::cerr.flush();
 }
 
 struct LoopbackSide {
@@ -1171,13 +1133,36 @@ struct NetworkPlay::NetHost {
                 oa::netgame::WireError::ok)
                 state.unit_verdicts.push_back(bytes);
         }
-        // The room's layer comes off before the match mounts its own, map included.
-        runtime.release_room_mutators();
-        {
-            const auto room = runtime.room_mutators();
-            std::vector<oa::data::mutators::ResolvedMutator> room_chosen(room.begin(), room.end());
-            runtime.choose_match_mutators(std::move(room_chosen));
+        // The room's layer comes off before the match mounts its own, map
+        // included. The list is the one this room built. The run's own
+        // choice is put back afterwards, including when the start throws,
+        // so a later skirmish does not play this room's list.
+        if (runtime.room_match_unbuilt()) {
+            std::cerr << "open-annihilation: mutators: room failed: the battle room's "
+                         "list is not built\n";
+            throw std::runtime_error("the battle room's list is not built");
         }
+        std::vector<oa::data::mutators::ResolvedMutator> saved_choice(
+            runtime.chosen_match_mutators().begin(), runtime.chosen_match_mutators().end()
+        );
+        std::vector<oa::data::mutators::ResolvedMutator> room_chosen(
+            runtime.room_match_mutators().begin(), runtime.room_match_mutators().end()
+        );
+
+        struct RunChoiceRestore {
+            Runtime& runtime;
+            std::vector<oa::data::mutators::ResolvedMutator> saved;
+
+            ~RunChoiceRestore() {
+                try {
+                    runtime.choose_match_mutators(std::move(saved));
+                } catch (...) {
+                }
+            }
+        } run_choice_restore{runtime, std::move(saved_choice)};
+
+        runtime.release_room_mutators();
+        runtime.choose_match_mutators(std::move(room_chosen));
         runtime.bootstrap_match(
             {.units_per_player = limit,
              .place_commanders = false,
@@ -2280,9 +2265,25 @@ void NetworkPlay::follow_unicode_chat() {
 
 void NetworkPlay::follow_presence() {
     runtime_.follow_room_mutators();
-    const auto mutators = runtime_.room_mutators_presence();
-    // The full list, even when the bytes below are cut to the same record.
-    mp::multiplayer_bind_mutator_loadout(mutators ? &*mutators : nullptr);
+    const uint32_t generation = runtime_.room_mutators_generation();
+    const bool mutators_changed =
+        !presence_mutators_seen_ || generation != presence_mutator_generation_;
+    if (mutators_changed) {
+        presence_mutators_seen_ = true;
+        presence_mutator_generation_ = generation;
+        const oa::netgame::PresenceMutators* field = runtime_.room_mutators_presence();
+        if (field == nullptr) {
+            presence_mutators_held_ = false;
+            presence_mutators_ = {};
+        } else {
+            presence_mutators_ = *field;
+            presence_mutators_held_ = true;
+        }
+        // The full list, even when the bytes below are cut to the same record.
+        mp::multiplayer_bind_mutator_loadout(
+            presence_mutators_held_ ? &presence_mutators_ : nullptr
+        );
+    }
     if (presence_taken_ && !mp::multiplayer_showing())
         return;
     const bool first = !presence_taken_;
@@ -2290,14 +2291,16 @@ void NetworkPlay::follow_presence() {
     auto facts = presence_facts(runtime_);
     const auto played = played_content(runtime_);
     const auto key = played_content_key(played);
-    const auto mutator_key = mutator_presence_key(mutators);
-    if (!first && facts == presence_facts_ && key == presence_content_key_ &&
-        mutator_key == presence_mutator_key_)
+    if (!first && facts == presence_facts_ && key == presence_content_key_ && !mutators_changed)
         return;
     presence_facts_ = std::move(facts);
     presence_content_key_ = key;
-    presence_mutator_key_ = mutator_key;
-    auto record = write_presence_record(presence_facts_, presence_reported_, played, mutators);
+    auto record = write_presence_record(
+        presence_facts_,
+        presence_reported_,
+        played,
+        presence_mutators_held_ ? &presence_mutators_ : nullptr
+    );
     if (!first && record == bound_presence_record_)
         return;
     bound_presence_record_ = std::move(record);
