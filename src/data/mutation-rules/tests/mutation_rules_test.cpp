@@ -405,6 +405,61 @@ void stacking_factors() {
     run(true);
 }
 
+/// Twenty-four factors, and three scales that stay in file order inside one mutator.
+///
+/// The stacked product is not the same double in every list order. The spelled
+/// result is the fixed bit order. One mutator's three scales stay in file
+/// order: sorting those three by their bits would spell a different number.
+void factor_product_order() {
+    constexpr const char* k_factors[] = {
+        "0.13",  "83.7",  "0.152", "91.1",  "0.174", "98.5",  "0.196", "105.9",
+        "0.218", "113.3", "0.24",  "120.7", "0.262", "128.1", "0.284", "135.5",
+        "0.306", "142.9", "0.328", "150.3", "0.35",  "157.7", "0.372", "165.1",
+    };
+    constexpr int k_count = 24;
+    constexpr int k_orders[][k_count] = {
+        {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23},
+        {23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
+        {7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6},
+        {12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
+        {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22},
+        {22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 0, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1},
+    };
+    for (const auto& order : k_orders) {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs, "units/RIDGEFAB.fbi", "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nWorkerTime=1;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        for (int place = 0; place < k_count; ++place) {
+            const int factor_index = order[place];
+            std::string name = "pile-";
+            if (factor_index < 10)
+                name.push_back('0');
+            name += std::to_string(factor_index);
+            std::string text = "[*All*]\n{\nWorkerTime=*";
+            text += k_factors[factor_index];
+            text += ";\n}\n";
+            list.push_back(rules_of(std::move(name), text));
+        }
+        static_cast<void>(rules::apply_rules(list, docs, {}));
+        expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "361957422930209600");
+    }
+    {
+        rules::DocumentSet docs;
+        OA_CHECK(add_text(
+            docs, "units/RIDGEFAB.fbi", "[UNITINFO]\n{\nUnitName=RIDGEFAB;\nWorkerTime=1;\n}\n"
+        ));
+        std::vector<rules::MutatorRules> list;
+        list.push_back(rules_of(
+            "wide-steps",
+            "[*All*]\n{\nWorkerTime=*1e-12;\nWorkerTime=*1e12;\nWorkerTime=*1e11;\n}\n"
+        ));
+        static_cast<void>(rules::apply_rules(list, docs, {}));
+        expect_unit(docs, "units/RIDGEFAB.fbi", "WorkerTime", "100000000000");
+    }
+}
+
 void expect_bounty(rules::DocumentSet& docs, const rules::ApplyResult& result, bool with_swift) {
     expect_unit(docs, "units/RIDGECOM.fbi", "EnergyMake", "2500");
     expect_unit(docs, "units/RIDGECOM.fbi", "EnergyStorage", "7500");
@@ -1157,6 +1212,7 @@ int main() {
     document_set();
     targets();
     stacking_factors();
+    factor_product_order();
     command_bounty();
     widened_clamp();
     text_rules();
