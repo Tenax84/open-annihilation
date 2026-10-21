@@ -218,6 +218,10 @@ struct CollectionsAccess {
 
     static std::vector<HookNote>& notes(Collections& self) noexcept { return self.notes_; }
 
+    static const std::vector<std::string>& kept_weapon_ids(const Collections& self) noexcept {
+        return self.kept_weapon_ids_;
+    }
+
     static CollectionsState& work(Collections& self) noexcept { return *self.state_; }
 };
 
@@ -1217,11 +1221,38 @@ void rekey_if_renamed(Collections& self, const Live& live, std::string_view key)
     index.ready = true;
 }
 
+/// True when `key` is the id of a weapon the game already numbered.
+bool weapon_id_stays(const Collections& self, const Live& live, std::string_view key) {
+    if (live.kind != Kind::weapons || live.damage || !same_text(key, "id"))
+        return false;
+    const std::string folded = fold_copy(live.name);
+    const std::vector<std::string>& names = CollectionsAccess::kept_weapon_ids(self);
+    return std::binary_search(names.begin(), names.end(), folded);
+}
+
+/// Leaves a base or mod weapon id as it was, and notes the mutator.
+bool note_kept_weapon_id(Collections& self, const Live& live, std::string& reason) {
+    if (!room_for(self, 0, 1, reason))
+        return false;
+    HookNote note;
+    note.kind = HookNoteKind::id_kept;
+    note.mutators.push_back(CollectionsAccess::mutator(self));
+    note.path = live.path;
+    note.record = live.name;
+    note.key = "id";
+    note.message = "a base weapon keeps its id";
+    CollectionsAccess::notes(self).push_back(std::move(note));
+    commit_tally(self, 0, 1);
+    return true;
+}
+
 /// Writes one stored value. The grant has already been checked.
 bool write_stored(
     Collections& self, Live& live, std::string_view key, const Stored& stored, std::string& reason
 ) {
     const std::string trimmed(trim_view(key));
+    if (weapon_id_stays(self, live, trimmed))
+        return note_kept_weapon_id(self, live, reason);
     const FieldNow before = field_now(live.block, trimmed);
     const std::string block_name = live.damage ? "DAMAGE" : "";
     if (stored.kind == StoredKind::nil_value) {
@@ -3228,6 +3259,60 @@ void Collections::end_mutator() {
     active_ = false;
     mutator_.clear();
     grant_ = {};
+}
+
+void Collections::keep_weapon_ids(std::span<const std::string> names) {
+    kept_weapon_ids_.clear();
+    kept_weapon_ids_.reserve(names.size());
+    for (const std::string& name : names)
+        kept_weapon_ids_.push_back(fold_copy(name));
+    std::sort(kept_weapon_ids_.begin(), kept_weapon_ids_.end());
+    kept_weapon_ids_.erase(
+        std::unique(kept_weapon_ids_.begin(), kept_weapon_ids_.end()), kept_weapon_ids_.end()
+    );
+}
+
+void Collections::release_document(std::string_view path) {
+    if (documents_ == nullptr || state_ == nullptr)
+        return;
+    rules::LoadedDocument* loaded = documents_->find(path);
+    if (loaded == nullptr)
+        return;
+    std::size_t doc_place = documents_->size();
+    for (std::size_t cursor = 0; cursor < documents_->size(); ++cursor) {
+        if (&documents_->at(cursor) == loaded) {
+            doc_place = cursor;
+            break;
+        }
+    }
+    if (doc_place >= documents_->size())
+        return;
+    if (doc_place > static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+        return;
+    const auto narrow = static_cast<uint32_t>(doc_place);
+    CollectionsState& scratch = *state_;
+    for (CollectionsState::Index& index : scratch.indexes) {
+        index.records.erase(
+            std::remove_if(
+                index.records.begin(),
+                index.records.end(),
+                [narrow](const CollectionsState::Rec& rec) { return rec.doc_index == narrow; }
+            ),
+            index.records.end()
+        );
+        index.names.erase(narrow);
+        index.listed_children.erase(narrow);
+    }
+    for (auto slot = scratch.slots.begin(); slot != scratch.slots.end();) {
+        if (slot->first.doc_index == narrow)
+            slot = scratch.slots.erase(slot);
+        else
+            ++slot;
+    }
+    for (CollectionsState::Identity& identity : scratch.identities) {
+        if (identity.doc_index == narrow)
+            identity.section = nullptr;
+    }
 }
 
 void Collections::push_units(lua_State* state) {

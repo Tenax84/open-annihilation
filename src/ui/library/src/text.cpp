@@ -6,11 +6,13 @@
 #include "oa/ui/library/text.hpp"
 
 #include "oa/data/mutators/verdicts.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/ui/kit/text.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -311,6 +313,25 @@ change_texts(const Installed& installed, const UpdateNote& update, const TextHoo
 
 std::string engine_text(const formats::oamod::EngineRange& range, const TextHooks& text) {
     return range_text(range, false, text);
+}
+
+std::string range_words(std::string_view range_text, const TextHooks& text) {
+    if (range_text.empty())
+        return {};
+    const std::optional<formats::oamut::VersionRange> range =
+        formats::oamut::parse_version_range(range_text);
+    if (!range)
+        return std::string(range_text);
+    std::string joined;
+    for (const auto& [comparison, version] : range->terms) {
+        if (!joined.empty()) {
+            joined += shown(text, words::list_separator);
+            joined.push_back(' ');
+        }
+        const std::string number = formats::oamut::version_text(version);
+        joined += filled(text, comparison_pattern(comparison, false), {{"version", number}});
+    }
+    return joined;
 }
 
 std::string engine_short_text(const formats::oamod::EngineRange& range, const TextHooks& text) {
