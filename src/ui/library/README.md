@@ -182,7 +182,9 @@ translator finds them together. Every word passes through `Library::text`
     ("Any mod" when the list is empty or names `*`, marked when the mutator
     does not fit the mod being played), Checked (an installed copy whose
     verdict is set: the played mod's name, or "No Mod"; a bad mark is the
-    danger colour), one Needs per prerequisite and then the engine's Needs,
+    danger colour), one Needs per prerequisite (the name alone when it names
+    no range: "Gatehouse: not installed", or "Gatehouse ✓" when it is met)
+    and then the engine's Needs,
     Options, Changes, Rules ("Changes the game: unranked on Core Prime",
     shown whole) and From. `verdict_of_record` maps a dry-run record; a
     compatible summary counts the collections ("changes 2 units");

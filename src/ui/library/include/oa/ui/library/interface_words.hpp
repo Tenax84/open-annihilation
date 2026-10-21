@@ -384,6 +384,7 @@ inline constexpr std::string_view interface_words[] = {
     words::layer_menus,
     words::needs_mutator_missing,
     words::needs_mutator_met,
+    words::needs_mutator_missing_name,
     words::rules_mutator,
     words::checked_good,
     words::checked_no_effect,

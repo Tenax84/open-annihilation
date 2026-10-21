@@ -4792,10 +4792,44 @@ void test_mutator_details() {
     const lib::Entry* ridge_walls = at(listed_library, core, Kind::mutator, "ridge-walls");
     OA_CHECK(ridge_walls != nullptr && ridge_walls->not_compatible && ridge_walls->can_act);
     if (ridge_walls != nullptr) {
-        const lib::Fact* works = fact(lib::facts(listed_library, *ridge_walls), "Works with");
+        const auto ridge_facts = lib::facts(listed_library, *ridge_walls);
+        const lib::Fact* works = fact(ridge_facts, "Works with");
         OA_CHECK(works != nullptr && works->long_value == "Ridge" && works->mark == Mark::warn);
         OA_CHECK(actions_of(listed_library, *ridge_walls).front().first == Action::get);
         OA_CHECK(actions_of(listed_library, *ridge_walls).front().second);
+    }
+
+    // A prerequisite that names no version range is just the mutator's name.
+    {
+        lib::Inputs plain = base_inputs();
+        lib::Listing needs_plain = listing(core, Kind::mutator, "needs-plain", "Needs Plain");
+        lib::MutatorFacts plain_facts;
+        plain_facts.needs.push_back({"gatehouse", "", "Gatehouse"});
+        needs_plain.mutator = plain_facts;
+        plain.listings.push_back(std::move(needs_plain));
+        const lib::Library missing_range = built(plain);
+        const lib::Entry* missing_entry = at(missing_range, core, Kind::mutator, "needs-plain");
+        OA_CHECK(missing_entry != nullptr);
+        if (missing_entry != nullptr) {
+            const std::vector<lib::Fact> plain_list = lib::facts(missing_range, *missing_entry);
+            const lib::Fact* needs = fact(plain_list, "Needs");
+            OA_CHECK(
+                needs != nullptr && needs->long_value == "Gatehouse: not installed" &&
+                needs->short_value == needs->long_value && needs->mark == Mark::warn
+            );
+        }
+        plain.installed.push_back(installed(core, Kind::mutator, "gatehouse", "Gatehouse"));
+        const lib::Library met_range = built(std::move(plain));
+        const lib::Entry* met_entry = at(met_range, core, Kind::mutator, "needs-plain");
+        OA_CHECK(met_entry != nullptr);
+        if (met_entry != nullptr) {
+            const std::vector<lib::Fact> plain_list = lib::facts(met_range, *met_entry);
+            const lib::Fact* needs = fact(plain_list, "Needs");
+            OA_CHECK(
+                needs != nullptr && needs->long_value == "Gatehouse ✓" &&
+                needs->short_value == needs->long_value && needs->mark == Mark::good
+            );
+        }
     }
 
     const lib::Entry* bare_entry = at(listed_library, core, Kind::mutator, "bare");

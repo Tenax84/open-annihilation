@@ -285,10 +285,13 @@ inline constexpr std::string_view base_supported_short = "TA 3.1c";
 inline constexpr std::string_view needs_engine = "Open Annihilation {range}";
 inline constexpr std::string_view needs_engine_short = "OA {range}";
 /// A prerequisite no installed mutator meets. `{range}` is the version range
-/// in the engine's comparison words, empty when the prerequisite names none.
+/// in the engine's comparison words. A prerequisite that names no range uses
+/// `needs_mutator_missing_name` instead, so the line does not keep a blank.
 inline constexpr std::string_view needs_mutator_missing = "{name} {range}: not installed";
-/// A prerequisite an installed mutator meets.
+/// A prerequisite an installed mutator meets, when it names a version range.
 inline constexpr std::string_view needs_mutator_met = "{name} {range} ✓";
+/// A prerequisite with no version range that no installed mutator meets.
+inline constexpr std::string_view needs_mutator_missing_name = "{name}: not installed";
 inline constexpr std::string_view hacks_counts = "{game} change the game · {view} view only";
 inline constexpr std::string_view hacks_counts_short = "{game} game · {view} view";
 inline constexpr std::string_view hacks_none = "none";

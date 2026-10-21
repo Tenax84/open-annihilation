@@ -722,6 +722,9 @@ void library_worker(void* argument) {
                     std::cerr << "open-annihilation: library: the check failed: " << error.what()
                               << '\n';
                     outcome.cancelled = true;
+                } catch (...) {
+                    std::cerr << "open-annihilation: library: the check failed\n";
+                    outcome.cancelled = true;
                 }
             }
             base::threads::LockGuard guard(work.mutex);
@@ -1090,8 +1093,19 @@ void Runtime::LibraryHost::begin_mutator_check(Runtime& runtime, std::string_vie
         work.check_job = MutatorCheck{checking_id, std::move(job)};
         work.check_due = true;
     }
-    if (ensure_worker())
+    if (ensure_worker()) {
         work.wake.notify_all();
+    } else {
+        // The thread did not start, so nothing will ever record an outcome.
+        // Drop the job or the row stays "Checking…" and later checks wait.
+        {
+            base::threads::LockGuard guard(work.mutex);
+            work.check_job.reset();
+            work.check_due = false;
+        }
+        checking_id.clear();
+        check_open = false;
+    }
     rebuild(runtime);
 }
 
@@ -1129,8 +1143,17 @@ bool Runtime::LibraryHost::finish_mutator_check() {
                 work.check_job = MutatorCheck{checking_id, std::move(job)};
                 work.check_due = true;
             }
-            if (ensure_worker())
+            if (ensure_worker()) {
                 work.wake.notify_all();
+            } else {
+                {
+                    base::threads::LockGuard guard(work.mutex);
+                    work.check_job.reset();
+                    work.check_due = false;
+                }
+                checking_id.clear();
+                check_open = false;
+            }
         }
     }
     return true;

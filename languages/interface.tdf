@@ -12682,6 +12682,14 @@
 	it=Le mappe e le campagne di {name} escono dalle liste finché non lo riaccendi. Non viene cancellato nulla.;
 	}
 
+[{name}: not installed]
+	{
+	de={name}: nicht installiert;
+	fr={name} : pas installé;
+	es={name}: no instalado;
+	it={name}: non installato;
+	}
+
 [{n} GB]
 	{
 	de={n} GB;

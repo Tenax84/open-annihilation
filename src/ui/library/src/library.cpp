@@ -940,11 +940,19 @@ void append_mutator_facts(const Library& library, const Entry& entry, std::vecto
             continue;
         const std::string range = mutator_range_words(need.range, text);
         const bool met = prerequisite_met(library.inputs, need);
-        const std::string value = filled(
-            text,
-            met ? words::needs_mutator_met : words::needs_mutator_missing,
-            {{"name", name}, {"range", range}}
-        );
+        // An empty range would leave a blank in "{name} {range}". The met
+        // line reuses the row's "{name} ✓".
+        const std::string value =
+            range.empty() ? filled(
+                                text,
+                                met ? words::name_met : words::needs_mutator_missing_name,
+                                {{"name", name}}
+                            )
+                          : filled(
+                                text,
+                                met ? words::needs_mutator_met : words::needs_mutator_missing,
+                                {{"name", name}, {"range", range}}
+                            );
         list.push_back(
             fact_of(shown(text, words::fact_needs), value, value, met ? Mark::good : Mark::warn)
         );
