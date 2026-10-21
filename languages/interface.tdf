@@ -1114,6 +1114,14 @@
 	it=Base lascia che la scheda grafica lo scali in modo uniforme.;
 	}
 
+[Battle room]
+	{
+	de=Gefechtsraum;
+	fr=Salle de bataille;
+	es=Sala de batalla;
+	it=Sala di battaglia;
+	}
+
 [Battle Tactics]
 	{
 	de=Battle Tactics;
@@ -6010,6 +6018,22 @@
 	it=Non ci sono pacchetti di mappe installati.;
 	}
 
+[No mutator matches these filters]
+	{
+	de=Kein Mutator passt zu diesen Filtern;
+	fr=Aucun mutateur ne correspond à ces filtres;
+	es=Ningún mutador coincide con estos filtros;
+	it=Nessun mutatore corrisponde a questi filtri;
+	}
+
+[No mutators here yet. The Library on the main menu gets them.]
+	{
+	de=Hier sind noch keine Mutatoren. Die Bibliothek im Hauptmenü holt sie.;
+	fr=Pas encore de mutateurs ici. La Bibliothèque du menu principal les récupère.;
+	es=Aquí todavía no hay mutadores. La Biblioteca del menú principal los trae.;
+	it=Qui non ci sono ancora mutatori. La Biblioteca del menu principale li prende.;
+	}
+
 [No names match.]
 	{
 	de=Kein Name passt.;
@@ -6410,6 +6434,14 @@
 	it=SULLO SCHERMO;
 	}
 
+[ON · APPLIED TOP TO BOTTOM]
+	{
+	de=AKTIV · VON OBEN NACH UNTEN ANGEWANDT;
+	fr=ACTIFS · APPLIQUÉS DE HAUT EN BAS;
+	es=ACTIVOS · SE APLICAN DE ARRIBA ABAJO;
+	it=ATTIVI · APPLICATI DALL'ALTO IN BASSO;
+	}
+
 [ON/OFF]
 	{
 	de=AN/AUS;
@@ -6728,6 +6760,14 @@
 	fr=Dialogue d'options;
 	es=Diálogo de opciones;
 	it=Finestra delle opzioni;
+	}
+
+[Order]
+	{
+	de=Reihenfolge;
+	fr=Ordre;
+	es=Orden;
+	it=Ordine;
 	}
 
 [Order: tap to arm it, then tap where it goes; tap again to take it back.]
@@ -8034,6 +8074,14 @@
 	it=Cerca mod, autori, etichette;
 	}
 
+[Search mutators]
+	{
+	de=Mutatoren suchen;
+	fr=Rechercher des mutateurs;
+	es=Buscar mutadores;
+	it=Cerca mutatori;
+	}
+
 [Search mutators, authors, tags]
 	{
 	de=Mutatoren, Autoren, Stichworte suchen;
@@ -8296,6 +8344,14 @@
 	fr=Passer;
 	es=Omitir;
 	it=Salta;
+	}
+
+[Skirmish]
+	{
+	de=Gefecht;
+	fr=Escarmouche;
+	es=Escaramuza;
+	it=Schermaglia;
 	}
 
 [Skirmish players]
@@ -10160,6 +10216,14 @@
 	fr=UTILISER CE DOSSIER;
 	es=USAR ESA CARPETA;
 	it=USA QUELLA CARTELLA;
+	}
+
+[USE THESE]
+	{
+	de=ÜBERNEHMEN;
+	fr=VALIDER;
+	es=USAR ESTOS;
+	it=USA QUESTI;
 	}
 
 [USE THIS GAME]
@@ -13338,6 +13402,14 @@
 	it={save_heading} / {now_heading};
 	}
 
+[{setup} · {mod}]
+	{
+	de={setup} · {mod};
+	fr={setup} · {mod};
+	es={setup} · {mod};
+	it={setup} · {mod};
+	}
+
 [{shown} of {all}]
 	{
 	de={shown} von {all};
@@ -13658,6 +13730,14 @@
 	it={version} · rev. {revision};
 	}
 
+[{version} · {author}]
+	{
+	de={version} · {author};
+	fr={version} · {author};
+	es={version} · {author};
+	it={version} · {author};
+	}
+
 [{version} · {maps}]
 	{
 	de={version} · {maps};
@@ -13736,6 +13816,22 @@
 	fr=‹ TÉLÉCHARGEMENTS;
 	es=‹ DESCARGAS;
 	it=‹ DOWNLOAD;
+	}
+
+[▲ UP]
+	{
+	de=▲ HOCH;
+	fr=▲ HAUT;
+	es=▲ ARRIBA;
+	it=▲ SU;
+	}
+
+[▼ DOWN]
+	{
+	de=▼ RUNTER;
+	fr=▼ BAS;
+	es=▼ ABAJO;
+	it=▼ GIÙ;
 	}
 
 [✓]
