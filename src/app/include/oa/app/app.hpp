@@ -295,6 +295,10 @@ struct Options {
     fs::path mod_dir;
     // Plays the game folder without the remembered mod folder (--base-game).
     bool base_game = false;
+    /// Plays this run with no mutators (--no-mutators). A list `--mutator`
+    /// or a launch file names is refused and logged, and none is applied.
+    /// The last set of each setup is left as it is.
+    bool no_mutators = false;
     // Mutators for this run (--mutator PATH|ID[:OPTION=VALUE,...]), each
     // value as written, in the order given. Empty applies none.
     std::vector<std::string> mutators;

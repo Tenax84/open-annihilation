@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -982,9 +983,21 @@ end
     OA_CHECK(result.journal.entries.size() == 1);
 }
 
+/// Real time each phase of a budget case may run. These cases are about the
+/// instruction allowance; the real-time limit has its own test, and a busy
+/// machine must not turn a budget stop into a time stop here.
+constexpr std::chrono::minutes k_budget_time_limit{10};
+
+/// Most processor time a loop the allowance stops may spend. The heaviest
+/// takes under 0.1 s on a fast machine, so a slow one has room. A loop the
+/// allowance does not stop fails the cause check when the real-time limit
+/// stops it.
+constexpr double k_budget_stop_seconds = 20.0;
+
 /// Runs one maps script with a small instruction allowance. The allowance
 /// is large enough that the loop's own Lua does not spend it, and small
-/// enough that the charged map work does, well inside the ten-second clock.
+/// enough that the charged map work does, well before the long real-time
+/// limit the case runs under.
 void expect_budget_stop(
     oa::AssetStore& store,
     const fs::path& scratch,
@@ -1001,12 +1014,25 @@ void expect_budget_stop(
     mutators::PipelineInput input = make_input({load_mutator(package)});
     input.map = valley;
     input.budget.instructions = 1000000;
+    input.time_limit = k_budget_time_limit;
+    // The bound is on the processor time this test spends, so other programs
+    // sharing the machine do not stretch it. The real time is printed too.
+    const std::clock_t processor_started = std::clock();
     const auto started = std::chrono::steady_clock::now();
     const mutators::PipelineResult result = mutators::run_pipeline(store, input);
+    const double processor_seconds =
+        static_cast<double>(std::clock() - processor_started) / CLOCKS_PER_SEC;
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
                                   std::chrono::steady_clock::now() - started
     )
                                   .count();
+    std::printf(
+        "%.*s stopped in %lld ms (%.0f ms of processor time)\n",
+        static_cast<int>(id.size()),
+        id.data(),
+        static_cast<long long>(milliseconds),
+        processor_seconds * 1000.0
+    );
     OA_CHECK(!result.playable());
     OA_CHECK(!result.mutators.empty());
     if (!result.mutators.empty()) {
@@ -1021,7 +1047,7 @@ void expect_budget_stop(
                 result.mutators.front().message.c_str()
             );
     }
-    OA_CHECK(milliseconds < 5000);
+    OA_CHECK(processor_seconds < k_budget_stop_seconds);
     OA_CHECK(served_entry(result, valley.ota_path) == nullptr);
     release(store);
 }

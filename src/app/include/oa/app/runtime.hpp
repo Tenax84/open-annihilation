@@ -170,6 +170,11 @@ struct PipelineResult;
 struct ResolvedMutator;
 } // namespace oa::data::mutators
 
+namespace oa::app::mutators_memory {
+enum class Setup : uint8_t;
+struct Crash;
+} // namespace oa::app::mutators_memory
+
 namespace oa::platform::text_font {
 class FontStack;
 } // namespace oa::platform::text_font
@@ -4370,10 +4375,77 @@ class Runtime final : public menu::Host,
         std::vector<std::string> fields
     );
 
+    /// The last set a setup started a game with.
+    ///
+    /// The mutator picker reads it. None when the key is absent or its
+    /// text is not a loadout, and none for the whole run under
+    /// `--no-mutators`, which leaves the key as it is.
+    ///
+    /// @param setup the setup
+    /// @return the set, or none
+    [[nodiscard]] std::optional<oa::data::mutators::Loadout>
+    remembered_mutators(mutators_memory::Setup setup) const;
+
+    /// Stores the set a setup started a game with and saves the preferences.
+    ///
+    /// A setup's START calls it, and a campaign's saved games will. An
+    /// empty loadout writes nothing. `--no-mutators` writes nothing. A
+    /// failure to save is logged once and is not thrown.
+    ///
+    /// @param setup the setup
+    /// @param loadout the set
+    void
+    remember_mutators(mutators_memory::Setup setup, const oa::data::mutators::Loadout& loadout);
+
+    /// Erases the set a setup remembered and saves the preferences.
+    ///
+    /// The crash question's FORGET IT calls it. A failure to save is logged
+    /// once and is not thrown.
+    ///
+    /// @param setup the setup
+    void forget_mutators(mutators_memory::Setup setup);
+
+    /// Begins a game with the set a setup's START chose.
+    ///
+    /// A setup's START calls it. The set is remembered for that setup, the
+    /// setup is kept for the next match start, and the loadout is the next
+    /// match's request. An empty loadout remembers nothing; the next matches
+    /// play the run's own list (`--mutator`'s or a launch file's), normally
+    /// none. `--no-mutators` remembers nothing and applies nothing. Throws
+    /// std::runtime_error naming the entry when the set no longer resolves
+    /// (a mutator removed, or another version or SHA-256 installed); nothing
+    /// is remembered or chosen then.
+    ///
+    /// @param setup the setup
+    /// @param loadout the set, in play order
+    void start_with_mutators(mutators_memory::Setup setup, oa::data::mutators::Loadout loadout);
+
+    /// Returns the crash record the start found, once.
+    ///
+    /// The crash question asks with it. The next call returns nothing.
+    ///
+    /// @return the record, or nothing
+    [[nodiscard]] std::optional<mutators_memory::Crash> take_mutator_crash();
+
+    /// Tells whether `--no-mutators` refuses every mutator for this run.
+    ///
+    /// Every caller can ask. The crash record is still read and taken.
+    ///
+    /// @return true when the flag is set
+    [[nodiscard]] bool mutators_refused_for_run() const noexcept;
+
   private:
 
     /// The mutators chosen for the next matches, and the running match's result.
     struct MutatorState;
+
+    /// The crash record's file and a leftover read at the start.
+    struct MutatorMemory;
+
+    /// Frees the crash record.
+    ///
+    /// @param memory record to free; null is allowed
+    static void destroy_mutator_memory(MutatorMemory* memory) noexcept;
 
     /// Frees the mutator state.
     ///
@@ -4390,7 +4462,8 @@ class Runtime final : public menu::Host,
     /// refuses fails that mutator in the plan phase, and a mutator excluded
     /// only because it requires one is dropped with it. The match still starts.
     /// When the layer serves the chosen map, the cached scenario is read again
-    /// and a campaign mission is bound again.
+    /// and a campaign mission is bound again. Under `--no-mutators` a chosen
+    /// list is refused and nothing is applied.
     ///
     /// @param bootstrap the match being started
     void apply_match_mutators(const MatchBootstrap& bootstrap);
@@ -4464,6 +4537,41 @@ class Runtime final : public menu::Host,
     /// served a rewritten map, the cached scenario is read again from the
     /// installed files. A campaign mission is not bound again here.
     void release_match_mutators() noexcept;
+
+    /// Reads the crash record beside the preferences file into memory and
+    /// deletes the file, so the next start does not ask again.
+    void open_mutator_sentinel();
+
+    /// Rewrites the crash record with the loadout in play and the setup that
+    /// started it. An empty loadout writes nothing.
+    ///
+    /// @param setup the setup, or nothing when no setup started the match
+    /// @param loadout the mutators in play
+    void arm_mutator_sentinel(
+        std::optional<mutators_memory::Setup> setup, const oa::data::mutators::Loadout& loadout
+    );
+
+    /// Deletes the crash record's file. A fatal unwind must not call this:
+    /// Runtime's destructor does not.
+    void clear_mutator_sentinel();
+
+    /// Logs once that `--no-mutators` refused a named list. An empty list
+    /// logs nothing.
+    ///
+    /// @param named the list, as it was named
+    void note_mutators_refused(std::string_view named);
+
+    /// The mutators of a loadout, as a log line names them.
+    ///
+    /// @param loadout the loadout
+    /// @return `<id> <version>`, joined by commas
+    [[nodiscard]] static std::string mutator_names(const oa::data::mutators::Loadout& loadout);
+
+    /// Joins mutators as a command line or a launch file named them.
+    ///
+    /// @param names `--mutator` values, or a launch file's items
+    /// @return the names, joined by commas
+    [[nodiscard]] static std::string mutator_list_text(const std::vector<std::string>& names);
 
     /// The name an installed pack gives a map, for a campaign load.
     friend const char* pack_index_title(void* context, const char* map_name);
@@ -16999,6 +17107,20 @@ class Runtime final : public menu::Host,
     std::unique_ptr<MutatorState, void (*)(MutatorState*) noexcept> mutator_state_{
         nullptr, destroy_mutator_state
     };
+    /// The crash record beside the preferences file, and a leftover read at
+    /// the start. Null until the preferences are loaded. A run with no
+    /// preferences file holds a record that reads and writes nothing.
+    /// Runtime's destructor does not delete the file.
+    std::unique_ptr<MutatorMemory, void (*)(MutatorMemory*) noexcept> mutator_memory_{
+        nullptr, destroy_mutator_memory
+    };
+    /// The setup whose START chose the mutators of the next match. Empty
+    /// when no setup started it. The next match start takes it.
+    std::optional<mutators_memory::Setup> mutator_setup_{};
+    /// `--no-mutators` has already logged the list it refused.
+    bool mutator_refusal_logged_{};
+    /// A failure to store or erase a remembered set has already been logged.
+    bool mutator_sets_failure_logged_{};
     // The mounted pack map, the game's names, the fits and the refusals;
     // null until a pack map is first named.
     std::unique_ptr<PackMapState, void (*)(PackMapState*) noexcept> pack_map_state_{
