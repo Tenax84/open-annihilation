@@ -24,8 +24,8 @@ enum class Phase : uint8_t {
     manifest,  ///< the manifest's works-with and engine requirement
     plan,      ///< the plan returned by mutate
     files,     ///< the files layer
-    rules,     ///< the one rules pass
-    hooks,     ///< the units hook, then the weapons hook
+    rules,     ///< one mutator's rules
+    hooks,     ///< that mutator's units hook, then its weapons hook
     integrity, ///< reserved for the check that follows the last hook
 };
 
@@ -53,7 +53,8 @@ enum class Change : uint8_t {
 /// One change the pipeline kept.
 ///
 /// `mutators` are indices into the list passed to the pipeline. A rule write
-/// names every mutator that contributed, in list order. `field` is lower
+/// names the mutator whose step wrote the field, and a hook write names the
+/// mutator whose hook wrote it. `field` is lower
 /// case and empty for a record or a file. `old_text` and `new_text` are
 /// absent when the field was absent or removed. `record` is a unit name, a
 /// weapon or feature section, or a path. `block` is empty for a key of the
@@ -93,9 +94,10 @@ struct Journal {
 
     /// Sorts `entries` into journal order.
     ///
-    /// Phase first, then the first mutator's index, then path, record, block
-    /// and field compared byte by byte after ASCII case folding, with the
-    /// raw bytes breaking a tie.
+    /// The first mutator's index first, then the phase, so one mutator's
+    /// rules come before its hooks. An entry that names no mutator sorts
+    /// last. Path, record, block and field are compared byte by byte after
+    /// ASCII case folding, with the raw bytes breaking a tie.
     void order();
 
     /// Returns the entries that name `mutator`, in journal order.
@@ -116,7 +118,7 @@ enum class ConflictKind : uint8_t {
     same_path_added,     ///< two mutators added one path; the later one won
     added_path_hidden,   ///< a mask hid a file an earlier mutator added
     add_folder_missing,  ///< an add folder is not in the package
-    same_field_hooked,   ///< two hooks wrote one field; the later one won
+    same_field_hooked,   ///< a later hook wrote a field an earlier mutator wrote or locked
     value_replaced,      ///< a later mutator's rule replaced a value an earlier mutator wrote
     field_locked,        ///< a later mutator's rule left a field an earlier mutator locked alone
     text_change_dropped, ///< a text change was dropped

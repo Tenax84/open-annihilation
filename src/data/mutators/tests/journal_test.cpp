@@ -39,6 +39,7 @@ mutators::JournalEntry make_entry(
 void test_order() {
     mutators::Journal journal;
     journal.entries.push_back(make_entry(mutators::Phase::hooks, {1}, "z"));
+    journal.entries.push_back(make_entry(mutators::Phase::hooks, {0}, "h"));
     journal.entries.push_back(make_entry(mutators::Phase::rules, {0}, "b"));
     journal.entries.push_back(make_entry(mutators::Phase::rules, {0}, "a", "B"));
     journal.entries.push_back(make_entry(mutators::Phase::rules, {0}, "a", "a"));
@@ -50,8 +51,8 @@ void test_order() {
     journal.entries.push_back(make_entry(mutators::Phase::files, {0}, "m"));
     journal.order();
 
-    OA_CHECK(journal.entries.size() == 10);
-    if (journal.entries.size() != 10)
+    OA_CHECK(journal.entries.size() == 11);
+    if (journal.entries.size() != 11)
         return;
     const mutators::JournalEntry* ordered = journal.entries.data();
     OA_CHECK(ordered[0].phase == mutators::Phase::files && ordered[0].path == "m");
@@ -59,19 +60,23 @@ void test_order() {
     OA_CHECK(ordered[2].field == "Max");
     OA_CHECK(ordered[3].field == "max");
     OA_CHECK(ordered[4].record == "B");
-    OA_CHECK(ordered[5].path == "b");
+    OA_CHECK(ordered[5].path == "b" && ordered[5].phase == mutators::Phase::rules);
+    // One mutator's rules come before its hooks, and that mutator comes
+    // before the next mutator's rules.
+    OA_CHECK(ordered[6].phase == mutators::Phase::hooks && ordered[6].path == "h");
+    OA_CHECK(ordered[7].phase == mutators::Phase::hooks && ordered[7].path == "z");
     OA_CHECK(
-        ordered[6].mutators.size() == 1 && ordered[6].mutators[0] == 2 && ordered[6].path == "a"
+        ordered[8].mutators.size() == 1 && ordered[8].mutators[0] == 2 && ordered[8].path == "a"
     );
-    OA_CHECK(ordered[7].path == "c" && ordered[7].mutators.size() == 2);
-    OA_CHECK(ordered[8].mutators.empty() && ordered[8].phase == mutators::Phase::rules);
-    OA_CHECK(ordered[9].phase == mutators::Phase::hooks && ordered[9].path == "z");
+    OA_CHECK(ordered[9].path == "c" && ordered[9].mutators.size() == 2);
+    OA_CHECK(ordered[10].mutators.empty() && ordered[10].phase == mutators::Phase::rules);
 
     const std::vector<mutators::JournalEntry> of_tough = journal.entries_of(0);
-    OA_CHECK(of_tough.size() == 7);
-    if (of_tough.size() == 7) {
+    OA_CHECK(of_tough.size() == 8);
+    if (of_tough.size() == 8) {
         OA_CHECK(of_tough[0].path == "m");
-        OA_CHECK(of_tough[6].path == "c");
+        OA_CHECK(of_tough[6].phase == mutators::Phase::hooks && of_tough[6].path == "h");
+        OA_CHECK(of_tough[7].path == "c");
     }
     const std::vector<mutators::JournalEntry> of_later = journal.entries_of(2);
     OA_CHECK(of_later.size() == 2);

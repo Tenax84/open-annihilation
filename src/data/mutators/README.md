@@ -71,10 +71,13 @@ and that every message starts with the path and every rule has its own name.
 
 `data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
 Ridge packages under `tests/data/mutators` through `run_pipeline`: rules in
-either order, hooks in list order, each kind of failure, and a run with a
-failing mutator against the run of the mutators that remain, whether its
-hook, its rules or its files would have reached the mutators below it, and
-with the mutators that require it. It also covers plans whose tables have
+either order, a later assignment replacing an earlier one, a rule that
+reads a hook's write from the mutator above it, a lock that holds against
+a later mutator's rules but not its hook, hooks in list order, each kind
+of failure, and a run with a failing mutator against the run of the
+mutators that remain, whether its hook, its rules or its files would have
+reached the mutators below it, and with the mutators that require it. It
+also covers plans whose tables have
 metatables, the allowances and the string cap, files added, masked and
 hidden with their journal entries, a document that does not parse, a
 player's option, the list checks and two identical runs.
@@ -576,11 +579,12 @@ Each manifest is then checked against the mod and the engine version. A
 mutator that does not fit is incompatible and left out. The rest go through
 passes. A pass plans every mutator by calling its `mutate(ctx)` in a
 sandbox of its own, builds and mounts the files layer, parses every
-document the match will load from the layered store, applies each
-mutator's rules as a step of its own in list order, each on the documents
-the one above it left, and then runs each mutator's hooks in list order,
-its units hook and then its weapons hook. Only a document the pass changed
-is written back, whole, with the text writer, at the path the store listed
+document the match will load from the layered store, then takes each
+mutator in list order and applies its rules and then its hooks, on the
+documents the mutators above it left. Its units hook runs, then its
+weapons hook. A plan that returns map hooks is refused, so none run. Only
+a document the pass changed is written back, whole, with the text writer,
+at the path the store listed
 it under. A document a hook removed is hidden.
 
 The plan is read inside the plan phase, with the mutator's allowances and
@@ -596,7 +600,7 @@ change, depends on nothing but the mutator itself, so every such failure is
 kept. Any later failure can depend on the mutators above it: a mask or a
 layer-wide limit in the files layer, or the documents a hook reads. So the
 pass keeps only the failure nearest the top of the list, and it stops at the
-first hook that fails. No later hook runs on what a failed mutator left. The
+first hook that fails. No later mutator runs on what a failed mutator left. The
 mutator that failed, and every mutator that requires it, is dropped, and the
 next pass starts again from the store. A mutator dropped for what it
 requires is `excluded`, in the phase `loadout`. Each pass drops at least one
@@ -606,14 +610,18 @@ no file, rule, journal entry or note.
 
 The journal keeps every change of the last pass: each rule write, naming
 the mutator that made it, each hook write and removal, each file a mutator
-added, and each file of the mod a mask hides. It is sorted by phase, then
-by the first mutator, then by path, record, block and field. The conflict
-report holds the stacking notes, and the paths a parse left out, one
-warning each. Among the notes, `value_replaced` is a value a later
-mutator's rule replaced, and `field_locked` is a field an earlier mutator
-locked, so a later mutator's rule left it alone. Each names both mutators,
-the earlier first. A script stopped by an allowance, the real-time limit or
-the string cap has a cause of its own (`instruction_budget`,
+added, and each file of the mod a mask hides. It is sorted by the first
+mutator, then by phase, so one mutator's rules come before its hooks, then
+by path, record, block and field. The conflict report holds the stacking
+notes, and the paths a parse left out, one warning each. Among the notes,
+`value_replaced` is a value a later mutator's rule replaced. One such note
+is kept for each field name and pair of mutators, so a stack that rewrites
+the same field on many records does not flood the report. `field_locked`
+is a field an earlier mutator locked, so a later mutator's rule left it
+alone. A later hook can still write that field, and the report notes the
+hook as the writer that won, naming both. Each of these names both
+mutators, the earlier first. A script stopped by an allowance, the
+real-time limit or the string cap has a cause of its own (`instruction_budget`,
 `memory_budget`, `time_limit` or `string_length`), never `script_error`.
 
 The pipeline prints nothing and keeps nothing between calls. The same input

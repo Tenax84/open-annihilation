@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // One ordered run of mutators. The list is checked, each plan is read in a
-// sandbox, the files layer is mounted, documents are parsed from that layer,
-// rules run once, and the hooks run in list order. A pass is a transaction:
-// a failure ends it, drops that mutator and anyone who requires it, and the
-// run starts again from the store.
+// sandbox, the files layer is mounted and documents are parsed from that
+// layer. Each mutator then applies its rules and then its hooks, in list
+// order. A pass is a transaction: a failure ends it, drops that mutator and
+// anyone who requires it, and the run starts again from the store.
 #include "oa/data/mutators/pipeline.hpp"
 
 #include "oa/base/sha256.hpp"
@@ -35,6 +35,8 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -1735,6 +1737,143 @@ void plan_mutator(
     }
 }
 
+/// The step state's id for one hook write, folded the way a rule step folds it.
+///
+/// @param write the hook write
+/// @return the id
+rules::FieldId field_id_of(const rules::FieldWrite& write) {
+    rules::FieldId id;
+    id.path.resize(write.path.size());
+    for (std::size_t offset = 0; offset < write.path.size(); ++offset)
+        id.path[offset] = fold_path_byte(write.path[offset]);
+    id.record = fold_copy(write.record);
+    id.block = fold_copy(write.block);
+    id.key = fold_copy(write.key);
+    return id;
+}
+
+/// One replaced-value note: the field name and the two mutators.
+struct ReplacedField {
+    std::string field;
+    uint16_t earlier{};
+    uint16_t later{};
+
+    /// Orders by the earlier mutator, then the later one, then the field.
+    ///
+    /// @param other the other note
+    /// @return true when this note sorts first
+    bool operator<(const ReplacedField& other) const {
+        if (earlier != other.earlier)
+            return earlier < other.earlier;
+        if (later != other.later)
+            return later < other.later;
+        return field < other.field;
+    }
+};
+
+/// Adds one rules note to the report.
+///
+/// A replaced value is kept once for each field name and pair of mutators.
+/// Further records of that same replacement would flood a deep stack.
+///
+/// @param report the pass report
+/// @param note the rules note
+/// @param ids mutator ids, in list order
+/// @param[in,out] replaced_fields the replacements already kept
+void append_rule_note(
+    ConflictReport& report,
+    const rules::RuleNote& note,
+    const std::vector<std::string>& ids,
+    std::set<ReplacedField>& replaced_fields
+) {
+    Conflict conflict = conflict_from_rule(note, ids);
+    if (conflict.kind == ConflictKind::value_replaced && conflict.mutators.size() >= 2) {
+        ReplacedField key;
+        key.field = conflict.field;
+        key.earlier = conflict.mutators.front();
+        key.later = conflict.mutators.back();
+        if (!replaced_fields.insert(std::move(key)).second)
+            return;
+    }
+    report.conflicts.push_back(std::move(conflict));
+}
+
+/// Reports whether `note` names `mutator`.
+///
+/// @param note the hook note
+/// @param mutator the id
+/// @return true when the note names it
+bool note_names(const HookNote& note, std::string_view mutator) {
+    for (const std::string& name : note.mutators) {
+        if (name == mutator)
+            return true;
+    }
+    return false;
+}
+
+/// Records this mutator's new hook notes and writes.
+///
+/// A hook may write a field an earlier mutator locked. The write stands, and
+/// the report names both mutators. The step state remembers the hook as the
+/// last writer, and keeps the lock, so a later mutator's rules still leave
+/// the field alone.
+///
+/// @param collections the hooks' collections
+/// @param[in,out] state lock marks and last writers
+/// @param[in,out] report the pass report
+/// @param ids mutator ids, in list order
+/// @param slot this mutator's index
+/// @param notes_before how many hook notes existed before this mutator
+/// @param writes_before how many hook writes existed before this mutator
+void record_hook_turn(
+    Collections& collections,
+    rules::ApplyState& state,
+    ConflictReport& report,
+    const std::vector<std::string>& ids,
+    std::size_t slot,
+    std::size_t notes_before,
+    std::size_t writes_before
+) {
+    const std::span<const HookNote> notes = collections.notes();
+    for (std::size_t note_index = notes_before; note_index < notes.size(); ++note_index)
+        report.conflicts.push_back(conflict_from_hook(notes[note_index], ids));
+
+    const std::span<const rules::FieldWrite> writes = collections.writes();
+    for (std::size_t write_index = writes_before; write_index < writes.size(); ++write_index) {
+        const rules::FieldWrite& write = writes[write_index];
+        const rules::FieldId id = field_id_of(write);
+        const std::string& writer = write.mutators.empty() ? ids[slot] : write.mutators.front();
+        state.writers.insert_or_assign(id, writer);
+        const auto locker = state.locks.find(id);
+        if (locker == state.locks.end() || locker->second == writer)
+            continue;
+        bool named = false;
+        for (std::size_t seen = notes_before; seen < notes.size(); ++seen) {
+            const HookNote& earlier = notes[seen];
+            if (earlier.kind == HookNoteKind::hook_overwrote &&
+                same_path(earlier.path, write.path) && same_text(earlier.record, write.record) &&
+                same_text(earlier.key, write.key) && note_names(earlier, locker->second)) {
+                named = true;
+                break;
+            }
+        }
+        if (named)
+            continue;
+        HookNote note;
+        note.kind = HookNoteKind::hook_overwrote;
+        note.mutators.push_back(locker->second);
+        note.mutators.push_back(writer);
+        note.path = write.path;
+        note.record = write.record;
+        note.key = write.key;
+        note.message = writer;
+        note.message += " wrote a field ";
+        note.message += locker->second;
+        note.message += " had locked";
+        report.conflicts.push_back(conflict_from_hook(note, ids));
+    }
+}
+
 /// Fails every mutator still in the pass with an engine error.
 void fail_every(
     std::vector<MutatorResult>& results,
@@ -1885,21 +2024,34 @@ bool run_pass(
     apply_options.check = [&layout](
                               const rules::FieldRef& field, const std::optional<std::string>& text
                           ) { return check_field(field, text, layout); };
-    const rules::ApplyResult applied = rules::apply_rules(rule_sets, documents, apply_options);
+    rules::ApplyState apply_state;
+    std::vector<rules::FieldWrite> rule_writes;
+    std::set<ReplacedField> replaced_fields;
 
-    // The hooks run in list order on the pass's documents. The first hook
-    // that fails ends the pass, so no later hook runs on what it left. Hooks
-    // below a failure the files layer found are not run: they cannot change
-    // which failure is first.
+    // Each mutator applies its rules, then its units hook and its weapons
+    // hook, on the documents the mutators above it left. A plan that returns
+    // map hooks is refused, so none run. The first hook that fails ends the
+    // pass: no later mutator's rules or hooks run on what it left. A mutator
+    // below a failure the files layer found does not run either.
     collections.emplace(documents, &layout);
-    bool hooks_done = true;
+    bool steps_done = true;
     for (std::size_t slot = 0; slot < count && slot < first.slot; ++slot) {
         if (active[slot] == 0)
             continue;
+        if (plans[slot].has_rules) {
+            rules::ApplyResult step =
+                rules::apply_step(plans[slot].rules, documents, apply_state, apply_options);
+            for (rules::FieldWrite& write : step.writes)
+                rule_writes.push_back(std::move(write));
+            for (const rules::RuleNote& note : step.notes)
+                append_rule_note(report, note, ids, replaced_fields);
+        }
         if (plans[slot].units_hook == LUA_NOREF && plans[slot].weapons_hook == LUA_NOREF)
             continue;
         if (!sandboxes[slot].has_value())
             continue;
+        const std::size_t notes_before = collections->notes().size();
+        const std::size_t writes_before = collections->writes().size();
         WriteGrant grant;
         grant.units = declares(input.mutators[slot].manifest, oamut::Layer::units);
         grant.weapons = declares(input.mutators[slot].manifest, oamut::Layer::weapons);
@@ -1927,12 +2079,13 @@ bool run_pass(
             );
         }
         if (!hook_ok) {
-            hooks_done = false;
+            steps_done = false;
             break;
         }
         collections->end_mutator();
+        record_hook_turn(*collections, apply_state, report, ids, slot, notes_before, writes_before);
     }
-    if (!hooks_done) {
+    if (!steps_done) {
         sandboxes.clear();
         collections.reset();
         guard.release();
@@ -1942,7 +2095,7 @@ bool run_pass(
 
     std::vector<std::vector<Writer>> writers(documents.size());
     std::vector<uint8_t> menus(documents.size(), 0);
-    for (const rules::FieldWrite& write : applied.writes) {
+    for (const rules::FieldWrite& write : rule_writes) {
         journal.entries.push_back(entry_from_write(write, ids, Phase::rules, layout));
         for (const uint16_t mutator : journal.entries.back().mutators) {
             note_writer(
@@ -1956,8 +2109,6 @@ bool run_pass(
             );
         }
     }
-    for (const rules::RuleNote& note : applied.notes)
-        report.conflicts.push_back(conflict_from_rule(note, ids));
     for (const rules::FieldWrite& write : collections->writes()) {
         journal.entries.push_back(entry_from_write(write, ids, Phase::hooks, layout));
         for (const uint16_t mutator : journal.entries.back().mutators) {
@@ -1998,8 +2149,6 @@ bool run_pass(
         }
         journal.entries.push_back(std::move(entry));
     }
-    for (const HookNote& note : collections->notes())
-        report.conflicts.push_back(conflict_from_hook(note, ids));
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
         const std::optional<uint16_t> mutator = index_of(ids, entry.owner);

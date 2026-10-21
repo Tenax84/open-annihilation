@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 // SPDX-License-Identifier: GPL-3.0-only
 
-// Journal order, and the stacking notes of the files layer, the rules pass
-// and the hooks turned into conflicts. The sentences are the log lines.
+// Journal order, and the stacking notes of the files layer, each mutator's
+// rules and its hooks turned into conflicts. The sentences are the log lines.
 #include "oa/data/mutators/journal.hpp"
 
 #include <algorithm>
@@ -77,12 +77,12 @@ uint16_t first_mutator(const JournalEntry& entry) {
 /// @param right another entry
 /// @return true when `left` sorts first
 bool entry_before(const JournalEntry& left, const JournalEntry& right) {
-    if (left.phase != right.phase)
-        return static_cast<uint8_t>(left.phase) < static_cast<uint8_t>(right.phase);
     const uint16_t left_mutator = first_mutator(left);
     const uint16_t right_mutator = first_mutator(right);
     if (left_mutator != right_mutator)
         return left_mutator < right_mutator;
+    if (left.phase != right.phase)
+        return static_cast<uint8_t>(left.phase) < static_cast<uint8_t>(right.phase);
     if (left.path != right.path && less_text(left.path, right.path))
         return true;
     if (left.path != right.path && less_text(right.path, left.path))

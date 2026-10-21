@@ -38,12 +38,8 @@ finite, and a block that matched nothing are noted.
   The writes come sorted by path, record, block and key, compared without
   ASCII case, so the writes of one field stay in the order they were applied
   whichever spelling of the key each change used.
-- `apply_rules` applies a list of mutators: one `apply_step` per mutator, in
-  list order, on one `ApplyState` it starts empty. It combines nothing; its
-  writes and notes are each step's, in step order. It exists only while the
-  pipeline applies every mutator's rules before any mutator's hooks. When the
-  pipeline calls `apply_step` once per mutator, with that mutator's hooks
-  after it, `apply_rules` is removed.
+  The pipeline calls `apply_step` once per mutator and runs that mutator's
+  hooks before the next mutator's step.
 
 ## Targets and records
 
@@ -204,9 +200,9 @@ an earlier block changed, needs on fields a record leaves out (including a
 movement class and a key no schema holds), targets and folders, a layout
 that renames `units`, the spelling of a key a record does not hold, the
 writes of one field listed in applied order when a change creates it again
-under another spelling, `apply_rules` giving what one step per mutator
-gives, a depth change applied once when a block has two case variants of a
-key, and the notes for a block that matched nothing, a field that is not a
+under another spelling, a depth change applied once when a block has two
+case variants of a key, and the notes for a block that matched nothing, a
+field that is not a
 number, a result that is not finite (including a clamp that does not rescue
 it), and a check that warns or refuses.
 
