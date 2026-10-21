@@ -24,6 +24,12 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 - `rule_name` returns the stable lower-case name of a `PathRule`.
 - `build_files_layer` turns an ordered list of files plans into one
   `MutatorLayerSpec`. See [Files layer](#files-layer).
+- `run_pipeline` runs an ordered list of mutators against an asset store
+  and returns each mutator's outcome, the layer it left mounted, the
+  `Journal` of the changes kept and the `ConflictReport`. See
+  [Pipeline](#pipeline).
+- `Journal::entries_of` returns one mutator's changes, and `describe` writes
+  one conflict as a single English line.
 
 ## State
 
@@ -32,7 +38,8 @@ or the preferences. A null `PathContext::layout` means `data_layout()`. An
 empty `is_unit_name` knows no unit. `build_files_layer` reads the package
 folders it is given while it builds the layer, and it keeps nothing after
 it returns. `folder_digest` reads one folder and does not write. The other
-loadout functions read nothing.
+loadout functions read nothing. `run_pipeline` keeps nothing between calls:
+it reads the packages and the store it is given, and mounts its layer there.
 
 ## Invariants
 
@@ -61,6 +68,18 @@ loadout functions read nothing.
 allowed and refused form, including mixed case, backslashes and a variant
 folder; a layout that renames directories; every invalid path; the masks;
 and that every message starts with the path and every rule has its own name.
+
+`data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
+Ridge packages under `tests/data/mutators` through `run_pipeline`: rules in
+either order, hooks in list order, each kind of failure, and a run with a
+failing mutator against the run of the mutators that remain, whether its
+hook, its rules or its files would have reached the mutators below it, and
+with the mutators that require it. It also covers plans whose tables have
+metatables, the allowances and the string cap, files added, masked and
+hidden with their journal entries, a document that does not parse, a
+player's option, the list checks and two identical runs.
+`data-mutators-journal` (`tests/journal_test.cpp`) checks the entry order,
+`entries_of`, each note conversion and the sentences `describe` writes.
 
 ## Limitations
 
@@ -508,53 +527,52 @@ here opens the file.
 
 ## Pipeline
 
-`run_pipeline` takes an asset store and an ordered list of mutators and
-applies them in one fixed order: each `mutate(ctx)` for its plan, then the
-files layer, then every document the match will load, then one rules pass,
-then each mutator's hooks in list order. A hook is a transaction. A mutator
-that fails is dropped, with every mutator that requires it, and the run is
-repeated, so a failure leaves no file, rule or note. Only a document the
-run changed is written back. The result names each mutator's outcome and
-holds the journal and the conflict report. The store must hold no mutator
-layer when the call starts. On return the final layer is mounted when it
-holds at least one entry or mask, and the caller unmounts it.
+`run_pipeline` takes an asset store and an ordered list of mutators, and
+applies them in one fixed order. The list is checked first: more than 32
+mutators, an id listed twice, a requirement that no mutator above it meets,
+or two mutators that conflict refuses the whole list, and nothing runs.
+Each manifest is then checked against the mod and the engine version. A
+mutator that does not fit is incompatible and left out. The rest go through
+passes. A pass plans every mutator by calling its `mutate(ctx)` in a
+sandbox of its own, builds and mounts the files layer, parses every
+document the match will load from the layered store, applies every
+mutator's rules together once, and runs each mutator's hooks in list order,
+its units hook and then its weapons hook. Only a document the pass changed
+is written back, whole, with the text writer, at the path the store listed
+it under. A document a hook removed is hidden.
 
-## Entry points
+The plan is read inside the plan phase, with the mutator's allowances and
+real-time limit in force, and by raw access only, so no metamethod of the
+script runs. The plan, its `files` table, the `mask` and `add` lists and the
+`rules` list must be plain tables. One with a metatable refuses the plan,
+because its raw contents need not be what the script meant. A plan key the
+engine does not support yet (`menus`, `sides`, `tables`, `maps` and
+`hacks`) refuses the plan instead of being ignored.
 
-- `run_pipeline` runs one loadout and returns the outcomes, the layer, the
-  journal and the conflict report. It prints nothing.
-- `Journal` records the changes that were kept, in phase order, and
-  `entries_of` returns one mutator's entries.
-- `ConflictReport` holds the stacking notes and the paths a parse left out.
-  `describe` writes one note as a single English line.
+A pass is a transaction. A plan, or a rule aimed at a folder no mutator may
+change, depends on nothing but the mutator itself, so every such failure is
+kept. Any later failure can depend on the mutators above it: a mask or a
+layer-wide limit in the files layer, or the documents a hook reads. So the
+pass keeps only the failure nearest the top of the list, and it stops at the
+first hook that fails. No later hook runs on what a failed mutator left. The
+mutator that failed, and every mutator that requires it, is dropped, and the
+next pass starts again from the store. A mutator dropped for what it
+requires is `excluded`, in the phase `loadout`. Each pass drops at least one
+mutator, so a run makes at most one pass more than it has mutators. The
+result is the run of the mutators that remain: a mutator that failed leaves
+no file, rule, journal entry or note.
 
-## State
+The journal keeps every change of the last pass: each rule write, naming
+every mutator that contributed to it, each hook write and removal, each file
+a mutator added, and each file of the mod a mask hides. It is sorted by
+phase, then by the first mutator, then by path, record, block and field.
+The conflict report holds the stacking notes, and the paths a parse left
+out, one warning each. A script stopped by an allowance, the real-time
+limit or the string cap has a cause of its own (`instruction_budget`,
+`memory_budget`, `time_limit` or `string_length`), never `script_error`.
 
-None kept between calls. The pipeline mounts the layer on the store it is
-given and keeps nothing after it returns.
-
-## Invariants
-
-- The same input produces the same layer bytes, journal and report.
-- A mutator that fails leaves no trace: the result equals the run without
-  it and without every mutator that requires it.
-- A document that did not change is never written. A changed document is
-  written with the text writer, at the path the store listed.
-- Nothing of a mutator runs after `run_pipeline` returns. The scripts stay
-  inside the sandbox they were given.
-
-## Tests
-
-`data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up Ridge
-packages under `tests/data/mutators`: rules, hooks, a failed mutator, the
-budgets, files added and hidden, and the list checks. `data-mutators-journal`
-checks the entry order, `entries_of`, each note conversion and the sentences
-`describe` writes.
-
-## Limitations
-
-The plan keys `menus`, `sides`, `tables`, `maps` and `hacks` are refused
-until their tickets add them: menus with D06, sides and tables with D04,
-maps with D07 and hacks with D08. The integrity check after the last hook
-arrives with V04. Until then a plan that names one of those keys fails
-that mutator instead of ignoring the key.
+The pipeline prints nothing and keeps nothing between calls. The same input
+gives the same layer bytes, journal and report. The store must hold no
+mutator layer when the call starts. On return the final layer is mounted
+when it holds at least one entry or mask, and the caller unmounts it. No
+integrity check runs after the last hook yet.
