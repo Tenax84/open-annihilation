@@ -10,10 +10,13 @@
 #include "oa/app/app.hpp"
 #include "net_options.hpp"
 #include "oa/netgame/dplay.hpp"
+#include "oa/test/scratch_directory.hpp"
 
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -323,5 +326,86 @@ int main() {
         "-y skips the intro and is noted"
     );
     expect(rejection({"-y"}, false) == "-y is not handled by this build", "-y is network play's");
+
+    // A launch's mutators fill the run's list unless --mutator already did,
+    // including a headless run. adopt_launch_run reads the process context,
+    // so these cases hand it that context and clear it again afterwards.
+    const std::filesystem::path launch_dir =
+        oa::test::make_scratch_directory("V07-launch-mutators");
+    const std::filesystem::path launch_file = launch_dir / "host.oalaunch";
+    auto& live = oa::app::netgame_context();
+    live.options = {};
+    live.launch = {};
+    {
+        std::ofstream out(launch_file);
+        out << "oalaunch: 1\n"
+               "game:\n"
+               "  role: host\n"
+               "  name: Example\n"
+               "player:\n"
+               "  name: Commander\n"
+               "content:\n"
+               "  mutators:\n"
+               "    - wide-sight\n"
+               "    - id: fast-builders\n"
+               "      options:\n"
+               "        factor: 2\n";
+    }
+    const std::string launch_path = launch_file.string();
+    const auto parse_live = [](const std::vector<const char*>& arguments) {
+        auto& context = oa::app::netgame_context();
+        context.options = {};
+        context.launch = {};
+        std::vector<std::string> storage{"open-annihilation"};
+        storage.insert(storage.end(), arguments.begin(), arguments.end());
+        std::vector<char*> argv;
+        for (auto& argument : storage)
+            argv.push_back(argument.data());
+        oa::app::Extension table{};
+        oa::app::fill_option_hooks(table, context);
+        auto app = oa::app::parse_options(static_cast<int>(argv.size()), argv.data(), table);
+        return Parsed{context.options, std::move(app)};
+    };
+    const auto from_file = parse_live({"--launch", launch_path.c_str()});
+    expect(
+        from_file.app.mutators.size() == 2 && from_file.app.mutators[0] == "wide-sight" &&
+            from_file.app.mutators[1] == "fast-builders:factor=2" &&
+            from_file.app.mutator_fields.size() == 2 &&
+            from_file.app.mutator_fields[1] == "content.mutators[2]",
+        "a launch's mutators fill the run's list"
+    );
+    const auto headless = parse_live({"--headless-check", "--launch", launch_path.c_str()});
+    expect(
+        headless.app.headless_check && headless.app.mutators.size() == 2 &&
+            headless.app.mutators[0] == "wide-sight",
+        "a headless run takes the launch's mutators"
+    );
+    const auto replaced = parse_live({"--launch", launch_path.c_str(), "--mutator", "other-pack"});
+    expect(
+        replaced.app.mutators.size() == 1 && replaced.app.mutators[0] == "other-pack" &&
+            replaced.app.mutator_fields.empty(),
+        "--mutator replaces the launch's list"
+    );
+    const auto before = parse_live({"--mutator", "other-pack", "--launch", launch_path.c_str()});
+    expect(
+        before.app.mutators.size() == 1 && before.app.mutators[0] == "other-pack",
+        "--mutator before the file replaces its list"
+    );
+    const auto plain_host = parse_live({"--host"});
+    expect(plain_host.app.mutators.empty(), "no launch adds no mutators");
+    {
+        std::ofstream out(launch_file);
+        out << "oalaunch: 1\n"
+               "game:\n"
+               "  role: host\n"
+               "  name: Example\n"
+               "player:\n"
+               "  name: Commander\n";
+    }
+    const auto unnamed = parse_live({"--launch", launch_path.c_str()});
+    expect(unnamed.app.mutators.empty(), "a launch without mutators adds none");
+    live.options = {};
+    live.launch = {};
+    std::filesystem::remove_all(launch_dir);
     return failures == 0 ? 0 : 1;
 }

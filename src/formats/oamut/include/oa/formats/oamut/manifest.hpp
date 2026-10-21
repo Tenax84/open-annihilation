@@ -90,6 +90,16 @@ inline constexpr std::size_t most_choice_value_bytes = 32;
 /// @return true when a script can name it that way
 [[nodiscard]] bool option_id(std::string_view text) noexcept;
 
+/// Tells whether text is a mutator id.
+///
+/// Lower-case kebab-case of 1 to 64 bytes: words of `a`-`z` and `0`-`9`
+/// joined by single hyphens, not starting or ending with a hyphen. The same
+/// rule the manifest uses for `id`.
+///
+/// @param text the id
+/// @return true when it is such an id
+[[nodiscard]] bool mutator_id(std::string_view text) noexcept;
+
 /// The most steps a number option's range may hold.
 inline constexpr std::size_t most_number_steps = 1000;
 
