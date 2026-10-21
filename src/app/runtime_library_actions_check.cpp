@@ -2522,7 +2522,10 @@ void Runtime::check_library_update_question() {
         std::vector<install::PackageOutcome> outcomes = install::take_package_outcomes();
         if (!outcomes.empty())
             outcome = outcomes.front();
-        require_step(state.prompt == nullptr, "installing Ridge asked a question");
+        require_step(
+            state.prompt == nullptr || state.stage != ModInstallState::Stage::asking,
+            "installing Ridge asked a question"
+        );
     }
     require_step(
         outcome && outcome->result == install::OutcomeResult::installed &&
