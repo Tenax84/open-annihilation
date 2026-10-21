@@ -4,6 +4,7 @@
 add_library(
   oa-data-mutators
   src/allow_list.cpp
+  src/clone.cpp
   src/collections.cpp
   src/collections_sides.cpp
   src/files_layer.cpp
@@ -36,6 +37,11 @@ if(BUILD_TESTING)
     oa-data-mutators-charge-test PRIVATE oa-data-mutators oa-data-script-host oa-test-support
   )
   add_test(NAME data-mutators-charge COMMAND oa-data-mutators-charge-test)
+
+  add_executable(oa-data-mutators-clone-test tests/clone_test.cpp)
+  target_link_libraries(oa-data-mutators-clone-test PRIVATE oa-data-mutators oa-test-support)
+  add_test(NAME data-mutators-clone COMMAND oa-data-mutators-clone-test)
+  set_tests_properties(data-mutators-clone PROPERTIES TIMEOUT 30)
 
   add_executable(oa-data-mutators-collections-test tests/collections_test.cpp)
   target_link_libraries(

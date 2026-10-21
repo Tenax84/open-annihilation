@@ -30,6 +30,10 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   [Pipeline](#pipeline).
 - `Journal::entries_of` returns one mutator's changes, and `describe` writes
   one conflict as a single English line.
+- `units:clone(source, name, fields)` and `weapons:clone(source, name, fields)`
+  add a copy of one record. A unit clone keeps the source model by writing
+  `Objectname` and serves the source script, picture and build pages under
+  the new name. A weapon clone takes the lowest free id from 1 to 255.
 - A hook's `ctx.sides` is the side table and the build lists. `ctx.sides[1]`
   is the first side, `ctx.sides.ARM` finds a side by name, ignoring case,
   and `ctx.sides:each` walks the sides in that order. `canbuild`,
@@ -93,6 +97,14 @@ allowed and refused form, including mixed case, backslashes and a variant
 folder; a layout that renames directories; every invalid path; the masks;
 and that every message starts with the path and every rule has its own name.
 
+`data-mutators-clone` (`tests/clone_test.cpp`) runs made-up packages
+through `run_pipeline` over a scratch store: a unit's copied definition,
+the files the layer serves under the new name, a weapon's free id, and a
+clone that a later error rolls back. A loop of clones, a loop of clones
+whose source script is 1 MiB, and a `pcall` loop of weapon clones that are
+refused, each stop on the work budget inside the real-time limit. A clone whose build page collides with an existing screen
+is refused and the layer serves nothing.
+
 `data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
 Ridge packages under `tests/data/mutators` through `run_pipeline`: rules in
 either order, a later assignment replacing an earlier one, a rule that
@@ -118,11 +130,21 @@ the installed game and serves no game-data file.
 ## Limitations
 
 The checks do not look at a mutator's files and do not apply a verdict.
-Build pages stay refused, because they change through the menus hook; only
-a named unit's build picture and its download-button art are files a
-mutator may add under `anims/`, and only as those files. `sounds/` stays
-refused until a later ticket shows the game
-reads it again for every match, or changes the game so that it does.
+Build pages stay refused for the files layer, because they change through
+the menus hook. A unit clone may serve `guis/<new><digits>.gui` when that
+path is not already in the store or the layer; every path a clone serves
+still goes through `check_mutable_path`, and the new name counts as a unit
+for `anims/`. A clone is refused, naming the path, when the script, the
+picture, a build page or that page's art already exists. Only a named
+unit's build picture and its download-button art are files a mutator may
+add under `anims/`, and only as those files. `sounds/` stays refused until
+a later ticket shows the game reads it again for every match, or changes
+the game so that it does.
+
+A clone does not copy a download entry, and it does not copy
+download-linked button art (`anims/<unit>_gadget.gaf`). A download-linked
+button for a clone draws with no picture. A weapon clone never takes slot
+0, which is the default weapon.
 
 A mutator cannot add or remove a side. Rectangle sub-sections of a side
 are neither shown nor changed. A build list keeps at most 1024 names. When
@@ -270,6 +292,25 @@ state it is pushed into, and the document set must outlive the object.
 `set_context_collections` sets those collections on a context table as
 `units`, `weapons` and `features`. `begin_mutator` names whose turn it is
 and which layers that mutator may change. `end_mutator` ends the turn.
+`units:clone` and `weapons:clone` add a record to that collection at once.
+The new unit's file is `units/<name>.<extension>` with `UnitName` set to
+the new name. `Objectname` is the source's model, or the source's own
+name when the source leaves the model out, so the clone shares that model
+instead of shipping another one. The layer serves `scripts/<name>.COB`,
+`unitpics/<name>.PCX`, the build pages `guis/<name><n>.GUI` from page 0
+and then 1, 2, … until one is missing, and `anims/<name><n>.GAF` for each
+page it served, each with the source's bytes. A field in the clone's
+table is a typed write, in sorted key order, and a bad field adds nothing.
+A weapon clone copies the source section, including `[DAMAGE]`, into
+`Weapons/<name>.tdf` (or `Weapons/<name>-<k>.tdf` when that path is taken,
+`k` from 2) and sets `ID` to the lowest free id from 1 to 255. When several
+sections share a name, the copy is the first in collection order (name,
+then path, then position), which may not be the lowest slot the game fires.
+A field named `ID` is refused. The journal records each clone and each
+served copy. A unit clone is refused, naming the path, when any path it
+would serve already exists. A clone's work (its name lookups, the bytes it
+reads and writes and, for a weapon, each section the id search visits) is
+charged in one step when the clone returns, so a refused clone pays too.
 
 `install_selection_forms` publishes `range`, `is`, `has`, `absent` and
 `not_`. `need_from_lua` reads one need: a number `n` is `range(n, n)`,
