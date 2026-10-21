@@ -411,6 +411,35 @@ void aux_sort(lua_State* state, SortIndex lo, SortIndex up, unsigned salt) {
     }
 }
 
+/// Replaces the metatable at `index` with a copy whose own metatable refuses
+/// `__mode`.
+///
+/// The caller's table stays theirs, so a later write to it, including one
+/// through a table shared by several values, cannot make this value weak.
+/// `__index` still points at the table it pointed at. The walk costs
+/// scan_call_charge, as one walk of `pairs` does, since an emptied table can
+/// make it visit every slot it used to hold, and each field copied costs one
+/// unit. No object with a destructor may be alive across this call.
+///
+/// @param state the sandbox state
+/// @param index stack index of the caller's metatable, a table
+void replace_with_guarded_copy(lua_State* state, int index) {
+    index = lua_absindex(state, index);
+    charge(state, scan_call_charge);
+    lua_newtable(state);
+    const int copy = lua_gettop(state);
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0) {
+        charge(state, 1);
+        lua_pushvalue(state, -2);
+        lua_insert(state, -2);
+        lua_rawset(state, copy);
+    }
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &metatable_guard_key);
+    lua_setmetatable(state, copy);
+    lua_replace(state, index);
+}
+
 extern "C" {
 static int host_print(lua_State* state) {
     const int count = lua_gettop(state);
@@ -554,21 +583,7 @@ static int host_setmetatable(lua_State* state) {
         if (!lua_isnil(state, -1))
             return luaL_error(state, "setmetatable: a metatable with __mode is refused");
         lua_pop(state, 1);
-
-        // The caller's table stays theirs. The value gets a copy, so a later
-        // write, including one through a table shared by several values, cannot
-        // make this value weak. __index still points at the table it pointed at.
-        lua_newtable(state);
-        const int copy = lua_gettop(state);
-        lua_pushnil(state);
-        while (lua_next(state, 2) != 0) {
-            lua_pushvalue(state, -2);
-            lua_insert(state, -2);
-            lua_rawset(state, copy);
-        }
-        lua_rawgetp(state, LUA_REGISTRYINDEX, &metatable_guard_key);
-        lua_setmetatable(state, copy);
-        lua_replace(state, 2);
+        replace_with_guarded_copy(state, 2);
     }
     lua_rawgetp(state, LUA_REGISTRYINDEX, &setmetatable_key);
     lua_pushvalue(state, 1);

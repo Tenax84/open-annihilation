@@ -667,6 +667,16 @@ void copied_calls_stop() {
     expect_budget(
         "local s = string.rep(\" \", 65000) .. \"1\"\nwhile true do\n  tonumber(s)\nend\n"
     );
+    // setmetatable installs a copy of the metatable, walking every field.
+    expect_budget(
+        "local mt = {}\n"
+        "for i = 1, 30000 do\n"
+        "  mt[i] = i\n"
+        "end\n"
+        "while true do\n"
+        "  setmetatable({}, mt)\n"
+        "end\n"
+    );
 }
 
 /// Runs `setup` and then `loop` as two phases of one sandbox, and returns the

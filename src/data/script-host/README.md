@@ -144,7 +144,8 @@ moves that state; the moved-from object has no state.
   A later write to the caller's own table does not change the copy, and the
   copy refuses `__mode`. `rawset` of `__mode` is refused on every table.
   No script can make a weak table. `getmetatable` returns the copy, or the
-  `__metatable` field when the caller set one.
+  `__metatable` field when the caller set one. Making the copy counts 4096
+  units for the walk, as `pairs` does, and one unit per field copied.
 
 ## Maths
 
@@ -266,13 +267,13 @@ them, and checks that a loop or an impossible range in each one stops the
 phase. That includes a plain find, a direct `utf8.codes` call, `table.sort`
 of a C comparison and of long zero-filled strings, an allocation loop
 caught with `pcall`, `string.format` copying long texts before an error
-the script catches, and `table.pack` of 300,000 values. It checks that a
-loop of short strings costs the same with an empty heap and with 20,000
-live tables, and that walking, clamping, formatting and sorting the fields
-of 400 units stays a small part of the allowance. It also checks that
-`utf8.codes` returns one function, that the pack functions stay absent,
-and runs a phase that reads several hundred small tables and rewrites
-their text.
+the script catches, `table.pack` of 300,000 values, and `setmetatable`
+with a metatable of 30,000 fields. It checks that a loop of short strings
+costs the same with an empty heap and with 20,000 live tables, and that
+walking, clamping, formatting and sorting the fields of 400 units stays a
+small part of the allowance. It also checks that `utf8.codes` returns one
+function, that the pack functions stay absent, and runs a phase that reads
+several hundred small tables and rewrites their text.
 
 `data-script-host-string-length` checks that a string of 65,536 bytes is
 kept for each way of making one, and that each way of making a longer one
