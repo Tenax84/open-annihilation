@@ -12,7 +12,8 @@ sentence chosen from the rule, which is not this module's to write.
 
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
-`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/choice.hpp`, `oa/data/mutators/collections.hpp`,
+`oa/data/mutators/files_layer.hpp`,
 `oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
 `oa/data/mutators/pipeline.hpp`, `oa/data/mutators/rules_lua.hpp` and
 `oa/data/mutators/verdicts.hpp`.
@@ -30,12 +31,33 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   [Pipeline](#pipeline).
 - `Journal::entries_of` returns one mutator's changes, and `describe` writes
   one conflict as a single English line.
+- `parse_choice` reads one `--mutator` value, `format_choice` writes it
+  back, and `resolve_choice` finds the package and types its options. See
+  [Choice text](#choice-text).
+
+## Choice text
+
+An id holds no `/` and no `\`. Anything else is a path to a package folder.
+Options follow the last `:` whose remainder is `name=value` pairs joined by
+`,`, so a Windows drive letter stays in the path. The text is not trimmed.
+An empty text, an empty name or value, a repeated option and a `,` or `=`
+inside a value are refused.
+
+`resolve_choice` looks an id up in the installed listing. A path is the
+package folder itself, and `oamut.yaml` is matched without ASCII case. A
+symbolic link is not followed. Defaults are filled, and the named options
+are written over them. A missing mutator, an option the manifest does not
+have and a value of the wrong kind or outside the option's choices are
+refused in words that quote the player's text.
 
 ## State
 
-None kept. The two checks are pure: they do not read files, the asset store
-or the preferences. A null `PathContext::layout` means `data_layout()`. An
-empty `is_unit_name` knows no unit. `build_files_layer` reads the package
+None kept. `parse_choice` and `format_choice` read nothing. `resolve_choice`
+reads one package's `oamut.yaml`, or the installed listing of the Mutators
+folder it is given, and keeps nothing after it returns. The two checks are
+pure: they do not read files, the asset store or the preferences. A null
+`PathContext::layout` means `data_layout()`. An empty `is_unit_name` knows
+no unit. `build_files_layer` reads the package
 folders it is given while it builds the layer, and it keeps nothing after
 it returns. `folder_digest` reads one folder and does not write. The other
 loadout functions read nothing. `run_pipeline` keeps nothing between calls:
@@ -68,6 +90,11 @@ it reads the packages and the store it is given, and mounts its layer there.
 allowed and refused form, including mixed case, backslashes and a variant
 folder; a layout that renames directories; every invalid path; the masks;
 and that every message starts with the path and every rule has its own name.
+
+`data-mutators-choice` (`tests/choice_test.cpp`) checks the choice text,
+including a Windows drive path, the round trip of `format_choice`, and
+`resolve_choice` for each option kind, against an installed mutator and
+against a package folder.
 
 `data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
 Ridge packages under `tests/data/mutators` through `run_pipeline`: rules in

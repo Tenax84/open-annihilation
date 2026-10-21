@@ -2170,6 +2170,10 @@ hosts them on the OA layer.
   no category cooling down (`NativeOfflineServices::bind_announcements`),
   as each mission start does in 3.1c, so what one match said never
   silences the next.
+- `runtime_mutator_layer_check.cpp`: `--check-mutator-layer`
+  (`native-mutator-layer`): a skirmish with no mutator, one that changes
+  the commanders, the same skirmish again, and one mutator that does not
+  apply. The layer is mounted only while the match that applied it runs.
 - `runtime_side_data_check.cpp`: `--check-side-data-per-match`
   (`native-side-data-per-match`): each match reads `gamedata/sidedata.tdf`
   again. When the file is unchanged the match keeps the sides the game
@@ -3760,6 +3764,24 @@ under a profile that turns the visual rules on and checks these overlays
 in the standard and accelerated tiers, and in the Full tier after its own
 cases (`check_visual_rule_overlays`), with the megamap opening only while
 the Mouse wheel zoom setting is off and closing when it is turned on.
+
+## Mutators at the start of a match
+
+Every match start applies the mutators the run chose, after a pack map's
+files are mounted and before the match reads its game data. The command
+line's `--mutator` values are that choice, in the order given. A run that
+names none applies nothing, mounts nothing and logs nothing. The pipeline
+leaves its layer mounted for the match. The log names each mutator that
+applied, how many files were added, hidden or rewritten, each conflict,
+and each mutator that did not apply.
+
+A mutator that does not apply, or a list the pipeline refuses, stops the
+start. The message names that mutator, by the name in its manifest and by
+its id, and why. The layer is released before the failure leaves the
+start, and again when the match ends. A start that fails by an exception
+after the mutators were applied releases the layer too, so a campaign, a
+save, a network game and a replay leave none either. The next match
+applies the list chosen then, including none.
 
 ## Extensions
 

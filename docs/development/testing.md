@@ -1157,6 +1157,13 @@ definition loaders a skirmish start runs, on every core (see
 layout, meteor and scenario readers take from the installation's TDF texts,
 so a change to how any of them reads shows there.
 
+`native-mutator-layer` starts the game with `--check-mutator-layer` and two
+package paths. It plays a match with no mutator, one that changes the
+commanders, the same match again with none, and one mutator that does not
+apply. `native-mutators-command-line` runs headless skirmishes with
+`--mutator`: none, one package, a number option, two packages in each
+order, a missing mutator, an unknown option and a mutator whose script stops.
+
 ## Writing a test
 
 ### Where it goes
