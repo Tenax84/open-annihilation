@@ -8,9 +8,9 @@
 
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/mutators/journal.hpp"
+#include "oa/data/mutators/loadout.hpp"
 #include "oa/data/script_host/script_host.hpp"
 #include "oa/formats/hpi.hpp"
-#include "oa/formats/oamod.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 
 #include <cstddef>
@@ -75,36 +75,16 @@ struct ModIdentity {
     std::string game;
 };
 
-/// One option value, already typed.
-///
-/// A toggle uses `toggle`. A number uses `number_value`. A choice uses
-/// `number` to say which, and `text` for a string choice. The pipeline
-/// fills any option the manifest defines and this value does not, from
-/// the manifest's default.
-struct OptionValue {
-    /// The option's id.
-    std::string id;
-    /// Toggle, choice or number.
-    oa::formats::oamut::OptionType type{oa::formats::oamut::OptionType::toggle};
-    /// A toggle's value.
-    bool toggle{false};
-    /// True when a choice or a number holds `number_value`.
-    bool number{false};
-    /// A number, or a choice whose value is a number.
-    oa::formats::oamod::Number number_value{};
-    /// A string choice's text.
-    std::string text;
-};
-
 /// One mutator in the loadout.
 struct PipelineMutator {
     /// The installed package folder.
     std::filesystem::path package;
     /// The manifest. Its entry defaults to `mutator.lua`.
     oa::formats::oamut::Manifest manifest;
-    /// The player's settings. An option left out takes the manifest's default.
-    /// An id the manifest does not define is ignored.
-    std::vector<OptionValue> options;
+    /// The player's settings, in the loadout's own form. An option left out
+    /// takes the manifest's default, as `default_option` gives it. An id the
+    /// manifest does not define is ignored.
+    std::vector<LoadoutOption> options;
 };
 
 /// What one run needs. The same input produces the same layer, journal and report.

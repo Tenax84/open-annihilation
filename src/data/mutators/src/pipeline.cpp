@@ -12,8 +12,10 @@
 #include "oa/data/defs/files.hpp"
 #include "oa/data/field_schema.hpp"
 #include "oa/data/mutators/allow_list.hpp"
+#include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/rules_lua.hpp"
 #include "oa/data/mutation_rules/documents.hpp"
+#include "oa/formats/oamod.hpp"
 #include "oa/formats/soft_mutator.hpp"
 #include "oa/formats/tdf/edit.hpp"
 #include "oa/formats/tdf/write.hpp"
@@ -119,7 +121,7 @@ struct PlanFault {
 struct ContextView {
     const ModIdentity* mod{};
     const std::string* engine{};
-    const std::vector<OptionValue>* options{};
+    const std::vector<LoadoutOption>* options{};
 };
 
 /// What `mutate` left in the registry.
@@ -349,36 +351,13 @@ uint64_t mutator_seed(uint64_t seed, std::string_view id) {
     return mixed;
 }
 
-/// A default for one manifest option.
-OptionValue default_option(const oamut::Option& option) {
-    OptionValue value;
-    value.id = option.id;
-    value.type = option.type;
-    if (option.type == oamut::OptionType::toggle) {
-        value.toggle = option.toggle_default;
-        return value;
-    }
-    if (option.type == oamut::OptionType::number) {
-        value.number = true;
-        value.number_value = option.number_default;
-        return value;
-    }
-    if (option.default_index < option.values.size()) {
-        const oamut::ChoiceValue& chosen = option.values[option.default_index];
-        value.number = chosen.number;
-        value.number_value = chosen.number_value;
-        value.text = chosen.text;
-    }
-    return value;
-}
-
 /// Manifest defaults, with the player's values written over the ids they set.
-std::vector<OptionValue> resolve_options(const PipelineMutator& mutator) {
-    std::vector<OptionValue> values;
+std::vector<LoadoutOption> resolve_options(const PipelineMutator& mutator) {
+    std::vector<LoadoutOption> values;
     values.reserve(mutator.manifest.options.size());
     for (const oamut::Option& option : mutator.manifest.options) {
-        const OptionValue* given = nullptr;
-        for (const OptionValue& candidate : mutator.options) {
+        const LoadoutOption* given = nullptr;
+        for (const LoadoutOption& candidate : mutator.options) {
             if (candidate.id == option.id) {
                 given = &candidate;
                 break;
@@ -476,13 +455,13 @@ bool source_read(void* context, std::string_view path, std::vector<uint8_t>& byt
 
 /// Pushes one option value. Called only from a Lua callback, so it keeps no
 /// C++ object that would need destroying if the allocator raises.
-void push_option(lua_State* state, int table, const OptionValue* option) {
+void push_option(lua_State* state, int table, const LoadoutOption* option) {
     if (option->type == oamut::OptionType::toggle)
         lua_pushboolean(state, option->toggle ? 1 : 0);
-    else if (option->type == oamut::OptionType::number || option->number)
-        lua_pushnumber(state, oamod::number_to_double(option->number_value));
+    else if (option->type == oamut::OptionType::number || option->value.number)
+        lua_pushnumber(state, oamod::number_to_double(option->value.number_value));
     else
-        lua_pushlstring(state, option->text.data(), option->text.size());
+        lua_pushlstring(state, option->value.text.data(), option->value.text.size());
     lua_setfield(state, table, option->id.c_str());
 }
 
@@ -1351,7 +1330,7 @@ void plan_mutator(
     std::size_t slot,
     const defs::DataLayout& layout,
     Listing& listing,
-    const std::vector<OptionValue>& options,
+    const std::vector<LoadoutOption>& options,
     std::optional<host::Sandbox>& sandbox,
     Plan& plan,
     MutatorResult& result
@@ -1493,7 +1472,7 @@ bool run_pass(
             started_applied[slot] = 1;
     }
     std::vector<Listing> listings(count);
-    std::vector<std::vector<OptionValue>> options(count);
+    std::vector<std::vector<LoadoutOption>> options(count);
     std::vector<std::optional<host::Sandbox>> sandboxes(count);
     std::vector<Plan> plans(count);
     for (std::size_t slot = 0; slot < count; ++slot) {

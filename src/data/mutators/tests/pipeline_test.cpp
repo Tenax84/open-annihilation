@@ -650,6 +650,29 @@ void test_compatibility_and_repeat() {
     release(mounted);
 }
 
+void test_player_option() {
+    mutators::PipelineMutator swift = load_id("ridge-swift");
+    for (const oamut::Option& option : swift.manifest.options) {
+        if (option.id != "factor")
+            continue;
+        mutators::LoadoutOption chosen = mutators::default_option(option);
+        for (const oamut::ChoiceValue& value : option.values) {
+            if (value.text == "2")
+                chosen.value = value;
+        }
+        swift.options.push_back(chosen);
+    }
+    OA_CHECK(swift.options.size() == 1);
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(std::move(swift));
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    OA_CHECK(text_of(store.read("units/RGBOT.fbi").bytes).find("3.2") != std::string::npos);
+    release(store);
+}
+
 } // namespace
 
 int main() {
@@ -663,5 +686,6 @@ int main() {
     test_files_layer();
     test_list_rules();
     test_compatibility_and_repeat();
+    test_player_option();
     return oa::test::check_exit_status();
 }
