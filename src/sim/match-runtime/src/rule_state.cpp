@@ -53,7 +53,10 @@ const RuleStateTable* find_rule_state(const RuleState& state, std::string_view n
 }
 
 uint64_t digest_rule_state(
-    uint64_t digest, const RuleState& state, std::span<const uint8_t> profile_sim_hash
+    uint64_t digest,
+    const RuleState& state,
+    std::span<const uint8_t> profile_sim_hash,
+    std::span<const uint8_t> mutator_digest
 ) noexcept {
     digest = fold_bytes(digest, profile_sim_hash);
     for (uint8_t at = 0; at < state.count; ++at) {
@@ -72,6 +75,7 @@ uint64_t digest_rule_state(
         digest = fold_bytes(digest, size_bytes);
         digest = fold_bytes(digest, bytes);
     }
+    digest = fold_bytes(digest, mutator_digest);
     return digest;
 }
 

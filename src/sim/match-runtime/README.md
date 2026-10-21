@@ -122,10 +122,11 @@ only when its parameters need the state: at its baseline a rule adds none.
 `Match::fold_rule_state` folds the profile's sim hash and every table into
 the match-state digest (`src/sim/state-hash`), and `match_tick_digest` and
 the trace recorder fold the same into the trace's total; a save keeps each
-table as a blob of its ModProfile account. With no table nothing more is
-digested or saved, so a match without a profile, or with every rule at its
-baseline, digests as before: `match-determinism` plays its skirmish under
-the profile that turns every limit and hack on at its baseline preset and
+table as a blob of its ModProfile account. A mutator digest the match holds
+is folded too, even when no table was added. With no table and no mutator
+digest nothing more is digested or saved, so a match without a profile, or
+with every rule at its baseline, digests as before: `match-determinism` plays
+its skirmish under the profile that turns every limit and hack on at its baseline preset and
 holds it to the same pins. `match-rules` checks the copies, the view and the
 rule-state digests. Under `repair.rate: exact-remainder` the match keeps
 each unit slot's heal remainders (`Match::repair_remainders`) as the table

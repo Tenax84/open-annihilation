@@ -28,7 +28,8 @@ namespace oa::sim::trace {
 /// and goals as their blobs hold them; each plot's metal and placing-player
 /// bits; the sight words; the camera; the meteor state when there is one; and,
 /// when the match keeps rule state, the profile's sim hash and every rule-state
-/// table (Match::fold_rule_state).
+/// table, and, when the match holds a mutator digest, those bytes, including
+/// when it keeps no rule state (Match::fold_rule_state).
 ///
 /// @param match match to digest; nothing in it changes, but its script
 ///        lookups take it mutable

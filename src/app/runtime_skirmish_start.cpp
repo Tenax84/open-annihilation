@@ -1128,6 +1128,7 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         );
         inputs.profile_sim_hash = profile->sim_hash;
     }
+    inputs.mutator_digest = match_mutator_digest();
     // Records for another type table than this one are not this match's.
     if (unit_type_rules_.size() == spawn_types_.size())
         inputs.unit_type_rules = unit_type_rules_;
