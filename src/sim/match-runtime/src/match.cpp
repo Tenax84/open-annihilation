@@ -1541,12 +1541,15 @@ data::match_rules::MatchRulesView Match::rules_view() const noexcept {
 }
 
 uint64_t Match::fold_rule_state(uint64_t digest) const noexcept {
-    if (rule_state_.count == 0)
+    std::span<const uint8_t> held{};
+    if (input_.mutator_digest)
+        held = *input_.mutator_digest;
+    if (rule_state_.count == 0 && held.empty())
         return digest;
     std::span<const uint8_t> profile_hash{};
-    if (input_.profile_sim_hash)
+    if (rule_state_.count != 0 && input_.profile_sim_hash)
         profile_hash = *input_.profile_sim_hash;
-    return digest_rule_state(digest, rule_state_, profile_hash);
+    return digest_rule_state(digest, rule_state_, profile_hash, held);
 }
 
 } // namespace oa::sim::match_runtime

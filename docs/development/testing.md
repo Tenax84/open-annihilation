@@ -886,17 +886,23 @@ archive holds, and a missing path.
 An extension can read the simulation hash the run plays under
 (`simulation_hash`, version 14 of the extension table): 64 lower-case
 hexadecimal digits. With no mod it is the plain baseline's. Under a mod it
-is that profile's sim hash. A Developer Mode override that changes the
-simulation changes it at once while no match is running; a running match
-keeps the hash it started with until it ends, which is the hash a save of
-that match and the network game are matched on. A display-only override
-leaves it unchanged. The plain baseline is resolved once a process and
-kept: it comes from the rules built into the program alone, so a mod
-switch, a game mode or Developer Mode never changes it.
-`native-simulation-hash` checks the baseline and an override in one start,
-then the first hash again once the settings are put back, and the kept
-baseline against a fresh resolve; `native-simulation-hash-mod` checks a
-profile that changes the simulation, then the same override.
+is that profile's sim hash. While a match has mutators applied, that hash
+is folded with the match's mutator digest, and the presence facts report
+the folded hash with the rules differing from 3.1c. With no mutators
+applied the hash and the presence facts are the profile's alone. A list
+that is chosen and not yet built changes nothing. A Developer Mode
+override that changes the simulation changes it at once while no match is
+running; a running match keeps the hash it started with until it ends,
+which is the hash a save of that match and the network game are matched
+on. A display-only override leaves it unchanged. The plain baseline is
+resolved once a process and kept: it comes from the rules built into the
+program alone, so a mod switch, a game mode or Developer Mode never
+changes it. `native-simulation-hash` checks the baseline, a skirmish with
+no mutators, then one with the command line's mutator, and an override in
+one start, then the first hash again once the settings are put back, and
+the kept baseline against a fresh resolve; `native-simulation-hash-mod`
+checks a profile that changes the simulation, the same two skirmishes,
+then the same override.
 
 ### Modern text for an extension
 
