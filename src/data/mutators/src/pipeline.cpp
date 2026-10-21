@@ -4473,10 +4473,17 @@ bool run_pass(
             break;
         }
         if (plans[slot].has_rules) {
-            rules::MutatorRules mapped = plans[slot].rules;
-            remap_rule_names(mapped, *collections, layout);
+            // Only a mutator that renamed a record needs its own copy of the
+            // rules, with its selectors pointed at the private names.
+            const rules::MutatorRules* step_rules = &plans[slot].rules;
+            rules::MutatorRules mapped;
+            if (collections->rename_count() > 0) {
+                mapped = plans[slot].rules;
+                remap_rule_names(mapped, *collections, layout);
+                step_rules = &mapped;
+            }
             rules::ApplyResult step =
-                rules::apply_step(mapped, documents, apply_state, apply_options);
+                rules::apply_step(*step_rules, documents, apply_state, apply_options);
             const std::size_t wrote_from = rule_writes.size();
             for (rules::FieldWrite& write : step.writes)
                 rule_writes.push_back(std::move(write));
