@@ -534,9 +534,29 @@ digits the canonical loadout writes), and a string choice is its text.
 each value `option_text` of the option. No options write nothing. This is
 the text that follows `id:` on `--mutator`.
 
-The match start fills this record from the mutators that play and folds
-the mutator digest into the simulation hash. Nothing in this header runs
-during a match.
+`loadout_of` builds this record from a resolved list. Every mutator is
+listed, in the list's order, and each option is that mutator's typed
+value with its default already filled, stored in id byte order. The
+package digest and the folder mark are the ones `resolve_choice` recorded:
+an installed id keeps the SHA-256 from its origin record (all zero when
+the record names none), and a package folder named by path keeps
+`folder_digest` and sets `folder`. A folder digest that is refused refuses
+the choice. `loadout_of` reads no file.
+
+`applied_loadout` keeps the entries a pipeline result applied, in the
+loadout's order. `resolve_loadout` finds each entry among the installed
+mutators by id, with the same version text and the same package SHA-256,
+and types its options as `resolve_choice` types `options_text`. A folder
+entry, a missing package, another version and another SHA-256 are refused,
+and the error names the entry.
+
+A playable match that applied at least one mutator keeps that applied
+loadout and `mutator_digest`. The layer digest reads each served path's
+bytes from the asset store while the layer is mounted. Both are forgotten
+when the match releases its mutators, including when the match ends. The
+simulation hash the run reports is the profile's sim hash folded with that
+digest while it is held, and the profile's hash alone otherwise. Nothing
+in this header runs during a match.
 
 `data-mutators-loadout` pins the canonical text, the four digests against
 values computed outside the engine, the refusals, the folder and layer
