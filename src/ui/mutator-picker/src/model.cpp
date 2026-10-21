@@ -298,47 +298,6 @@ cycle_ids(std::span<const library::Need> graph, const library::Closure& closure)
     return loop;
 }
 
-/// Writes a version range in the Library's words for engine and mutator ranges.
-///
-/// @param text how texts are looked up
-/// @param range_text the range as the manifest writes it
-/// @return the words, such as "4.0 or later"; the range as written when it
-///         does not read; empty for an empty range
-std::string range_words(const library::TextHooks& text, std::string_view range_text) {
-    if (range_text.empty())
-        return {};
-    const std::optional<oamut::VersionRange> range = oamut::parse_version_range(range_text);
-    if (!range)
-        return std::string(range_text);
-    std::string joined;
-    for (const auto& [comparison, version] : range->terms) {
-        if (!joined.empty()) {
-            joined += library::shown(text, library::words::list_separator);
-            joined.push_back(' ');
-        }
-        std::string_view pattern = library::words::engine_at_least;
-        switch (comparison) {
-        case oamod::EngineComparison::at_least:
-            pattern = library::words::engine_at_least;
-            break;
-        case oamod::EngineComparison::above:
-            pattern = library::words::engine_above;
-            break;
-        case oamod::EngineComparison::at_most:
-            pattern = library::words::engine_at_most;
-            break;
-        case oamod::EngineComparison::below:
-            pattern = library::words::engine_below;
-            break;
-        case oamod::EngineComparison::exactly:
-            pattern = library::words::engine_exactly;
-            break;
-        }
-        joined += library::filled(text, pattern, {{"version", oamut::version_text(version)}});
-    }
-    return joined;
-}
-
 /// Tells whether a prerequisite's version meets the range its dependant asks for.
 ///
 /// An empty range is any version. A range that does not read is not met.
@@ -378,7 +337,7 @@ std::string need_name(const Picker& picker, const library::Prerequisite& need) {
 ///         without the range when it names none
 std::string not_offered(const Picker& picker, const library::Prerequisite& need) {
     const library::TextHooks& text = picker.inputs.text;
-    const std::string range = range_words(text, need.range);
+    const std::string range = library::range_words(need.range, text);
     if (range.empty()) {
         return library::filled(
             text, words::blocked_prerequisite_any, {{"name", need_name(picker, need)}}

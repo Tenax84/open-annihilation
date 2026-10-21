@@ -9,6 +9,7 @@
 #include "oa/formats/oamut/manifest.hpp"
 #include "oa/test/check.hpp"
 #include "oa/ui/library/prerequisites.hpp"
+#include "oa/ui/library/text.hpp"
 #include "oa/ui/mutator_picker/model.hpp"
 #include "oa/ui/mutator_picker/text.hpp"
 
@@ -1151,10 +1152,12 @@ void locked_missing_prerequisite() {
     inputs.mutators.push_back(made("fast-builders", "Fast Builders"));
     picker::Picker model;
     picker::open(model, inputs);
-    const std::string keep_line = "Not compatible with this mod: Needs Gatehouse 4.0 or later, "
-                                  "which no registry offers";
+    const std::string keep_line = "Not compatible with this mod: Needs Gatehouse " +
+                                  lib::range_words(">= 4.0") + ", which no registry offers";
     const std::string walls_line =
         "Not compatible with this mod: Needs ridge-tower, which no registry offers";
+    OA_CHECK(lib::range_words(">= 4.0") == "4.0 or later");
+    OA_CHECK(walls_line.find(" ,") == std::string::npos);
     picker::SwitchResult outcome = picker::switch_on(model, "gatehouse-keep");
     OA_CHECK(!outcome.changed);
     OA_CHECK(outcome.refused == keep_line);
@@ -1200,8 +1203,8 @@ void locked_version_range() {
     inputs.mutators.push_back(tower);
     picker::Picker model;
     picker::open(model, inputs);
-    const std::string line = "Not compatible with this mod: Needs Gatehouse 4.0 or later, "
-                             "which no registry offers";
+    const std::string line = "Not compatible with this mod: Needs Gatehouse " +
+                             lib::range_words(">= 4.0") + ", which no registry offers";
     OA_CHECK(picker::switch_on(model, "gatehouse-keep").refused == line);
     OA_CHECK(picker::switch_on(model, "gatehouse-tower").refused == line);
     OA_CHECK(model.on.empty());
@@ -1220,13 +1223,14 @@ void locked_version_range() {
     model.inputs.mutators[1].needs[0].range = ">= 4.0, < 5.0";
     OA_CHECK(
         picker::switch_on(model, "gatehouse-keep").refused ==
-        "Not compatible with this mod: Needs Gatehouse 4.0 or later, before 5.0, which no "
-        "registry offers"
+        "Not compatible with this mod: Needs Gatehouse " + lib::range_words(">= 4.0, < 5.0") +
+            ", which no registry offers"
     );
     model.inputs.mutators[1].needs[0].range = "about 4";
     OA_CHECK(
         picker::switch_on(model, "gatehouse-keep").refused ==
-        "Not compatible with this mod: Needs Gatehouse about 4, which no registry offers"
+        "Not compatible with this mod: Needs Gatehouse " + lib::range_words("about 4") +
+            ", which no registry offers"
     );
 
     inputs.mutators[0].version = "4.1";
@@ -1402,8 +1406,8 @@ void refresh_version_falls() {
     OA_CHECK(model.left_out.size() == 2 && model.left_out[0] == "Gatehouse Keep");
     OA_CHECK(model.left_out.size() == 2 && model.left_out[1] == "Ridge Walls");
     OA_CHECK(picker::ready(model));
-    const std::string line = "Not compatible with this mod: Needs Gatehouse 4.0 or later, "
-                             "which no registry offers";
+    const std::string line = "Not compatible with this mod: Needs Gatehouse " +
+                             lib::range_words(">= 4.0") + ", which no registry offers";
     const std::vector<picker::Row> listed = picker::rows(model);
     const picker::Row* keep_row = row_of(listed, "gatehouse-keep");
     OA_CHECK(keep_row != nullptr && keep_row->locked && keep_row->line == line);
