@@ -828,6 +828,30 @@ void adopt_launch_run(Options& options) {
     if (!net.launch_content.mod.empty() && options.mod_file.empty() && options.mod_dir.empty() &&
         !options.base_game)
         net.launch_mod_pending = true;
+    // The first --mutator replaces the file's whole list. A headless run
+    // takes the list here too: adopt_launch_run runs before the match.
+    if (net.launch_content.mutators_named && options.mutators.empty()) {
+        options.mutators.reserve(net.launch_content.mutators.size());
+        options.mutator_fields.reserve(net.launch_content.mutators.size());
+        options.mutator_versions.reserve(net.launch_content.mutators.size());
+        for (std::size_t index = 0; index < net.launch_content.mutators.size(); ++index) {
+            const netgame::LaunchMutator& one = net.launch_content.mutators[index];
+            std::string text = one.id;
+            if (!one.options.empty()) {
+                text.push_back(':');
+                for (std::size_t option = 0; option < one.options.size(); ++option) {
+                    if (option != 0)
+                        text.push_back(',');
+                    text += one.options[option].first;
+                    text.push_back('=');
+                    text += one.options[option].second;
+                }
+            }
+            options.mutators.push_back(std::move(text));
+            options.mutator_fields.push_back("content.mutators[" + std::to_string(index + 1) + "]");
+            options.mutator_versions.push_back(one.version);
+        }
+    }
 }
 
 void put_launch_in_place(NetgameContext& netgame, LaunchPlan plan) {

@@ -14,6 +14,8 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -323,5 +325,67 @@ int main() {
         "-y skips the intro and is noted"
     );
     expect(rejection({"-y"}, false) == "-y is not handled by this build", "-y is network play's");
+
+    // A launch's mutators fill the run's list unless --mutator already did,
+    // including a headless run.
+    const std::filesystem::path launch_dir =
+        std::filesystem::temp_directory_path() / "V07-launch-mutators";
+    std::filesystem::create_directories(launch_dir);
+    const std::filesystem::path launch_file = launch_dir / "host.oalaunch";
+    {
+        std::ofstream out(launch_file);
+        out << "oalaunch: 1\n"
+               "game:\n"
+               "  role: host\n"
+               "  name: Example\n"
+               "player:\n"
+               "  name: Commander\n"
+               "content:\n"
+               "  mutators:\n"
+               "    - wide-sight\n"
+               "    - id: fast-builders\n"
+               "      options:\n"
+               "        factor: 2\n";
+    }
+    const std::string launch_path = launch_file.string();
+    const auto from_file = parse({"--launch", launch_path.c_str()});
+    expect(
+        from_file.app.mutators.size() == 2 && from_file.app.mutators[0] == "wide-sight" &&
+            from_file.app.mutators[1] == "fast-builders:factor=2" &&
+            from_file.app.mutator_fields.size() == 2 &&
+            from_file.app.mutator_fields[1] == "content.mutators[2]",
+        "a launch's mutators fill the run's list"
+    );
+    const auto headless = parse({"--headless-check", "--launch", launch_path.c_str()});
+    expect(
+        headless.app.headless_check && headless.app.mutators.size() == 2 &&
+            headless.app.mutators[0] == "wide-sight",
+        "a headless run takes the launch's mutators"
+    );
+    const auto replaced = parse({"--launch", launch_path.c_str(), "--mutator", "other-pack"});
+    expect(
+        replaced.app.mutators.size() == 1 && replaced.app.mutators[0] == "other-pack" &&
+            replaced.app.mutator_fields.empty(),
+        "--mutator replaces the launch's list"
+    );
+    const auto before = parse({"--mutator", "other-pack", "--launch", launch_path.c_str()});
+    expect(
+        before.app.mutators.size() == 1 && before.app.mutators[0] == "other-pack",
+        "--mutator before the file replaces its list"
+    );
+    const auto plain_host = parse({"--host"});
+    expect(plain_host.app.mutators.empty(), "no launch adds no mutators");
+    {
+        std::ofstream out(launch_file);
+        out << "oalaunch: 1\n"
+               "game:\n"
+               "  role: host\n"
+               "  name: Example\n"
+               "player:\n"
+               "  name: Commander\n";
+    }
+    const auto unnamed = parse({"--launch", launch_path.c_str()});
+    expect(unnamed.app.mutators.empty(), "a launch without mutators adds none");
+    std::filesystem::remove_all(launch_dir);
     return failures == 0 ? 0 : 1;
 }

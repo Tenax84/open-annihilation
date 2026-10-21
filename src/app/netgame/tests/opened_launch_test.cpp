@@ -311,6 +311,11 @@ void test_content(const Scratch&) {
     running.mod_folder = "Ridge";
     net::LaunchContentChoice none;
     OA_CHECK(!net::launch_content_differs(none, running));
+    net::LaunchContentChoice only_mutators;
+    only_mutators.mutators_named = true;
+    only_mutators.mutators.push_back(net::LaunchMutator{"wide-sight", "", {}});
+    OA_CHECK(!only_mutators.named);
+    OA_CHECK(!net::launch_content_differs(only_mutators, running));
     net::LaunchContentChoice same;
     same.named = true;
     same.base_game = "totala";
