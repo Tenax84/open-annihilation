@@ -101,6 +101,9 @@ struct PipelineMutator {
     /// takes the manifest's default, as `default_option` gives it. An id the
     /// manifest does not define is ignored.
     std::vector<LoadoutOption> options;
+    /// The player's clash choice. Empty when the player left it, so the
+    /// manifest's `clashes` or `PipelineInput::clash_default` decides.
+    std::optional<oa::formats::oamut::ClashMode> clashes{};
 };
 
 /// What one run needs. The same input produces the same layer, journal and report.
@@ -119,6 +122,9 @@ struct PipelineInput {
     uint64_t seed{};
     /// Instruction and memory allowances. The default is the mutator profile's.
     oa::data::script_host::Budget budget{};
+    /// Clash mode when a mutator's player and manifest both leave it unset.
+    /// Replace unless the caller read another preference.
+    oa::formats::oamut::ClashMode clash_default{oa::formats::oamut::ClashMode::replace};
     /// Real time each phase of a mutator's script may run. The default is the
     /// script host's `default_time_limit`.
     std::chrono::milliseconds time_limit{oa::data::script_host::default_time_limit};
@@ -167,6 +173,20 @@ struct PipelineResult {
 [[nodiscard]] std::string
 list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::string>& versions);
 
+/// The first mutator whose failure stops a match from starting.
+///
+/// A mutator that applied stops nothing. One that failed because its
+/// hacks were refused, or was excluded only because a mutator it
+/// requires failed that way (directly or through another exclusion),
+/// fails alone. Any other failure stops the start. A refused list
+/// (result.refusal) is the caller's to test first; it names no mutator.
+///
+/// @param result the pipeline's result
+/// @param listed the mutators as they were run, top first
+/// @return the first slot that stops the start, or nothing
+[[nodiscard]] std::optional<std::size_t>
+first_blocking(const PipelineResult& result, std::span<const PipelineMutator> listed);
+
 /// Runs the mutators in `input` against `store`.
 ///
 /// The list is checked first. More than `max_mutators`, an id twice, a
@@ -178,21 +198,29 @@ list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::
 /// refuses fails that mutator in the plan phase and the pass runs again
 /// without it. The files are mounted and the documents parsed from that
 /// layer. Record files are not mounted as whole files: each mutator in list
-/// order applies the units, weapons and download entries in its own copies,
-/// then its rules and then its hooks, units then weapons then menus. When
-/// `input.map` names a map, each mutator's maps entry then runs, in list
-/// order, as a transaction of its own. A changed OTA is served at that
-/// map's path. No map, and the maps phase does nothing. Each pass over the
-/// list is a transaction. A failure in a plan or a rule target is the
-/// mutator's own, and every one is kept. Any later failure can depend on the
-/// mutators above it, so the pass keeps only the one nearest the top of the
-/// list, and stops at the first hook that fails: no later mutator runs on
-/// what a failed mutator left. The mutator that failed, and every mutator
-/// that requires it, is then dropped and the pass repeated from the store,
-/// so the result is the run without them. Only a document the run changed
-/// is written back. After the last units, weapons or menus hook, and before
-/// the maps entries, every weapon a mutator brought, by a record file or by
-/// `weapons:clone`, is given an id. The game's and the mod's weapons keep
+/// order applies the weapons, then the units, then the download entries in
+/// its own copies, then its rules and then its hooks, units then weapons then
+/// menus. A unit or weapon whose
+/// name already exists follows that mutator's clash mode: the player's
+/// choice when `PipelineMutator::clashes` is set, otherwise the manifest's
+/// `clashes`, otherwise `clash_default`. Replace puts the new record in
+/// place of the old one. Add shares a record that matches the one already
+/// there and gives a different one a private name, then points that
+/// mutator's own weapon fields, menu entries, clone sources and side or AI
+/// list writes at the private name. A download entry is its builder and
+/// unit, not its section name. When `input.map` names a map, each mutator's
+/// maps entry then runs, in list order, as a transaction of its own. A
+/// changed OTA is served at that map's path. No map, and the maps phase
+/// does nothing. Each pass over the list is a transaction. A failure in a
+/// plan or a rule target is the mutator's own, and every one is kept. Any
+/// later failure can depend on the mutators above it, so the pass keeps
+/// only the one nearest the top of the list, and stops at the first hook
+/// that fails: no later mutator runs on what a failed mutator left. The
+/// mutator that failed, and every mutator that requires it, is then dropped
+/// and the pass repeated from the store, so the result is the run without
+/// them. Only a document the run changed is written back. After the last
+/// units, weapons or menus hook, and before the maps entries, every weapon a
+/// mutator brought, by a record file or by
 /// theirs. Numbering takes each mutator in list order: its requested ids
 /// from 1 to 255 when those ids are still free, then free ids for its
 /// other weapons. A later request for an id already held takes another

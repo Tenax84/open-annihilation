@@ -133,6 +133,96 @@ void unit_sync_create(Lobby& lobby, bool host) noexcept {
     }
 }
 
+namespace {
+
+/// Sends the greeting unit_sync_tick would, and keeps the peer in the table.
+///
+/// @param lobby Lobby state.
+/// @param player_id the peer
+void greet_peer_now(Lobby& lobby, uint32_t player_id) noexcept {
+    if (lobby.sync.peer_count >= kSlotCount)
+        return;
+    auto& peer = lobby.sync.peers[lobby.sync.peer_count++];
+    peer = UnitSyncPeer{};
+    peer.player_id = player_id;
+    send_handshake(lobby, peer.player_id, kSubtypeGreeting, 0, 0);
+    ++peer.sent;
+}
+
+/// Compares every stored checksum with the host's units after a reload.
+///
+/// @param lobby Lobby state.
+void reevaluate_units(Lobby& lobby) noexcept {
+    for (int32_t index = 0; index < lobby.sync.record_count; ++index) {
+        const uint32_t key = lobby.sync.records[index].key;
+        uint32_t checksum = kUnknownChecksum;
+        for (int32_t type = 1; type < lobby.unit_count; ++type) {
+            if (lobby.units[type].fbi_hash != key)
+                continue;
+            checksum = unit_sync_content_checksum(lobby, lobby.units[type]);
+            break;
+        }
+        unit_sync_update_record(lobby, key, checksum);
+    }
+}
+
+} // namespace
+
+void unit_sync_rebuild(Lobby& lobby) noexcept {
+    // The local player's role decides. sync.host is unset until the table
+    // exists, and a host must not be rebuilt as a guest.
+    const bool host = lobby.game != nullptr && (local_info(lobby).role & kRoleHost) != 0;
+    UnitSyncPeer kept[kSlotCount]{};
+    uint32_t dropped[kSlotCount]{};
+    int32_t kept_count = 0;
+    int32_t dropped_count = 0;
+    if (host) {
+        for (int32_t index = 0; index < lobby.sync.peer_count; ++index) {
+            const auto& peer = lobby.sync.peers[index];
+            const auto* player = netgame::player_of_id(*lobby.game, peer.player_id);
+            if (player == nullptr)
+                continue;
+            const auto* info = player_info(lobby, *player);
+            // No setup block, or an Open Annihilation peer: dropped and
+            // greeted again now. A 3.1c peer keeps what it reported, so
+            // turning mutators on and off does not make it report again.
+            if (info == nullptr ||
+                netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(info))) {
+                if (dropped_count < kSlotCount)
+                    dropped[dropped_count++] = peer.player_id;
+                continue;
+            }
+            kept[kept_count] = peer;
+            ++kept_count;
+        }
+    }
+    unit_sync_create(lobby, host);
+    for (int32_t index = 0; index < kept_count; ++index)
+        lobby.sync.peers[index] = kept[index];
+    lobby.sync.peer_count = kept_count;
+    if (!host)
+        return;
+    for (int32_t index = 0; index < dropped_count; ++index)
+        greet_peer_now(lobby, dropped[index]);
+    reevaluate_units(lobby);
+}
+
+void unit_sync_regreet(Lobby& lobby, uint32_t player_id) noexcept {
+    if (lobby.game == nullptr || (local_info(lobby).role & kRoleHost) == 0)
+        return;
+    auto& sync = lobby.sync;
+    for (int32_t index = 0; index < sync.peer_count; ++index) {
+        if (sync.peers[index].player_id != player_id)
+            continue;
+        for (int32_t later = index + 1; later < sync.peer_count; ++later)
+            sync.peers[later - 1] = sync.peers[later];
+        --sync.peer_count;
+        greet_peer_now(lobby, player_id);
+        reevaluate_units(lobby);
+        return;
+    }
+}
+
 void unit_sync_destroy(Lobby& lobby) noexcept {
     lobby.sync = UnitSync{};
 }
@@ -194,6 +284,13 @@ void unit_sync_receive(Lobby& lobby, std::span<const uint8_t> bytes, uint8_t fro
     ++sync.records_handled;
     const auto key = record.key;
     if (!sync.host) {
+        // A greeting starts this machine's report again. A 3.1c host greets
+        // each peer once, before any checksum, so resetting here changes
+        // nothing it sees. An Open Annihilation host greets again after the
+        // room's units change, and the next ticks send the count and then
+        // the checksums from the first unit.
+        if (subtype == kSubtypeGreeting)
+            sync.next_unit = 0;
         if (subtype != kSubtypeVerdict)
             return;
         auto* entry = upsert(sync, key);

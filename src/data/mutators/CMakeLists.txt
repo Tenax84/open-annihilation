@@ -5,6 +5,7 @@ add_library(
   oa-data-mutators
   src/allow_list.cpp
   src/choice.cpp
+  src/clashes.cpp
   src/clone.cpp
   src/collections.cpp
   src/collections_sides.cpp
@@ -46,6 +47,12 @@ if(BUILD_TESTING)
   add_executable(oa-data-mutators-choice-test tests/choice_test.cpp)
   target_link_libraries(oa-data-mutators-choice-test PRIVATE oa-data-mutators oa-test-support)
   add_test(NAME data-mutators-choice COMMAND oa-data-mutators-choice-test)
+
+  add_executable(oa-data-mutators-clashes-test tests/clashes_test.cpp)
+  target_link_libraries(
+    oa-data-mutators-clashes-test PRIVATE oa-data-mutators oa-formats-tdf oa-test-support
+  )
+  add_test(NAME data-mutators-clashes COMMAND oa-data-mutators-clashes-test)
 
   add_executable(oa-data-mutators-clone-test tests/clone_test.cpp)
   target_link_libraries(oa-data-mutators-clone-test PRIVATE oa-data-mutators oa-test-support)
@@ -129,7 +136,7 @@ if(BUILD_TESTING)
             oa-test-game-data
   )
   add_test(NAME data-mutators-menus COMMAND oa-data-mutators-menus-test)
-  set_tests_properties(data-mutators-menus PROPERTIES TIMEOUT 30)
+  set_tests_properties(data-mutators-menus PROPERTIES TIMEOUT 60)
   oa_add_game_data_test(data-mutators-menus-data oa-data-mutators-menus-test --data)
   set_tests_properties(data-mutators-menus-data PROPERTIES TIMEOUT 180)
 

@@ -8,6 +8,7 @@
 #include "oa/data/mod_profile/value.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/clashes.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/json.hpp"
 #include "oa/formats/oamod.hpp"
@@ -17,7 +18,9 @@
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <optional>
 #include <span>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -36,6 +39,7 @@ namespace {
 
 namespace fs = std::filesystem;
 namespace oamod = oa::formats::oamod;
+namespace oamut = oa::formats::oamut;
 namespace json = oa::formats::json;
 namespace profile = oa::data::mod_profile;
 
@@ -127,6 +131,9 @@ profile::Value entry_json(const LoadoutEntry& entry) {
         options.members.push_back(profile::Member{option.id, option_json(option)});
 
     profile::Value object = profile::make_map();
+    profile::set_member(
+        object, "clashes", profile::make_string(std::string{oamut::clash_mode_name(entry.clashes)})
+    );
     profile::set_member(object, "folder", profile::make_boolean(entry.folder));
     profile::set_member(object, "id", profile::make_string(entry.id));
     profile::set_member(object, "options", std::move(options));
@@ -138,10 +145,10 @@ profile::Value entry_json(const LoadoutEntry& entry) {
 /// Tells whether a key is one an entry object may hold.
 ///
 /// @param key the key
-/// @return true for folder, id, options, sha256 and version
+/// @return true for clashes, folder, id, options, sha256 and version
 bool entry_key(std::string_view key) noexcept {
-    return key == "folder" || key == "id" || key == "options" || key == "sha256" ||
-           key == "version";
+    return key == "clashes" || key == "folder" || key == "id" || key == "options" ||
+           key == "sha256" || key == "version";
 }
 
 /// Tells whether a text is 64 lower-case hex digits.
@@ -247,6 +254,7 @@ bool read_entry(
     }
 
     bool duplicate = false;
+    const json::Json* clashes = find_member(value, "clashes", duplicate);
     const json::Json* folder = find_member(value, "folder", duplicate);
     const json::Json* id = find_member(value, "id", duplicate);
     const json::Json* options = find_member(value, "options", duplicate);
@@ -256,9 +264,18 @@ bool read_entry(
         set_error(error, place + " repeats a key");
         return false;
     }
-    if (folder == nullptr || id == nullptr || options == nullptr || sha == nullptr ||
-        version == nullptr) {
-        set_error(error, place + " lacks folder, id, options, sha256 or version");
+    if (clashes == nullptr || folder == nullptr || id == nullptr || options == nullptr ||
+        sha == nullptr || version == nullptr) {
+        set_error(error, place + " lacks clashes, folder, id, options, sha256 or version");
+        return false;
+    }
+    if (clashes->type() != json::JsonType::string || clashes->string() == nullptr) {
+        set_error(error, place + " clashes is not a string");
+        return false;
+    }
+    const std::optional<oamut::ClashMode> clash_mode = oamut::parse_clash_mode(*clashes->string());
+    if (!clash_mode.has_value()) {
+        set_error(error, place + " clashes is not add or replace");
         return false;
     }
     if (folder->type() != json::JsonType::boolean) {
@@ -280,6 +297,7 @@ bool read_entry(
     }
 
     entry = LoadoutEntry{};
+    entry.clashes = *clash_mode;
     entry.folder = folder->boolean().value_or(false);
     entry.id = id->string() == nullptr ? std::string{} : *id->string();
     entry.version = version->string() == nullptr ? std::string{} : *version->string();
@@ -439,6 +457,65 @@ struct FolderFile {
     /// The SHA-256 of the file's bytes.
     base::sha256::Digest digest{};
 };
+
+/// How a relative path is left out of a folder digest.
+///
+/// These are the names `oa-tool mutator pack` leaves out of a package. A
+/// name that starts with '.' and is not one of them is still hashed.
+enum class FolderOmit : uint8_t {
+    keep,  ///< the path is part of the walk
+    entry, ///< this path is left out; a folder of this name is still walked
+    tree,  ///< this path and everything under it are left out
+};
+
+/// Tells whether any `/`-separated part of a folded path is `name`.
+///
+/// @param folded_path the path, already folded, '/' between parts
+/// @param name the part
+/// @return true when a part is that name
+bool part_is(std::string_view folded_path, std::string_view name) {
+    std::size_t start = 0;
+    while (start < folded_path.size()) {
+        const std::size_t slash = folded_path.find('/', start);
+        const std::string_view part = slash == std::string_view::npos
+                                          ? folded_path.substr(start)
+                                          : folded_path.substr(start, slash - start);
+        if (part == name)
+            return true;
+        if (slash == std::string_view::npos)
+            return false;
+        start = slash + 1;
+    }
+    return false;
+}
+
+/// Says whether a relative path is one the folder digest leaves out.
+///
+/// `__MACOSX` and `.backup` are left out only as the first part. `.git` and
+/// `.oa-origin.yaml` are left out at any depth. `.DS_Store`, in any ASCII
+/// case, and a name that starts with `._` are left out at any depth. The
+/// comparison folds ASCII case, as the packer does.
+///
+/// @param relative the path inside the folder, '/' between parts
+/// @return how it is left out
+FolderOmit folder_omit(std::string_view relative) {
+    const std::string folded = fold_path(relative);
+    const std::size_t first_slash = folded.find('/');
+    const std::string_view first = first_slash == std::string::npos
+                                       ? std::string_view(folded)
+                                       : std::string_view(folded).substr(0, first_slash);
+    if (first == "__macosx" || first == ".backup")
+        return FolderOmit::tree;
+    if (part_is(folded, ".git") || part_is(folded, ".oa-origin.yaml"))
+        return FolderOmit::tree;
+    const std::size_t last_slash = folded.rfind('/');
+    const std::string_view last = last_slash == std::string::npos
+                                      ? std::string_view(folded)
+                                      : std::string_view(folded).substr(last_slash + 1);
+    if (last == ".ds_store" || last.starts_with("._"))
+        return FolderOmit::entry;
+    return FolderOmit::keep;
+}
 
 } // namespace
 
@@ -602,19 +679,22 @@ std::optional<base::sha256::Digest> folder_digest(const fs::path& folder, std::s
         const std::string relative = relative_text(folder, current);
         const fs::file_status status = cursor->symlink_status(failure);
         const FolderItem item = failure ? FolderItem::missing : folder_item(status, current);
-        switch (item) {
-        case FolderItem::missing:
+        if (item == FolderItem::missing) {
             set_error(error, relative + " cannot be read");
             return std::nullopt;
-        case FolderItem::link:
+        }
+        if (item == FolderItem::link) {
             set_error(error, relative + " is a symbolic link");
             return std::nullopt;
-        case FolderItem::other:
+        }
+        if (item == FolderItem::other) {
             set_error(error, relative + " is not a regular file");
             return std::nullopt;
-        case FolderItem::folder:
-            break;
-        case FolderItem::file: {
+        }
+        const FolderOmit omit = folder_omit(relative);
+        if (omit == FolderOmit::tree && item == FolderItem::folder)
+            cursor.disable_recursion_pending();
+        if (omit == FolderOmit::keep && item == FolderItem::file) {
             FolderFile file;
             file.path = relative;
             if (!digest_file(current, file.size, file.digest)) {
@@ -622,8 +702,6 @@ std::optional<base::sha256::Digest> folder_digest(const fs::path& folder, std::s
                 return std::nullopt;
             }
             files.push_back(std::move(file));
-            break;
-        }
         }
         cursor.increment(failure);
         if (failure) {
@@ -766,7 +844,8 @@ std::string options_text(const LoadoutEntry& entry) {
     return text;
 }
 
-Loadout loadout_of(std::span<const ResolvedMutator> chosen) {
+Loadout
+loadout_of(std::span<const ResolvedMutator> chosen, oa::formats::oamut::ClashMode clash_default) {
     Loadout loadout;
     loadout.entries.reserve(chosen.size());
     for (const ResolvedMutator& one : chosen) {
@@ -775,6 +854,7 @@ Loadout loadout_of(std::span<const ResolvedMutator> chosen) {
         entry.version = oa::formats::oamut::version_text(one.manifest.version);
         entry.package = one.package;
         entry.folder = one.folder;
+        entry.clashes = effective_clash(one.clashes, one.manifest.clashes, clash_default);
         entry.options = one.options;
         std::sort(
             entry.options.begin(),
@@ -857,6 +937,7 @@ resolve_loadout(const Loadout& loadout, const fs::path& mutators_folder, std::st
             );
             return std::nullopt;
         }
+        one->clashes = entry.clashes;
         resolved.push_back(std::move(*one));
     }
     return resolved;

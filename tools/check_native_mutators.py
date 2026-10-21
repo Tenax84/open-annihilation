@@ -16,7 +16,11 @@ and its error, and no match. --no-mutators plays the stock health and
 logs the refusal once. A match with mutators leaves no crash record and
 writes no remembered set. A record planted beside the preferences is
 logged once and deleted. A campaign start that the mutators refuse leaves
-no crash record.
+no crash record. ridge-commander-copy, whose manifest names no clash mode,
+clones CORCOM onto ARMCOM: with mutators.clash-default=add in the
+preferences the copy takes a private name, one note names the rename and
+both commanders keep their stock health; without the key the copy
+replaces ARMCOM, whose commander then holds 4321, and no rename is noted.
 """
 import argparse
 import os
@@ -33,10 +37,18 @@ RUNNER = shlex.split(os.environ.get("OA_TEST_RUNNER", ""))
 PREPARED = "Offline match world prepared"
 UNIT_LINE = re.compile(r"^tick=(\d+) slot=\d+ type=\d+ owner=(\d+) .* health=(-?\d+)")
 RUN_TIMEOUT = 300
+# The first line of a preferences file.
+PREFERENCES_HEADER = "open-annihilation-preferences 1"
+# The preference that sets the clash mode a mutator's manifest leaves unset.
+CLASH_DEFAULT = "mutators.clash-default"
+# The health ridge-commander-copy gives its copy of CORCOM.
+COPY_HEALTH = 4321
+RENAMED_NOTE = "ridge-commander-copy renamed ARMCOM to ARMCOM_2"
+REPLACED_NOTE = "ridge-commander-copy replaced ARMCOM from the game on "
 # Canonical loadout text for ridge-tough 1.0. The crash record stores this
 # text; the next start names the id and the version and does not resolve it.
 TOUGH_LOADOUT = (
-    '{"mutators":[{"folder":false,"id":"ridge-tough","options":{},'
+    '{"mutators":[{"clashes":"replace","folder":false,"id":"ridge-tough","options":{},'
     '"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",'
     '"version":"1.0"}],"oaloadout":1}'
 )
@@ -229,6 +241,49 @@ def expect_planted_record(native, game_dir, workdir):
     assert_no_sentinel(folder)
 
 
+def expect_clash_default(native, game_dir, workdir, package, stock):
+    """The preference sets the clash mode of a mutator whose manifest names none.
+
+    With mutators.clash-default=add the clone onto ARMCOM takes a private
+    name and both commanders keep stock; with no key it replaces ARMCOM.
+    """
+    for mode in ("add", None):
+        name = "clash-" + (mode or "unset")
+        folder = separate(workdir, name)
+        if mode is not None:
+            (folder / "run.conf").write_text(
+                PREFERENCES_HEADER
+                + "\n"
+                + quote_preference(CLASH_DEFAULT)
+                + " "
+                + quote_preference(mode)
+                + "\n",
+                encoding="utf-8",
+            )
+        status, lines, units = run(native, game_dir, folder, "run", [str(package)])
+        if status != 0:
+            print("\n".join(lines))
+            raise ScriptFailure(f"{name} exited with {status}")
+        renamed = [line for line in lines if RENAMED_NOTE in line]
+        replaced = [line for line in lines if REPLACED_NOTE in line]
+        health = commanders(units, lines)
+        if mode == "add":
+            if len(renamed) != 1 or replaced:
+                print("\n".join(lines))
+                raise ScriptFailure(f"{name} did not keep the copy beside ARMCOM")
+            if health != stock:
+                raise ScriptFailure(f"{name} left the commanders at {health}, not {stock}")
+        else:
+            if renamed or len(replaced) != 1:
+                print("\n".join(lines))
+                raise ScriptFailure(f"{name} did not put the copy in place of ARMCOM")
+            if COPY_HEALTH not in health:
+                raise ScriptFailure(
+                    f"{name} left the commanders at {health}, neither at {COPY_HEALTH}"
+                )
+        assert_no_sentinel(folder)
+
+
 def expect_campaign_refusal(native, game_dir, workdir, package):
     """A campaign start the mutators refuse leaves no crash record."""
     folder = separate(workdir, "campaign-boom")
@@ -352,6 +407,9 @@ def main():
             expect_no_mutators(native, game_dir, workdir, tough, health)
             expect_planted_record(native, game_dir, workdir)
             expect_campaign_refusal(native, game_dir, workdir, packages)
+            expect_clash_default(
+                native, game_dir, workdir, packages / "ridge-commander-copy", health
+            )
         except ScriptFailure as failure:
             print(f"FAIL {failure}")
             return 1

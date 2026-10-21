@@ -6,6 +6,7 @@ add_library(oa-ui-frontend-multiplayer
   src/panel.cpp
   src/lobby_net.cpp
   src/battleroom.cpp
+  src/room_mutators.cpp
   src/team_rules.cpp
   src/unit_sync.cpp
   src/restrict.cpp
@@ -48,6 +49,12 @@ if(BUILD_TESTING)
     oa-ui-frontend-multiplayer oa-ui-kit oa-netgame oa-test-support)
   add_test(NAME ui-multiplayer-presence-card COMMAND oa-ui-frontend-multiplayer-presence-card-test)
   set_tests_properties(ui-multiplayer-presence-card PROPERTIES TIMEOUT 30)
+  # The battle room's mutator gate, the host's list parts and the unit-sync restart.
+  add_executable(oa-ui-frontend-multiplayer-room-mutators-test tests/room_mutators_test.cpp)
+  target_link_libraries(oa-ui-frontend-multiplayer-room-mutators-test PRIVATE
+    oa-ui-frontend-multiplayer oa-netgame)
+  add_test(NAME ui-multiplayer-room-mutators COMMAND oa-ui-frontend-multiplayer-room-mutators-test)
+  set_tests_properties(ui-multiplayer-room-mutators PROPERTIES TIMEOUT 30)
   # GET MAP: every state and line over hand-made records, packs and offers;
   # with --data, the battle room's side over the installed GUI files: what a
   # joiner reads of the host's map, the host's pack through

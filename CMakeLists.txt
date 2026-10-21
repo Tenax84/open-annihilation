@@ -1107,6 +1107,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_pack_maps.cpp
   src/app/pack_map_source.cpp
   src/app/runtime_get_map.cpp
+  src/app/runtime_room_mutators.cpp
   src/app/mod_install_watch.cpp
   src/app/user_folder_open.cpp
   src/app/runtime_mission_orders.cpp src/app/runtime_showcase.cpp src/app/match_clock.cpp
@@ -3349,8 +3350,9 @@ endforeach()
         # number option, two packages in each order, a missing id, an
         # unknown option and a mutator whose script stops. Also
         # --no-mutators, a match that leaves no crash record and no
-        # remembered set, a planted crash record, and a campaign start
-        # the mutators refuse.
+        # remembered set, a planted crash record, a campaign start the
+        # mutators refuse, and the clash mode the preferences' default
+        # gives a mutator whose manifest names none.
         add_test(NAME native-mutators-command-line COMMAND ${Python3_EXECUTABLE}
           "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_native_mutators.py"
           --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"

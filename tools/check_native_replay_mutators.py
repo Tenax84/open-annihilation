@@ -188,7 +188,8 @@ def require_loadout_sector(path, sha):
         raise ReplayMutatorsFailure(f"{path.name}'s mutators sector does not follow the date")
     text = sector_text(parsed[at][1])
     want = (
-        '{"mutators":[{"folder":false,"id":"ridge-art-a","options":{},"sha256":"'
+        '{"mutators":[{"clashes":"replace","folder":false,"id":"ridge-art-a",'
+        '"options":{},"sha256":"'
         + sha
         + '","version":"1.0"}],"oaloadout":1}'
     )

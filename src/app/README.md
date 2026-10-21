@@ -4375,6 +4375,48 @@ other's players carry no presence bytes.
 [docs/development/testing.md](../../docs/development/testing.md#network-play)
 lists its tests.
 
+The battle room builds the host's mutator list on each machine
+(`follow_room_mutators` in `runtime_room_mutators.cpp`). The host's list
+starts as the run's `--mutator` choice. A guest uses only the list the
+host's records are carrying now, and only once every mutator of it has
+arrived; it never builds from a list of its own or from a list it hosted
+before. Joining a room and leaving the screens forget the previous host's
+list, even when the next host's records carry none. The build runs on the
+calling thread when the wanted digest or this machine's sim hash changes,
+on the live mod data, with no map. It
+judges the list as the match start does: the same hack check and the same
+blocking judgement, against this machine's own Developer Mode. It does not
+play the hacks into the profile, so the room's sim hash stays the
+profile's. A mutator whose hacks were refused fails alone, and the field's
+index, while built, names the first mutator this machine dropped for that
+reason. The field's layer digest is the mutator digest of the applied
+loadout and its layer. A mutator dropped on every machine alike does not
+hold START; two machines that drop different ones do, and the hold names
+the earlier of the two positions. The same Developer Mode settings are
+what make the machines agree. The room's layer is not the match's: leaving
+the multiplayer screens releases it. A network start applies the list this
+room built; a guest's start applies it only while the host's current
+record names it. The start then puts the run's own choice back, so a
+later skirmish plays that choice. A network start that never showed the
+battle room, such as `--net-loopback-check`, has no room list and plays
+the run's own choice, as a single-player start does. The presence
+record's mutators field says what this machine
+built. The host's names every mutator and says it has each one. A guest's
+carries the host's digest, how much of the list it holds and whether each
+package is installed here, and it names no mutator. While a guest is
+behind, the host's record still leaves room for the map pack, and one
+continued part of the list follows the pack. A guest that has not built
+the host's list keeps READY off. START stays unavailable while mutators
+are on and an OA player of another machine lacks one, failed one, is still
+receiving the list, built another layer or plays another sim hash. It also
+stays unavailable when the host has dropped the list and an OA peer's
+record still carries one. When the layer is built or cleared, the battle
+room reads its unit headers again and restarts unit sync: the host keeps a
+3.1c peer that had finished and greets the OA peers again. The first time
+a peer's record says it built the host's current list, and the first time
+that record drops the field after the host's list is empty, the host
+greets that peer once more.
+
 ### GET MAP in the battle room
 
 A joiner whose host is an OA machine playing a pack map gets the host's

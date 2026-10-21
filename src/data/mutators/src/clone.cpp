@@ -11,6 +11,7 @@
 
 #include "oa/data/field_schema.hpp"
 #include "oa/data/mutators/allow_list.hpp"
+#include "oa/data/mutators/clashes.hpp"
 #include "oa/data/mutators/collections.hpp"
 #include "oa/data/script_host/fixed.hpp"
 #include "oa/data/script_host/script_host.hpp"
@@ -239,24 +240,6 @@ bool ensure_grant(const Collections& self, bool weapons, std::string& error) {
     return false;
 }
 
-uint32_t count_mine_writes(const Collections& self) {
-    const std::string& who = CloneAccess::mutator(self);
-    uint32_t count = 0;
-    for (const rules::FieldWrite& write : self.writes()) {
-        bool mine = false;
-        for (const std::string& name : write.mutators) {
-            if (name == who)
-                mine = true;
-        }
-        if (!mine)
-            continue;
-        if (count == mutator_write_limit)
-            return count;
-        ++count;
-    }
-    return count;
-}
-
 uint32_t count_mine_notes(const Collections& self) {
     const std::string& who = CloneAccess::mutator(self);
     uint32_t count = 0;
@@ -275,15 +258,13 @@ uint32_t count_mine_notes(const Collections& self) {
     return count;
 }
 
-bool room_for(
-    const Collections& self, uint32_t more_writes, uint32_t more_notes, std::string& error
-) {
-    const uint32_t writes = count_mine_writes(self);
-    const uint32_t notes = count_mine_notes(self);
-    if (more_writes > 0 && writes > mutator_write_limit - more_writes) {
+/// Refuses a field write past the mutator's shared tally, or a note past its note limit.
+bool room_for(Collections& self, uint32_t more_writes, uint32_t more_notes, std::string& error) {
+    if (more_writes > 0 && !self.allow_field_write()) {
         error = "this mutator has changed too many fields";
         return false;
     }
+    const uint32_t notes = count_mine_notes(self);
     if (more_notes > 0 && notes > mutator_note_limit - more_notes) {
         error = "this mutator has made too many notes";
         return false;
@@ -470,6 +451,7 @@ bool apply_field(
         write.key = before.key;
         write.old_text = before.text;
         CloneAccess::writes(self).push_back(std::move(write));
+        self.count_field_write();
         return true;
     }
 
@@ -526,6 +508,7 @@ bool apply_field(
     write.old_text = before.present ? before.text : std::nullopt;
     write.new_text = after.present ? after.text : std::optional<std::string>(text);
     CloneAccess::writes(self).push_back(std::move(write));
+    self.count_field_write();
     if (check.verdict == fields::Verdict::warn) {
         HookNote note;
         note.kind = HookNoteKind::check_warned;
@@ -655,7 +638,8 @@ std::string join_path(std::string_view folder, std::string_view name) {
 /// Bills the bytes, then keeps the copy when the destination is free and
 /// `check_mutable_path` allows it. A build page is the menus-only exception:
 /// `guis/<name><digits>.gui` is served only when that path does not exist.
-/// A taken path refuses the clone and names the path. Returns false when the
+/// A taken path refuses the clone and names the path, unless `may_exist`
+/// says the path is the replaced record's own file. Returns false when the
 /// source has no bytes (nothing to serve).
 bool take_copy(
     uint64_t& units,
@@ -665,6 +649,7 @@ bool take_copy(
     std::string path,
     std::string source_path,
     const std::shared_ptr<const std::vector<uint8_t>>& bytes,
+    bool may_exist,
     std::vector<PendingCopy>& pending,
     std::string& error
 ) {
@@ -679,7 +664,7 @@ bool take_copy(
     };
     const PathVerdict verdict = check_mutable_path(path, context);
     const bool page = clone_build_page(path, folder_of(self, defs::DataDirectory::guis), name);
-    const bool taken = path_taken(self, path);
+    const bool taken = !may_exist && path_taken(self, path);
     const bool gui_ok = page && verdict.rule == PathRule::menus_only && !taken;
     if (taken || (!verdict.allowed() && !gui_ok)) {
         if (taken) {
@@ -697,11 +682,14 @@ bool take_copy(
 
 /// Reads the script, picture and build pages the game would, under the new name.
 /// A refusal sets `error` and returns false. A missing source file is skipped.
+/// With `may_exist` the destination paths are the replaced record's own
+/// files, so a path that exists is taken over instead of refusing the clone.
 bool collect_unit_copies(
     uint64_t& units,
     Collections& self,
     std::string_view source,
     std::string_view name,
+    bool may_exist,
     std::vector<PendingCopy>& pending,
     std::string& error
 ) {
@@ -717,6 +705,7 @@ bool collect_unit_copies(
             new_script,
             source_script,
             lookup_bytes(self, source_script),
+            may_exist,
             pending,
             error
         ) &&
@@ -732,6 +721,7 @@ bool collect_unit_copies(
             new_pic,
             source_pic,
             lookup_bytes(self, source_pic),
+            may_exist,
             pending,
             error
         ) &&
@@ -750,6 +740,7 @@ bool collect_unit_copies(
             new_page,
             source_page,
             lookup_bytes(self, source_page),
+            may_exist,
             pending,
             error
         );
@@ -777,6 +768,7 @@ bool collect_unit_copies(
                 new_gaf,
                 source_gaf,
                 lookup_bytes(self, source_gaf),
+                may_exist,
                 pending,
                 error
             ) &&
@@ -916,6 +908,8 @@ void publish(
     std::string source,
     int weapon_id,
     std::string path,
+    std::string asked,
+    bool replaced,
     std::vector<PendingCopy> pending
 ) {
     CloneRecord record;
@@ -925,15 +919,20 @@ void publish(
     record.source = source;
     record.weapon_id = weapon_id;
     record.path = path;
+    record.asked = std::move(asked);
+    record.replaced = replaced;
+    const char* verb = replaced ? "replaced " : "added ";
     if (weapons) {
-        record.sentence = "added weapon ";
+        record.sentence = verb;
+        record.sentence.append("weapon ");
         record.sentence.append(name);
         record.sentence.append(" (copy of ");
         record.sentence.append(source);
         record.sentence.append(") at id ");
         record.sentence.append(std::to_string(weapon_id));
     } else {
-        record.sentence = "added unit ";
+        record.sentence = verb;
+        record.sentence.append("unit ");
         record.sentence.append(name);
         record.sentence.append(" (copy of ");
         record.sentence.append(source);
@@ -950,6 +949,7 @@ void publish(
         served.path = std::move(copy.path);
         served.source_path = std::move(copy.source_path);
         served.bytes = std::move(copy.bytes);
+        served.replaces = replaced;
         const std::string key = fold_path(served.path);
         const std::size_t index = CloneAccess::served(self).size();
         CloneAccess::served(self).push_back(std::move(served));
@@ -969,6 +969,137 @@ bool set_text(
         error = tdf::edit_status_message(status);
         return false;
     }
+    return true;
+}
+
+/// Removes every key and child of a block. The block itself stays.
+bool empty_section(tdf::Document* document, tdf::Block* block, std::string& error) {
+    if (block == nullptr)
+        return true;
+    const uint32_t children = tdf::child_count(block);
+    for (uint32_t index = children; index > 0; --index) {
+        const tdf::EditStatus status = tdf::remove_child(document, block, index - 1);
+        if (status != tdf::EditStatus::ok) {
+            error = tdf::edit_status_message(status);
+            return false;
+        }
+    }
+    std::vector<std::string> keys;
+    const uint32_t props = tdf::property_count(block);
+    keys.reserve(props);
+    for (uint32_t index = 0; index < props; ++index) {
+        const char* key = tdf::property_key_at(block, static_cast<int32_t>(index));
+        if (key != nullptr)
+            keys.emplace_back(key);
+    }
+    for (const std::string& key : keys) {
+        const tdf::EditStatus status = tdf::remove_key(document, block, key);
+        if (status != tdf::EditStatus::ok) {
+            error = tdf::edit_status_message(status);
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Puts the source section in place of the existing record.
+///
+/// The existing file stays. A unit takes the source's model through
+/// `Objectname`, and the source's script, build picture, build pages and
+/// page art are served under the existing name in place of that unit's
+/// own, as a clone under a new name serves them, so the script always
+/// matches the model. A weapon keeps the id it already had. The source
+/// section is not emptied when it is the destination: cloning a record
+/// onto itself only applies the fields and copies nothing.
+bool replace_existing(
+    uint64_t& units,
+    Collections& collections,
+    bool weapons,
+    const std::string& source,
+    const std::string& source_sought,
+    const std::string& name,
+    const CloneHit& found,
+    const CloneHit& existing,
+    const std::vector<HeldField>& held,
+    std::string& error
+) {
+    rules::DocumentSet& documents = CloneAccess::documents(collections);
+    if (existing.doc_index >= documents.size()) {
+        error = request_error(weapons, source, name, "the record disappeared");
+        return false;
+    }
+    rules::LoadedDocument& loaded = documents.at(existing.doc_index);
+    tdf::Block* dest = existing.section;
+    const tdf::Block* source_section = found.section;
+    if (dest == nullptr || source_section == nullptr || loaded.document.get() == nullptr) {
+        error = request_error(weapons, source, name, "the record disappeared");
+        return false;
+    }
+    const bool same = dest == source_section;
+    std::vector<PendingCopy> pending;
+    if (!weapons && !same &&
+        !collect_unit_copies(
+            units, collections, source_sought, existing.name, true, pending, error
+        ))
+        return false;
+    const char* saved_id = weapons ? tdf::find_value(dest, "ID") : nullptr;
+    const bool had_id = saved_id != nullptr;
+    const std::string kept_id = had_id ? std::string{saved_id} : std::string{};
+    if (!same) {
+        if (!empty_section(loaded.document.get(), dest, error) ||
+            !copy_properties(loaded.document.get(), dest, source_section, error) ||
+            !copy_children(loaded.document.get(), dest, source_section, error)) {
+            const std::string detail = error;
+            error = request_error(weapons, source, name, detail);
+            return false;
+        }
+    }
+    if (!weapons) {
+        if (!set_text(loaded, dest, "UnitName", existing.name, error) ||
+            !set_text(
+                loaded, dest, "Objectname", effective_model(source_section, found.name), error
+            )) {
+            const std::string detail = error;
+            error = request_error(weapons, source, name, detail);
+            return false;
+        }
+    } else if (had_id) {
+        const char* now = tdf::find_value(dest, "ID");
+        if (now == nullptr || std::string_view{now} != kept_id) {
+            if (!set_text(loaded, dest, "ID", kept_id, error)) {
+                const std::string detail = error;
+                error = request_error(weapons, source, name, detail);
+                return false;
+            }
+        }
+    } else if (tdf::remove_key(loaded.document.get(), dest, "ID") != tdf::EditStatus::ok) {
+        error = request_error(weapons, source, name, "the weapon id could not be restored");
+        return false;
+    }
+    for (const HeldField& field : held) {
+        if (!apply_field(collections, weapons, loaded, dest, existing.name, field, error)) {
+            const std::string detail = error;
+            error = request_error(weapons, source, name, detail);
+            return false;
+        }
+    }
+    int weapon_id = 0;
+    if (weapons && had_id) {
+        const int32_t parsed = tdf::parse_int(kept_id.c_str());
+        if (parsed > 0 && parsed <= 255)
+            weapon_id = static_cast<int>(parsed);
+    }
+    publish(
+        collections,
+        weapons,
+        existing.name,
+        source,
+        weapon_id,
+        existing.path,
+        {},
+        true,
+        std::move(pending)
+    );
     return true;
 }
 
@@ -996,8 +1127,10 @@ int clone_collection(
     if (!ensure_grant(collections, weapons, error))
         return -1;
 
+    const std::string mapped_source = collections.private_name_of(weapons, source);
+    const std::string source_sought = mapped_source.empty() ? source : mapped_source;
     CloneHit found;
-    if (!clone_find(collections, weapons, source, found, units)) {
+    if (!clone_find(collections, weapons, source_sought, found, units)) {
         error = request_error(
             weapons,
             source,
@@ -1006,12 +1139,62 @@ int clone_collection(
         );
         return -1;
     }
+    std::string stored_name = name;
     CloneHit existing;
     if (clone_find(collections, weapons, name, existing, units)) {
-        error = request_error(weapons, source, name, "the new name already exists");
-        return -1;
+        const bool clash = collections.clash_active() && name_ok(name);
+        const bool replacing =
+            clash && collections.clash_mode() == oa::formats::oamut::ClashMode::replace;
+        const bool rename = clash && collections.clash_mode() == oa::formats::oamut::ClashMode::add;
+        if (!replacing && !rename) {
+            error = request_error(weapons, source, name, "the new name already exists");
+            return -1;
+        }
+        std::vector<HeldField> held_now;
+        if (replacing) {
+            if (!read_fields(state, 4, weapons, source, name, held_now, error))
+                return -1;
+            if (!precheck_fields(weapons, source, name, held_now, error))
+                return -1;
+            if (!replace_existing(
+                    units,
+                    collections,
+                    weapons,
+                    source,
+                    source_sought,
+                    name,
+                    found,
+                    existing,
+                    held_now,
+                    error
+                ))
+                return -1;
+            return 0;
+        }
+        const std::optional<std::string> renamed =
+            private_record_name(name, [&](std::string_view candidate) {
+                if (!name_ok(candidate))
+                    return true;
+                CloneHit hit;
+                if (clone_find(collections, weapons, candidate, hit, units))
+                    return true;
+                if (weapons)
+                    return false;
+                const std::string candidate_path = unit_path(collections, candidate);
+                bill_elements(
+                    units, static_cast<uint64_t>(CloneAccess::documents(collections).size())
+                );
+                bill_bytes(units, candidate_path.size());
+                return path_taken(collections, candidate_path);
+            });
+        if (!renamed.has_value()) {
+            error = request_error(weapons, source, name, "no free name");
+            return -1;
+        }
+        stored_name = *renamed;
+        collections.note_rename(weapons, name, stored_name);
     }
-    if (!name_ok(name)) {
+    if (!name_ok(stored_name)) {
         error = request_error(
             weapons, source, name, "the new name is not 1 to 31 letters, digits, '_' or '-'"
         );
@@ -1035,8 +1218,8 @@ int clone_collection(
         }
     }
 
-    const std::string path =
-        weapons ? weapon_path(collections, name, error) : unit_path(collections, name);
+    const std::string path = weapons ? weapon_path(collections, stored_name, error)
+                                     : unit_path(collections, stored_name);
     if (path.empty()) {
         const std::string detail = error.empty() ? std::string("the file name is not free") : error;
         error = request_error(weapons, source, name, detail);
@@ -1048,7 +1231,8 @@ int clone_collection(
     }
 
     std::vector<PendingCopy> pending;
-    if (!weapons && !collect_unit_copies(units, collections, source, name, pending, error))
+    if (!weapons &&
+        !collect_unit_copies(units, collections, source_sought, stored_name, false, pending, error))
         return -1;
 
     rules::DocumentSet& documents = CloneAccess::documents(collections);
@@ -1064,7 +1248,7 @@ int clone_collection(
         body = *written;
     } else {
         body.push_back('[');
-        body.append(name);
+        body.append(stored_name);
         body.append("]\n{\n}\n");
     }
     bill_bytes(units, body.size());
@@ -1093,7 +1277,7 @@ int clone_collection(
         if (!strip_canbuild(
                 loaded->document.get(), tdf::editable_root(loaded->document.get()), error
             ) ||
-            !set_text(*loaded, section, "UnitName", name, error) ||
+            !set_text(*loaded, section, "UnitName", stored_name, error) ||
             !set_text(
                 *loaded, section, "Objectname", effective_model(source_section, found.name), error
             )) {
@@ -1103,7 +1287,7 @@ int clone_collection(
             return -1;
         }
         for (const HeldField& field : held) {
-            if (!apply_field(collections, weapons, *loaded, section, name, field, error)) {
+            if (!apply_field(collections, weapons, *loaded, section, stored_name, field, error)) {
                 const std::string detail = error;
                 abandon();
                 error = request_error(weapons, source, name, detail);
@@ -1127,7 +1311,7 @@ int clone_collection(
             return -1;
         }
         for (const HeldField& field : held) {
-            if (!apply_field(collections, weapons, *loaded, section, name, field, error)) {
+            if (!apply_field(collections, weapons, *loaded, section, stored_name, field, error)) {
                 const std::string detail = error;
                 abandon();
                 error = request_error(weapons, source, name, detail);
@@ -1140,7 +1324,20 @@ int clone_collection(
         if (final_text->size() > body.size())
             bill_bytes(units, final_text->size() - body.size());
     }
-    publish(collections, weapons, name, source, weapon_id, path, std::move(pending));
+    std::string asked_name;
+    if (!same_text(name, stored_name))
+        asked_name = name;
+    publish(
+        collections,
+        weapons,
+        stored_name,
+        source,
+        weapon_id,
+        path,
+        std::move(asked_name),
+        false,
+        std::move(pending)
+    );
     return 0;
 }
 
