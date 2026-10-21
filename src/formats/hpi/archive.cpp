@@ -497,11 +497,20 @@ struct HpiArchive::Impl {
 
     /// Copies file node `index`'s decoded bytes from `position` into `output`.
     ///
+    /// @param index file node index
+    /// @param position first decoded byte wanted
+    /// @param[out] output receives the bytes
+    /// @param chunks the node's chunk table, or null to read it for this call
     /// @return the count copied, short when a stored entry runs past the end
     ///         of the archive; or the error, at its archive offset, of a
-    ///         chunk that cannot be read or decoded
-    [[nodiscard]] Decoded<uint32_t>
-    read_range(uint32_t index, uint32_t position, std::span<uint8_t> output) const {
+    ///         chunk or size table that cannot be read or decoded, or
+    ///         out_of_range for a chunk table of another node
+    [[nodiscard]] Decoded<uint32_t> read_range(
+        uint32_t index,
+        uint32_t position,
+        std::span<uint8_t> output,
+        const formats::hpi::ChunkTable* chunks
+    ) const {
         if (index >= nodes.size() || nodes[index].directory())
             return DecodeError{DecodeCode::out_of_range, 0, "HPI node is not a file"};
         const ArchiveNode& node = nodes[index];
@@ -514,28 +523,43 @@ struct HpiArchive::Impl {
             decrypt_at(output.first(got), key, at);
             return static_cast<uint32_t>(got);
         }
+        formats::hpi::ChunkTable read_now;
+        if (chunks == nullptr) {
+            auto table = chunk_table(index);
+            if (!table.ok())
+                return table.error;
+            read_now = std::move(*table.value);
+            chunks = &read_now;
+        } else if (chunks->node != index || chunks->offsets.size() != chunk_count(node) + 1U) {
+            return DecodeError{
+                DecodeCode::out_of_range, node.data_offset, "HPI chunk table is another entry's"
+            };
+        }
         std::size_t copied = 0;
-        return decode_blocks(node, position, wanted, [&](const uint8_t* bytes, std::size_t count) {
-            std::memcpy(output.data() + copied, bytes, count);
-            copied += count;
-        });
+        return decode_blocks(
+            node, *chunks, position, wanted, [&](const uint8_t* bytes, std::size_t count) {
+                std::memcpy(output.data() + copied, bytes, count);
+                copied += count;
+            }
+        );
     }
 
-    /// Decodes the chunks of a compressed file node that hold `wanted`
-    /// bytes from `position`, handing each chunk's part to `take` in order.
+    /// Returns how many chunks a compressed file node is stored in.
     ///
-    /// @param node the file node; compressed
-    /// @param position first decoded byte wanted
-    /// @param wanted count of bytes wanted; within the entry
-    /// @param take called with each part's bytes and count
-    /// @return the count handed on; or the error, at its archive offset, of
-    ///         a chunk or size table that cannot be read or decoded
-    template <class Take>
-    [[nodiscard]] Decoded<uint32_t> decode_blocks(
-        const ArchiveNode& node, uint32_t position, std::size_t wanted, Take&& take
-    ) const {
-        const uint32_t chunks =
-            node.size / formats::hpi::BlockBytes + (node.size % formats::hpi::BlockBytes != 0);
+    /// @param node the file node
+    /// @return its decoded size in 64 KiB blocks, rounded up
+    [[nodiscard]] static uint32_t chunk_count(const ArchiveNode& node) noexcept {
+        return node.size / formats::hpi::BlockBytes + (node.size % formats::hpi::BlockBytes != 0);
+    }
+
+    /// Reads and decrypts a compressed file node's chunk-size table.
+    ///
+    /// @param index file node index; a compressed file
+    /// @return where each chunk is stored; or truncated, at the node's data
+    ///         offset, for a table past the end of the archive
+    [[nodiscard]] Decoded<formats::hpi::ChunkTable> chunk_table(uint32_t index) const {
+        const ArchiveNode& node = nodes[index];
+        const uint32_t chunks = chunk_count(node);
         std::vector<uint8_t> table(static_cast<std::size_t>(chunks) * 4U);
         if (read_stored(node.data_offset, table) != table.size())
             return DecodeError{
@@ -544,7 +568,38 @@ struct HpiArchive::Impl {
                 "HPI chunk size table lies past the end of the archive"
             };
         decrypt_at(table, key, node.data_offset);
+        formats::hpi::ChunkTable result;
+        result.node = index;
+        result.offsets.resize(static_cast<std::size_t>(chunks) + 1U);
+        // Summed at 64 bits, so stored sizes cannot wrap the offset back
+        // into the archive; a chunk past its end reads short.
+        uint64_t at = static_cast<uint64_t>(node.data_offset) + table.size();
+        for (uint32_t i = 0; i < chunks; ++i) {
+            result.offsets[i] = at;
+            at += load_le32(table.data() + i * 4U);
+        }
+        result.offsets[chunks] = at;
+        return result;
+    }
 
+    /// Decodes the chunks of a compressed file node that hold `wanted`
+    /// bytes from `position`, handing each chunk's part to `take` in order.
+    ///
+    /// @param node the file node; compressed
+    /// @param chunks the node's chunk table
+    /// @param position first decoded byte wanted
+    /// @param wanted count of bytes wanted; within the entry
+    /// @param take called with each part's bytes and count
+    /// @return the count handed on; or the error, at its archive offset, of
+    ///         a chunk that cannot be read or decoded
+    template <class Take>
+    [[nodiscard]] Decoded<uint32_t> decode_blocks(
+        const ArchiveNode& node,
+        const formats::hpi::ChunkTable& chunks,
+        uint32_t position,
+        std::size_t wanted,
+        Take&& take
+    ) const {
         // Every byte of these buffers is written before it is read, so they
         // are allocated without being filled.
         const auto decoded_bytes =
@@ -556,12 +611,9 @@ struct HpiArchive::Impl {
         while (copied < wanted) {
             const uint32_t block_index = cursor / formats::hpi::BlockBytes;
             if (block_index != loaded) {
-                // Summed at 64 bits, so stored sizes cannot wrap the offset
-                // back into the archive; a chunk past its end reads short.
-                uint64_t at = static_cast<uint64_t>(node.data_offset) + table.size();
-                for (uint32_t i = 0; i < block_index; ++i)
-                    at += load_le32(table.data() + i * 4U);
-                const uint32_t stored = load_le32(table.data() + block_index * 4U);
+                const uint64_t at = chunks.offsets[block_index];
+                // The difference is one size of the table, so it fits 32 bits.
+                const auto stored = static_cast<uint32_t>(chunks.offsets[block_index + 1U] - at);
                 if (stored > kMaxStoredChunkSize)
                     return DecodeError{
                         DecodeCode::limit_exceeded,
@@ -662,7 +714,23 @@ std::optional<uint32_t> HpiArchive::lookup_directory(std::string_view path) cons
 
 Decoded<uint32_t>
 HpiArchive::read_node_range(uint32_t index, uint32_t position, std::span<uint8_t> output) const {
-    return impl_->read_range(index, position, output);
+    return impl_->read_range(index, position, output, nullptr);
+}
+
+Decoded<uint32_t> HpiArchive::read_node_range(
+    uint32_t index,
+    uint32_t position,
+    std::span<uint8_t> output,
+    const formats::hpi::ChunkTable& chunks
+) const {
+    return impl_->read_range(index, position, output, &chunks);
+}
+
+Decoded<formats::hpi::ChunkTable> HpiArchive::read_chunk_table(uint32_t index) const {
+    if (index >= impl_->nodes.size() || impl_->nodes[index].directory() ||
+        impl_->nodes[index].compression == 0)
+        return DecodeError{DecodeCode::out_of_range, 0, "HPI node is not a compressed file"};
+    return impl_->chunk_table(index);
 }
 
 Decoded<std::vector<uint8_t>> HpiArchive::read_node(uint32_t index) const {
@@ -693,13 +761,16 @@ Decoded<std::vector<uint8_t>> HpiArchive::read_node(uint32_t index) const {
             // The archive holds every stored byte, so the buffer is no
             // larger than what it gives.
             bytes.resize(node.size);
-            read = impl_->read_range(index, 0, bytes);
+            read = impl_->read_range(index, 0, bytes, nullptr);
         } else {
             // Room is set aside for the claimed size, and only the chunks
             // that decode fill it.
             bytes.reserve(node.size);
+            auto chunks = impl_->chunk_table(index);
+            if (!chunks.ok())
+                return chunks.error;
             read = impl_->decode_blocks(
-                node, 0, node.size, [&](const uint8_t* decoded, std::size_t count) {
+                node, *chunks.value, 0, node.size, [&](const uint8_t* decoded, std::size_t count) {
                     bytes.insert(bytes.end(), decoded, decoded + count);
                 }
             );
