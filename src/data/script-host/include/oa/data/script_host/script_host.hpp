@@ -29,6 +29,41 @@ inline constexpr std::size_t default_memory_budget = std::size_t{64} << 20;
 /// Instructions between checks of the running allowance.
 inline constexpr int budget_check_interval = 1000;
 
+/// Bytes of a string's length, or of a scan, that count as one instruction.
+///
+/// Making or walking a string byte by byte takes about as long per 32 bytes
+/// as a few instructions of the interpreter. A count uses this, never the
+/// size the allocator happened to reserve, so it is the same on every build.
+inline constexpr std::size_t bytes_per_charge = 32;
+
+/// How many instruction units `bytes` cost, one per `bytes_per_charge`, rounded up.
+///
+/// @param bytes a length the script can see, such as a key or a path
+/// @return the units, 0 when `bytes` is 0
+[[nodiscard]] inline uint64_t units_for_bytes(std::size_t bytes) {
+    return (static_cast<uint64_t>(bytes) + bytes_per_charge - 1) / bytes_per_charge;
+}
+
+/// Units for one comparison that is not two strings, and the least two strings cost.
+///
+/// One comparison in `table.sort`, `pairs` or `math.max` takes about as long
+/// as one or two instructions of the interpreter. Two strings cost one unit
+/// per byte of the two lengths when that is more than this.
+inline constexpr uint64_t comparison_unit = 2;
+
+/// Units for one `next` call, or one walk that collects keys for `pairs`.
+///
+/// An emptied table can make that call visit every slot it used to hold.
+/// 4096 units spends the default allowance before a loop of those calls
+/// runs for long.
+inline constexpr uint64_t scan_call_charge = 4096;
+
+/// Units one element of a table, record or key list costs.
+///
+/// `table.move` and the other table walks charge this for each element they
+/// move or visit. A host walk over records or keys uses the same rate.
+inline constexpr uint64_t element_charge = 1;
+
 /// Real time one phase may run before that phase stops.
 ///
 /// A steady clock is read when the phase starts. The count hook and the
@@ -330,5 +365,21 @@ class Sandbox {
 /// @return false when the bytes are refused or the chunk does not load
 [[nodiscard]] bool
 compile_check(std::span<const uint8_t> source, std::string_view path, ScriptError& error);
+
+/// Adds `units` to the running phase and raises when the allowance is spent.
+///
+/// This is the count the libraries use. `units` must come from element
+/// counts and byte lengths, so one script spends the same count on every
+/// build and every run. A spent allowance raises the instruction-budget
+/// error, as the count hook does, and arms that hook so a protected call
+/// cannot keep the phase alive. A string refusal or a phase past its
+/// real-time limit raises that error instead. No C++ object with a
+/// destructor may be alive across this call: the raise leaves such an
+/// object unrun.
+///
+/// @param state a sandbox state inside a phase
+/// @param units instruction units to add; 0 adds nothing and still raises
+///     when the allowance is already spent
+void charge_work(lua_State* state, uint64_t units);
 
 } // namespace oa::data::script_host

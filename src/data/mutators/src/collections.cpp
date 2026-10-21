@@ -12,6 +12,7 @@
 #include "oa/data/mutators/collections.hpp"
 
 #include "oa/data/field_schema.hpp"
+#include "oa/data/script_host/script_host.hpp"
 #include "oa/data/script_host/sorted.hpp"
 #include "oa/formats/tdf/edit.hpp"
 #include "oa/formats/tdf/number.hpp"
@@ -438,6 +439,32 @@ std::string_view name_of(const RecordBox* box) noexcept {
     return std::string_view(bytes, box->name_size);
 }
 
+/// Charges one key-collecting walk. May raise. No C++ destructor is alive.
+void charge_scan(lua_State* state) {
+    host::charge_work(state, host::scan_call_charge);
+}
+
+/// Charges `visits` elements in one step. May raise. No C++ destructor is alive.
+void charge_visits(lua_State* state, uint64_t visits) {
+    if (host::element_charge != 0 && visits > UINT64_MAX / host::element_charge)
+        visits = UINT64_MAX / host::element_charge;
+    host::charge_work(state, visits * host::element_charge);
+}
+
+/// Charges the bytes of one key or name. May raise. No C++ destructor is alive.
+void charge_text(lua_State* state, std::size_t bytes) {
+    host::charge_work(state, host::units_for_bytes(bytes));
+}
+
+/// `left * right`, or the largest count when the product does not fit.
+uint64_t saturating_product(std::size_t left, std::size_t right) {
+    const uint64_t wide_left = static_cast<uint64_t>(left);
+    const uint64_t wide_right = static_cast<uint64_t>(right);
+    if (wide_left != 0 && wide_right > UINT64_MAX / wide_left)
+        return UINT64_MAX;
+    return wide_left * wide_right;
+}
+
 /// The layout the collections read, or the layout in force.
 const defs::DataLayout& layout_of(const Collections& self) noexcept {
     if (CollectionsAccess::layout_ptr(self) != nullptr)
@@ -654,6 +681,7 @@ void push_record(
     uint32_t slot,
     std::string_view name
 ) {
+    charge_text(state, name.size());
     const std::size_t bytes = sizeof(RecordBox) + name.size();
     void* memory = lua_newuserdatauv(state, bytes, 0);
     auto* box = static_cast<RecordBox*>(memory);
@@ -1374,7 +1402,9 @@ bool collect_handles(lua_State* state, Collections& owner, int index) {
     }
     const int sequence = lua_absindex(state, -1);
     const lua_Unsigned length = lua_rawlen(state, sequence);
+    charge_scan(state);
     for (lua_Unsigned slot = 1; slot <= length; ++slot) {
+        charge_visits(state, 1);
         lua_rawgeti(state, sequence, static_cast<lua_Integer>(slot));
         const RecordBox* box = record_at(state, -1);
         if (box == nullptr) {
@@ -1400,7 +1430,9 @@ bool read_keys(lua_State* state, Collections& self, int key_count, const char* t
     CollectionsState& scratch = working(self);
     scratch.keys.clear();
     const int sequence = lua_absindex(state, -1);
+    charge_scan(state);
     for (int slot = 1; slot <= key_count; ++slot) {
+        charge_visits(state, 1);
         lua_rawgeti(state, sequence, slot);
         if (lua_type(state, -1) != LUA_TSTRING) {
             lua_pop(state, 1);
@@ -1409,6 +1441,7 @@ bool read_keys(lua_State* state, Collections& self, int key_count, const char* t
         }
         std::size_t length = 0;
         const char* text = lua_tolstring(state, -1, &length);
+        charge_text(state, length);
         try {
             scratch.keys.emplace_back(text != nullptr ? text : "", length);
         } catch (const std::bad_alloc&) {
@@ -1445,7 +1478,9 @@ int where_from_keys(lua_State* state, Collections& owner, Kind kind, int key_cou
     scratch.needs.clear();
     const int table = 2;
     for (std::size_t index = 0; index < scratch.keys.size(); ++index) {
+        charge_visits(state, 1);
         const std::string& field = scratch.keys[index];
+        charge_text(state, field.size());
         lua_pushlstring(state, field.data(), field.size());
         lua_rawget(state, table);
         if (!need_from_lua(state, -1, trim_view(field), scratch.staging, &scratch.pending_error)) {
@@ -1461,9 +1496,25 @@ int where_from_keys(lua_State* state, Collections& owner, Kind kind, int key_cou
         }
         lua_pop(state, 1);
     }
+    const std::vector<Rec>* indexed = nullptr;
     try {
-        const std::vector<Rec>& records = ensure_index(owner, kind);
+        indexed = &ensure_index(owner, kind);
         scratch.matched.clear();
+    } catch (const std::bad_alloc&) {
+        scratch.pending_error = "out of memory";
+        return -1;
+    }
+    if (indexed == nullptr) {
+        scratch.pending_error = "out of memory";
+        return -1;
+    }
+    const std::vector<Rec>& records = *indexed;
+    // The match loops are C++. Charge them before any string is built, so a
+    // spent allowance raises with no destructor alive.
+    charge_scan(state);
+    charge_visits(state, static_cast<uint64_t>(records.size()));
+    charge_visits(state, saturating_product(records.size(), scratch.needs.size()));
+    try {
         for (std::size_t index = 0; index < records.size(); ++index) {
             bool keep = true;
             for (const sm::Need& need : scratch.needs) {
@@ -1493,7 +1544,6 @@ int where_from_keys(lua_State* state, Collections& owner, Kind kind, int key_cou
         scratch.pending_error = "too many records";
         return -1;
     }
-    const std::vector<Rec>& records = ensure_index(owner, kind);
     lua_createtable(state, static_cast<int>(scratch.matched.size()), 0);
     for (std::size_t index = 0; index < scratch.matched.size(); ++index) {
         const Rec& rec = records[scratch.matched[index]];
@@ -1544,6 +1594,8 @@ int push_members(lua_State* state, Collections& owner) {
         scratch.pending_error = "too many records";
         return -1;
     }
+    charge_scan(state);
+    charge_visits(state, static_cast<uint64_t>(records.size()));
     lua_createtable(state, static_cast<int>(records.size()), 0);
     for (std::size_t index = 0; index < records.size(); ++index) {
         push_record(state, &owner, kind, false, records[index].slot, records[index].name);
@@ -1716,24 +1768,52 @@ int assign_record(lua_State* state, const RecordBox* box, std::string_view key) 
 }
 
 /// Collects a record's keys into the collections object, in name order.
-int prepare_keys(const RecordBox* box) {
-    std::string reason;
-    Live live;
-    if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
-        pending_of(*box->owner) = std::move(reason);
+///
+/// The charges sit outside every `try`: a spent allowance raises, and a
+/// raise leaves a destructor unrun.
+int prepare_keys(lua_State* state, const RecordBox* box) {
+    const tdf::Block* block = nullptr;
+    try {
+        std::string reason;
+        Live live;
+        if (!resolve(*box->owner, *box, name_of(box), live, reason)) {
+            pending_of(*box->owner) = std::move(reason);
+            return -1;
+        }
+        block = live.block;
+    } catch (const std::bad_alloc&) {
+        pending_of(*box->owner) = "out of memory";
         return -1;
     }
     CollectionsState& scratch = working(*box->owner);
     scratch.keys.clear();
-    if (live.block != nullptr) {
-        const uint32_t count = tdf::property_count(live.block);
-        for (uint32_t index = 0; index < count; ++index) {
-            const char* stored = tdf::property_key_at(live.block, static_cast<int32_t>(index));
-            if (stored != nullptr)
-                scratch.keys.emplace_back(stored);
-        }
+    const uint32_t property_count = block != nullptr ? tdf::property_count(block) : 0;
+    charge_scan(state);
+    charge_visits(state, property_count);
+    for (uint32_t scan_index = 0; scan_index < property_count; ++scan_index) {
+        const char* stored = tdf::property_key_at(block, static_cast<int32_t>(scan_index));
+        if (stored == nullptr)
+            continue;
+        charge_text(state, std::strlen(stored));
     }
-    std::stable_sort(scratch.keys.begin(), scratch.keys.end(), host::name_less);
+    try {
+        for (uint32_t copy_index = 0; copy_index < property_count; ++copy_index) {
+            const char* stored = tdf::property_key_at(block, static_cast<int32_t>(copy_index));
+            if (stored == nullptr)
+                continue;
+            scratch.keys.emplace_back(stored);
+        }
+    } catch (const std::bad_alloc&) {
+        pending_of(*box->owner) = "out of memory";
+        return -1;
+    }
+    host::charge_work(state, host::comparison_unit * static_cast<uint64_t>(scratch.keys.size()));
+    try {
+        std::stable_sort(scratch.keys.begin(), scratch.keys.end(), host::name_less);
+    } catch (const std::bad_alloc&) {
+        pending_of(*box->owner) = "out of memory";
+        return -1;
+    }
     return 1;
 }
 
@@ -1877,6 +1957,7 @@ static int form_not(lua_State* state) {
 static int pairs_next(lua_State* state) {
     const bool skip = lua_toboolean(state, lua_upvalueindex(3)) != 0;
     for (;;) {
+        charge_visits(state, 1);
         lua_settop(state, 0);
         const lua_Integer slot = lua_tointeger(state, lua_upvalueindex(2)) + 1;
         lua_pushinteger(state, slot);
@@ -2012,6 +2093,8 @@ static int collection_each(lua_State* state) {
     if (length > static_cast<lua_Unsigned>(std::numeric_limits<lua_Integer>::max()))
         return luaL_error(state, "each: too many records");
     const auto last = static_cast<lua_Integer>(length);
+    charge_scan(state);
+    charge_visits(state, static_cast<uint64_t>(last));
     for (lua_Integer index = 1; index <= last; ++index) {
         if (skip) {
             lua_rawgeti(state, sequence, index);
@@ -2120,7 +2203,9 @@ static int set_assign(lua_State* state) {
     const Kind kind = set != nullptr ? set->kind : Kind::units;
     const int table = 2;
     for (std::size_t index = 0; index < scratch.keys.size(); ++index) {
+        charge_visits(state, 1);
         const std::string& raw = scratch.keys[index];
+        charge_text(state, raw.size());
         lua_pushlstring(state, raw.data(), raw.size());
         lua_rawget(state, table);
         bool stored_ok = false;
@@ -2147,6 +2232,8 @@ static int set_assign(lua_State* state) {
         if (!stored_ok)
             return raise_pending(state, *owner);
     }
+    charge_visits(state, static_cast<uint64_t>(scratch.handles.size()));
+    charge_visits(state, saturating_product(scratch.handles.size(), scratch.assignments.size()));
     bool ok = false;
     try {
         std::string reason;
@@ -2184,7 +2271,9 @@ static int set_scale(lua_State* state) {
                                         ? std::string_view("record")
                                         : std::string_view(scratch.handles[0].name);
     for (std::size_t index = 0; index < scratch.keys.size(); ++index) {
+        charge_visits(state, 1);
         const std::string& raw = scratch.keys[index];
+        charge_text(state, raw.size());
         lua_pushlstring(state, raw.data(), raw.size());
         lua_rawget(state, table);
         const bool number = lua_type(state, -1) == LUA_TNUMBER;
@@ -2212,6 +2301,8 @@ static int set_scale(lua_State* state) {
         if (failed)
             return raise_pending(state, *owner);
     }
+    charge_visits(state, static_cast<uint64_t>(scratch.handles.size()));
+    charge_visits(state, saturating_product(scratch.handles.size(), scratch.factors.size()));
     bool ok = false;
     try {
         std::string reason;
@@ -2238,6 +2329,9 @@ static int set_remove(lua_State* state) {
         return luaL_error(state, "remove expects a record or a set");
     if (!collect_handles(state, *owner, 1))
         return raise_pending(state, *owner);
+    // `remove_collected` walks the handles twice. Charge that before the
+    // caller's reason string exists.
+    charge_visits(state, saturating_product(working(*owner).handles.size(), 2));
     bool ok = false;
     try {
         std::string reason;
@@ -2375,13 +2469,7 @@ static int record_call_keys(lua_State* state) {
     const RecordBox* box = record_at(state, 1);
     if (box == nullptr || box->owner == nullptr)
         return luaL_error(state, "keys expects a record");
-    int result = 0;
-    try {
-        result = prepare_keys(box);
-    } catch (const std::bad_alloc&) {
-        pending_of(*box->owner) = "out of memory";
-        result = -1;
-    }
+    const int result = prepare_keys(state, box);
     if (result < 0)
         return raise_pending(state, *box->owner);
     const std::vector<std::string>& keys = working(*box->owner).keys;

@@ -285,6 +285,12 @@ before it.
 Nothing in this walk follows Lua
 table order, hash order or pointer order.
 
+A walk of a script table, of records or of keys, and a scan of a name or a
+path, counts against the phase's instruction allowance through the script
+host's `charge_work`, at that host's rates: one key-collecting walk, one
+unit per element, and one unit per 32 bytes. A call that stays inside the
+allowance returns the same records and raises the same errors.
+
 `writes()` is every successful field write, in the order it happened:
 the mutator, the path, the record, the block (`""` or `DAMAGE`), the key
 as stored, and the old and new text. A later mutator that writes a field
@@ -299,7 +305,10 @@ The messages are "this mutator has changed too many fields" and "this
 mutator has made too many notes".
 
 `data-mutators-collections` builds a small Ridge document set and runs
-the fixtures in `tests/collections`.
+the fixtures in `tests/collections`. `data-mutators-charge` checks that a
+loop of collection walks stops on a small instruction allowance, and that
+one `where` and one `pairs` over two Ridge weapons stays inside a bound
+and spends the same count on two runs.
 
 ## Loadouts
 
@@ -407,7 +416,13 @@ table later changes no block already built. Field names in one block are
 stored in the order of those names after ASCII lower-casing, with the
 raw bytes breaking a tie, so the records do not follow Lua's iteration
 order. Two changes to one field are two blocks, because one table cannot
-hold the same key twice. A block's line is the line the host reports for
+hold the same key twice. Two keys that trim to the same field, such as
+`a` and ` a`, are refused, and the message names both spellings. The
+walks of those tables, and the byte scans of names and paths, count
+against the phase's instruction allowance through the script host's
+`charge_work`, at that host's rates. A call that stays inside the
+allowance builds the same blocks and raises the same errors. A block's
+line is the line the host reports for
 the `where`, `all` or `named` call, or for `on` when `on` is what starts
 the block. Calling `on` on a block that already has a selector keeps
 that line and only replaces the folder and extension. A later `where`,
@@ -463,7 +478,10 @@ is an error. An unfinished block in the list refuses the plan.
 
 `data-mutators-rules-lua` checks each Lua fixture against the rule file
 beside it, both as records and as the writes those records make on one
-Ridge document set.
+Ridge document set. `data-mutators-charge` checks that repeating `where`
+on a 4,000-key table stops on a small instruction allowance, that a small
+plan stays inside a bound and spends the same count on two runs, and that
+`where` and `:change` refuse two keys which trim to one field.
 
 ## Verdicts
 
