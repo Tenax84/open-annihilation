@@ -175,19 +175,19 @@ list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::
 /// without it. The files are mounted and the documents parsed from that
 /// layer. Record files are not mounted as whole files: each mutator in list
 /// order applies the units, weapons and download entries in its own copies,
-/// then its rules and then its hooks. When `input.map` names a map, each
-/// mutator's maps entry then runs, in list order, as a transaction of its
-/// own. A changed OTA is served at that map's path. No map, and the maps
-/// phase does nothing. Each pass over the list is a transaction. A failure
-/// in a plan or a rule target is the mutator's own, and every one is kept.
-/// Any later failure can depend on the mutators above it, so the pass keeps
-/// only the one nearest the top of the list, and stops at the first hook
-/// that fails: no later mutator runs on what a failed mutator left. The
-/// mutator that failed, and every mutator that requires it, is then dropped
-/// and the pass repeated from the store, so the result is the run without
-/// them. Only a document the run changed is written back. After the last
-/// units or weapons hook, and before the maps entries, every weapon a
-/// mutator brought, by a record file or by
+/// then its rules and then its hooks, units then weapons then menus. When
+/// `input.map` names a map, each mutator's maps entry then runs, in list
+/// order, as a transaction of its own. A changed OTA is served at that
+/// map's path. No map, and the maps phase does nothing. Each pass over the
+/// list is a transaction. A failure in a plan or a rule target is the
+/// mutator's own, and every one is kept. Any later failure can depend on the
+/// mutators above it, so the pass keeps only the one nearest the top of the
+/// list, and stops at the first hook that fails: no later mutator runs on
+/// what a failed mutator left. The mutator that failed, and every mutator
+/// that requires it, is then dropped and the pass repeated from the store,
+/// so the result is the run without them. Only a document the run changed
+/// is written back. After the last units, weapons or menus hook, and before
+/// the maps entries, every weapon a mutator brought, by a record file or by
 /// `weapons:clone`, is given an id. The game's and the mod's weapons keep
 /// theirs. Numbering takes each mutator in list order: its requested ids
 /// from 1 to 255 when those ids are still free, then free ids for its

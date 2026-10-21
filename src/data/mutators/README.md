@@ -15,9 +15,9 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa/data/mutators/choice.hpp`, `oa/data/mutators/collections.hpp`,
 `oa/data/mutators/files_layer.hpp`, `oa/data/mutators/hacks.hpp`,
 `oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
-`oa/data/mutators/maps.hpp`, `oa/data/mutators/pipeline.hpp`,
-`oa/data/mutators/rules_lua.hpp`, `oa/data/mutators/verdicts.hpp` and
-`oa/data/mutators/weapon_ids.hpp`.
+`oa/data/mutators/maps.hpp`, `oa/data/mutators/menus.hpp`,
+`oa/data/mutators/pipeline.hpp`, `oa/data/mutators/rules_lua.hpp`,
+`oa/data/mutators/verdicts.hpp` and `oa/data/mutators/weapon_ids.hpp`.
 
 - `check_mutable_path` judges one file path.
 - `check_mutable_mask` judges one mask. The pattern's shape is
@@ -26,6 +26,7 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 - `rule_name` returns the stable lower-case name of a `PathRule`.
 - `build_files_layer` turns an ordered list of files plans into one
   `MutatorLayerSpec`. See [Files layer](#files-layer).
+- `Menus` is the build menus a hook reads and writes. See [Menus](#menus).
 - `read_hacks` reads a plan's `hacks` table, `merge_hacks` keeps the later
   value for each path, and `developer_conflicts` notes where those hacks
   overlap Developer Mode or a mod that leaves the entry off. `hack_faults`
@@ -205,6 +206,29 @@ requests are what overflow, that later mutator is the one refused.
 `data-mutators-hacks` (`tests/hacks_test.cpp`) checks reading a hacks table,
 the value's normal form, merging two mutators, the Developer Mode notes,
 and the values the resolver plays.
+`data-mutators-menus` (`tests/menus_test.cpp`, timeout 30 seconds) checks
+adding, moving, greying, hiding and removing build buttons, the conflict
+notes, and the downloadable mark through `load_download_menu` and
+`OA_UNIT_DEF_FLAG_DOWNLOADABLE`. It also runs a greyed page through
+`update_build_button_validity`. It checks that a slot an earlier mutator
+emptied, by `menus:remove` or by removing the unit, is taken exactly by a
+later one, and that the same mutator's menus hook and `ctx.menus` in its
+units hook see a slot its units hook freed. A rule's change to a download
+entry stays when a later mutator removes another entry of that file, and
+a slot the rule freed is free. A unit and a builder a hook cloned can be
+put in a menu from the same hook, the same mutator's menus hook and a
+later mutator, and a cloned builder's served page keeps its slots taken
+and is greyed in place. Removing an entry from the six-section
+`marked.tdf`, and from a six-section file whose sixth entry is a unit the
+builder does not offer, keeps the sixth section unread. A created file is
+journaled as a file added, a loop of refused calls under `pcall` leaves
+nothing behind, and a loop of `builds` and one of `remove` stop on the
+instruction allowance at a small part of the real-time limit's processor
+time. `data-mutators-menus-data` is the same program with `--data`
+(timeout 180 seconds): it reads the installed game and checks
+`menus:builds("ARMCOM")`, a grey of `ARMALAB` on `ARMCK`, that a
+builds-only hook serves nothing, and that a loop of `builds("ARMCOM")`
+and one of `remove("ARMSOLAR")` stop on the allowance.
 
 `data-mutators-sides` (`tests/collections_sides_test.cpp`) runs made-up
 Ridge packages through `run_pipeline` and checks side fields, build lists,
@@ -229,8 +253,11 @@ a skirmish session must read its rewrite back through the session loader.
 ## Limitations
 
 The checks do not look at a mutator's files and do not apply a verdict.
-Build pages stay refused for the files layer, because they change through
-the menus hook. A unit clone may serve `guis/<new><digits>.gui` when that
+A build page is not a file a mutator may replace. Buttons are added, moved,
+greyed, hidden and removed through the menus hook. An authored page's
+button cannot be moved: grey or hide it and add an entry. A download button
+whose unit has no `anims/<unit>_gadget.gaf` is added with no picture, and
+the run notes that. A unit clone may serve `guis/<new><digits>.gui` when that
 path is not already in the store or the layer; every path a clone serves
 still goes through `check_mutable_path`, and the new name counts as a unit
 for `anims/`. A clone is refused, naming the path, when the script, the
@@ -508,7 +535,8 @@ section in the layout's download folder whose `UNITNAME` or `UNITMENU`
 names the unit, ignoring ASCII case. A download file left with no section
 is marked removed. When the section removed was the file's first and
 another section remains, a note names the unit that file now marks.
-Pages under `guis/` are left as they are. `remove` on a weapon or a
+Pages under `guis/` are left as they are. The menus collection greys those
+buttons; `remove` does not. `remove` on a weapon or a
 feature drops that section, and marks the document removed when it was
 the last section. A handle remembers the section it was given. The name
 it keeps is only for messages. Removing that section, or its document,
@@ -558,7 +586,9 @@ both; the later value is the one kept. `removals()` lists each unit,
 weapon, feature, download entry and document that a removal took out.
 `notes()` lists a check warning, an overwrite, a download file whose
 first entry changed, and a scale that skipped a value that is not a
-number. One mutator may journal at most 65536 field writes and 65536
+number, and the build menus' notes: a moved entry, a button with no
+picture, and an entry the AI's list cannot hold.
+One mutator may journal at most 65536 field writes and 65536
 notes on one collections object. Passing either limit fails that mutator.
 The messages are "this mutator has changed too many fields" and "this
 mutator has made too many notes".
@@ -568,6 +598,132 @@ the fixtures in `tests/collections`, including the `fixed_` scripts.
 `data-mutators-charge` checks that a loop of collection walks stops on a
 small instruction allowance, and that one `where` and one `pairs` over two
 Ridge weapons stays inside a bound and spends the same count on two runs.
+
+## Menus
+
+`Menus` is the build menus of one document set. A hook receives it as
+`ctx.menus` on every hook, and a plan may return a `menus` function that
+is called with the collection and the context after the units hook and the
+weapons hook. The menus share the collections' documents, units index and
+journal. `begin_mutator` and `end_mutator` bracket one mutator's hooks
+inside the collections' own turn, and say whether the manifest declares
+the `menus` layer. Writes need that layer. `builds` does not.
+`added_files` lists the download files the menus created, each with the
+mutator whose request made it; the run journals each one as a file added.
+
+Every name is matched without ASCII case and must be a unit the units
+collection holds when the call runs: a unit or a builder a hook cloned is
+there, and a unit a hook removed is not.
+
+- `menus:add(builder, unit)`,
+  `menus:add(builder, unit, { page = p, slot = s })` and
+  `menus:add(builder, unit, { page = "new" })` add a download entry and
+  return `{ page = p, slot = s }`, where the entry landed. With no
+  place it takes the first free slot. With `"new"` it takes slot 1 of the
+  page after the builder's last page. A unit the builder already has a
+  button or an entry for is not added twice: the call changes nothing and
+  returns that place.
+- `menus:move(builder, unit, { page = p, slot = s })` moves that builder's
+  entry for the unit and returns `{ page = p, slot = s }`, where it landed.
+- `menus:remove(unit)` drops the download entries that name the unit, on
+  every builder, and greys its buttons on every builder's pages.
+  `menus:remove(builder, unit)` does the same for one builder. Both return
+  nothing, and a unit the builder does not offer is not an error.
+- `menus:grey(builder, unit)` and `menus:hide(builder, unit)` grey or hide
+  each button of that unit on the builder's authored pages, and return
+  nothing.
+- `menus:builds(builder)` returns a new array of unit names, each once:
+  the authored unit buttons that are neither greyed nor hidden, in page
+  and button order, then the builder's download entries in page and slot
+  order, leaving out a unit the units collection no longer holds.
+
+A call is refused with a Lua error, and changes nothing, when:
+
+- a page is not 1 to 7 ("page must be from 1 to 7") or a slot is not 1 to
+  6 ("slot must be from 1 to 6"). `move` takes no `"new"`;
+- the builder has no free slot left: "B has no free build slot on pages 1
+  to 7";
+- `move` names a button of an authored page: "U's button is part of B's
+  page p; grey or hide it and add an entry instead";
+- `grey` or `hide` names a unit the builder offers only by a download
+  entry: "U is a download entry on B; use menus:remove". When the builder
+  offers the unit nowhere, `grey`, `hide` and `move` give "B does not
+  build U";
+- a name is not a unit, "unknown unit X", or not a builder, "unknown
+  builder X";
+- the mutator writes without declaring the layer: "this mutator does not
+  declare the menus layer";
+- the arguments are not text or are the wrong number, for example
+  "menus:add expects a builder and a unit", or the script reads a method
+  the collection does not have, "menus has no X", or assigns one.
+
+A slot is a builder, a page from 1 to 7 and a slot from 1 to 6. The page a
+player calls `p` is the file `guis/<unit><p>.GUI` and the download field
+`MENU=p+1`. `BUTTON` is the slot minus one. Every slot of an authored page
+is taken, because an entry there would replace the page's own button or
+an order button. A builder a hook cloned has the pages the clone serves
+under its name, so their slots are taken too. An occupied slot is not
+overwritten: the later request moves to the next free slot and the report
+records "U moved from page p slot s to page p' slot s': taken by <who>".
+`<who>` is the mutator that placed the entry there, or the page itself
+when an authored page or the mod's own download entry holds the slot.
+
+A slot is decided when the request is made, in list order, not in one
+layout step after the last mutator. A later mutator cannot move an earlier
+mutator's entry, and an earlier request is not moved into a slot a later
+mutator empties: that slot stays free for whoever asks next. Two mutators
+that claim one slot, and a slot an earlier mutator emptied, come out the
+same as they would in one step at the end.
+
+Every call reads the download files, the units and the build pages as
+they stand when it runs. A slot an earlier mutator, the same mutator's
+units hook or an earlier call freed is free, and a rule's change to a
+download file is what the call sees. An edit changes only the sections
+and keys it names, in the shared documents: `add` appends a section to a
+file the menus made, `move` writes `MENU` and `BUTTON`, and `remove` takes
+out a section. Another mutator's rule or hook writes to the same file
+stay. A download entry is the builder and the unit it names; the section
+name is only the label written in the file (`MENUENTRY1`, `MENUENTRY2`,
+and so on).
+
+A unit stays downloadable exactly when it was before the call, except a
+unit a hook removed from the game and a unit whose every download entry
+was removed. A new file for a unit that is not downloadable starts with a
+`PLACEHOLDER` section whose `UNITMENU` is empty. The loader leaves that
+section zeroed, so it marks nobody. The loader reads only the first five
+sections of a file, so removing one of those from a longer file puts a
+placeholder in its place, and no section past the fifth becomes an entry.
+When a file's first section goes, another entry of the same unit in that
+file moves first; otherwise a placeholder takes the first place, so no
+other unit becomes downloadable. When that leaves the unit with entries
+but no mark, one of its entries moves to the front of a file again. A
+file left with no entry is hidden. A units hook's removal drops the
+removed unit's entries at once; the next menus call, or the end of the
+mutator's hooks, puts the same placeholders where those entries were and
+greys the unit's buttons on every builder's pages, journaled to that
+mutator.
+
+An authored page stays a file a mutator may not replace. Grey sets
+`grayedout=1` and clears bit `0x04` of `commonattribs`, because the build
+page's validity pass clears `grayedout` on every button that still has
+that bit. Hide sets `active=0`. Neither changes a download entry. A grey
+or a hide on a page a clone serves rewrites the copy it serves. A button
+with no `anims/<unit>_gadget.gaf` is still added, with a note. An add that
+the AI's list cannot hold is still added, with a note that the list is
+full.
+
+Each call is charged against the hook's instruction allowance at the
+collections' rates: one unit for each document, section, button and entry
+it walks, a binary search's depth for each look in the units index, and
+the bytes of the names it compares and returns. A callback works into the
+menus' own storage and charges before it pushes a result or raises, so no
+C++ object is alive across a Lua error. The list of download entries and
+the list of builders are rebuilt only when a document, a journaled write
+or a removal was added since the last call, or a new mutator's turn
+began, so a loop of calls stops on the allowance well inside the
+real-time limit.
+
+`data-mutators-menus` is the test named above.
 
 ## Loadouts
 
@@ -836,21 +992,22 @@ a weapon, and each section of a download file is an entry in that file.
 A record whose name already exists replaces that record. A new record is
 added. Other files stay whole files, and the later mutator wins the path.
 The mutator then applies its rules and then its hooks, on the documents
-the mutators above it left. Its units hook runs, then its weapons hook.
-When the caller names a map, each mutator's maps entry then runs, in list
-order, as a transaction of its own, after every mutator's records, rules
-and hooks and after the weapons are numbered. Only a document the pass
-changed is written back, whole, with the text writer, at the path the
-store listed it under. A document a hook removed is hidden. A scenario is
-served only when its bytes differ from the map the caller passed.
+the mutators above it left. Its units hook runs, then its weapons hook,
+then its menus hook. When the caller names a map, each mutator's maps
+entry then runs, in list order, as a transaction of its own, after every
+mutator's records, rules and hooks and after the weapons are numbered.
+Only a document the pass changed is written back, whole, with the text
+writer, at the path the store listed it under. A document a hook removed
+is hidden. A scenario is served only when its bytes differ from the map
+the caller passed.
 
 The plan is read inside the plan phase, with the mutator's allowances and
 real-time limit in force, and by raw access only, so no metamethod of the
 script runs. The plan, its `files` table, the `mask` and `add` lists and the
 `rules` list must be plain tables. One with a metatable refuses the plan,
 because its raw contents need not be what the script meant. A plan key the
-engine does not support yet (`menus`, `sides` and `tables`) refuses the
-plan instead of being ignored. A `hacks` table sets match parameters of
+engine does not support yet (`sides` and `tables`) refuses the plan
+instead of being ignored. A `hacks` table sets match parameters of
 entries the registry marks `mutator: true`. Today those are
 `limits.units-per-player.default`, `console.game-speed-range.min` and
 `console.game-speed-range.max`. The manifest must list the `hacks` layer.
