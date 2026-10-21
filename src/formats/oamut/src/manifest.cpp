@@ -13,6 +13,29 @@
 #include <vector>
 
 namespace oa::formats::oamut {
+
+/// Tells whether an id is lower-case kebab-case of 1 to 64 bytes.
+///
+/// The same rule as a catalogue package key.
+///
+/// @param text the id
+/// @return true when it is such an id
+bool mutator_id(std::string_view text) noexcept {
+    if (text.empty() || text.size() > most_id_bytes || text.front() == '-' || text.back() == '-')
+        return false;
+    char previous = 0;
+    for (const char character : text) {
+        const bool word =
+            (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9');
+        if (!word && character != '-')
+            return false;
+        if (character == '-' && previous == '-')
+            return false;
+        previous = character;
+    }
+    return true;
+}
+
 namespace {
 
 namespace oamod = oa::formats::oamod;
@@ -322,27 +345,6 @@ bool has_control(std::string_view text, bool allow_line_feed) {
             return true;
     }
     return false;
-}
-
-/// Tells whether an id is lower-case kebab-case of 1 to 64 bytes.
-///
-/// The same rule as a catalogue package key.
-///
-/// @param text the id
-/// @return true when it is such an id
-bool mutator_id(std::string_view text) noexcept {
-    if (text.empty() || text.size() > most_id_bytes || text.front() == '-' || text.back() == '-')
-        return false;
-    char previous = 0;
-    for (const char character : text) {
-        const bool word = (character >= 'a' && character <= 'z') || digit(character);
-        if (!word && character != '-')
-            return false;
-        if (character == '-' && previous == '-')
-            return false;
-        previous = character;
-    }
-    return true;
 }
 
 /// Tells whether a key is a language tag of 2 to 35 bytes.

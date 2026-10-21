@@ -156,6 +156,13 @@ content:
   base-game: totala
   expansions: [core-contingency]
   mod: ridge
+  mutators:
+    - wide-sight
+    - id: fast-builders
+      version: "1.0"
+      options:
+        factor: 2
+        rush: on
 status:
   standard-output: true
   file: status.jsonl
@@ -1050,7 +1057,17 @@ void check_launch() {
     expect(
         plan.content.named && plan.content.base_game == "totala" &&
             plan.content.expansions.size() == 1 &&
-            plan.content.expansions[0] == "core-contingency" && plan.content.mod == "ridge",
+            plan.content.expansions[0] == "core-contingency" && plan.content.mod == "ridge" &&
+            plan.content.mutators_named && plan.content.mutators.size() == 2 &&
+            plan.content.mutators[0].id == "wide-sight" &&
+            plan.content.mutators[0].version.empty() &&
+            plan.content.mutators[1].id == "fast-builders" &&
+            plan.content.mutators[1].version == "1.0" &&
+            plan.content.mutators[1].options.size() == 2 &&
+            plan.content.mutators[1].options[0] ==
+                std::pair<std::string, std::string>{"factor", "2"} &&
+            plan.content.mutators[1].options[1] ==
+                std::pair<std::string, std::string>{"rush", "true"},
         "content"
     );
     expect(
@@ -1750,6 +1767,134 @@ void check_standard_input(const Scratch& scratch) {
     close_reader(empty_input);
 }
 
+/// content.mutators keeps order, normalises options, and refuses a bad list.
+void check_mutators() {
+    const auto both = launch_file::read_launch_text(
+        "launch.oalaunch",
+        "oalaunch: 1\n"
+        "content:\n"
+        "  mutators:\n"
+        "    - wide-sight\n"
+        "    - id: fast-builders\n"
+        "      version: \"1.0\"\n"
+        "      options:\n"
+        "        factor: 2\n"
+        "        rush: on\n"
+        "        shown: true\n"
+        "        quiet: off\n"
+        "        hidden: false\n"
+    );
+    expect(!both.content.named && both.content.mutators_named, "mutators do not name content");
+    expect(both.content.mutators.size() == 2, "both forms are kept");
+    expect(
+        both.content.mutators[0].id == "wide-sight" && both.content.mutators[0].options.empty() &&
+            both.content.mutators[1].id == "fast-builders" &&
+            both.content.mutators[1].version == "1.0",
+        "the order and the version are kept"
+    );
+    const auto& options = both.content.mutators[1].options;
+    expect(
+        options.size() == 5 && options[0].second == "2" && options[1].second == "true" &&
+            options[2].second == "true" && options[3].second == "false" &&
+            options[4].second == "false",
+        "on, off, true and false are normalised"
+    );
+    const auto empty =
+        launch_file::read_launch_text("launch.oalaunch", "oalaunch: 1\ncontent:\n  mutators: []\n");
+    expect(
+        empty.content.mutators_named && empty.content.mutators.empty() && !empty.content.named,
+        "an empty list names no mutators"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators: wide-sight\n") ==
+            "launch.oalaunch: content.mutators: expected a list",
+        "option text is not a list"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators: [1]\n") ==
+            "launch.oalaunch: content.mutators[1]: expected a mutator id or a group",
+        "a number is not a mutator"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators:\n  - version: \"1.0\"\n") ==
+            "launch.oalaunch: content.mutators[1]: expected an id",
+        "a group needs an id"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - wide-sight\n  - id: fast-builders\n"
+            "    colour: 2\n"
+        ) == "launch.oalaunch: content.mutators[2].colour: is not a mutator setting",
+        "another key is not a mutator setting"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators: [Wide-Sight]\n") ==
+            "launch.oalaunch: content.mutators[1]: expected a mutator id",
+        "an id the manifest would refuse"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        Factor: 1\n"
+        ) == "launch.oalaunch: content.mutators[1].options.Factor: expected an option id",
+        "an option id the manifest would refuse"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - wide-sight\n  - id: fast-builders\n"
+            "    options: [factor]\n"
+        ) == "launch.oalaunch: content.mutators[2].options: expected a group of options",
+        "options are a group"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        factor: [2]\n"
+        ) == "launch.oalaunch: content.mutators[1].options.factor: expected text, a number, on or "
+             "off",
+        "an option value is not a list"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        health: \"1000,extra=true\"\n"
+        ) == "launch.oalaunch: content.mutators[1].options.health: expected a value of letters, "
+             "digits, _, - or .",
+        "a value cannot carry another option"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        health: \"1000,health=3000\"\n"
+        ) == "launch.oalaunch: content.mutators[1].options.health: expected a value of letters, "
+             "digits, _, - or .",
+        "a value cannot repeat an option"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        health: \"two thousand\"\n"
+        ) == "launch.oalaunch: content.mutators[1].options.health: expected a value of letters, "
+             "digits, _, - or .",
+        "a value is an identifier"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators: [wide-sight, wide-sight]\n") ==
+            "launch.oalaunch: content.mutators[2]: \"wide-sight\" is named twice",
+        "the same id twice"
+    );
+    std::string many = "oalaunch: 1\ncontent:\n  mutators:\n";
+    for (int index = 0; index < 32; ++index)
+        many += "  - wide-" + std::to_string(index) + "\n";
+    const auto taken = launch_file::read_launch_text("launch.oalaunch", many);
+    expect(taken.content.mutators.size() == 32, "32 mutators are taken");
+    many += "  - wide-32\n";
+    expect(
+        refused_text(many) == "launch.oalaunch: content.mutators[33]: expected at most 32 mutators",
+        "33 mutators are refused"
+    );
+}
+
 } // namespace
 
 int main() {
@@ -1763,6 +1908,7 @@ int main() {
     check_spaced_paths(scratch);
     check_switch_notes();
     check_launch();
+    check_mutators();
     check_options_match_the_file(
         scratch.write("launch.oalaunch", kLaunch), scratch.write("plain.oalaunch", kPlainHost)
     );

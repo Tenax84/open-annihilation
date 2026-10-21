@@ -298,6 +298,13 @@ struct Options {
     // Mutators for this run (--mutator PATH|ID[:OPTION=VALUE,...]), each
     // value as written, in the order given. Empty applies none.
     std::vector<std::string> mutators;
+    /// The launch field that named each entry of `mutators`, such as
+    /// `content.mutators[1]`. Empty for an entry `--mutator` named, so a
+    /// refusal of that entry keeps `--mutator`'s own wording.
+    std::vector<std::string> mutator_fields{};
+    /// The version a launch required of each entry of `mutators`. Empty when
+    /// the file named none, and for an entry `--mutator` named.
+    std::vector<std::string> mutator_versions{};
     /// The base game and expansions for this run (--content
     /// GAME[:EXPANSION,...]). Empty when the run uses the remembered choice.
     /// It is not written to the preferences, and the mounted files change
