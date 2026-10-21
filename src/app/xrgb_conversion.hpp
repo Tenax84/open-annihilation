@@ -130,6 +130,14 @@ inline constexpr std::size_t palette_entry_bytes = 4;
 /// @return the key colour, red, green and blue
 [[nodiscard]] std::array<uint8_t, 3> overlay_key_colour(std::span<const uint8_t> palette) noexcept;
 
+/// Fills an RGB24 picture with one colour, as overlay canvases are cleared
+/// to their key colour (overlay_key_colour).
+///
+/// @param[out] rgb the picture, 3 bytes a pixel
+/// @param pixels pixels in the picture
+/// @param colour the colour, red, green and blue
+void fill_rgb24(uint8_t* rgb, std::size_t pixels, std::array<uint8_t, 3> colour) noexcept;
+
 /// Converts a canvas cleared to a key colour and painted over into an
 /// ARGB8888 overlay, in bands of xrgb_band_rows rows: 0, transparent, where
 /// the canvas still holds the key, and the canvas's colour through the
