@@ -371,6 +371,13 @@ add_library(oa-app-renderer-state src/app/renderer_state.cpp)
 add_library(oa::app::renderer_state ALIAS oa-app-renderer-state)
 target_link_libraries(oa-app-renderer-state PUBLIC oa-app-renderer-records
   PRIVATE oa-platform-preferences oa-options)
+# The last mutator set of each setup, and the crash record kept beside the
+# preferences file while a match with mutators runs. A set is the canonical
+# loadout text (mutators_memory.hpp). The game reads it at start.
+add_library(oa-app-mutators-memory src/app/mutators_memory.cpp)
+add_library(oa::app::mutators_memory ALIAS oa-app-mutators-memory)
+target_link_libraries(oa-app-mutators-memory PUBLIC oa-app-headers oa-platform-preferences
+  oa-data-mutators PRIVATE oa-options)
 # A mod profile's display rules as the records and decisions of the modules
 # that carry them out (view_rules.hpp).
 add_library(oa-app-view-rules src/app/view_rules.cpp)
@@ -829,6 +836,14 @@ if(BUILD_TESTING)
   target_link_libraries(oa-app-renderer-state-test PRIVATE oa-app-renderer-state oa-platform-preferences
     oa-test-support oa-options)
   add_test(NAME app-renderer-state COMMAND oa-app-renderer-state-test)
+  # The last mutator set of each setup and the crash record: a set read back
+  # as the canonical loadout, text that is no set, and the sentinel file in
+  # scratch folders.
+  add_executable(oa-app-mutators-memory-test src/app/mutators_memory_test.cpp)
+  target_link_libraries(oa-app-mutators-memory-test PRIVATE oa-app-mutators-memory
+    oa-test-support oa-options)
+  add_test(NAME app-mutators-memory COMMAND oa-app-mutators-memory-test)
+  set_tests_properties(app-mutators-memory PROPERTIES TIMEOUT 30)
   # The draw states the match renderer keeps per unit slot and per 3D feature.
   add_executable(oa-match-model-draws-test src/app/match_model_draws_test.cpp)
   target_link_libraries(oa-match-model-draws-test PRIVATE oa-app-headers oa-present-model oa-sim-feature-runtime
@@ -1085,6 +1100,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_package_kinds.cpp
   src/app/runtime_mutator_library.cpp
   src/app/runtime_mutators.cpp
+  src/app/runtime_mutators_memory.cpp
   src/app/runtime_pack_maps.cpp
   src/app/pack_map_source.cpp
   src/app/runtime_get_map.cpp
@@ -1208,6 +1224,7 @@ set(oa_game_libraries oa-formats-hpi oa-formats-json oa-app-game-options oa-app-
   oa-app-map-packs
   oa-data-mutator-library
   oa-data-mutators
+  oa-app-mutators-memory
   oa-ui-pad-controls oa-ui-folder-chooser oa-platform-game-installs oa-platform-file-types
   oa-data-content-bundles
   oa-ui-frontend-multiplayer oa-ui-library oa-ui-map-browser oa-ui-mutator-picker

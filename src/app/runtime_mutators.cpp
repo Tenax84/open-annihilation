@@ -318,6 +318,17 @@ std::optional<oa::base::sha256::Digest> Runtime::match_mutator_digest() const no
 }
 
 void Runtime::take_command_line_mutators() {
+    if (options_.no_mutators) {
+        std::string named;
+        for (const std::string& value : options_.mutators) {
+            if (!named.empty())
+                named += ", ";
+            named += value;
+        }
+        note_mutators_refused(named);
+        choose_match_mutators({});
+        return;
+    }
     if (options_.mutators.empty()) {
         choose_match_mutators({});
         return;
@@ -349,6 +360,10 @@ std::string Runtime::launch_mutator_refusal(
     const std::vector<std::string>& versions,
     const std::vector<std::string>& fields
 ) const {
+    // The flag refuses the list before any package is read, so a missing
+    // mutator does not stop the launch.
+    if (options_.no_mutators)
+        return {};
     const fs::path folder =
         user_folder_ / std::string(oa::data::mutator_library::mutators_folder_name);
     std::vector<mutators::PipelineMutator> listed;
@@ -382,6 +397,17 @@ std::string Runtime::take_launch_mutators(
     std::vector<std::string> versions,
     std::vector<std::string> fields
 ) {
+    if (options_.no_mutators) {
+        std::string named;
+        for (const std::string& value : texts) {
+            if (!named.empty())
+                named += ", ";
+            named += value;
+        }
+        note_mutators_refused(named);
+        choose_match_mutators({});
+        return {};
+    }
     const std::string refusal = launch_mutator_refusal(source, texts, versions, fields);
     if (!refusal.empty())
         return refusal;
@@ -404,9 +430,31 @@ std::string Runtime::take_launch_mutators(
 }
 
 void Runtime::apply_match_mutators(const MatchBootstrap&) {
+    // Taken even when this start applies nothing, so a later start that no
+    // setup made is not labelled with a setup that already started a game.
+    const std::optional<mutators_memory::Setup> pending_setup =
+        std::exchange(mutator_setup_, std::nullopt);
+    if (options_.no_mutators) {
+        if (mutator_state_ != nullptr && !mutator_state_->chosen.empty()) {
+            std::string named;
+            for (const mutators::ResolvedMutator& one : mutator_state_->chosen) {
+                if (!named.empty())
+                    named += ", ";
+                named += one.manifest.id;
+                named += ' ';
+                named += oa::formats::oamut::version_text(one.manifest.version);
+            }
+            note_mutators_refused(named);
+        }
+        return;
+    }
     if (mutator_state_ == nullptr || mutator_state_->chosen.empty())
         return;
     const std::vector<mutators::ResolvedMutator> listed = mutator_state_->chosen;
+    const mutators::Loadout requested = mutators::loadout_of(listed);
+    // Written before the pipeline, so a crash while the mutators are applied
+    // leaves the file. A playable run rewrites it with what applied.
+    arm_mutator_sentinel(pending_setup, requested);
     // A layer already mounted makes the pipeline refuse the list and leave
     // that layer in place.
     if (assets_.mutator_layer_mounted())
@@ -448,10 +496,23 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         release_match_mutators();
         throw std::runtime_error(reason);
     }
-    const mutators::Loadout applied =
-        mutators::applied_loadout(mutators::loadout_of(listed), *mutator_state_->result);
-    if (applied.entries.empty())
+    const mutators::Loadout applied = mutators::applied_loadout(requested, *mutator_state_->result);
+    if (applied.entries.empty()) {
+        clear_mutator_sentinel();
         return;
+    }
+    arm_mutator_sentinel(pending_setup, applied);
+    // V02's applied line names the same mutators and then the files they
+    // changed. This line is the one a crash report can quote.
+    std::string playing;
+    for (const mutators::LoadoutEntry& entry : applied.entries) {
+        if (!playing.empty())
+            playing += ", ";
+        playing += entry.id;
+        playing += ' ';
+        playing += entry.version;
+    }
+    std::cerr << "open-annihilation: mutators in play: " << playing << '\n';
     try {
         const oa::base::sha256::Digest layer =
             mutators::layer_digest(mutator_state_->result->layer, [this](std::string_view path) {
