@@ -125,6 +125,7 @@ enum class ConflictKind : uint8_t {
     matched_nothing,     ///< a rule selected no record
     value_past_limit,    ///< a value was kept past its comfortable limit
     write_refused,       ///< a write was refused
+    hack_note,           ///< a mutator hack overlaps Developer Mode or another mutator
 };
 
 /// One stacking situation, for the log and the dry run.

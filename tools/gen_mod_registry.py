@@ -253,6 +253,35 @@ def check_registry(reg):
                 spec = entries.get(hid, {}).get("params", {}).get(p)
                 if not spec or (spec.get("per-unit") or spec.get("per-weapon")) != eid:
                     problems.append(f"{where}: overrides {ov} does not name it back")
+        mutator = e.get("mutator", False)
+        if "mutator" in e and not isinstance(e.get("mutator"), bool):
+            problems.append(f"{where}: mutator must be true or false")
+        elif mutator is True:
+            if e["kind"] not in ("hack", "limit"):
+                problems.append(f"{where}: mutator: true is only for a hack or a limit")
+            else:
+                params = e.get("params") or {}
+                match_names = [
+                    name for name, spec in params.items()
+                    if isinstance(spec, dict) and spec.get("adjustable") == "match"
+                ]
+                if not match_names:
+                    problems.append(f"{where}: mutator: true needs a parameter adjustable per match")
+                touches = []
+                if e.get("visual") is True:
+                    touches.append("visual")
+                if e.get("scope") == "view":
+                    touches.append("scope view")
+                if eid.startswith("ui."):
+                    touches.append("ui.")
+                if any(isinstance(params.get(name), dict) and params[name].get("scope") == "view"
+                       for name in match_names):
+                    touches.append("a match parameter of scope view")
+                if touches:
+                    problems.append(
+                        f"{where}: mutator: true is refused on an entry that touches the interface"
+                        f" ({', '.join(touches)})"
+                    )
         if e["kind"] not in ("limit", "hack"):
             continue
         params = e["params"]
@@ -472,6 +501,8 @@ class Table:
             fields = [f".id = {cxx_string(eid)}", f".kind = EntryKind::{kind}", f".scope = Scope::{e['scope']}"]
             if e.get("visual"):
                 fields.append(".visual = true")
+            if e.get("mutator"):
+                fields.append(".mutator = true")
             if e.get("implemented"):
                 fields.append(".implemented = true")
             if "key" in e:
@@ -926,6 +957,32 @@ def self_test():
             failures.append(f"the registry check misses {needle!r}: {problems}")
     if check_registry({"entries": {"units.example": good}, "setting-transforms": {}, "area-titles": named}):
         failures.append("the registry check refuses a good entry")
+    marked = dict(good, mutator=True)
+    marked["params"] = {"ticks": dict(good["params"]["ticks"], adjustable="match")}
+    if check_registry({"entries": {"units.example": marked}, "setting-transforms": {}, "area-titles": named}):
+        failures.append("the registry check refuses a marked entry")
+    quiet = dict(good, mutator=False)
+    if check_registry({"entries": {"units.example": quiet}, "setting-transforms": {}, "area-titles": named}):
+        failures.append("the registry check refuses mutator: false")
+    visual = dict(marked, visual=True)
+    viewed = dict(marked, scope="view")
+    view_param = dict(marked)
+    view_param["params"] = {"ticks": dict(marked["params"]["ticks"], scope="view")}
+    ui = dict(marked, area="ui")
+    identity = {"kind": "identity", "scope": "sim", "key": "example", "mutator": True,
+                "value": {"type": "bool", "baseline": True, "scope": "sim"}}
+    for entry_id, entry, titles, needle in (
+            ("units.example", dict(good, mutator="yes"), named, "mutator must be true or false"),
+            ("units.example", dict(good, mutator=True), named, "needs a parameter adjustable per match"),
+            ("units.example", visual, named, "touches the interface (visual)"),
+            ("units.example", viewed, named, "touches the interface (scope view)"),
+            ("ui.example", ui, {"ui": "Interface"}, "touches the interface (ui.)"),
+            ("units.example", view_param, named, "touches the interface (a match parameter of scope view)"),
+            ("identity.example", identity, named, "only for a hack or a limit"),
+    ):
+        problems = check_registry({"entries": {entry_id: entry}, "setting-transforms": {}, "area-titles": titles})
+        if not any(needle in problem and entry_id in problem for problem in problems):
+            failures.append(f"the registry check misses {needle!r} for {entry_id}: {problems}")
     for f in failures:
         print("FAIL", f)
     print(f"gen_mod_registry self-test: {len(failures)} failures")

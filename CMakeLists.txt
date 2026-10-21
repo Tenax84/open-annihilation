@@ -298,13 +298,13 @@ target_include_directories(oa-app-headers INTERFACE src/app/include)
 # OA_SELF_CHECKS is 1 when the game holds its self-checks (app.hpp).
 target_compile_definitions(oa-app-headers INTERFACE "OA_SELF_CHECKS=$<BOOL:${OA_SELF_CHECKS}>")
 # app.hpp and render_policy.hpp include the engine settings' header,
-# runtime.hpp the gamepad controls' model, game_directory.hpp the found
-# installs' header and the content choice, and extension.hpp the UI kit's
-# headers and the registrations of Settings pages, kit screens, notices and
-# prompts.
+# runtime.hpp the gamepad controls' model and the mutator hack records,
+# game_directory.hpp the found installs' header and the content choice, and
+# extension.hpp the UI kit's headers and the registrations of Settings pages,
+# kit screens, notices and prompts.
 target_link_libraries(oa-app-headers INTERFACE oa-base-sha256 oa-data-languages oa-data-limits
-  oa-data-mod-profile oa-ui-engine-settings oa-ui-pad-controls oa-platform-game-installs
-  oa-ui-kit oa-ui-screen-registry oa-data-content-bundles)
+  oa-data-mod-profile oa-data-mutators oa-ui-engine-settings oa-ui-pad-controls
+  oa-platform-game-installs oa-ui-kit oa-ui-screen-registry oa-data-content-bundles)
 # oa-game's command line, which the option tests parse without a running app.
 add_library(oa-app-game-options src/app/startup.cpp)
 add_library(oa::app::game_options ALIAS oa-app-game-options)
@@ -1085,6 +1085,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_package_kinds.cpp
   src/app/runtime_mutator_library.cpp
   src/app/runtime_mutators.cpp
+  src/app/runtime_mutators_hacks.cpp
   src/app/runtime_pack_maps.cpp
   src/app/pack_map_source.cpp
   src/app/runtime_get_map.cpp

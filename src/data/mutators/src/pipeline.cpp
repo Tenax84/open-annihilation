@@ -75,7 +75,7 @@ static_assert(
 );
 
 /// How a supported plan key is read. D04, D06, D07 and D08 add rows here.
-enum class KeyJob : uint8_t { files, rules, units_hook, weapons_hook };
+enum class KeyJob : uint8_t { files, hacks, rules, units_hook, weapons_hook };
 
 struct PlanKeyRow {
     const char* name{};
@@ -85,6 +85,7 @@ struct PlanKeyRow {
 
 constexpr PlanKeyRow k_plan_keys[] = {
     {"files", KeyJob::files, oamut::Layer::files},
+    {"hacks", KeyJob::hacks, oamut::Layer::hacks},
     {"rules", KeyJob::rules, oamut::Layer::tables},
     {"units", KeyJob::units_hook, oamut::Layer::units},
     {"weapons", KeyJob::weapons_hook, oamut::Layer::weapons},
@@ -114,6 +115,7 @@ struct Plan {
     bool has_files{false};
     rules::MutatorRules rules;
     bool has_rules{false};
+    std::vector<MutatorHack> hacks;
     int units_hook{LUA_NOREF};
     int weapons_hook{LUA_NOREF};
 };
@@ -159,6 +161,9 @@ struct PlanShape {
     bool has_rules{false};
     PartFault rules_fault{PartFault::none};
     int rules_list{LUA_NOREF};
+    bool has_hacks{false};
+    PartFault hacks_fault{PartFault::none};
+    int hacks_table{LUA_NOREF};
     bool has_units{false};
     PartFault units_fault{PartFault::none};
     int units_hook{LUA_NOREF};
@@ -351,6 +356,7 @@ const defs::DataLayout& layout_of(const PipelineInput& input) {
 
 /// Marks a mutator that was still in the run as failed.
 void fail_mutator(MutatorResult& result, Phase phase, Cause cause, std::string message) {
+    result.hacks.clear();
     if (result.outcome != Outcome::applied)
         return;
     result.outcome = Outcome::failed;
@@ -362,6 +368,7 @@ void fail_mutator(MutatorResult& result, Phase phase, Cause cause, std::string m
 /// Marks a mutator excluded because something it requires did not apply.
 /// The list decided it, so its phase is `loadout`.
 void exclude_mutator(MutatorResult& result, std::string message) {
+    result.hacks.clear();
     if (result.outcome != Outcome::applied)
         return;
     result.outcome = Outcome::excluded;
@@ -726,6 +733,29 @@ void read_hook_shape(lua_State* state, int index, bool* present, PartFault* faul
     *ref = luaL_ref(state, LUA_REGISTRYINDEX);
 }
 
+/// Reads the hacks table inside the plan phase and takes its reference there.
+///
+/// The values are copied after the phase, so nothing here builds a string.
+///
+/// @param state the sandbox state
+/// @param index the value's stack index
+/// @param[out] shape what was found
+void read_hacks_shape(lua_State* state, int index, PlanShape* shape) {
+    const int value = lua_absindex(state, index);
+    shape->has_hacks = true;
+    if (lua_istable(state, value) == 0) {
+        shape->hacks_fault = PartFault::wrong_type;
+        return;
+    }
+    if (lua_getmetatable(state, value) != 0) {
+        lua_pop(state, 1);
+        shape->hacks_fault = PartFault::metatable;
+        return;
+    }
+    lua_pushvalue(state, value);
+    shape->hacks_table = luaL_ref(state, LUA_REGISTRYINDEX);
+}
+
 /// Reads what `mutate` returned, inside the plan phase.
 ///
 /// Raw access only, so no metamethod of the script runs. Nothing here needs
@@ -775,6 +805,8 @@ void read_plan_shape(lua_State* state, int index, PlanShape* shape) {
             read_files_shape(state, value, shape);
         } else if (row->job == KeyJob::rules) {
             read_rules_shape(state, value, shape);
+        } else if (row->job == KeyJob::hacks) {
+            read_hacks_shape(state, value, shape);
         } else if (row->job == KeyJob::units_hook) {
             read_hook_shape(
                 state, value, &shape->has_units, &shape->units_fault, &shape->units_hook
@@ -929,6 +961,35 @@ PlanFault read_rules_part(
     return {};
 }
 
+/// Turns the hacks table the plan phase found into records, or refuses it.
+PlanFault read_hacks_part(
+    lua_State* state, const PlanShape& shape, const oamut::Manifest& manifest, Plan& plan
+) {
+    if (shape.hacks_fault == PartFault::wrong_type)
+        return refuse_plan(Cause::invalid_plan, "hacks: hacks must be a table");
+    if (shape.hacks_fault == PartFault::metatable)
+        return refuse_plan(
+            Cause::invalid_plan, "hacks: hacks must be a plain table, not one with a metatable"
+        );
+    if (shape.hacks_table == LUA_NOREF)
+        return {};
+    lua_rawgeti(state, LUA_REGISTRYINDEX, shape.hacks_table);
+    std::string problem = read_hacks(
+        state,
+        lua_gettop(state),
+        plan.rules.mutator,
+        declares(manifest, oamut::Layer::hacks),
+        plan.hacks
+    );
+    lua_pop(state, 1);
+    if (problem.empty())
+        return {};
+    const Cause cause = problem.find("does not declare the hacks layer") != std::string::npos
+                            ? Cause::undeclared_layer
+                            : Cause::invalid_plan;
+    return refuse_plan(cause, std::move(problem));
+}
+
 /// Checks one hook the plan phase found and keeps its reference.
 PlanFault read_hook_part(
     PartFault seen,
@@ -952,8 +1013,8 @@ PlanFault read_hook_part(
 
 /// Turns the plan the phase read into a `Plan`, or refuses it.
 ///
-/// The checks run in the order the keys sort in: files, rules, units, then
-/// weapons, and the first refusal is the one reported.
+/// The checks run in the order the keys sort in: files, hacks, rules, units,
+/// then weapons, and the first refusal is the one reported.
 PlanFault read_returned_plan(
     lua_State* state,
     const PlanShape& shape,
@@ -979,6 +1040,11 @@ PlanFault read_returned_plan(
     PlanFault fault;
     if (shape.has_files) {
         fault = read_files_part(state, shape, manifest, plan);
+        if (fault.failed)
+            return fault;
+    }
+    if (shape.has_hacks) {
+        fault = read_hacks_part(state, shape, manifest, plan);
         if (fault.failed)
             return fault;
     }
@@ -1608,6 +1674,7 @@ void refuse_list(PipelineResult& result, std::string refusal) {
         mutator.phase = Phase::loadout;
         mutator.cause = Cause::none;
         mutator.message.clear();
+        mutator.hacks.clear();
     }
 }
 
@@ -1720,7 +1787,9 @@ void plan_mutator(
     if (fault.failed) {
         fail_mutator(result, Phase::plan, fault.cause, std::move(fault.message));
         sandbox.reset();
+        return;
     }
+    result.hacks = plan.hacks;
 }
 
 /// True when `spec` already has an entry for `path`.

@@ -32,6 +32,7 @@
 #include "oa/data/languages.hpp"
 #include "oa/data/languages/language_pack.hpp"
 #include "oa/data/limits.hpp"
+#include "oa/data/mutators/hacks.hpp"
 #include "oa/sim/gameplay_input/input.hpp"
 #include "oa/sim/gameplay_input/order_cursor.hpp"
 #include "oa/ui/gui_input/gadget_panel.hpp"
@@ -4288,11 +4289,22 @@ class Runtime final : public menu::Host,
     /// and before the match reads its game data.
     ///
     /// An empty choice does nothing: no pipeline, no layer and no log line.
-    /// A mutator that does not apply, or a list the pipeline refuses,
-    /// releases the layer and throws std::runtime_error naming it.
+    /// A list the pipeline refuses, or a mutator that does not apply for a
+    /// reason other than its hacks, releases the layer and throws
+    /// std::runtime_error naming it. A hack the registry refuses fails that
+    /// mutator alone, and the match still starts.
     ///
     /// @param bootstrap the match being started
     void apply_match_mutators(const MatchBootstrap& bootstrap);
+
+    /// Lays the applied mutators' hacks over the profile this match plays.
+    ///
+    /// With no records it does nothing. A hack the registry refuses fails
+    /// that mutator alone. The values are copied into the one profile the
+    /// match plays. The match's teardown puts the player's profile back.
+    ///
+    /// @param hacks the hack records of the mutators that applied, in list order
+    void play_mutator_hacks(const std::vector<oa::data::mutators::MutatorHack>& hacks);
 
     /// Resolves the command line's `--mutator` values and chooses them.
     ///

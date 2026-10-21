@@ -8,6 +8,7 @@
 #pragma once
 
 #include "oa/data/defs/layout.hpp"
+#include "oa/data/mutators/hacks.hpp"
 #include "oa/data/mutators/journal.hpp"
 #include "oa/data/mutators/loadout.hpp"
 #include "oa/data/script_host/script_host.hpp"
@@ -68,6 +69,9 @@ struct MutatorResult {
     Cause cause{};
     /// What happened, in plain words. Empty when there is nothing to add.
     std::string message;
+    /// The hacks the plan set, for a mutator that applied. Empty when it
+    /// did not, or when it failed: a failure clears them.
+    std::vector<MutatorHack> hacks;
 };
 
 /// The mod `ctx.mod` shows the scripts.

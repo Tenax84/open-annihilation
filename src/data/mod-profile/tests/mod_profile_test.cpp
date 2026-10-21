@@ -342,6 +342,182 @@ void test_single_profile() {
     OA_CHECK(!parse_match_option("no-equals").has_value());
 }
 
+void test_mutator_match() {
+    const std::string single = profile_text("single", single_body);
+    // A match option wins over an override of the same parameter.
+    ResolveOptions both{};
+    both.overrides = {HackOverride{"console.game-speed-range", true, {{"min", make_integer(3)}}}};
+    both.match = {*parse_match_option("console.game-speed-range.min=7")};
+    const ResolveResult won = resolve(single, both);
+    OA_CHECK(won.resolution.has_value());
+    if (won.resolution) {
+        OA_CHECK(text_of(at(*won.resolution, {"hacks", "console.game-speed-range", "min"})) == "7");
+        OA_CHECK(source_of(*won.resolution, "hacks.console.game-speed-range.min") == "match");
+    }
+    // An override that turns the hack on makes a match option valid.
+    const std::string off = profile_text("off");
+    ResolveOptions opened{};
+    opened.overrides = {HackOverride{"console.game-speed-range", true, {}}};
+    opened.match = {*parse_match_option("console.game-speed-range.min=4")};
+    const ResolveResult opened_result = resolve(off, opened);
+    OA_CHECK(opened_result.resolution.has_value());
+    if (opened_result.resolution) {
+        OA_CHECK(
+            text_of(at(*opened_result.resolution, {"hacks", "console.game-speed-range", "min"})) ==
+            "4"
+        );
+        OA_CHECK(
+            source_of(*opened_result.resolution, "hacks.console.game-speed-range.min") == "match"
+        );
+    }
+    // turn_on turns the hack on when the profile leaves it off. The other
+    // parameters take the registry's defaults.
+    MatchOption turned;
+    turned.path = "console.game-speed-range.min";
+    turned.value = "5";
+    turned.source = "host";
+    turned.turn_on = true;
+    ResolveOptions host{};
+    host.match = {turned};
+    const ResolveResult turned_on = resolve(off, host);
+    OA_CHECK(turned_on.resolution.has_value());
+    if (turned_on.resolution) {
+        OA_CHECK(
+            text_of(at(*turned_on.resolution, {"hacks", "console.game-speed-range", "min"})) == "5"
+        );
+        OA_CHECK(
+            text_of(at(*turned_on.resolution, {"hacks", "console.game-speed-range", "max"})) == "20"
+        );
+        OA_CHECK(
+            text_of(at(*turned_on.resolution, {"hacks", "console.game-speed-range", "syncon"})) ==
+            "true"
+        );
+        OA_CHECK(
+            source_of(*turned_on.resolution, "hacks.console.game-speed-range.min") ==
+            "match host (turned on)"
+        );
+        OA_CHECK(
+            source_of(*turned_on.resolution, "hacks.console.game-speed-range.max") == "default"
+        );
+        OA_CHECK(
+            source_of(*turned_on.resolution, "hacks.console.game-speed-range.syncon") == "default"
+        );
+    }
+    // And when an override turns it off, after the profile had set it.
+    const std::string narrowed = profile_text(
+        "narrowed", "hacks:\n  console.game-speed-range: {min: 1, max: 12, syncon: false}\n"
+    );
+    ResolveOptions closed{};
+    closed.overrides = {HackOverride{"console.game-speed-range", false, {}}};
+    closed.match = {turned};
+    const ResolveResult reopened = resolve(narrowed, closed);
+    OA_CHECK(reopened.resolution.has_value());
+    if (reopened.resolution) {
+        OA_CHECK(
+            text_of(at(*reopened.resolution, {"hacks", "console.game-speed-range", "min"})) == "5"
+        );
+        OA_CHECK(
+            text_of(at(*reopened.resolution, {"hacks", "console.game-speed-range", "max"})) == "20"
+        );
+        OA_CHECK(
+            text_of(at(*reopened.resolution, {"hacks", "console.game-speed-range", "syncon"})) ==
+            "true"
+        );
+        OA_CHECK(
+            source_of(*reopened.resolution, "hacks.console.game-speed-range.min") ==
+            "match host (turned on)"
+        );
+    }
+    // A limit the profile leaves off is updated in place to the defaults.
+    MatchOption cap;
+    cap.path = "limits.units-per-player.default";
+    cap.value = "400";
+    cap.source = "ridge";
+    cap.turn_on = true;
+    ResolveOptions limited{};
+    limited.match = {cap};
+    const ResolveResult capped = resolve(off, limited);
+    OA_CHECK(capped.resolution.has_value());
+    if (capped.resolution) {
+        OA_CHECK(
+            text_of(at(*capped.resolution, {"limits", "units-per-player", "default"})) == "400"
+        );
+        OA_CHECK(text_of(at(*capped.resolution, {"limits", "units-per-player", "max"})) == "1500");
+        OA_CHECK(
+            source_of(*capped.resolution, "limits.units-per-player.default") ==
+            "match ridge (turned on)"
+        );
+        OA_CHECK(source_of(*capped.resolution, "limits.units-per-player.max") == "default");
+    }
+    // source shows in provenance when the entry is already on.
+    MatchOption sourced;
+    sourced.path = "console.game-speed-range.min";
+    sourced.value = "6";
+    sourced.source = "host";
+    ResolveOptions named{};
+    named.match = {sourced};
+    const ResolveResult sourced_result = resolve(single, named);
+    OA_CHECK(sourced_result.resolution.has_value());
+    if (sourced_result.resolution) {
+        OA_CHECK(
+            source_of(*sourced_result.resolution, "hacks.console.game-speed-range.min") ==
+            "match host"
+        );
+    }
+    // turn_on on an entry the registry does not mark is an error naming it.
+    MatchOption warp;
+    warp.path = "setup.commander-warp.available";
+    warp.value = "true";
+    warp.turn_on = true;
+    ResolveOptions unmarked{};
+    unmarked.match = {warp};
+    OA_CHECK(refused_with(off, "setup.commander-warp is not marked mutator: true", unmarked));
+
+    MatchOption fixed_option;
+    fixed_option.path = "console.game-speed-range.syncon";
+    fixed_option.value = "true";
+    const std::optional<std::string> fixed_problem = match_option_problem(fixed_option);
+    OA_CHECK(fixed_problem.has_value() && fixed_problem->find("fixed") != std::string::npos);
+    MatchOption unknown;
+    unknown.path = "nope.nope";
+    unknown.value = "1";
+    const std::optional<std::string> unknown_problem = match_option_problem(unknown);
+    OA_CHECK(
+        unknown_problem.has_value() &&
+        unknown_problem->find("unknown parameter") != std::string::npos
+    );
+    MatchOption range;
+    range.path = "console.game-speed-range.min";
+    range.value = "30";
+    const std::optional<std::string> range_problem = match_option_problem(range);
+    OA_CHECK(range_problem.has_value() && range_problem->find("outside") != std::string::npos);
+    MatchOption good;
+    good.path = "console.game-speed-range.min";
+    good.value = "5";
+    OA_CHECK(!match_option_problem(good).has_value());
+
+    std::set<std::string> marked;
+    for (const registry::Entry& entry : registry::table().entries) {
+        if (!entry.mutator)
+            continue;
+        marked.insert(std::string{entry.id});
+        OA_CHECK(!entry.visual);
+        OA_CHECK(entry.scope != registry::Scope::view);
+        OA_CHECK(!std::string{entry.id}.starts_with("ui."));
+        bool match = false;
+        for (const registry::Parameter& parameter : registry::parameters_of(entry)) {
+            if (parameter.adjustable != registry::Adjustable::match)
+                continue;
+            match = true;
+            OA_CHECK(parameter.value.scope != registry::Scope::view);
+        }
+        OA_CHECK(match);
+    }
+    OA_CHECK(marked.size() == 2);
+    OA_CHECK(marked.count("limits.units-per-player") == 1);
+    OA_CHECK(marked.count("console.game-speed-range") == 1);
+}
+
 void test_base_profile() {
     // A profile that changes nothing resolves to 3.1c's records.
     const ResolveResult result = resolve(profile_text("minimal"));
@@ -1474,6 +1650,7 @@ int main(int argc, char** argv) {
     test_canonical_form();
     test_baseline_profile();
     test_single_profile();
+    test_mutator_match();
     test_base_profile();
     test_blocks();
     test_side_names();

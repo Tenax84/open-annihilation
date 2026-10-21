@@ -6,6 +6,7 @@
 
 #include "oa/app/runtime.hpp"
 
+#include "mutator_state.hpp"
 #include "oa/base/sha256.hpp"
 #include "oa/data/content_bundles/content_choice.hpp"
 #include "oa/data/defs/layout.hpp"
@@ -227,11 +228,6 @@ void log_applied(
 
 } // namespace
 
-struct Runtime::MutatorState {
-    std::vector<mutators::ResolvedMutator> chosen{};
-    std::optional<mutators::PipelineResult> result{};
-};
-
 void Runtime::destroy_mutator_state(MutatorState* state) noexcept {
     delete state;
 }
@@ -327,9 +323,32 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         throw std::runtime_error("the mutators did not apply");
     }
     mutator_state_->result = std::move(result);
+    std::vector<mutators::MutatorHack> hacks;
+    for (const mutators::MutatorResult& one : mutator_state_->result->mutators) {
+        if (one.outcome != mutators::Outcome::applied)
+            continue;
+        hacks.insert(hacks.end(), one.hacks.begin(), one.hacks.end());
+    }
+    play_mutator_hacks(hacks);
     log_applied(listed, *mutator_state_->result);
-    if (mutator_state_->result->playable())
+    bool blocking = !mutator_state_->result->refusal.empty();
+    if (!blocking) {
+        for (const mutators::MutatorResult& one : mutator_state_->result->mutators) {
+            if (one.outcome == mutators::Outcome::applied)
+                continue;
+            // A refused hack fails that mutator alone. Anything else still
+            // refuses the start, as a plan or a rule failure does.
+            if (!one.message.starts_with("hacks: ")) {
+                blocking = true;
+                break;
+            }
+        }
+    }
+    if (!blocking)
         return;
+    // A hack that was copied into the played profile is undone with the
+    // profile the match would have played without mutators.
+    play_latest_profile();
     const std::string reason = failure_text(listed, *mutator_state_->result);
     release_match_mutators();
     throw std::runtime_error(reason);
