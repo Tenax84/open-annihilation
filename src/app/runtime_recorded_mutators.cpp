@@ -12,7 +12,9 @@
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
 #include "oa/data/mutators/loadout.hpp"
+#include "oa/data/persist/save_mutators.hpp"
 #include "oa/data/saves/content_record.hpp"
+#include "oa/session/demo/recording.hpp"
 
 #include <array>
 #include <cstddef>
@@ -29,6 +31,12 @@ namespace oa::app {
 
 namespace mutators = oa::data::mutators;
 namespace saves = oa::data::saves;
+
+static_assert(
+    mutators::loadout_text_most_bytes == oa::session::demo::recording_loadout_most_bytes,
+    "a loadout parse_loadout accepts fits in a recording"
+);
+static_assert(mutators::loadout_text_most_bytes <= oa::data::persist::save_mutators_most_bytes);
 
 namespace {
 

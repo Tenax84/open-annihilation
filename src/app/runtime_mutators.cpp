@@ -99,8 +99,9 @@ mutator_seed(const Runtime& runtime, const std::vector<mutators::ResolvedMutator
 /// The clash mode a mutator plays with when neither the player nor its
 /// manifest names one: the `mutators.clash-default` preference.
 ///
-/// The match start and the battle room both read it here, so a room's layer
-/// and digest are the ones its match start makes.
+/// The match start reads it here. The battle room reads the same preference
+/// when it digests and sends the list, so a room's layer and digest are the
+/// ones its match start makes.
 ///
 /// @param values the preferences
 /// @return the mode

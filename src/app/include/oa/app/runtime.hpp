@@ -77,6 +77,7 @@
 #include "oa/app/content/downloads.hpp"
 #include "oa/app/content/settings.hpp"
 #include "oa/app/renderer_records.hpp"
+#include "oa/ui/frontend_multiplayer/host_mutators.hpp"
 #include "oa/ui/frontend_renderer/scroll_bars.hpp"
 #include "oa/present/world_renderer/world_radar.hpp"
 #include "oa/sim/messages.hpp"
@@ -4415,12 +4416,43 @@ class Runtime final : public menu::Host,
 
     /// Builds the battle room's mutator layer when its list changes.
     ///
-    /// The host's list is its own. A guest's is the host's once every
-    /// mutator of that list has arrived, resolved from this machine's
-    /// Mutators folder. The build runs on the calling thread, once per
-    /// change of the wanted digest, with no map. Leaving the multiplayer
-    /// screens while no match runs releases the layer.
+    /// The host's list is its own, and its loadout digest includes each
+    /// mutator's clash mode. A guest's is the host's once every mutator of
+    /// that list has arrived, resolved from this machine's Mutators folder
+    /// and built with the modes the host sent. The build runs on the calling
+    /// thread, once per change of the wanted digest, with no map. Leaving
+    /// the multiplayer screens while no match runs releases the layer.
     void follow_room_mutators();
+
+    /// One mutator of the host's list, and whether this machine can fetch that release.
+    struct HostMutatorFetch {
+        oa::ui::frontend_multiplayer::HostMutator mutator;  ///< the host's id, version and prefix
+        oa::ui::frontend_multiplayer::MutatorFetch state{}; ///< what a guest can do about it
+        oa::ui::frontend_multiplayer::MutatorOffer offer;   ///< the registry the decision used
+        uint64_t done{}; ///< bytes of a download still running; 0 when none is
+        /// Why the last try failed, in English as the queue says it. Empty when
+        /// the last try did not fail. The battle room translates it.
+        std::string failure;
+    };
+
+    /// Returns what this machine can fetch of the host's mutator list.
+    ///
+    /// Empty on the host, and empty while the host's list has not all
+    /// arrived. Each call reads that list, the installed mutators, the
+    /// catalogues and the download queue. A download is never started here.
+    /// A failure stays until fetch_host_mutators is called again.
+    ///
+    /// @return one row per mutator, in the host's order
+    [[nodiscard]] std::vector<HostMutatorFetch> host_mutators_fetch();
+
+    /// Queues every mutator of the host's list whose release this machine can fetch.
+    ///
+    /// A row is queued only when a catalogue entry's SHA-256 starts with the
+    /// host's prefix. The queue checks the file against that entry's
+    /// SHA-256. A failure, a refusal or a cancelled download is not tried
+    /// again until this is called. Prerequisites are the host's own list
+    /// entries, each at the release the host named.
+    void fetch_host_mutators();
 
     /// Returns the mutators field this machine sends, or null when it plays none.
     ///
@@ -4429,6 +4461,14 @@ class Runtime final : public menu::Host,
     ///
     /// @return the field, or null when the room plays no mutators
     [[nodiscard]] const oa::netgame::PresenceMutators* room_mutators_presence() const noexcept;
+
+    /// The clash modes the host sends with its mutator field.
+    ///
+    /// One bit per mutator: set means Add, clear means Replace. Nothing when
+    /// this machine sends no mutator field, or sends one as a guest.
+    ///
+    /// @return the mask, or nothing when no mask is sent
+    [[nodiscard]] std::optional<uint32_t> room_mutator_modes() const noexcept;
 
     /// How many times the mutators field this machine sends has changed.
     ///
@@ -4750,6 +4790,19 @@ class Runtime final : public menu::Host,
     /// @return the state
     RoomMutatorState& ensure_room_mutators();
 
+    /// Downloads this machine started for the host's mutators, and why one failed.
+    struct HostMutatorFetchState;
+
+    /// Frees the host-mutator downloads.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_host_mutator_fetch_state(HostMutatorFetchState* state) noexcept;
+
+    /// The host-mutator downloads, made on first use.
+    ///
+    /// @return the state
+    HostMutatorFetchState& ensure_host_mutator_fetches();
+
     /// Unmounts the battle room's layer. A layer it did not mount stays.
     ///
     /// @return false when that layer is still mounted
@@ -4770,13 +4823,19 @@ class Runtime final : public menu::Host,
 
     /// Resolves a guest's whole copy of the host's list.
     ///
+    /// Each mutator's mode is the bit in `modes`: set means Add, clear means
+    /// Replace. When `modes` is nothing, an older record, every mode is
+    /// Replace. The guest's own default is not used.
+    ///
     /// @param assembly the host's list
+    /// @param modes the host's clash-mode mask, or nothing when the record has none
     /// @param[out] resolved the packages that resolved
     /// @param[out] codes one have-code per position
     /// @param[out] wanted the digest, when every position has and it matches
     /// @return true when every position has and the digest is the host's
     bool resolve_guest_loadout(
         const oa::netgame::PresenceLoadoutAssembly& assembly,
+        std::optional<uint32_t> modes,
         std::vector<oa::data::mutators::ResolvedMutator>& resolved,
         std::vector<uint8_t>& codes,
         oa::base::sha256::Digest& wanted
@@ -5706,6 +5765,15 @@ class Runtime final : public menu::Host,
     /// last requires the demo mounted. Throws std::runtime_error naming the
     /// first step that failed. With no installer, the demo half is not run.
     void check_library_content();
+
+    /// Runs --check-library-update-question. Installs made-up Ridge from an
+    /// added registry, offers an update whose rules change, and at 640x480
+    /// opens that row's details page. NOT NOW leaves the page. UPDATE, fifty
+    /// times, leaves the Library on top with its tabs on the next frames,
+    /// and the Library stays there after the update is no longer offered.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_library_update_question();
 
     // The map browser on the OA layer (runtime_map_browser.cpp): MORE MAPS…
     // over the skirmish map list and over the host's map list in the battle
@@ -17512,6 +17580,9 @@ class Runtime final : public menu::Host,
     std::unique_ptr<RoomMutatorState, void (*)(RoomMutatorState*) noexcept> room_mutator_state_{
         nullptr, destroy_room_mutator_state
     };
+    // Downloads started for the host's mutators; null until a guest asks.
+    std::unique_ptr<HostMutatorFetchState, void (*)(HostMutatorFetchState*) noexcept>
+        host_mutator_fetch_state_{nullptr, destroy_host_mutator_fetch_state};
 
     /// The player's mutators while a replay or a saved game plays another list; null until then.
     std::unique_ptr<LoadoutOnceHold, void (*)(LoadoutOnceHold*) noexcept> loadout_once_hold_{

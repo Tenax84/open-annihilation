@@ -412,6 +412,7 @@ Network play's own checks, the last rows, are in every build.
 | `--check-library-install` | Installs made-up mod packages from three registries while the Library shows. |
 | `--check-library-map-previews` | Checks the Library's map pictures. |
 | `--check-library-content` | Turns Core Contingency off in the Library, and chooses the demo when its installer is there. |
+| `--check-library-update-question` | At 640x480, confirms a rules-changing update fifty times and requires the Library to stay open with its tabs. |
 | `--check-renderer-ladder` | Forces each renderer failure the game handles and checks it goes on. |
 | `--render-fault POINT[@FRAME]` | Forces only that failure, for `--check-renderer-ladder`. |
 | `--check-briefing-narration` | Checks a briefing's narration plays and stops when it should. |

@@ -1107,6 +1107,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_pack_maps.cpp
   src/app/pack_map_source.cpp
   src/app/runtime_get_map.cpp
+  src/app/runtime_host_mutators.cpp
   src/app/runtime_room_mutators.cpp
   src/app/mod_install_watch.cpp
   src/app/user_folder_open.cpp
@@ -1335,6 +1336,8 @@ if(OA_BUILD_PLATFORM)
       OBJECT_DEPENDS "${oa_windows_manifest}")
   endif()
   target_link_libraries(oa-game PRIVATE oa-ui-display-layout oa-ui-gadget-render)
+  # The recorded mutators compare a loadout with the text one recording holds.
+  target_link_libraries(oa-game PRIVATE oa-session-demo)
   target_link_libraries(oa-game PRIVATE oa-media-director oa-media-director-planner oa-audio-offline-mix
     oa-formats-oascript oa-formats-zip oa-app-director-output)
   target_link_libraries(oa-game PRIVATE ${oa_game_intro_player} SDL3::SDL3 ${oa_game_libraries}
@@ -2238,6 +2241,32 @@ if(OA_BUILD_PLATFORM)
         WORKING_DIRECTORY "${oa_library_content_dir}"
         ENVIRONMENT "${oa_library_content_env}"
         FIXTURES_REQUIRED library-content-clean)
+      # Ridge, from an added registry, installed while the Library shows, then
+      # an update whose rules change. At 640x480 the row's details page has no
+      # tabs. NOT NOW leaves that page. UPDATE, fifty times, leaves the Library
+      # on top with its tabs on the next frames, and it is still there once the
+      # update is no longer offered. The player's folder stays in the build
+      # tree and is cleared before each run, which is when the settings are read.
+      set(oa_library_update_question_dir
+        "${CMAKE_CURRENT_BINARY_DIR}/native-checks/library-update-question")
+      file(MAKE_DIRECTORY "${oa_library_update_question_dir}")
+      add_test(NAME library-update-question-clean COMMAND ${CMAKE_COMMAND} -E rm -rf
+        "${oa_library_update_question_dir}/Open Annihilation"
+        "${oa_library_update_question_dir}/files"
+        "${oa_library_update_question_dir}/data"
+        "${oa_library_update_question_dir}/library-update-question.conf")
+      set_tests_properties(library-update-question-clean PROPERTIES
+        FIXTURES_SETUP library-update-question-clean)
+      add_test(NAME native-library-update-question COMMAND oa-game --game-dir "${OA_GAME_DIR}"
+        --skip-intro --mute --check-library-update-question
+        --preferences-file "${oa_library_update_question_dir}/library-update-question.conf"
+        --user-folder "${oa_library_update_question_dir}/Open Annihilation"
+        --data-dir "${oa_library_update_question_dir}/data")
+      set_tests_properties(native-library-update-question PROPERTIES
+        TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+        WORKING_DIRECTORY "${oa_library_update_question_dir}"
+        ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software"
+        FIXTURES_REQUIRED library-update-question-clean)
       # Made-up mod packages posted as the download queue posts them, from a
       # built-in registry and two added ones, installed while the Library
       # shows: the built-in one's with no question, the added ones' asking

@@ -202,6 +202,22 @@
 	it=5–10;
 	}
 
+[*** {player} plays Total Annihilation 3.1c and cannot join a game with mutators.]
+	{
+	de=*** {player} spielt Total Annihilation 3.1c und kann einem Spiel mit Mutatoren nicht beitreten.;
+	fr=*** {player} joue à Total Annihilation 3.1c et ne peut pas rejoindre une partie avec des mutateurs.;
+	es=*** {player} juega a Total Annihilation 3.1c y no puede unirse a una partida con mutadores.;
+	it=*** {player} gioca a Total Annihilation 3.1c e non può unirsi a una partita con mutatori.;
+	}
+
+[*** {player} plays Total Annihilation 3.1c, which cannot play with mutators.]
+	{
+	de=*** {player} spielt Total Annihilation 3.1c, das nicht mit Mutatoren gespielt werden kann.;
+	fr=*** {player} joue à Total Annihilation 3.1c, qui ne peut pas jouer avec des mutateurs.;
+	es=*** {player} juega a Total Annihilation 3.1c, que no puede jugar con mutadores.;
+	it=*** {player} gioca a Total Annihilation 3.1c, che non può giocare con i mutatori.;
+	}
+
 [A]
 	{
 	de=A;

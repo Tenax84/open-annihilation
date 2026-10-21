@@ -306,6 +306,7 @@ void check_game_files_options(Options& options) {
         {options.check_library_install, "--check-library-install"},
         {options.check_library_map_previews, "--check-library-map-previews"},
         {options.check_library_content, "--check-library-content"},
+        {options.check_library_update_question, "--check-library-update-question"},
         {!options.open_files.empty(), "--open"},
         {options.check_renderer_ladder, "--check-renderer-ladder"},
         {options.check_briefing_narration, "--check-briefing-narration"},
@@ -598,6 +599,7 @@ void check_director_options(Options& options) {
         {options.check_library_install, "--check-library-install"},
         {options.check_library_map_previews, "--check-library-map-previews"},
         {options.check_library_content, "--check-library-content"},
+        {options.check_library_update_question, "--check-library-update-question"},
         {!options.open_files.empty(), "--open"},
         {options.check_renderer_ladder, "--check-renderer-ladder"},
     };
@@ -692,6 +694,7 @@ void refuse_left_out_self_checks([[maybe_unused]] const Options& options) {
             {options.check_library_install, "--check-library-install"},
             {options.check_library_map_previews, "--check-library-map-previews"},
             {options.check_library_content, "--check-library-content"},
+            {options.check_library_update_question, "--check-library-update-question"},
             {options.check_renderer_ladder, "--check-renderer-ladder"},
         };
         for (const auto& [given, name] : checks)
@@ -844,6 +847,7 @@ constexpr FlagOption kFlagOptions[] = {
     {"--check-library-install", &Options::check_library_install},
     {"--check-library-map-previews", &Options::check_library_map_previews},
     {"--check-library-content", &Options::check_library_content},
+    {"--check-library-update-question", &Options::check_library_update_question},
     {"--check-renderer-ladder", &Options::check_renderer_ladder},
     {"--check-briefing-narration", &Options::check_briefing_narration},
     {"--check-match-layers", &Options::check_match_layers},
@@ -1477,6 +1481,7 @@ void write_startup_line(std::string_view text) {
                      "[--check-registries] "
                      "[--check-library] [--check-library-install] "
                      "[--check-library-map-previews] [--check-library-content] "
+                     "[--check-library-update-question] "
                      "[--check-renderer-ladder [--render-fault POINT[@FRAME]]] "
                      "[--check-briefing-narration] [--check-director-view] "
                      "[--check-director-render] [--check-interpolation] "
@@ -1668,25 +1673,25 @@ void write_startup_line(std::string_view text) {
         result.check_mod_warning || result.check_mod_install || result.check_language_install ||
         result.check_challenge || result.check_registries || result.check_library ||
         result.check_library_install || result.check_library_map_previews ||
-        result.check_library_content || result.check_renderer_ladder || result.check_match_orders ||
-        result.check_factory_orders || result.check_unit_speech || result.check_mutator_layer ||
-        result.check_replay_loadout || result.check_side_data_per_match ||
-        result.check_gadget_art_per_match || result.check_download_builds ||
-        result.check_stockpile_builds || result.check_unit_page_memory ||
-        result.check_side_column || result.check_match_bars || !result.check_unit_pages.empty() ||
-        result.check_kill_board || !result.check_unit_language.empty() ||
-        result.check_language_switch || result.check_language_registry ||
-        result.check_language_notice || result.check_first_run || result.check_setup_window ||
-        result.check_window_place || result.check_progress || result.check_text_fit ||
-        result.check_folder_chooser || result.check_patrol_reclaim || result.check_reclaim_cursor ||
-        result.check_wreck_pick || result.check_build_preview || result.check_pointer_interfaces ||
-        result.check_megamap_clicks || result.check_radar_orders || result.check_touch_controls ||
-        result.check_pad_controls || result.check_running_while_inactive ||
-        result.check_director_view || result.check_director_render || result.check_interpolation ||
-        result.check_unit_playout || result.check_paused_save || result.check_simulation_hash ||
-        result.check_zoom_memory || result.check_map_packs || result.check_map_browser ||
-        result.check_mutator_picker || result.check_map_pack_lists ||
-        result.check_mod_map_settings || result.check_side_orders;
+        result.check_library_content || result.check_library_update_question ||
+        result.check_renderer_ladder || result.check_match_orders || result.check_factory_orders ||
+        result.check_unit_speech || result.check_mutator_layer || result.check_replay_loadout ||
+        result.check_side_data_per_match || result.check_gadget_art_per_match ||
+        result.check_download_builds || result.check_stockpile_builds ||
+        result.check_unit_page_memory || result.check_side_column || result.check_match_bars ||
+        !result.check_unit_pages.empty() || result.check_kill_board ||
+        !result.check_unit_language.empty() || result.check_language_switch ||
+        result.check_language_registry || result.check_language_notice || result.check_first_run ||
+        result.check_setup_window || result.check_window_place || result.check_progress ||
+        result.check_text_fit || result.check_folder_chooser || result.check_patrol_reclaim ||
+        result.check_reclaim_cursor || result.check_wreck_pick || result.check_build_preview ||
+        result.check_pointer_interfaces || result.check_megamap_clicks ||
+        result.check_radar_orders || result.check_touch_controls || result.check_pad_controls ||
+        result.check_running_while_inactive || result.check_director_view ||
+        result.check_director_render || result.check_interpolation || result.check_unit_playout ||
+        result.check_paused_save || result.check_simulation_hash || result.check_zoom_memory ||
+        result.check_map_packs || result.check_map_browser || result.check_mutator_picker ||
+        result.check_map_pack_lists || result.check_mod_map_settings || result.check_side_orders;
     // A capture and a showcase need the application's own loop and window,
     // which checks and benchmarks do not run.
     const bool check_run = result.fixed_clock || result.check_navigation ||

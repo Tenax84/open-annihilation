@@ -472,6 +472,9 @@ struct Lobby {
     /// The mutator hold last logged for this host, and whether one was logged.
     MutatorsBlock mutators_hold_logged{};
     bool mutators_hold_seen{};
+    /// The room has posted its lines for the host's current mutator field.
+    /// Cleared when that field goes, so the next one posts once.
+    bool classic_lines_posted{};
     /// Difficulty of a computer player in this slot, 0 easy, 1 medium, 2 hard.
     /// Shown before the start. Zero, and computer_difficulty_set false, until
     /// this machine seats the player or a presence record names it.
