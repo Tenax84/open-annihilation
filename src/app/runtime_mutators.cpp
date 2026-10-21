@@ -518,6 +518,9 @@ std::string Runtime::take_launch_mutators(
 }
 
 void Runtime::apply_match_mutators(const MatchBootstrap&) {
+    // The held list is the one this start plays, including a start that chooses
+    // none. A teardown before this line is not the end of that match.
+    start_loadout_once();
     // Taken even when this start applies nothing, so a later start that no
     // setup made is not labelled with a setup that already started a game.
     const std::optional<mutators_memory::Setup> pending_setup =

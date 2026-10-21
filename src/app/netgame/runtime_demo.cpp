@@ -14,17 +14,20 @@
 
 #include "oa/netgame/match/net_match.hpp"
 #include "oa/session/demo.hpp"
+#include "oa/data/mutators/choice.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -81,6 +84,18 @@ void NetworkPlay::start_demo_playback() {
     const std::string needs = runtime_.content_switch_sentence(recorded);
     if (!needs.empty())
         throw std::runtime_error(needs);
+    std::vector<oa::data::mutators::ResolvedMutator> playback_mutators;
+    if (const oa::formats::tad::Sector* sector = oa::formats::tad::find_sector(
+            session->playback.demo, oa::formats::tad::SectorType::mutators
+        )) {
+        const std::string_view mutator_text = oa::formats::tad::sector_text(*sector);
+        if (!mutator_text.empty()) {
+            const std::string refusal =
+                runtime_.recorded_mutators_refusal(mutator_text, &playback_mutators);
+            if (!refusal.empty())
+                throw std::runtime_error(refusal);
+        }
+    }
     const bool ignore_unit_table = staged ? !staged->strict : net_options().demo_ignore_unit_table;
     const auto& recording = session->playback.demo;
     const auto& players = recording.players;
@@ -110,7 +125,22 @@ void NetworkPlay::start_demo_playback() {
         }
     }
     // The watcher leaves the battleroom with the recorded verdicts.
+    // A recording without the sector plays with no mutators. The player's
+    // own list comes back when this match ends, or at once when the start
+    // throws.
     const auto* verdicts = demo::demo_unit_sync(session->playback);
+    runtime_.play_loadout_once(std::move(playback_mutators));
+
+    struct LoadoutOnceGuard {
+        Runtime& runtime;
+        int exceptions = std::uncaught_exceptions();
+
+        ~LoadoutOnceGuard() {
+            if (std::uncaught_exceptions() > exceptions)
+                runtime.cancel_loadout_once();
+        }
+    } loadout_once{runtime_};
+
     runtime_.bootstrap_match(
         {.units_per_player = recording.max_units,
          .place_commanders = false,
@@ -135,6 +165,9 @@ void NetworkPlay::start_demo_playback() {
     if (!extra.empty())
         table_line += extra.size() > kReportedExtraDefinitions ? ", ...)" : ")";
     std::cerr << table_line << '\n';
+    const oa::data::mutators::Loadout* applied = runtime_.match_loadout();
+    const std::size_t applied_count = applied == nullptr ? 0 : applied->entries.size();
+    std::cerr << "demo mutators: " << applied_count << " applied\n";
     if (!check.identical && !ignore_unit_table)
         throw std::runtime_error(
             "demo playback needs the recording's unit definitions: " + table_line
