@@ -14,6 +14,7 @@
 #include "oa/app/netgame/opened_launch.hpp"
 #include "oa/app/presence_facts.hpp"
 #include "oa/app/runtime.hpp"
+#include "oa/netgame/presence.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -113,14 +114,19 @@ class NetworkPlay {
     /// The facts (presence_facts) are read while the multiplayer screens
     /// show, and on the first call. The record carries this build's version,
     /// the platform and architecture, the mod and where it was published, the
-    /// sim hash, the game and view hacks with their counts, and Developer
-    /// Mode with its overrides; the host's map pack is the battle room's to
-    /// add. It is written within presence_record_max_bytes less
-    /// presence_map_pack_field_max_bytes, so that the host's pack always
-    /// fits beside it, unless its fixed fields alone need more. A fact that
-    /// breaks the record's rules is left out, with one line on the error
-    /// stream the first time. The battle room is told only when the record's
-    /// bytes change. No setup block carries any of it.
+    /// sim hash, the mutators the battle room is playing, the game and view
+    /// hacks with their counts, and Developer Mode with its overrides; the
+    /// host's map pack is the battle room's to add. It is written within
+    /// presence_record_max_bytes less presence_map_pack_field_max_bytes, so
+    /// that the host's pack always fits beside it, unless its fixed fields
+    /// alone need more. A fact that breaks the record's rules is left out,
+    /// with one line on the error stream the first time. The battle room is
+    /// told when the record's bytes change. The full mutator list is bound
+    /// even when those bytes are cut to the same record, so a part can still
+    /// be drawn from it. The room's layer is followed first, including on
+    /// the way out of the multiplayer screens; a change to its field while
+    /// the screens are hidden is written when they show again. No setup
+    /// block carries any of it.
     void follow_presence();
 
     /// Runs one frame of the network match; nothing without an active match.
@@ -526,6 +532,13 @@ class NetworkPlay {
     // from. They are not part of PresenceFacts. Read through Runtime's
     // public methods only.
     std::string presence_content_key_;
+    // The mutator field the bound record was written from. The generation
+    // skips the copy until that field changes. Both start at 0, so seen
+    // tells a first read from a field that has never been sent.
+    uint32_t presence_mutator_generation_ = 0;
+    bool presence_mutators_seen_ = false;
+    bool presence_mutators_held_ = false;
+    oa::netgame::PresenceMutators presence_mutators_{};
 };
 
 } // namespace oa::app

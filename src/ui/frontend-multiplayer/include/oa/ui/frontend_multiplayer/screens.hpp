@@ -143,6 +143,15 @@ void multiplayer_bind_unicode_chat(bool on) noexcept;
 /// @param size its length; 0, or more than netgame::presence_record_max_bytes, binds none
 void multiplayer_bind_presence_record(const uint8_t* record, std::size_t size) noexcept;
 
+/// Binds the full mutator list this machine draws a part from.
+///
+/// The presence record may be cut so a map pack still fits. The battle room
+/// sends the mutators that did not fit from this list. Null binds none. The
+/// binding is kept across a new game, as the source record is.
+///
+/// @param loadout the list; null binds none
+void multiplayer_bind_mutator_loadout(const netgame::PresenceMutators* loadout) noexcept;
+
 /// Binds the map packs' answer to which pack the host's selected map comes from (LobbyMaps::pack).
 ///
 /// The binding survives multiplayer_reset. The battle room asks it once
@@ -689,6 +698,31 @@ void multiplayer_reset() noexcept;
 ///
 /// @param ctx Screen context of the running frontend.
 void multiplayer_reload_unit_headers(app::ScreenContext* ctx);
+
+/// Drops the battle room's unit table, reads it again and restarts unit sync.
+///
+/// The table is read from the install the room already uses. With no install
+/// bound, the table is cleared and sync still restarts.
+void multiplayer_units_changed();
+
+/// Drops one peer and greets it again at once.
+///
+/// @param player_id the peer
+void multiplayer_regreet(uint32_t player_id);
+
+/// Copies the host's mutator list as this guest holds it.
+///
+/// False on the host, and false when the host's records have named no list.
+/// A list that is still arriving is copied as far as it has come.
+///
+/// @param[out] out the list; null asks only whether there is one
+/// @return true when this machine is a guest and the host has named a list
+[[nodiscard]] bool multiplayer_room_mutators(netgame::PresenceLoadoutAssembly* out);
+
+/// How many times the guest's copy of the host's list has changed.
+///
+/// @return the generation, starting at 0
+[[nodiscard]] uint32_t multiplayer_room_mutators_generation() noexcept;
 
 } // namespace oa::ui::frontend_multiplayer
 

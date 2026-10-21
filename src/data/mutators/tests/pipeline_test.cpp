@@ -24,6 +24,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -1730,6 +1731,56 @@ void test_removed_weapon_file_comes_back() {
     release(store);
 }
 
+/// A hack refusal fails that mutator alone. Another failure stops the start.
+void test_first_blocking() {
+    mutators::PipelineMutator base;
+    base.manifest.id = "base";
+    base.manifest.version = oamut::Version{1, 0, 0, 1};
+    mutators::PipelineMutator needs;
+    needs.manifest.id = "needs";
+    needs.manifest.version = oamut::Version{1, 0, 0, 1};
+    needs.manifest.requires_mutators.push_back(oamut::Condition{"base", {}, std::nullopt});
+    const mutators::PipelineMutator listed[] = {base, needs};
+
+    mutators::MutatorResult base_hack;
+    base_hack.id = "base";
+    base_hack.outcome = mutators::Outcome::failed;
+    base_hack.cause = mutators::Cause::hack_refused;
+    mutators::MutatorResult needs_out;
+    needs_out.id = "needs";
+    needs_out.outcome = mutators::Outcome::excluded;
+    needs_out.cause = mutators::Cause::prerequisite_failed;
+
+    mutators::PipelineResult result;
+    result.mutators = {base_hack, needs_out};
+    OA_CHECK(!mutators::first_blocking(result, listed).has_value());
+
+    result.mutators[0].cause = mutators::Cause::script_error;
+    const std::optional<std::size_t> script = mutators::first_blocking(result, listed);
+    OA_CHECK(script.has_value() && *script == 0);
+
+    mutators::MutatorResult applied;
+    applied.id = "base";
+    applied.outcome = mutators::Outcome::applied;
+    result.refusal = "base is listed twice";
+    result.mutators = {applied};
+    OA_CHECK(!mutators::first_blocking(result, std::span{listed, 1}).has_value());
+
+    mutators::PipelineMutator looped = needs;
+    looped.manifest.requires_mutators = {oamut::Condition{"needs", {}, std::nullopt}};
+    base.manifest.requires_mutators = {oamut::Condition{"needs", {}, std::nullopt}};
+    const mutators::PipelineMutator cycle[] = {base, looped};
+    mutators::MutatorResult base_loop;
+    base_loop.id = "base";
+    base_loop.outcome = mutators::Outcome::excluded;
+    base_loop.cause = mutators::Cause::prerequisite_failed;
+    mutators::MutatorResult needs_loop = needs_out;
+    result.refusal.clear();
+    result.mutators = {base_loop, needs_loop};
+    const std::optional<std::size_t> loop = mutators::first_blocking(result, cycle);
+    OA_CHECK(loop.has_value() && *loop == 0);
+}
+
 /// True when `key=value` occurs and the next character is not part of a name.
 bool has_assignment(std::string_view text, std::string_view key, std::string_view value) {
     const std::string needle = std::string{key} + "=" + std::string{value};
@@ -3142,6 +3193,7 @@ int main() {
     test_request_overflow_follows_list_order();
     test_removed_record_file_comes_back();
     test_removed_weapon_file_comes_back();
+    test_first_blocking();
     test_add_gives_each_unit_its_own_weapon();
     test_replace_makes_both_units_fire_the_later_weapon();
     test_add_shares_an_identical_weapon();
