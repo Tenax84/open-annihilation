@@ -128,7 +128,8 @@ struct PipelineInput {
     /// Real time each phase of a mutator's script may run. The default is the
     /// script host's `default_time_limit`.
     std::chrono::milliseconds time_limit{oa::data::script_host::default_time_limit};
-    /// The map the match will play. None on a dry run, and then no maps hook runs.
+    /// The map the match will play. None on a dry run: map rules leave one
+    /// note each and no maps hook runs.
     std::optional<ChosenMap> map{};
     /// Called after every plan is read and before files, rules and hooks.
     /// Empty skips the check. Each error fails that mutator in the plan
@@ -208,10 +209,11 @@ first_blocking(const PipelineResult& result, std::span<const PipelineMutator> li
 /// there and gives a different one a private name, then points that
 /// mutator's own weapon fields, menu entries, clone sources and side or AI
 /// list writes at the private name. A download entry is its builder and
-/// unit, not its section name. When `input.map` names a map, each mutator's
-/// maps entry then runs, in list order, as a transaction of its own. A
-/// changed OTA is served at that map's path. No map, and the maps phase
-/// does nothing. Each pass over the list is a transaction. A failure in a
+/// unit, not its section name. When `input.map` names a map, map rules for
+/// `maps/*.ota` run first, on that map only, and then each mutator's maps
+/// entry runs, in list order, as a transaction of its own. A changed OTA is
+/// served at that map's path. With no map, those rules leave one note each
+/// and the maps entries do not run. Each pass over the list is a transaction. A failure in a
 /// plan or a rule target is the mutator's own, and every one is kept. Any
 /// later failure can depend on the mutators above it, so the pass keeps
 /// only the one nearest the top of the list, and stops at the first hook

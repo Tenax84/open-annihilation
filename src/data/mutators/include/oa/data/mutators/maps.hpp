@@ -15,9 +15,15 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace oa::formats::tdf {
+struct Document;
+struct Block;
+} // namespace oa::formats::tdf
 
 struct lua_State;
 
@@ -146,6 +152,64 @@ void install_map_match_forms(lua_State* state);
     const MapScriptContext& context,
     uint16_t mutator
 );
+
+/// The refusal D07 would give for this header text, or empty when it would keep it.
+///
+/// Whole-number header keys (`minwindspeed`, `maxwindspeed`, `gravity`,
+/// `waterdamage`) accept a fractional result when it is finite and from 0 to
+/// 32,767, because a rule's product is written as computed. A bit is still
+/// 0 or 1, a real is still finite and from 0 to 1,000, and a frozen header
+/// key cannot change. A null text is a removal, which the header refuses.
+/// An unknown key is not a header or schema setting.
+///
+/// @param key header key, any case
+/// @param text the new text, or null when the field is removed
+/// @return the refusal, or an empty string
+[[nodiscard]] std::string
+map_header_refusal(std::string_view key, const std::optional<std::string>& text);
+
+/// The refusal D07 gives for a schema `SurfaceMetal` outside 0 to 255.
+///
+/// The text must be a finite whole number in that range. A null text, a
+/// fraction and any other text are refused with the schema sentence.
+///
+/// @param text the new text, or null when the field is removed
+/// @return the refusal, or an empty string
+[[nodiscard]] std::string map_schema_metal_refusal(const std::optional<std::string>& text);
+
+/// Writes one key with D07's editor. The block keeps an existing spelling.
+///
+/// @param document document whose arena stores the text
+/// @param block block to change
+/// @param spelling field name to use when the key is new
+/// @param text field value
+/// @return true when the editor accepted the write
+[[nodiscard]] bool write_map_field(
+    oa::formats::tdf::Document* document,
+    oa::formats::tdf::Block* block,
+    const char* spelling,
+    std::string_view text
+);
+
+/// How many `[Schema N]` blocks the header holds, stopping at the first gap.
+///
+/// @param document parsed OTA, or null
+/// @return the count, from 0
+[[nodiscard]] int map_schema_count(const oa::formats::tdf::Document* document);
+
+/// The `[Schema N]` block, to edit. Null when that number is absent.
+///
+/// @param document parsed OTA, or null
+/// @param number schema number, from 0
+/// @return the block, or null
+[[nodiscard]] oa::formats::tdf::Block*
+map_schema_block(oa::formats::tdf::Document* document, int number);
+
+/// The `Schema N` spelling D07 looks up, or empty when `number` is negative.
+///
+/// @param number schema number, from 0
+/// @return the label
+[[nodiscard]] std::string map_schema_label(int number);
 
 /// The notes for map fields that more than one mutator wrote.
 ///
