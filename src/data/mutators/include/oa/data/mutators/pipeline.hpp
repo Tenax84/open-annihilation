@@ -38,6 +38,8 @@ enum class Cause : uint8_t {
     script_error,        ///< the script stopped with an error
     instruction_budget,  ///< the script used its instruction allowance
     memory_budget,       ///< the script used its memory allowance
+    time_limit,          ///< a phase of the script ran past its real-time limit
+    string_length,       ///< the script made a string past the length cap
     invalid_plan,        ///< mutate did not return a plan this engine accepts
     undeclared_layer,    ///< the plan uses a layer the manifest does not declare
     files_refused,       ///< the files layer refused the mutator

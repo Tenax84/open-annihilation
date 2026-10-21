@@ -650,6 +650,19 @@ void test_compatibility_and_repeat() {
     release(mounted);
 }
 
+void test_string_cap_is_its_own_cause() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, input_of({"ridge-long-text"}));
+    OA_CHECK(result.mutators.size() == 1);
+    if (result.mutators.size() == 1) {
+        OA_CHECK(result.mutators[0].outcome == mutators::Outcome::failed);
+        OA_CHECK(result.mutators[0].phase == mutators::Phase::hooks);
+        OA_CHECK(result.mutators[0].cause == mutators::Cause::string_length);
+    }
+    release(store);
+}
+
 void test_player_option() {
     mutators::PipelineMutator swift = load_id("ridge-swift");
     for (const oamut::Option& option : swift.manifest.options) {
@@ -686,6 +699,7 @@ int main() {
     test_files_layer();
     test_list_rules();
     test_compatibility_and_repeat();
+    test_string_cap_is_its_own_cause();
     test_player_option();
     return oa::test::check_exit_status();
 }

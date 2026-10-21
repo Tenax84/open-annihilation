@@ -325,11 +325,19 @@ void exclude_mutator(MutatorResult& result, Phase phase, std::string message) {
 }
 
 /// Turns a script-host error into a cause. The message stays the host's text.
+///
+/// The allowances, the real-time limit and the string cap each have their
+/// own cause. They stop the script whatever data it works on, so they are
+/// never read as the script's own error.
 Cause cause_of(host::ErrorKind kind) {
     if (kind == host::ErrorKind::instruction_budget)
         return Cause::instruction_budget;
     if (kind == host::ErrorKind::memory_budget)
         return Cause::memory_budget;
+    if (kind == host::ErrorKind::time_limit)
+        return Cause::time_limit;
+    if (kind == host::ErrorKind::string_length)
+        return Cause::string_length;
     return Cause::script_error;
 }
 
