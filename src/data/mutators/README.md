@@ -235,7 +235,7 @@ requests are what overflow, that later mutator is the one refused.
 `data-mutators-hacks` (`tests/hacks_test.cpp`) checks reading a hacks table,
 the value's normal form, merging two mutators, the Developer Mode notes,
 and the values the resolver plays.
-`data-mutators-menus` (`tests/menus_test.cpp`, timeout 30 seconds) checks
+`data-mutators-menus` (`tests/menus_test.cpp`, timeout 60 seconds) checks
 adding, moving, greying, hiding and removing build buttons, the conflict
 notes, and the downloadable mark through `load_download_menu` and
 `OA_UNIT_DEF_FLAG_DOWNLOADABLE`. It also runs a greyed page through
@@ -250,7 +250,10 @@ later mutator, and a cloned builder's served page keeps its slots taken
 and is greyed in place. Removing an entry from the six-section
 `marked.tdf`, and from a six-section file whose sixth entry is a unit the
 builder does not offer, keeps the sixth section unread. A created file is
-journaled as a file added, a loop of refused calls under `pcall` leaves
+journaled as a file added. A file created and then emptied in one mutator
+is absent from the journal and the layer, and the next entry uses the
+same path. Removing the first entry of `marked.tdf` leaves a placeholder
+and a note that names no unit. A loop of refused calls under `pcall` leaves
 nothing behind, and a loop of `builds` and one of `remove` stop on the
 instruction allowance at a small part of the real-time limit's processor
 time. `data-mutators-menus-data` is the same program with `--data`
@@ -639,6 +642,8 @@ section in the layout's download folder whose `UNITNAME` or `UNITMENU`
 names the unit, ignoring ASCII case. A download file left with no section
 is marked removed. When the section removed was the file's first and
 another section remains, a note names the unit that file now marks.
+When the build menus then leave a placeholder in that first place, the
+note says the placeholder holds it and no unit gains a mark.
 Pages under `guis/` are left as they are. The menus collection greys those
 buttons; `remove` does not. `remove` on a weapon or a
 feature drops that section, and marks the document removed when it was
@@ -799,10 +804,14 @@ sections of a file, so removing one of those from a longer file puts a
 placeholder in its place, and no section past the fifth becomes an entry.
 When a file's first section goes, another entry of the same unit in that
 file moves first; otherwise a placeholder takes the first place, so no
-other unit becomes downloadable. When that leaves the unit with entries
-but no mark, one of its entries moves to the front of a file again. A
-file left with no entry is hidden. A units hook's removal drops the
-removed unit's entries at once; the next menus call, or the end of the
+other unit becomes downloadable. The note on that removal says the
+placeholder holds the first place and no unit gains a mark. When that
+leaves the unit with entries but no mark, one of its entries moves to
+the front of a file again. A file left with no entry is hidden. A file
+this mutator created and then emptied is left out of the journal and the
+layer, and a later entry for that unit uses the same path. A units
+hook's removal drops the removed unit's entries at once; the next menus
+call, or the end of the
 mutator's hooks, puts the same placeholders where those entries were and
 greys the unit's buttons on every builder's pages, journaled to that
 mutator.
