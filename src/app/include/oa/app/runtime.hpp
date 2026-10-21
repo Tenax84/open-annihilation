@@ -4383,7 +4383,7 @@ class Runtime final : public menu::Host,
 
     /// One mutator of the host's list, and whether this machine can fetch that release.
     struct HostMutatorFetch {
-        oa::ui::frontend_multiplayer::HostMutator mutator; ///< the host's id, version and prefix
+        oa::ui::frontend_multiplayer::HostMutator mutator;  ///< the host's id, version and prefix
         oa::ui::frontend_multiplayer::MutatorFetch state{}; ///< what a guest can do about it
         oa::ui::frontend_multiplayer::MutatorOffer offer;   ///< the registry the decision used
         uint64_t done{}; ///< bytes of a download still running; 0 when none is
