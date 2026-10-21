@@ -15,6 +15,9 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace oa {
@@ -53,15 +56,6 @@ char ascii_upper(char value) noexcept {
     return value >= 'a' && value <= 'z' ? static_cast<char>(value - ('a' - 'A')) : value;
 }
 
-bool equal_nocase(std::string_view a, std::string_view b) noexcept {
-    if (a.size() != b.size())
-        return false;
-    for (std::size_t i = 0; i < a.size(); ++i)
-        if (ascii_upper(a[i]) != ascii_upper(b[i]))
-            return false;
-    return true;
-}
-
 // Archive data transform `out = position ^ ~in ^ key`; a zero key is a no-op.
 void decrypt_at(std::span<uint8_t> bytes, uint8_t key, uint64_t position) noexcept {
     if (key == 0)
@@ -74,6 +68,65 @@ void decrypt_at(std::span<uint8_t> bytes, uint8_t key, uint64_t position) noexce
             static_cast<uint8_t>(position + i) ^ static_cast<uint8_t>(~data[i]) ^ key
         );
 }
+
+/// Folds one character of an archive path: ASCII letters in upper case and
+/// '\\' as '/'.
+///
+/// @param value the character
+/// @return the folded character
+char path_fold(char value) noexcept {
+    return value == '\\' ? '/' : ascii_upper(value);
+}
+
+// The 64-bit FNV-1a hash's starting value and multiplier.
+constexpr uint64_t kFnvOffsetBasis = 0xcbf29ce484222325ULL;
+constexpr uint64_t kFnvPrime = 0x100000001b3ULL;
+
+/// Continues a 64-bit FNV-1a hash over text folded as path_fold() folds it.
+///
+/// @param hash the hash so far; kFnvOffsetBasis to start one
+/// @param text the characters hashed next
+/// @return the hash with them
+uint64_t folded_hash(uint64_t hash, std::string_view text) noexcept {
+    for (const char value : text) {
+        hash ^= static_cast<unsigned char>(path_fold(value));
+        hash *= kFnvPrime;
+    }
+    return hash;
+}
+
+/// Hashes an archive path as path_fold() folds it, so that paths a lookup
+/// takes as the same hash alike.
+struct FoldedPathHash {
+    using is_transparent = void;
+
+    /// Hashes a path.
+    ///
+    /// @param path the path
+    /// @return its hash: 64-bit FNV-1a over the folded characters
+    std::size_t operator()(std::string_view path) const noexcept {
+        return static_cast<std::size_t>(folded_hash(kFnvOffsetBasis, path));
+    }
+};
+
+/// Compares archive paths as path_fold() folds them.
+struct FoldedPathEqual {
+    using is_transparent = void;
+
+    /// Tells whether two paths fold alike.
+    ///
+    /// @param left one path
+    /// @param right the other
+    /// @return true when every folded character matches
+    bool operator()(std::string_view left, std::string_view right) const noexcept {
+        if (left.size() != right.size())
+            return false;
+        for (std::size_t i = 0; i < left.size(); ++i)
+            if (path_fold(left[i]) != path_fold(right[i]))
+                return false;
+        return true;
+    }
+};
 
 /// Returns whether a step of opening an archive failed.
 ///
@@ -258,6 +311,17 @@ struct HpiArchive::Impl {
     uint64_t archive_size{};
     uint8_t key{};
     std::vector<ArchiveNode> nodes;
+
+    // One record a lookup reaches, by the hash of its '/'-joined path.
+    struct IndexedPath {
+        uint64_t hash{}; ///< folded_hash of the path from kFnvOffsetBasis
+        uint32_t node{};
+    };
+
+    // Every record a lookup reaches, in order of hash.
+    std::vector<IndexedPath> paths;
+    // The directory that holds each node; 0 for the root's records and the root.
+    std::vector<uint32_t> parents;
     // The lock is held only while a read copies stored bytes from the
     // source; decrypting and decompressing run outside it, so reads on
     // several threads decode at the same time.
@@ -315,7 +379,74 @@ struct HpiArchive::Impl {
             };
         nodes.push_back(ArchiveNode{"", formats::hpi::EntryFlagDirectory});
         std::unordered_set<uint32_t> visited;
-        return parse_directory(block, root, 0, visited, 0);
+        if (const auto parsed = parse_directory(block, root, 0, visited, 0); failed(parsed))
+            return parsed;
+        parents.assign(nodes.size(), 0);
+        index_paths(0, kFnvOffsetBasis);
+        std::sort(paths.begin(), paths.end(), [](const IndexedPath& a, const IndexedPath& b) {
+            return a.hash < b.hash || (a.hash == b.hash && a.node < b.node);
+        });
+        paths.shrink_to_fit();
+        return {};
+    }
+
+    /// Records the path of every record a lookup reaches below a directory.
+    ///
+    /// Of the records of one directory whose names match ignoring ASCII
+    /// case, a lookup takes the last, so only that one is recorded and only
+    /// its subtree is walked. A name that holds '\\' or '/' never matches
+    /// one part of a path and is not recorded.
+    ///
+    /// @param directory node index of the directory
+    /// @param hash folded_hash of the directory's path; unused for the root
+    void index_paths(uint32_t directory, uint64_t hash) {
+        const ArchiveNode& parent = nodes[directory];
+        // The last record of each name, ignoring ASCII case.
+        std::unordered_map<std::string_view, uint32_t, FoldedPathHash, FoldedPathEqual> last;
+        for (uint32_t i = 0; i < parent.child_count; ++i) {
+            const uint32_t index = parent.first_child + i;
+            parents[index] = directory;
+            const std::string& name = nodes[index].name;
+            if (name.find_first_of("\\/") == std::string::npos)
+                last.insert_or_assign(std::string_view(name), index);
+        }
+        const uint64_t prefix = directory == 0 ? kFnvOffsetBasis : folded_hash(hash, "/");
+        for (uint32_t i = 0; i < parent.child_count; ++i) {
+            const uint32_t index = parent.first_child + i;
+            const ArchiveNode& node = nodes[index];
+            const auto found = last.find(std::string_view(node.name));
+            if (found == last.end() || found->second != index)
+                continue;
+            const uint64_t path_hash = folded_hash(prefix, node.name);
+            paths.push_back({path_hash, index});
+            if (node.directory())
+                index_paths(index, path_hash);
+        }
+    }
+
+    /// Tells whether a node is the record a path names: its name and those
+    /// of the directories above it, matched ignoring ASCII case, joined by
+    /// '\\' or '/'.
+    ///
+    /// @param node an indexed node
+    /// @param path the path
+    /// @return true when the path names the node
+    [[nodiscard]] bool names_node(uint32_t node, std::string_view path) const noexcept {
+        std::size_t end = path.size();
+        for (uint32_t at = node;;) {
+            const std::string& name = nodes[at].name;
+            if (end < name.size() ||
+                !FoldedPathEqual{}(path.substr(end - name.size(), name.size()), name))
+                return false;
+            end -= name.size();
+            const uint32_t above = parents[at];
+            if (above == 0)
+                return end == 0;
+            if (end == 0 || (path[end - 1] != '\\' && path[end - 1] != '/'))
+                return false;
+            --end;
+            at = above;
+        }
     }
 
     /// Checks that the last 36 bytes equal Trailer, apart from its four year characters.
@@ -454,35 +585,33 @@ struct HpiArchive::Impl {
         return {};
     }
 
+    /// Resolves a path, or the directory of all but its last part.
+    ///
+    /// @param entry_path '\\'- or '/'-separated path
+    /// @param stop_before_last true to resolve the directory that holds the last part
+    /// @return the node index, or nullopt
     [[nodiscard]] std::optional<uint32_t>
     walk(std::string_view entry_path, bool stop_before_last) const noexcept {
-        uint32_t directory = 0;
-        std::size_t begin = 0;
-        for (;;) {
-            std::size_t end = begin;
-            while (end < entry_path.size() && entry_path[end] != '\\' && entry_path[end] != '/')
-                ++end;
-            const bool last = end == entry_path.size();
-            if (last && stop_before_last)
-                return directory;
-            const std::string_view segment = entry_path.substr(begin, end - begin);
-            const ArchiveNode& parent = nodes[directory];
-            std::optional<uint32_t> match;
-            for (uint32_t i = parent.child_count; i-- > 0;) {
-                if (equal_nocase(nodes[parent.first_child + i].name, segment)) {
-                    match = parent.first_child + i;
-                    break;
-                }
-            }
-            if (!match)
-                return std::nullopt;
-            if (last)
-                return match;
-            if (!nodes[*match].directory())
-                return std::nullopt;
-            directory = *match;
-            begin = end + 1;
+        if (stop_before_last) {
+            const auto separator = entry_path.find_last_of("\\/");
+            if (separator == std::string_view::npos)
+                return 0u;
+            entry_path = entry_path.substr(0, separator);
         }
+        const uint64_t hash = folded_hash(kFnvOffsetBasis, entry_path);
+        auto at = std::lower_bound(
+            paths.begin(), paths.end(), hash, [](const IndexedPath& path, uint64_t wanted) {
+                return path.hash < wanted;
+            }
+        );
+        for (; at != paths.end() && at->hash == hash; ++at) {
+            if (!names_node(at->node, entry_path))
+                continue;
+            if (stop_before_last && !nodes[at->node].directory())
+                return std::nullopt;
+            return at->node;
+        }
+        return std::nullopt;
     }
 
     /// Reads stored bytes at `offset` from the source.
