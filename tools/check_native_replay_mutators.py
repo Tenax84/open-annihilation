@@ -9,6 +9,8 @@ content note. The same game without a mutator records neither. Playback with
 the same folder applies that mutator. An empty folder, another package
 SHA-256, and a sector that is not a loadout each refuse before the match.
 A recording without the sector plays no mutators even when one is chosen.
+A run that plays no mutators refuses a recording that names one, and still
+plays a recording that names none.
 """
 import argparse
 import os
@@ -36,6 +38,8 @@ MISSING = (
 )
 DIFFERENT = 'This needs a mutator you do not have: "ridge-art-a" is a different package'
 UNREADABLE = "The mutators this was made with cannot be read."
+PLAYED_NONE = "This was made with mutators, and this run plays none."
+BEFORE_MATCH = ["Offline match world prepared"]
 
 
 class ReplayMutatorsFailure(Exception):
@@ -183,7 +187,12 @@ def require_loadout_sector(path, sha):
     if at == 0 or types[at - 1] != DATE_SECTOR:
         raise ReplayMutatorsFailure(f"{path.name}'s mutators sector does not follow the date")
     text = sector_text(parsed[at][1])
-    if f'"id":"ridge-art-a"' not in text or sha not in text or '"oaloadout":1' not in text:
+    want = (
+        '{"mutators":[{"folder":false,"id":"ridge-art-a","options":{},"sha256":"'
+        + sha
+        + '","version":"1.0"}],"oaloadout":1}'
+    )
+    if text != want:
         raise ReplayMutatorsFailure(f"{path.name}'s loadout is {text}")
 
 
@@ -279,14 +288,14 @@ def check(native, game_dir, art, tough, workdir):
     empty = workdir / "empty-user"
     empty.mkdir()
     missing = play("missing", empty, recorded, [], 1)
-    require_output(missing, [MISSING], ["Offline match world prepared"], "missing")
+    require_output(missing, [MISSING], BEFORE_MATCH, "missing")
 
     changed = workdir / "changed-user"
     shutil.copytree(user, changed)
     origin = changed / "Mutators" / "ridge-art-a" / ".oa-origin.yaml"
     origin.write_text(origin_text("1" * 64), encoding="utf-8")
     different = play("different", changed, recorded, [], 1)
-    require_output(different, [DIFFERENT], [], "different")
+    require_output(different, [DIFFERENT], BEFORE_MATCH, "different")
 
     broken = workdir / "broken.tad"
     data = recorded.read_bytes()
@@ -295,13 +304,22 @@ def check(native, game_dir, art, tough, workdir):
         raise ReplayMutatorsFailure("the recording does not hold one oaloadout field")
     broken.write_bytes(data.replace(old, b'"oaloadout":2', 1))
     unread = play("unreadable", user, broken, [], 1)
-    require_output(unread, [UNREADABLE], [], "unreadable")
+    require_output(unread, [UNREADABLE], BEFORE_MATCH, "unreadable")
 
     none = play("none", user, plain, ["--mutator", "ridge-tough"], 0)
     if count_line(none, "demo mutators: 0 applied") != 1:
         raise ReplayMutatorsFailure("a recording without the sector applied mutators")
     if any("mutators: applied" in line for line in none.splitlines()):
         raise ReplayMutatorsFailure("a recording without the sector logged an applied mutator")
+
+    refused = play("no-mutators", user, recorded, ["--no-mutators"], 1)
+    require_output(refused, [PLAYED_NONE], BEFORE_MATCH, "no-mutators")
+
+    played_none = play(
+        "no-mutators-plain", user, plain, ["--no-mutators", "--mutator", "ridge-tough"], 0
+    )
+    if count_line(played_none, "demo mutators: 0 applied") != 1:
+        raise ReplayMutatorsFailure("a run that plays none applied a recorded mutator")
 
 
 def main():
@@ -322,8 +340,8 @@ def main():
             print(f"replay mutators check: {failure}", file=sys.stderr)
             return 1
     print("replay mutators check: a recording carries the loadout, playback applies it, "
-          "and a missing package, another package, an unreadable sector and a recording "
-          "without the sector do what they should")
+          "and a missing package, another package, an unreadable sector, a recording "
+          "without the sector and a run that plays none do what they should")
     return 0
 
 

@@ -235,12 +235,20 @@ void Runtime::check_replay_loadout() {
     if (entered)
         fail("ridge-commander-boom started a match");
     cancel_loadout_once();
+    expect_ids(chosen_ids(*this), player, "the choice after a cancelled start");
     while (oa::ui::frontend_dialogs::dialog_count() != 0)
         oa::ui::frontend_dialogs::close_dialog();
     back_to_menu();
     start_benchmark_skirmish();
     expect_ids(loadout_ids(*this), player, "the match after the cancelled start");
     expect_ids(chosen_ids(*this), player, "the choice after the cancelled start");
+    back_to_menu();
+
+    play_loadout_once({supplied[1]});
+    cancel_loadout_once();
+    expect_ids(chosen_ids(*this), player, "the choice after a cancel before the start");
+    start_benchmark_skirmish();
+    expect_ids(loadout_ids(*this), player, "the match after a cancel before the start");
     back_to_menu();
     std::cout << "replay loadout check: passed\n";
 }
