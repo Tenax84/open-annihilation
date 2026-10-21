@@ -167,36 +167,6 @@ std::optional<library::Kind> kind_of(const package_install::PackageKind* kind) {
     return std::nullopt;
 }
 
-/// Returns where a queued download stands, as the Library's queue line
-/// says it.
-///
-/// @param state the queue's state
-/// @return the phase; nothing for a cancelled item, which the Library leaves out
-std::optional<library::QueueItem::Phase> phase_of(content::DownloadState state) noexcept {
-    using Phase = library::QueueItem::Phase;
-    switch (state) {
-    case content::DownloadState::waiting:
-    case content::DownloadState::asking:
-    case content::DownloadState::challenge:
-    case content::DownloadState::paused_for_match:
-        return Phase::waiting;
-    case content::DownloadState::downloading:
-        return Phase::downloading;
-    case content::DownloadState::verifying:
-        return Phase::verifying;
-    case content::DownloadState::handing_over:
-    case content::DownloadState::installing:
-        return Phase::installing;
-    case content::DownloadState::failed:
-        return Phase::failed;
-    case content::DownloadState::done:
-        return Phase::installed;
-    case content::DownloadState::cancelled:
-        return std::nullopt;
-    }
-    return std::nullopt;
-}
-
 /// Tells whether a queued download has ended: installed, failed or cancelled.
 ///
 /// @param state the queue's state
@@ -456,82 +426,6 @@ ModBadge read_limited_badge(const std::filesystem::path& path) {
     if (failed || bytes.empty())
         return {};
     return read_mod_badge(bytes);
-}
-
-/// Copies a mutator manifest's facts. Names stay empty for the main thread.
-///
-/// @param manifest the installed manifest
-/// @return the facts
-library::MutatorFacts facts_of(const formats::oamut::Manifest& manifest) {
-    library::MutatorFacts facts;
-    facts.tags = manifest.tags;
-    for (const formats::oamut::Condition& condition : manifest.works_with) {
-        library::WorksWith item;
-        item.id = condition.id;
-        item.range = condition.range_text;
-        facts.works_with.push_back(std::move(item));
-    }
-    for (const formats::oamut::Condition& condition : manifest.requires_mutators) {
-        library::Prerequisite need;
-        need.id = condition.id;
-        need.range = condition.range_text;
-        facts.needs.push_back(std::move(need));
-    }
-    for (const formats::oamut::Condition& condition : manifest.conflicts_with)
-        facts.conflicts.push_back(condition.id);
-    for (const formats::oamut::Layer layer : manifest.layers)
-        facts.layers.emplace_back(formats::oamut::layer_name(layer));
-    for (const formats::oamut::Option& option : manifest.options) {
-        library::OptionLine line;
-        line.label = option.label;
-        if (!option.value_labels.empty())
-            line.values = option.value_labels;
-        else
-            for (const formats::oamut::ChoiceValue& value : option.values)
-                line.values.push_back(value.text);
-        facts.options.push_back(std::move(line));
-    }
-    return facts;
-}
-
-/// Copies a catalogue mutator's facts. Names stay empty for the main thread.
-///
-/// @param package the catalogue entry
-/// @return the facts
-library::MutatorFacts facts_of(const data::catalogue::Package& package) {
-    library::MutatorFacts facts;
-    facts.tags = package.tags;
-    for (const std::string& written : package.works_with) {
-        const std::optional<formats::oamut::Condition> condition =
-            formats::oamut::parse_condition(written);
-        if (!condition)
-            continue;
-        library::WorksWith item;
-        item.id = condition->id;
-        item.range = condition->range_text;
-        facts.works_with.push_back(std::move(item));
-    }
-    for (const data::catalogue::MutatorRequirement& requirement : package.requires_mutators) {
-        library::Prerequisite need;
-        need.id = requirement.id;
-        need.range = requirement.range_text;
-        facts.needs.push_back(std::move(need));
-    }
-    for (const data::catalogue::MutatorRequirement& requirement : package.conflicts_with)
-        facts.conflicts.push_back(requirement.id);
-    for (const formats::oamut::Layer layer : package.layers)
-        facts.layers.emplace_back(formats::oamut::layer_name(layer));
-    for (const data::catalogue::OptionSummary& option : package.options) {
-        library::OptionLine line;
-        line.label = option.label;
-        if (!option.value_labels.empty())
-            line.values = option.value_labels;
-        else
-            for (const data::catalogue::ChoiceValueText& value : option.values)
-                line.values.push_back(value.text);
-        facts.options.push_back(std::move(line));
-    }
-    return facts;
 }
 
 /// Finds the installed mutator whose folder is a package's folder.

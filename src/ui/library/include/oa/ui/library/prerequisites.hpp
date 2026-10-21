@@ -120,6 +120,26 @@ struct GetPlan {
 /// @return the plan
 [[nodiscard]] GetPlan get_plan(const Library& library, const Entry& entry);
 
+/// The listing a package is downloaded from.
+///
+/// `preferred` wins when one of its listings meets the ranges, then a
+/// registry that ships with the game, then the lowest registry id. Within
+/// that set the newest release wins. An empty `preferred` skips the first
+/// pool, which is how a row with no parent registry is chosen. This is the
+/// listing rule `get_plan` uses.
+///
+/// @param library the Library
+/// @param preferred the registry to prefer; empty skips that pool
+/// @param id the package key
+/// @param ranges the ranges the version must meet; empty is any version
+/// @return the listing, or null when none meets the ranges
+[[nodiscard]] const Listing* choose_listing(
+    const Library& library,
+    std::string_view preferred,
+    std::string_view id,
+    const std::vector<std::string>& ranges
+);
+
 /// The question's CANCEL button's name to automation. It is marked at first
 /// and queues nothing.
 inline constexpr std::string_view get_with_cancel_id = "cancel";

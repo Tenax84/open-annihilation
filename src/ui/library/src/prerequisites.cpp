@@ -559,59 +559,6 @@ bool newer_listing(const Listing& candidate, const Listing& chosen) {
     return candidate.registry < chosen.registry;
 }
 
-/// The listing a prerequisite is downloaded from.
-///
-/// The entry's own registry wins, then a registry that ships with the game,
-/// then the lowest registry id. Within that set the newest release wins.
-///
-/// @param library the Library
-/// @param entry the entry being got
-/// @param id the prerequisite's key
-/// @param ranges the ranges it must meet
-/// @return the listing, or null when none meets the ranges
-const Listing* choose_listing(
-    const Library& library,
-    const Entry& entry,
-    std::string_view id,
-    const std::vector<std::string>& ranges
-) {
-    std::vector<const Listing*> meeting;
-    for (const Listing& listing : library.inputs.listings) {
-        if (listing.kind == Kind::mutator && listing.key == id && listing_meets(listing, ranges))
-            meeting.push_back(&listing);
-    }
-    if (meeting.empty())
-        return nullptr;
-    std::vector<const Listing*> own;
-    std::vector<const Listing*> built_in;
-    for (const Listing* listing : meeting) {
-        if (listing->registry == entry.id.registry)
-            own.push_back(listing);
-        const Registry* registry = find_registry(library, listing->registry);
-        if (registry != nullptr && registry->built_in)
-            built_in.push_back(listing);
-    }
-    std::vector<const Listing*> pool;
-    if (!own.empty())
-        pool = std::move(own);
-    else if (!built_in.empty())
-        pool = std::move(built_in);
-    else {
-        std::string lowest = meeting.front()->registry;
-        for (const Listing* listing : meeting)
-            if (listing->registry < lowest)
-                lowest = listing->registry;
-        for (const Listing* listing : meeting)
-            if (listing->registry == lowest)
-                pool.push_back(listing);
-    }
-    const Listing* chosen = pool.front();
-    for (const Listing* listing : pool)
-        if (listing != chosen && newer_listing(*listing, *chosen))
-            chosen = listing;
-    return chosen;
-}
-
 /// The first tag id a listing or an installed copy names.
 ///
 /// @param listing the listing; may be null
@@ -865,6 +812,49 @@ std::string name_and_range(
 
 } // namespace
 
+const Listing* choose_listing(
+    const Library& library,
+    std::string_view preferred,
+    std::string_view id,
+    const std::vector<std::string>& ranges
+) {
+    std::vector<const Listing*> meeting;
+    for (const Listing& listing : library.inputs.listings) {
+        if (listing.kind == Kind::mutator && listing.key == id && listing_meets(listing, ranges))
+            meeting.push_back(&listing);
+    }
+    if (meeting.empty())
+        return nullptr;
+    std::vector<const Listing*> own;
+    std::vector<const Listing*> built_in;
+    for (const Listing* listing : meeting) {
+        if (!preferred.empty() && listing->registry == preferred)
+            own.push_back(listing);
+        const Registry* registry = find_registry(library, listing->registry);
+        if (registry != nullptr && registry->built_in)
+            built_in.push_back(listing);
+    }
+    std::vector<const Listing*> pool;
+    if (!own.empty())
+        pool = std::move(own);
+    else if (!built_in.empty())
+        pool = std::move(built_in);
+    else {
+        std::string lowest = meeting.front()->registry;
+        for (const Listing* listing : meeting)
+            if (listing->registry < lowest)
+                lowest = listing->registry;
+        for (const Listing* listing : meeting)
+            if (listing->registry == lowest)
+                pool.push_back(listing);
+    }
+    const Listing* chosen = pool.front();
+    for (const Listing* listing : pool)
+        if (listing != chosen && newer_listing(*listing, *chosen))
+            chosen = listing;
+    return chosen;
+}
+
 std::vector<Need> needs_of(const Library& library) {
     std::vector<Need> graph;
     for (const Entry& entry : library.entries) {
@@ -941,7 +931,7 @@ GetPlan get_plan(const Library& library, const Entry& entry) {
         const std::vector<std::string>& asked = ranges[id];
         if (installed_in_ranges(library, id, asked))
             continue;
-        const Listing* listing = choose_listing(library, entry, id, asked);
+        const Listing* listing = choose_listing(library, entry.id.registry, id, asked);
         if (listing == nullptr) {
             const std::string name =
                 display_name(names[id], nullptr, installed_of(library, id), id);

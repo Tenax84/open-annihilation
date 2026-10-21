@@ -12,6 +12,7 @@
 #include "oa/formats/oamod/package_keys.hpp"
 #include "oa/ui/library/library.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <string>
@@ -752,6 +753,24 @@ using Place = std::pair<std::string_view, std::string_view>;
 /// @return the text
 [[nodiscard]] std::string
 filled(const TextHooks& text, std::string_view pattern, std::initializer_list<Place> places);
+
+/// Joins names the way a sentence lists them, through names_comma and names_and.
+///
+/// @param text how texts are looked up
+/// @param names the names, in order
+/// @return the list; empty when `names` is empty
+[[nodiscard]] inline std::string
+join_names(const TextHooks& text, const std::vector<std::string>& names) {
+    if (names.empty())
+        return {};
+    if (names.size() == 1)
+        return names.front();
+    std::string joined = names.front();
+    for (std::size_t index = 1; index + 1 < names.size(); ++index) {
+        joined = filled(text, words::names_comma, {{"left", joined}, {"right", names[index]}});
+    }
+    return filled(text, words::names_and, {{"left", joined}, {"right", names.back()}});
+}
 
 /// Writes a size in binary units.
 ///

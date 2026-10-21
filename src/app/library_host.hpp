@@ -18,7 +18,9 @@
 #include "oa/app/runtime.hpp"
 #include "oa/base/threads.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
+#include "oa/data/catalogue/catalogue.hpp"
 #include "oa/data/mutators/verdicts.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/ui/library/library.hpp"
 #include "oa/ui/library/screen.hpp"
 
@@ -398,6 +400,112 @@ struct Runtime::LibraryHost {
     /// @return true for a registry that ships with the game
     static bool own_built_in(void* context, std::string_view registry);
 };
+
+/// Returns where a queued download stands, as the Library's queue line says it.
+///
+/// @param state the queue's state
+/// @return the phase; nothing for a cancelled item, which the lists leave out
+inline std::optional<oa::ui::library::QueueItem::Phase>
+phase_of(content::DownloadState state) noexcept {
+    using Phase = oa::ui::library::QueueItem::Phase;
+    switch (state) {
+    case content::DownloadState::waiting:
+    case content::DownloadState::asking:
+    case content::DownloadState::challenge:
+    case content::DownloadState::paused_for_match:
+        return Phase::waiting;
+    case content::DownloadState::downloading:
+        return Phase::downloading;
+    case content::DownloadState::verifying:
+        return Phase::verifying;
+    case content::DownloadState::handing_over:
+    case content::DownloadState::installing:
+        return Phase::installing;
+    case content::DownloadState::failed:
+        return Phase::failed;
+    case content::DownloadState::done:
+        return Phase::installed;
+    case content::DownloadState::cancelled:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+/// Copies a mutator manifest's facts. Names stay empty for the caller to fill.
+///
+/// @param manifest the installed manifest
+/// @return the facts
+inline oa::ui::library::MutatorFacts facts_of(const oa::formats::oamut::Manifest& manifest) {
+    oa::ui::library::MutatorFacts facts;
+    facts.tags = manifest.tags;
+    for (const oa::formats::oamut::Condition& condition : manifest.works_with) {
+        oa::ui::library::WorksWith item;
+        item.id = condition.id;
+        item.range = condition.range_text;
+        facts.works_with.push_back(std::move(item));
+    }
+    for (const oa::formats::oamut::Condition& condition : manifest.requires_mutators) {
+        oa::ui::library::Prerequisite need;
+        need.id = condition.id;
+        need.range = condition.range_text;
+        facts.needs.push_back(std::move(need));
+    }
+    for (const oa::formats::oamut::Condition& condition : manifest.conflicts_with)
+        facts.conflicts.push_back(condition.id);
+    for (const oa::formats::oamut::Layer layer : manifest.layers)
+        facts.layers.emplace_back(oa::formats::oamut::layer_name(layer));
+    for (const oa::formats::oamut::Option& option : manifest.options) {
+        oa::ui::library::OptionLine line;
+        line.label = option.label;
+        if (!option.value_labels.empty())
+            line.values = option.value_labels;
+        else
+            for (const oa::formats::oamut::ChoiceValue& value : option.values)
+                line.values.push_back(value.text);
+        facts.options.push_back(std::move(line));
+    }
+    return facts;
+}
+
+/// Copies a catalogue mutator's facts. Names stay empty for the caller to fill.
+///
+/// @param package the catalogue entry
+/// @return the facts
+inline oa::ui::library::MutatorFacts facts_of(const oa::data::catalogue::Package& package) {
+    oa::ui::library::MutatorFacts facts;
+    facts.tags = package.tags;
+    for (const std::string& written : package.works_with) {
+        const std::optional<oa::formats::oamut::Condition> condition =
+            oa::formats::oamut::parse_condition(written);
+        if (!condition)
+            continue;
+        oa::ui::library::WorksWith item;
+        item.id = condition->id;
+        item.range = condition->range_text;
+        facts.works_with.push_back(std::move(item));
+    }
+    for (const oa::data::catalogue::MutatorRequirement& requirement : package.requires_mutators) {
+        oa::ui::library::Prerequisite need;
+        need.id = requirement.id;
+        need.range = requirement.range_text;
+        facts.needs.push_back(std::move(need));
+    }
+    for (const oa::data::catalogue::MutatorRequirement& requirement : package.conflicts_with)
+        facts.conflicts.push_back(requirement.id);
+    for (const oa::formats::oamut::Layer layer : package.layers)
+        facts.layers.emplace_back(oa::formats::oamut::layer_name(layer));
+    for (const oa::data::catalogue::OptionSummary& option : package.options) {
+        oa::ui::library::OptionLine line;
+        line.label = option.label;
+        if (!option.value_labels.empty())
+            line.values = option.value_labels;
+        else
+            for (const oa::data::catalogue::ChoiceValueText& value : option.values)
+                line.values.push_back(value.text);
+        facts.options.push_back(std::move(line));
+    }
+    return facts;
+}
 
 /// Returns the Library's tab a tab of the settings dialog names.
 ///

@@ -880,24 +880,36 @@ match starts.
   runtime's own feed, installed the first time the picker opens, lists the
   installed mutators (`list_installed`) and the catalogues' mutator entries,
   with each one's download, its badge, and why it cannot be switched on
-  here. Every verdict stays unchecked and `check` stays null, so no chip
-  shows. A check replaces the feed with `set_mutator_picker_feed` and puts
-  the runtime's back with `restore_mutator_picker_feed`. Switching on a
-  mutator that is not installed queues it and the prerequisites it lacks
-  (`get_plan` on the runtime's own catalogue; the listing itself when a
-  check's feed has none). A refusal switches it off and the row reads why.
-  Changing an option asks `check` again, and the row reads the checking
-  words until a later list brings the verdict.
+  here. That list is rebuilt when the catalogues change, when the picture
+  cache changes, or when a download ends, fails or is cancelled. Byte
+  progress does not rebuild it: each frame reads the queue and updates the
+  rows already shown. An icon that failed to decode is remembered for the
+  rest of the opening and is not read again. Every verdict stays unchecked
+  and `check` stays null, so no chip shows. A check replaces the feed with
+  `set_mutator_picker_feed` and puts the runtime's back with
+  `restore_mutator_picker_feed`. Switching on a mutator that is not
+  installed queues it and the prerequisites it lacks (`get_plan` on the
+  runtime's own catalogue; the listing itself when a check's feed has
+  none). USE THESE does the same for every On mutator that is not installed
+  yet, and hands the set back once they are. A refusal switches it off and
+  the row reads why. Becoming On, changing an option, or a download
+  finishing asks `check` again, and the row reads the checking words until
+  a later list brings the verdict.
 - **Turn off.** Switching off a prerequisite asks "Turn off X?" over the
-  picker, pushed at once. TURN OFF turns it and what needs it off, and
-  cancels a download that is still waiting. CANCEL leaves them on.
+  picker, pushed at once. TURN OFF turns it and what needs it off. Switching
+  a mutator off, by its switch or by that question, cancels a download that
+  is still waiting. CANCEL on the question leaves them on.
 - **The check.** `native-mutator-picker` (`--check-mutator-picker`,
   `runtime_mutator_picker_check.cpp`) turns every built-in registry off and
   at 640x480, 1280x720, 1920x1080 and 2560x1440 opens the picker over the
   main menu on a feed of made-up mutators. It requires the size class, the
   mended On order, every row's grip and switch, one download with the
-  waiting words, the turn-off question, a drag, the set USE THESE hands
-  back, CANCEL handing nothing, and the verdict chip. It writes each size's
+  waiting words, that download's cancel, one more check when it installs
+  and when an installed mutator is switched on, the turn-off question, a
+  drag, the set USE THESE hands back, USE THESE fetching an On mutator that
+  is not installed, CANCEL handing nothing, and the verdict chip. At
+  2560x1440 it restores the runtime's own feed on a mutator written into
+  the check's folder, in English and in German. It writes each size's
   opening frame as `mutator-picker-<w>x<h>.png`. `--check-text-fit` paints
   the same screen, its details, the waiting line, the question and the
   read-only footer in every language. A FIXTURES_SETUP test

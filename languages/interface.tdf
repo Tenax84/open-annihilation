@@ -6594,6 +6594,14 @@
 	it=Non in linea;
 	}
 
+[On]
+	{
+	de=An;
+	fr=Marche;
+	es=Encendido;
+	it=Acceso;
+	}
+
 [On/Off: tap to switch the selected units on or off.]
 	{
 	de=An/Aus: tippe, um die gewählten Einheiten an- oder auszuschalten.;

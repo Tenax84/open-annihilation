@@ -177,111 +177,6 @@ ModBadge read_limited_badge(const std::filesystem::path& path) {
     return read_mod_badge(bytes);
 }
 
-/// Returns where a queued download stands, as the Library's queue line says it.
-///
-/// @param state the queue's state
-/// @return the phase; nothing for a cancelled item, which the picker leaves out
-std::optional<library::QueueItem::Phase> phase_of(content::DownloadState state) noexcept {
-    using Phase = library::QueueItem::Phase;
-    switch (state) {
-    case content::DownloadState::waiting:
-    case content::DownloadState::asking:
-    case content::DownloadState::challenge:
-    case content::DownloadState::paused_for_match:
-        return Phase::waiting;
-    case content::DownloadState::downloading:
-        return Phase::downloading;
-    case content::DownloadState::verifying:
-        return Phase::verifying;
-    case content::DownloadState::handing_over:
-    case content::DownloadState::installing:
-        return Phase::installing;
-    case content::DownloadState::failed:
-        return Phase::failed;
-    case content::DownloadState::done:
-        return Phase::installed;
-    case content::DownloadState::cancelled:
-        return std::nullopt;
-    }
-    return std::nullopt;
-}
-
-/// Copies a mutator manifest's facts.
-///
-/// @param manifest the installed manifest
-/// @return the facts
-library::MutatorFacts facts_of(const formats::oamut::Manifest& manifest) {
-    library::MutatorFacts facts;
-    facts.tags = manifest.tags;
-    for (const formats::oamut::Condition& condition : manifest.works_with) {
-        library::WorksWith item;
-        item.id = condition.id;
-        item.range = condition.range_text;
-        facts.works_with.push_back(std::move(item));
-    }
-    for (const formats::oamut::Condition& condition : manifest.requires_mutators) {
-        library::Prerequisite need;
-        need.id = condition.id;
-        need.range = condition.range_text;
-        facts.needs.push_back(std::move(need));
-    }
-    for (const formats::oamut::Condition& condition : manifest.conflicts_with)
-        facts.conflicts.push_back(condition.id);
-    for (const formats::oamut::Layer layer : manifest.layers)
-        facts.layers.emplace_back(formats::oamut::layer_name(layer));
-    for (const formats::oamut::Option& option : manifest.options) {
-        library::OptionLine line;
-        line.label = option.label;
-        if (!option.value_labels.empty())
-            line.values = option.value_labels;
-        else
-            for (const formats::oamut::ChoiceValue& value : option.values)
-                line.values.push_back(value.text);
-        facts.options.push_back(std::move(line));
-    }
-    return facts;
-}
-
-/// Copies a catalogue mutator's facts.
-///
-/// @param package the catalogue entry
-/// @return the facts
-library::MutatorFacts facts_of(const data::catalogue::Package& package) {
-    library::MutatorFacts facts;
-    facts.tags = package.tags;
-    for (const std::string& written : package.works_with) {
-        const std::optional<formats::oamut::Condition> condition =
-            formats::oamut::parse_condition(written);
-        if (!condition)
-            continue;
-        library::WorksWith item;
-        item.id = condition->id;
-        item.range = condition->range_text;
-        facts.works_with.push_back(std::move(item));
-    }
-    for (const data::catalogue::MutatorRequirement& requirement : package.requires_mutators) {
-        library::Prerequisite need;
-        need.id = requirement.id;
-        need.range = requirement.range_text;
-        facts.needs.push_back(std::move(need));
-    }
-    for (const data::catalogue::MutatorRequirement& requirement : package.conflicts_with)
-        facts.conflicts.push_back(requirement.id);
-    for (const formats::oamut::Layer layer : package.layers)
-        facts.layers.emplace_back(formats::oamut::layer_name(layer));
-    for (const data::catalogue::OptionSummary& option : package.options) {
-        library::OptionLine line;
-        line.label = option.label;
-        if (!option.value_labels.empty())
-            line.values = option.value_labels;
-        else
-            for (const data::catalogue::ChoiceValueText& value : option.values)
-                line.values.push_back(value.text);
-        facts.options.push_back(std::move(line));
-    }
-    return facts;
-}
-
 /// The names a manifest's translations give, filled along the fallback chain.
 struct ResolvedStrings {
     std::string name{};
@@ -330,118 +225,6 @@ ResolvedStrings resolve_strings(const std::vector<formats::oamut::Translation>& 
     return resolved;
 }
 
-/// Tells whether a listing's version meets every range.
-///
-/// @param listing the listing
-/// @param ranges the ranges as written
-/// @return true when it does; an empty range list is any version
-bool listing_meets(const library::Listing& listing, const std::vector<std::string>& ranges) {
-    for (const std::string& range_text : ranges) {
-        if (range_text.empty())
-            continue;
-        const std::optional<formats::oamut::VersionRange> range =
-            formats::oamut::parse_version_range(range_text);
-        if (!range)
-            return false;
-        const std::optional<formats::oamut::Version> version =
-            formats::oamut::parse_version(listing.version);
-        if (!version || !formats::oamut::version_in_range(*range, *version))
-            return false;
-    }
-    return true;
-}
-
-/// Tells whether `candidate` is a newer offer than `chosen`.
-///
-/// A higher release wins, then a higher version, then a lower registry id.
-///
-/// @param candidate the listing being considered
-/// @param chosen the listing kept so far
-/// @return true when `candidate` should replace `chosen`
-bool newer_listing(const library::Listing& candidate, const library::Listing& chosen) {
-    if (candidate.release != chosen.release)
-        return candidate.release > chosen.release;
-    const std::optional<formats::oamut::Version> candidate_version =
-        formats::oamut::parse_version(candidate.version);
-    const std::optional<formats::oamut::Version> chosen_version =
-        formats::oamut::parse_version(chosen.version);
-    if (candidate_version && chosen_version && *candidate_version != *chosen_version)
-        return *candidate_version > *chosen_version;
-    if (candidate_version && !chosen_version)
-        return true;
-    if (!candidate_version && chosen_version)
-        return false;
-    return candidate.registry < chosen.registry;
-}
-
-/// The listing a mutator row is taken from.
-///
-/// No parent registry is preferred: a registry that ships with the game
-/// wins, else the lowest registry id. Within that set the newest release
-/// wins. This is the rule get_plan uses for a prerequisite, with an empty
-/// parent registry so the "own registry" pool is empty.
-///
-/// @param listings the catalogue listings
-/// @param registries the registries, for which of them ship with the game
-/// @param key the mutator's id
-/// @return the listing, or null when none lists it
-const library::Listing* choose_root_listing(
-    const std::vector<library::Listing>& listings,
-    const std::vector<library::Registry>& registries,
-    std::string_view key
-) {
-    std::vector<const library::Listing*> meeting;
-    for (const library::Listing& listing : listings)
-        if (listing.kind == library::Kind::mutator && listing.key == key &&
-            listing_meets(listing, {}))
-            meeting.push_back(&listing);
-    if (meeting.empty())
-        return nullptr;
-    std::vector<const library::Listing*> built_in;
-    for (const library::Listing* listing : meeting) {
-        for (const library::Registry& registry : registries)
-            if (registry.id == listing->registry && registry.built_in)
-                built_in.push_back(listing);
-    }
-    std::vector<const library::Listing*> pool;
-    if (!built_in.empty()) {
-        pool = std::move(built_in);
-    } else {
-        std::string lowest = meeting.front()->registry;
-        for (const library::Listing* listing : meeting)
-            if (listing->registry < lowest)
-                lowest = listing->registry;
-        for (const library::Listing* listing : meeting)
-            if (listing->registry == lowest)
-                pool.push_back(listing);
-    }
-    const library::Listing* chosen = pool.front();
-    for (const library::Listing* listing : pool)
-        if (listing != chosen && newer_listing(*listing, *chosen))
-            chosen = listing;
-    return chosen;
-}
-
-/// Joins names as a sentence lists them.
-///
-/// @param text how texts are looked up
-/// @param names the names
-/// @return the list; empty when there are none
-std::string join_names(const library::TextHooks& text, const std::vector<std::string>& names) {
-    if (names.empty())
-        return {};
-    if (names.size() == 1)
-        return names.front();
-    std::string joined = names.front();
-    for (std::size_t index = 1; index + 1 < names.size(); ++index)
-        joined = library::filled(
-            text, library::words::names_comma, {{"left", joined}, {"right", names[index]}}
-        );
-    return library::filled(
-        text, library::words::names_and, {{"left", joined}, {"right", names.back()}}
-    );
-}
-
 /// The mods a mutator works with, in words.
 ///
 /// `*` means any mod, and then the text stays empty so the details say so.
@@ -469,7 +252,7 @@ std::string works_with_names(
         else
             names.push_back(item.id);
     }
-    return join_names(text, names);
+    return library::join_names(text, names);
 }
 
 /// Why a mutator cannot be switched on: the engine, else works-with.
@@ -712,17 +495,28 @@ registry_of(const content::Snapshot& snapshot, std::string_view registry) {
 
 /// The latest queued download of a mutator, when one has not finished.
 ///
+/// A row that names a listing registry only matches a download of that
+/// registry. A row with none matches on the key alone.
+///
 /// @param downloads the queue, copied off view()
 /// @param key the package key
+/// @param registry the row's listing registry; empty matches any
 /// @param name the name a player sees
 /// @return the item; nothing when none is queued, or it installed or was cancelled
 std::optional<library::QueueItem> queued_item(
-    const std::vector<content::DownloadView>& downloads, std::string_view key, std::string name
+    const std::vector<content::DownloadView>& downloads,
+    std::string_view key,
+    std::string_view registry,
+    std::string name
 ) {
     const content::DownloadView* latest = nullptr;
-    for (const content::DownloadView& item : downloads)
-        if (item.target.key == key && item.target.kind == data::catalogue::Kind::oamut)
-            latest = &item;
+    for (const content::DownloadView& item : downloads) {
+        if (item.target.key != key || item.target.kind != data::catalogue::Kind::oamut)
+            continue;
+        if (!registry.empty() && item.target.registry != registry)
+            continue;
+        latest = &item;
+    }
     if (latest == nullptr)
         return std::nullopt;
     const std::optional<library::QueueItem::Phase> phase = phase_of(latest->state);
@@ -756,6 +550,8 @@ struct Runtime::MutatorPickerState {
     std::deque<library::Badge> badges{};
     /// Which badge a mutator id already has, so an icon is not read twice.
     std::map<std::string, std::size_t> badge_index{};
+    /// Icons that failed to decode this opening, so they are not read again.
+    std::set<std::string> badge_failed{};
 
     /// One download the picker queued.
     struct Tracked {
@@ -938,9 +734,7 @@ picker::Inputs build_own_inputs(
         for (const data::mutator_library::InstalledMutator& one : installed.mutators)
             if (one.manifest.id == id)
                 installed_one = &one;
-        const library::Listing* listing = choose_root_listing(
-            state.library->inputs.listings, state.library->inputs.registries, id
-        );
+        const library::Listing* listing = library::choose_listing(*state.library, {}, id, {});
         const data::catalogue::Package* package = nullptr;
         std::string picture_url;
         if (snapshot != nullptr && listing != nullptr) {
@@ -1018,15 +812,20 @@ picker::Inputs build_own_inputs(
             mutator.listing = library::EntryId{
                 installed_one->registry, library::Kind::mutator, installed_one->catalogue_id
             };
-        mutator.queued = queued_item(downloads, id, mutator.name);
+        mutator.queued = queued_item(downloads, id, mutator.listing.registry, mutator.name);
 
         if (const library::Badge* badge = cached_badge(state, id)) {
             mutator.badge = badge;
-        } else if (installed_one != nullptr && !installed_one->manifest.icon.empty()) {
+        } else if (
+            !state.badge_failed.contains(id) && installed_one != nullptr &&
+            !installed_one->manifest.icon.empty()
+        ) {
             if (std::optional<library::Badge> decoded = badge_of(
                     read_limited_badge(installed_one->folder / installed_one->manifest.icon)
                 ))
                 mutator.badge = keep_badge(state, id, std::move(*decoded));
+            else
+                state.badge_failed.emplace(id);
         }
         if (mutator.badge == nullptr && !picture_url.empty() && listing != nullptr) {
             pictures.ask_cached_picture(listing->registry, picture_url);
@@ -1053,36 +852,22 @@ picker::Inputs build_own_inputs(
 
 } // namespace
 
-picker::Inputs Runtime::own_picker_inputs(void* context, picker::Setup /*setup*/) {
-    Runtime& runtime = *static_cast<Runtime*>(context);
-    if (runtime.mutator_picker_ == nullptr)
-        runtime.mutator_picker_.reset(new MutatorPickerState{});
-    PlayedReading played;
-    played.playing = runtime.plays_mod();
-    if (played.playing) {
-        if (const oa::data::mod_profile::ModProfile* profile = runtime.mod_profile()) {
-            played.id = profile->id;
-            played.name = profile->name;
-            played.version = profile->version;
-        }
-        played.folder_name = path_to_utf8(runtime.played_mod_folder().filename());
-    }
-    const std::shared_ptr<const content::Snapshot> snapshot = runtime.content_service().snapshot();
-    const std::vector<content::DownloadView> downloads = runtime.content_downloads().view();
-    const std::filesystem::path folder =
-        runtime.user_folder() / std::string(data::mutator_library::mutators_folder_name);
-    return build_own_inputs(
-        *runtime.mutator_picker_, runtime.library_host(), snapshot.get(), downloads, folder, played
-    );
-}
-
 uint64_t Runtime::own_picker_generation(void* context) {
     Runtime& runtime = *static_cast<Runtime*>(context);
-    uint64_t generation = runtime.content_service().generation();
-    generation += runtime.content_downloads().generation();
+    // Done, failed and cancelled items. Byte progress moves the queue's own
+    // generation and is left out, so a download does not rebuild this list
+    // on every frame.
+    uint64_t ended = 0;
+    for (const content::DownloadView& item : runtime.content_downloads().view()) {
+        const content::DownloadState state = item.state;
+        if (state == content::DownloadState::done || state == content::DownloadState::failed ||
+            state == content::DownloadState::cancelled)
+            ++ended;
+    }
+    uint64_t pictures = 0;
     if (runtime.library_ != nullptr && runtime.library_->work.pictures != nullptr)
-        generation += runtime.library_->work.pictures->generation();
-    return generation;
+        pictures = runtime.library_->work.pictures->generation();
+    return runtime.content_service().generation() + pictures + ended;
 }
 
 std::optional<uint64_t> Runtime::own_picker_enqueue(
@@ -1231,14 +1016,25 @@ struct Runtime::MutatorPickerScreen final : LayerScreen {
             runtime_.screen_ == Screen::match)
             return LayerAnswer::close;
         const MutatorPickerFeed& feed = runtime_.mutator_picker_feed_;
+        std::vector<std::string> just_installed;
+        bool changed = follow_downloads(just_installed);
         uint64_t generation = seen_generation_;
         if (feed.generation != nullptr)
             generation = feed.generation(feed.context);
-        bool changed = false;
         if (generation != seen_generation_) {
             seen_generation_ = generation;
             reload();
             changed = true;
+        }
+        for (const std::string& id : just_installed) {
+            bool still_tracked = false;
+            if (runtime_.mutator_picker_ != nullptr) {
+                for (const MutatorPickerState::Tracked& track : runtime_.mutator_picker_->tracked)
+                    if (track.id == id)
+                        still_tracked = true;
+            }
+            if (still_tracked)
+                check_installed(id);
         }
         if (update_waiting())
             changed = true;
@@ -1251,6 +1047,12 @@ struct Runtime::MutatorPickerScreen final : LayerScreen {
     [[nodiscard]] uint64_t revision() const override { return revision_; }
 
     void close(bool /*by_key*/) override;
+
+    /// The mod being played, read for one build of the list.
+    ///
+    /// @param runtime the runtime
+    /// @return the reading
+    [[nodiscard]] static PlayedReading read_played(const Runtime& runtime);
 
   private:
 
@@ -1266,8 +1068,19 @@ struct Runtime::MutatorPickerScreen final : LayerScreen {
     /// Reads the feed again, keeping the On list.
     void reload();
 
-    /// Asks for a check of each On mutator whose verdict has not arrived.
+    /// Asks once for each On mutator whose verdict is still unchecked.
     void ask_open_checks();
+
+    /// Asks again for a mutator whose download has just installed.
+    ///
+    /// @param id the mutator's id
+    void check_installed(const std::string& id);
+
+    /// Updates tracked rows from the queue. Names a download that just installed.
+    ///
+    /// @param[out] installed those mutators
+    /// @return true when a tracked row's download changed
+    bool follow_downloads(std::vector<std::string>& installed);
 
     /// Asks for a check after an option or a clash mode changed.
     ///
@@ -1383,7 +1196,37 @@ struct Runtime::MutatorPickerScreen final : LayerScreen {
     std::vector<std::string> pending_{};
     /// An option change asked again, until a later list brings a resolved verdict.
     std::vector<std::string> forced_{};
+    /// Mutators already asked again because their download installed.
+    std::vector<std::string> install_checked_{};
 };
+
+PlayedReading Runtime::MutatorPickerScreen::read_played(const Runtime& runtime) {
+    PlayedReading played;
+    played.playing = runtime.plays_mod();
+    if (played.playing) {
+        if (const oa::data::mod_profile::ModProfile* profile = runtime.mod_profile()) {
+            played.id = profile->id;
+            played.name = profile->name;
+            played.version = profile->version;
+        }
+        played.folder_name = path_to_utf8(runtime.played_mod_folder().filename());
+    }
+    return played;
+}
+
+picker::Inputs Runtime::own_picker_inputs(void* context, picker::Setup /*setup*/) {
+    Runtime& runtime = *static_cast<Runtime*>(context);
+    if (runtime.mutator_picker_ == nullptr)
+        runtime.mutator_picker_.reset(new MutatorPickerState{});
+    const PlayedReading played = MutatorPickerScreen::read_played(runtime);
+    const std::shared_ptr<const content::Snapshot> snapshot = runtime.content_service().snapshot();
+    const std::vector<content::DownloadView> downloads = runtime.content_downloads().view();
+    const std::filesystem::path folder =
+        runtime.user_folder() / std::string(data::mutator_library::mutators_folder_name);
+    return build_own_inputs(
+        *runtime.mutator_picker_, runtime.library_host(), snapshot.get(), downloads, folder, played
+    );
+}
 
 bool Runtime::MutatorPickerScreen::start() {
     opened_over_ = runtime_.screen_;
@@ -1419,6 +1262,7 @@ void Runtime::MutatorPickerScreen::drop_badges() {
     if (runtime_.mutator_picker_ != nullptr) {
         runtime_.mutator_picker_->badges.clear();
         runtime_.mutator_picker_->badge_index.clear();
+        runtime_.mutator_picker_->badge_failed.clear();
     }
 }
 
@@ -1450,17 +1294,7 @@ bool Runtime::MutatorPickerScreen::load_inputs(bool opening) {
     inputs.last_set = request_.set;
     inputs.remembered = false;
     inputs.text = text_hooks();
-    PlayedReading played;
-    played.playing = runtime_.plays_mod();
-    if (played.playing) {
-        if (const oa::data::mod_profile::ModProfile* profile = runtime_.mod_profile()) {
-            played.id = profile->id;
-            played.name = profile->name;
-            played.version = profile->version;
-        }
-        played.folder_name = path_to_utf8(runtime_.played_mod_folder().filename());
-    }
-    inputs.mod_name = mod_display(played);
+    inputs.mod_name = mod_display(read_played(runtime_));
     inputs.clash_default = clash_default();
     apply_notes(inputs);
     apply_synthetics(inputs);
@@ -1475,6 +1309,7 @@ bool Runtime::MutatorPickerScreen::load_inputs(bool opening) {
 
 void Runtime::MutatorPickerScreen::reload() {
     load_inputs(false);
+    ask_open_checks();
 }
 
 void Runtime::MutatorPickerScreen::ask_open_checks() {
@@ -1486,11 +1321,92 @@ void Runtime::MutatorPickerScreen::ask_open_checks() {
         picker::Mutator* mutator = find_mutator(picker_.inputs.mutators, chosen.id);
         if (mutator == nullptr || mutator->verdict.state != library::Verdict::State::unchecked)
             continue;
+        if (holds_id(pending_, chosen.id))
+            continue;
         mutator->verdict.state = library::Verdict::State::checking;
-        if (!holds_id(pending_, chosen.id))
-            pending_.push_back(chosen.id);
+        pending_.push_back(chosen.id);
         feed.check(feed.context, chosen.id, chosen);
     }
+}
+
+void Runtime::MutatorPickerScreen::check_installed(const std::string& id) {
+    if (holds_id(install_checked_, id))
+        return;
+    install_checked_.push_back(id);
+    force_check(id);
+}
+
+bool Runtime::MutatorPickerScreen::follow_downloads(std::vector<std::string>& installed) {
+    MutatorPickerState* state = runtime_.mutator_picker_.get();
+    if (state == nullptr || state->tracked.empty())
+        return false;
+    const std::vector<content::DownloadView> downloads = runtime_.content_downloads().view();
+    bool changed = false;
+    for (MutatorPickerState::Tracked& track : state->tracked) {
+        const content::DownloadView* found = nullptr;
+        for (const content::DownloadView& item : downloads)
+            if (item.item == track.queue_id)
+                found = &item;
+        if (found == nullptr)
+            continue;
+        const std::optional<library::QueueItem::Phase> phase = phase_of(found->state);
+        picker::Mutator* mutator = find_mutator(picker_.inputs.mutators, track.id);
+        if (!phase) {
+            if (mutator != nullptr && mutator->queued &&
+                mutator->queued->phase == library::QueueItem::Phase::waiting) {
+                mutator->queued.reset();
+                changed = true;
+            }
+            continue;
+        }
+        const bool became_installed = *phase == library::QueueItem::Phase::installed &&
+                                      track.phase != library::QueueItem::Phase::installed;
+        if (track.phase != *phase) {
+            track.phase = *phase;
+            changed = true;
+        }
+        track.synthetic = false;
+        if (became_installed)
+            installed.push_back(track.id);
+        if (mutator == nullptr)
+            continue;
+        if (*phase == library::QueueItem::Phase::installed) {
+            if (mutator->queued) {
+                mutator->queued.reset();
+                changed = true;
+            }
+            continue;
+        }
+        if (!mutator->queued) {
+            library::QueueItem made;
+            made.registry = found->target.registry;
+            made.kind = library::Kind::mutator;
+            made.key = found->target.key;
+            made.name = mutator->name.empty() ? mutator->id : mutator->name;
+            made.phase = *phase;
+            made.done_bytes = found->done;
+            made.total_bytes = found->target.size;
+            mutator->queued = std::move(made);
+            changed = true;
+            continue;
+        }
+        library::QueueItem& queued = *mutator->queued;
+        if (queued.phase == *phase && queued.done_bytes == found->done &&
+            queued.total_bytes == found->target.size)
+            continue;
+        queued.phase = *phase;
+        queued.done_bytes = found->done;
+        queued.total_bytes = found->target.size;
+        queued.registry = found->target.registry;
+        if (*phase == library::QueueItem::Phase::failed) {
+            if (!found->detail.empty())
+                queued.problem = found->detail;
+            else
+                queued.problem = content::failure_text(found->failure);
+        }
+        changed = true;
+    }
+    return changed;
 }
 
 void Runtime::MutatorPickerScreen::force_check(std::string id) {
@@ -1512,6 +1428,7 @@ void Runtime::MutatorPickerScreen::reapply_checking(picker::Inputs& inputs) {
     if (runtime_.mutator_picker_feed_.check == nullptr) {
         pending_.clear();
         forced_.clear();
+        install_checked_.clear();
         return;
     }
     for (picker::Mutator& mutator : inputs.mutators) {
@@ -1584,10 +1501,16 @@ void Runtime::MutatorPickerScreen::forget_installed() {
         const picker::Mutator* mutator = find_mutator(picker_.inputs.mutators, note.first);
         return mutator != nullptr && mutator->installed;
     });
+    std::vector<std::string> installed_ids;
     std::erase_if(state->tracked, [&](const MutatorPickerState::Tracked& track) {
         const picker::Mutator* mutator = find_mutator(picker_.inputs.mutators, track.id);
-        return mutator != nullptr && mutator->installed;
+        if (mutator == nullptr || !mutator->installed)
+            return false;
+        installed_ids.push_back(track.id);
+        return true;
     });
+    for (const std::string& id : installed_ids)
+        check_installed(id);
 }
 
 void Runtime::MutatorPickerScreen::clear_notes() {
@@ -1783,7 +1706,7 @@ std::string Runtime::MutatorPickerScreen::waiting_text() const {
         if (item.phase == library::QueueItem::Phase::installed)
             continue;
         const std::string name = mutator->name.empty() ? mutator->id : mutator->name;
-        std::uint64_t percent = 0;
+        uint64_t percent = 0;
         if (item.total_bytes != 0) {
             percent = (item.done_bytes / item.total_bytes) * 100;
             percent += (item.done_bytes % item.total_bytes) * 100 / item.total_bytes;
@@ -1821,6 +1744,7 @@ LayerAnswer Runtime::MutatorPickerScreen::handle_use() {
         }
         if (!ids.empty())
             enqueue_ids(ids);
+        ask_open_checks();
         update_waiting();
         relayout();
         return LayerAnswer::redraw;
@@ -1837,7 +1761,7 @@ void Runtime::MutatorPickerScreen::ask_question() {
     const Screen over = opened_over_;
     Runtime* runtime = &runtime_;
     QuestionScreen::Host host;
-    host.answer = [runtime](std::int32_t button) {
+    host.answer = [runtime](int32_t button) {
         LayerScreen* found = runtime->oa_layer().find(picker::screen_name);
         if (found == nullptr)
             return true;
@@ -1882,6 +1806,8 @@ LayerAnswer Runtime::MutatorPickerScreen::take(picker::ScreenResult result) {
         break;
     }
     if (result.action != picker::PickerAction::none || result.redraw) {
+        settle_left();
+        ask_open_checks();
         update_waiting();
         relayout();
         return LayerAnswer::redraw;
@@ -1954,6 +1880,7 @@ void Runtime::set_mutator_picker_feed(MutatorPickerFeed feed) {
         mutator_picker_->library.reset();
         mutator_picker_->badges.clear();
         mutator_picker_->badge_index.clear();
+        mutator_picker_->badge_failed.clear();
     }
 }
 

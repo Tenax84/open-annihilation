@@ -148,19 +148,7 @@ inline bool conflicts(const Mutator& left, const Mutator& right) {
 /// @return the list; empty when `names` is empty
 inline std::string
 join_names(const library::TextHooks& hooks, const std::vector<std::string>& names) {
-    if (names.empty())
-        return {};
-    if (names.size() == 1)
-        return names.front();
-    std::string joined = names.front();
-    for (std::size_t index = 1; index + 1 < names.size(); ++index) {
-        joined = library::filled(
-            hooks, library::words::names_comma, {{"left", joined}, {"right", names[index]}}
-        );
-    }
-    return library::filled(
-        hooks, library::words::names_and, {{"left", joined}, {"right", names.back()}}
-    );
+    return library::join_names(hooks, names);
 }
 
 /// Joins parts with a middle dot, through the Library's join.
