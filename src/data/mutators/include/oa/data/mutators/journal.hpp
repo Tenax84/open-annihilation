@@ -60,9 +60,9 @@ enum class Change : uint8_t {
 /// record itself.
 ///
 /// A file entry is `added` for each path a mutator's files add, and `hidden`
-/// for each file of the mod a mask hides and for each file a hook's removal
-/// empties. A mask that hides another mutator's file names both, the one
-/// whose file it hid first.
+/// for each file of the mod a mask hides (phase `files`) and for each file a
+/// hook's removal empties (phase `hooks`). A mask that hides another
+/// mutator's file names both, the one whose file it hid first.
 struct JournalEntry {
     /// Mutators that made the change, as indices into the input list.
     std::vector<uint16_t> mutators;

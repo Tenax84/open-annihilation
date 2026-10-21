@@ -1093,6 +1093,17 @@ uint16_t owner_of(const std::vector<Writer>& changes) {
     return best;
 }
 
+/// The last phase in which `mutator` changed a document. Hooks come after rules.
+Phase phase_of(const std::vector<Writer>& changes, uint16_t mutator) {
+    Phase last = Phase::rules;
+    for (const Writer& change : changes) {
+        if (change.mutator == mutator &&
+            static_cast<uint8_t>(change.phase) > static_cast<uint8_t>(last))
+            last = change.phase;
+    }
+    return last;
+}
+
 /// One journal entry for a field write.
 JournalEntry entry_from_write(
     const rules::FieldWrite& write,
@@ -1118,11 +1129,11 @@ JournalEntry entry_from_write(
     return entry;
 }
 
-/// A file added or hidden in the files layer.
-JournalEntry file_entry(uint16_t mutator, std::string path, Change change) {
+/// A file added or hidden, in the phase that added or hid it.
+JournalEntry file_entry(uint16_t mutator, std::string path, Change change, Phase phase) {
     JournalEntry entry;
     entry.mutators.push_back(mutator);
-    entry.phase = Phase::files;
+    entry.phase = phase;
     entry.collection = Collection::files;
     entry.change = change;
     entry.path = std::move(path);
@@ -1388,7 +1399,7 @@ std::vector<JournalEntry> mask_entries(
                 }
             }
             if (!served)
-                entries.push_back(file_entry(*owner, name, Change::hidden));
+                entries.push_back(file_entry(*owner, name, Change::hidden, Phase::files));
         }
     }
     std::stable_sort(
@@ -1996,7 +2007,7 @@ bool run_pass(
             continue;
         const Change change =
             entry.kind == oa::MutatorSourceKind::hidden ? Change::hidden : Change::added;
-        journal.entries.push_back(file_entry(*mutator, entry.path, change));
+        journal.entries.push_back(file_entry(*mutator, entry.path, change, Phase::files));
     }
     for (JournalEntry& entry : masked)
         journal.entries.push_back(std::move(entry));
@@ -2007,7 +2018,7 @@ bool run_pass(
         const std::optional<uint16_t> masker = index_of(ids, note.mutator);
         if (!masker.has_value())
             continue;
-        JournalEntry hidden = file_entry(*masker, note.path, Change::hidden);
+        JournalEntry hidden = file_entry(*masker, note.path, Change::hidden, Phase::files);
         const std::optional<uint16_t> adder = index_of(ids, note.other);
         if (adder.has_value())
             hidden.mutators.insert(hidden.mutators.begin(), *adder);
@@ -2037,18 +2048,19 @@ bool run_pass(
             continue;
         }
         const uint16_t owner = owner_of(writers[slot]);
+        const Phase owner_phase = phase_of(writers[slot], owner);
         oa::MutatorLayerEntry entry;
         entry.path = loaded.path;
         entry.owner = ids[owner];
         if (loaded.removed) {
             entry.kind = oa::MutatorSourceKind::hidden;
-            journal.entries.push_back(file_entry(owner, loaded.path, Change::hidden));
+            journal.entries.push_back(file_entry(owner, loaded.path, Change::hidden, owner_phase));
         } else {
             const std::optional<std::string> text = tdf::write_text(loaded.document.get());
             if (!text.has_value()) {
                 first.offer(
                     owner,
-                    Phase::hooks,
+                    owner_phase,
                     Cause::engine_error,
                     "a changed document could not be written"
                 );

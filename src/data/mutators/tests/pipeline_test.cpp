@@ -561,6 +561,16 @@ void test_files_layer() {
         mutators::run_pipeline(removed_store, input_of({"ridge-remove-bot"}));
     OA_CHECK(removed.playable());
     OA_CHECK(!lists_name(removed_store, "units", ".fbi", "rgbot.fbi"));
+    // The hook's remove() hid the files, so the journal says the hooks did.
+    std::size_t hidden_files = 0;
+    for (const mutators::JournalEntry& entry : removed.journal.entries) {
+        if (entry.change != mutators::Change::hidden)
+            continue;
+        ++hidden_files;
+        OA_CHECK(entry.phase == mutators::Phase::hooks);
+        OA_CHECK(entry.collection == mutators::Collection::files);
+    }
+    OA_CHECK(hidden_files >= 1);
     release(removed_store);
     OA_CHECK(lists_name(removed_store, "units", ".fbi", "rgbot.fbi"));
 }
