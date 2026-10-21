@@ -16,6 +16,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1035,6 +1036,145 @@ void asset_store_loose_listings() {
     );
 }
 
+/// Folds a resource path as the store's listings do: '\\' as '/', empty
+/// parts and a trailing separator dropped, ASCII letters in lower case.
+///
+/// @param path the path
+/// @return the folded path
+std::string folded_path(std::string_view path) {
+    std::string result;
+    bool previous_slash = true;
+    for (const char raw : path) {
+        const char ch = raw == '\\' ? '/' : raw;
+        if (ch == '/') {
+            if (!previous_slash)
+                result.push_back('/');
+            previous_slash = true;
+            continue;
+        }
+        result.push_back(ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch + ('a' - 'A')) : ch);
+        previous_slash = false;
+    }
+    if (!result.empty() && result.back() == '/')
+        result.pop_back();
+    return result;
+}
+
+/// Lists what a store with no loose files lists from its archives, by
+/// filtering every file record each archive holds.
+///
+/// @param store the store; its folders hold no files and it has no pack layer
+/// @param directory '/'-separated directory
+/// @param extension required suffix, or empty for any
+/// @param recursive true to take files below subfolders too
+/// @return the folded names in mount and stored order, each once
+std::vector<std::string> listed_by_full_scan(
+    const oa::AssetStore& store,
+    std::string_view directory,
+    std::string_view extension,
+    bool recursive
+) {
+    auto prefix = folded_path(directory);
+    if (!prefix.empty())
+        prefix += '/';
+    const auto suffix = folded_path(extension);
+    std::vector<std::string> result;
+    for (std::size_t mount = 0; mount < store.mount_paths().size(); ++mount)
+        for (const auto& entry : store.mounted(mount).entries()) {
+            const auto key = folded_path(entry.path);
+            if (key.starts_with(prefix) &&
+                (recursive || key.find('/', prefix.size()) == std::string::npos) &&
+                (suffix.empty() || key.ends_with(suffix)) &&
+                std::find(result.begin(), result.end(), key) == result.end())
+                result.push_back(key);
+        }
+    return result;
+}
+
+/// Checks that a store lists a directory as the full scan of its archives does.
+///
+/// @param store the store; its folders hold no files and it has no pack layer
+/// @param directory '/'-separated directory
+/// @param extension required suffix, or empty for any
+void check_listing_matches_full_scan(
+    const oa::AssetStore& store, std::string_view directory, std::string_view extension
+) {
+    const std::string what = "'" + std::string(directory) + "' " + std::string(extension);
+    check(
+        store.list_effective_in_mount_order(directory, extension) ==
+            listed_by_full_scan(store, directory, extension, false),
+        "listing " + what + " matches the full scan"
+    );
+    check(
+        store.list_effective_recursive(directory, extension) ==
+            listed_by_full_scan(store, directory, extension, true),
+        "recursive listing " + what + " matches the full scan"
+    );
+}
+
+/// Replaces the one occurrence of a name in an archive's bytes.
+///
+/// @param[in,out] bytes the archive, written with no header key
+/// @param from the name written
+/// @param to the name it becomes, of the same length
+void rename_record(Bytes& bytes, std::string_view from, std::string_view to) {
+    const auto at = std::search(bytes.begin(), bytes.end(), from.begin(), from.end());
+    check(at != bytes.end(), "the archive holds the name " + std::string(from));
+    if (at != bytes.end())
+        std::copy(to.begin(), to.end(), at);
+}
+
+/// A listing takes every record entries() lists under the directory, also
+/// those of a second folder of the same name, a lookup cannot reach, and a
+/// root record whose name holds a separator.
+void asset_store_lists_archive_folders() {
+    TempDir dir;
+    auto bytes = archive_of(
+        {{"guis/a.gui", text("1"), 0},
+         {"guis/sub/d.gui", text("2"), 0},
+         {"guis/e.txt", text("3"), 0},
+         {"gui2/b.gui", text("4"), 0},
+         {"gui2/deep/f.gui", text("5"), 0},
+         {"other/g.gui", text("6"), 0},
+         {"guisxc.gui", text("7"), 0},
+         {"h.gui", text("8"), 0}}
+    );
+    rename_record(bytes, "gui2", "GUIS");
+    rename_record(bytes, "guisxc.gui", "guis\\c.gui");
+    const auto second = archive_of({{"GUIS/A.GUI", text("9"), 0}, {"guis/i.gui", text("0"), 0}});
+    fs::create_directory(dir.path() / "loose");
+    oa::AssetStore store(dir.path() / "loose");
+    store.mount(dir.write("first.hpi", bytes));
+    store.mount(dir.write("second.hpi", second));
+    const auto guis = store.list_effective_in_mount_order("guis", ".gui");
+    for (const auto* name : {"guis/a.gui", "guis/b.gui", "guis/c.gui", "guis/i.gui"})
+        check(
+            std::find(guis.begin(), guis.end(), name) != guis.end(),
+            std::string("the listing of guis takes ") + name
+        );
+    check(guis.size() == 4, "the listing of guis takes each name once");
+    for (const auto* directory : {"", "guis", "GUIS", "guis/sub", "gui2", "other", "missing"})
+        for (const auto* extension : {"", ".gui", ".TXT"})
+            check_listing_matches_full_scan(store, directory, extension);
+}
+
+/// Every directory of the installed game's archives lists as the full scan
+/// of the archives does.
+///
+/// @param mounts the archives, in mount order
+void asset_store_lists_installed_folders(std::span<const fs::path> mounts) {
+    TempDir dir;
+    fs::create_directory(dir.path() / "loose");
+    oa::AssetStore store(dir.path() / "loose");
+    for (const auto& mount : mounts)
+        store.mount(mount);
+    for (const auto* directory :
+         {"", "guis", "units", "anims", "gamedata", "features", "features/corpses", "scripts"})
+        check_listing_matches_full_scan(store, directory, "");
+    check_listing_matches_full_scan(store, "guis", ".gui");
+    check_listing_matches_full_scan(store, "units", ".fbi");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1042,6 +1182,9 @@ int main(int argc, char** argv) {
         const auto root = oa::test::require_game_directory("the installed game's archive order");
         try {
             asset_store_discover_installed_game(root);
+            oa::AssetStore installed(root);
+            (void)installed.discover(oa::test::kGameRevision);
+            asset_store_lists_installed_folders(installed.mount_paths());
         } catch (const std::exception& error) {
             std::cerr << "unexpected exception: " << error.what() << '\n';
             return 1;
@@ -1075,6 +1218,7 @@ int main(int argc, char** argv) {
         asset_store_discover_pins_install_layout();
         asset_store_discover_installation_archive_on_disc_root();
         asset_store_loose_listings();
+        asset_store_lists_archive_folders();
         asset_store_names_in_any_script();
         asset_store_loose_links();
         asset_store_refuses_files_over_the_entry_limit();
