@@ -173,6 +173,20 @@ struct PipelineResult {
 [[nodiscard]] std::string
 list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::string>& versions);
 
+/// The first mutator whose failure stops a match from starting.
+///
+/// A mutator that applied stops nothing. One that failed because its
+/// hacks were refused, or was excluded only because a mutator it
+/// requires failed that way (directly or through another exclusion),
+/// fails alone. Any other failure stops the start. A refused list
+/// (result.refusal) is the caller's to test first; it names no mutator.
+///
+/// @param result the pipeline's result
+/// @param listed the mutators as they were run, top first
+/// @return the first slot that stops the start, or nothing
+[[nodiscard]] std::optional<std::size_t>
+first_blocking(const PipelineResult& result, std::span<const PipelineMutator> listed);
+
 /// Runs the mutators in `input` against `store`.
 ///
 /// The list is checked first. More than `max_mutators`, an id twice, a

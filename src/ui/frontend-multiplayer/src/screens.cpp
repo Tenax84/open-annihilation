@@ -4078,6 +4078,46 @@ void multiplayer_bind_presence_record(const uint8_t* record, std::size_t size) n
     take_presence_record(state.lobby, state.presence_record);
 }
 
+void multiplayer_bind_mutator_loadout(const netgame::PresenceMutators* loadout) noexcept {
+    auto& records = ui().lobby.presence_records;
+    if (loadout == nullptr)
+        records.part_source.reset();
+    else
+        records.part_source = *loadout;
+}
+
+void multiplayer_units_changed() {
+    auto& state = ui();
+    state.units = UnitStore{};
+    if (state.assets != nullptr) {
+        load_units();
+    } else {
+        state.lobby.units = nullptr;
+        state.lobby.unit_count = 0;
+    }
+    unit_sync_rebuild(state.lobby);
+}
+
+void multiplayer_regreet(uint32_t player_id) {
+    unit_sync_regreet(ui().lobby, player_id);
+}
+
+bool multiplayer_room_mutators(netgame::PresenceLoadoutAssembly* out) {
+    auto& lobby = ui().lobby;
+    if (lobby.game != nullptr && (local_info(lobby).role & kRoleHost) != 0)
+        return false;
+    const auto& assembly = lobby.presence_records.host_loadout;
+    if (assembly.total == 0)
+        return false;
+    if (out != nullptr)
+        *out = assembly;
+    return true;
+}
+
+uint32_t multiplayer_room_mutators_generation() noexcept {
+    return ui().lobby.presence_records.host_loadout_generation;
+}
+
 void multiplayer_bind_map_pack(
     void* context, bool (*pack)(void* context, netgame::PresenceMapPack* out)
 ) noexcept {

@@ -45,6 +45,11 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 - `list_refusal` is that list's check: more than `max_mutators`, an id
   twice, a requirement an earlier mutator does not meet, or two that
   conflict. Empty when the list may run.
+- `first_blocking` is the first mutator whose failure stops a match.
+  A mutator that applied stops nothing. One that failed because its
+  hacks were refused, or was excluded only because a mutator it requires
+  failed that way, fails alone. Any other failure stops the start. A
+  refused list is the caller's to test first and names no mutator.
 - `Journal::entries_of` returns one mutator's changes, and `describe` writes
   one conflict as a single English line.
 - `units:clone(source, name, fields)` and `weapons:clone(source, name, fields)`
