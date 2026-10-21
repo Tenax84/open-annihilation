@@ -167,13 +167,14 @@ struct Options {
     // flags, and the services record each EXPLODE.
     bool killed_script{};
     // The rules and capacities the match plays by (OfflineInputs::rules,
-    // limits, unit_type_rules, weapon_rules, profile_sim_hash); 3.1c's and no
-    // profile by default.
+    // limits, unit_type_rules, weapon_rules, profile_sim_hash, mutator_digest);
+    // 3.1c's and no profile by default.
     data::match_rules::MatchRules rules{};
     data::limits::Limits limits{};
     std::vector<data::match_rules::UnitTypeRules> unit_type_rules{};
     std::vector<data::match_rules::WeaponTypeRules> weapon_rules{};
     std::optional<base::sha256::Digest> profile_sim_hash{};
+    std::optional<base::sha256::Digest> mutator_digest{};
     // The map's wind limits (OfflineInputs::minimum_wind, maximum_wind).
     int32_t minimum_wind{};
     int32_t maximum_wind{};
@@ -428,6 +429,7 @@ struct Fixture {
         input.unit_type_rules = options.unit_type_rules;
         input.weapon_rules = options.weapon_rules;
         input.profile_sim_hash = options.profile_sim_hash;
+        input.mutator_digest = options.mutator_digest;
         input.minimum_wind = options.minimum_wind;
         input.maximum_wind = options.maximum_wind;
         match = std::make_unique<sim::match_runtime::Match>(input, services);

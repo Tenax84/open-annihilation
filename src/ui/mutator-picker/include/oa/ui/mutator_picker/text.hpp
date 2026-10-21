@@ -7,6 +7,8 @@
 // filled, so a translator finds every one of them here.
 #pragma once
 
+#include "oa/ui/library/text.hpp"
+
 #include <string_view>
 
 namespace oa::ui::mutator_picker {
@@ -29,10 +31,11 @@ inline constexpr std::string_view line_conflicts = "Cannot run beside {name}";
 /// Switching on would pass most_on, counting the prerequisites it brings.
 inline constexpr std::string_view refused_cap = "At most {count} mutators can be on";
 /// Why a row is locked: a prerequisite that names no version range and is
-/// not among the mutators the picker can get. With a range, the Library's
-/// `blocked_prerequisite` says it; a loop is the Library's `blocked_cycle`.
+/// not among the mutators the picker can get. GET WITH uses the same words.
+/// With a range, the Library's `blocked_prerequisite` says it; a loop is
+/// the Library's `blocked_cycle`.
 inline constexpr std::string_view blocked_prerequisite_any =
-    "Needs {name}, which no registry offers";
+    oa::ui::library::words::blocked_prerequisite_any;
 /// One option on a row, the Library's Options fact form.
 inline constexpr std::string_view option_line = "{label}: {value}";
 /// The clash choice on a row that brings units or weapons.

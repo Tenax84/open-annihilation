@@ -5,6 +5,7 @@
 // records it is given and hands them to the systems that apply them, and the
 // state a rule keeps outside the canonical records enters the state digest,
 // the trace and the computer players' view only once a rule adds a table.
+// A mutator digest enters the state digest and the trace with no table.
 #include "combat_fixture.hpp"
 
 #include "oa/base/game_loop.hpp"
@@ -206,6 +207,20 @@ void rule_state_enters_the_digests() {
     Counter same{};
     CHECK(runtime::add_rule_state(g.match->rule_state(), counter_table("counter", same)));
     CHECK(state_digest(*g.match) != with_table);
+
+    // A mutator digest moves the state digest and the trace with no rule table.
+    Options mutated{};
+    mutated.mutator_digest = oa::base::sha256::Digest{};
+    (*mutated.mutator_digest)[0] = 1;
+    Fixture held(mutated);
+    CHECK(held.match->mutator_digest_held());
+    CHECK(held.match->fold_rule_state(0x1234) != 0x1234);
+    CHECK(state_digest(*held.match) != plain_state);
+    CHECK(total_digest(*held.match) != plain_total);
+    Options other_mutator = mutated;
+    (*other_mutator.mutator_digest)[0] = 2;
+    Fixture different(other_mutator);
+    CHECK(state_digest(*different.match) != state_digest(*held.match));
 
     // A table restores from the bytes it digested.
     const auto* table = runtime::find_rule_state(f.match->rule_state(), "counter");

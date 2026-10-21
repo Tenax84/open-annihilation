@@ -6,6 +6,9 @@
 // run of the mutators that remain. Two rule-only mutators are compared by
 // the bytes the layer serves: the owner of a written file and the layer's
 // label follow the list, so those two fields are not the served bytes.
+#include "oa/data/defs/asset_files.hpp"
+#include "oa/data/defs/unit_def_loader.hpp"
+#include "oa/data/defs/weapons.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 #include "oa/test/check.hpp"
@@ -1113,6 +1116,420 @@ void test_player_option() {
     release(store);
 }
 
+int weapon_slot(oa::AssetStore& store, const char* name) {
+    auto table = std::make_unique<defs::WeaponTable>();
+    defs::weapon_table_init(table.get());
+    const defs::Files files = defs::asset_store_files(&store);
+    defs::load_weapon_defs(&files, table.get(), nullptr);
+    const int slot = defs::find_weapon_by_name(table->defs, name);
+    defs::weapon_table_free(table.get());
+    return slot;
+}
+
+/// Two mutators share weapons/extra.tdf and both ask for id 5. Each weapon
+/// stays, the earlier mutator keeps 5, and each unit's Weapon1 names the
+/// weapon that received that unit's id.
+void test_two_weapon_files_keep_both_weapons() {
+    oa::AssetStore store = open_ridge();
+    const std::vector<uint8_t> base_weapons = store.read("weapons/ridge.tdf").bytes;
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, input_of({"ridge-weap-a", "ridge-weap-b"}));
+    OA_CHECK(result.playable());
+    OA_CHECK(store.read("weapons/ridge.tdf").bytes == base_weapons);
+    OA_CHECK(weapon_slot(store, "RGGUN") == 1);
+    OA_CHECK(weapon_slot(store, "RGBLAST") == 2);
+    OA_CHECK(weapon_slot(store, "RGALPHA") == 5);
+    OA_CHECK(weapon_slot(store, "RGBETA") == 3);
+    const std::string alpha = text_of(store.read("units/RGALPHA.fbi").bytes);
+    const std::string beta = text_of(store.read("units/RGBETA.fbi").bytes);
+    OA_CHECK(alpha.find("Weapon1=RGALPHA") != std::string::npos);
+    OA_CHECK(beta.find("Weapon1=RGBETA") != std::string::npos);
+    const std::string weapons = text_of(store.read("weapons/extra.tdf").bytes);
+    OA_CHECK(weapons.find("RGALPHA") != std::string::npos);
+    OA_CHECK(weapons.find("RGBETA") != std::string::npos);
+    release(store);
+}
+
+/// A later unit file replaces the earlier record. A replaced base weapon
+/// keeps its id, and a new weapon that asked for that id takes another.
+void test_records_replace_and_base_weapon_id_stays() {
+    oa::AssetStore bots = open_ridge();
+    const mutators::PipelineResult replaced =
+        mutators::run_pipeline(bots, input_of({"ridge-bot-a", "ridge-bot-b"}));
+    OA_CHECK(replaced.playable());
+    const std::string bot = text_of(bots.read("units/RGBOT.fbi").bytes);
+    OA_CHECK(bot.find("2222") != std::string::npos);
+    OA_CHECK(bot.find("1111") == std::string::npos);
+    int replaced_records = 0;
+    for (const mutators::JournalEntry& entry : replaced.journal.entries) {
+        if (entry.change != mutators::Change::added || entry.record != "RGBOT")
+            continue;
+        OA_CHECK(entry.old_text.has_value() && *entry.old_text == "RGBOT");
+        ++replaced_records;
+    }
+    OA_CHECK(replaced_records == 2);
+    OA_CHECK(count_kind(replaced, mutators::ConflictKind::value_replaced) == 1);
+    const std::vector<std::string> bot_ids{"ridge-bot-a", "ridge-bot-b"};
+    const mutators::Conflict* bot_note =
+        conflict_of(replaced, mutators::ConflictKind::value_replaced);
+    OA_CHECK(bot_note != nullptr);
+    if (bot_note != nullptr) {
+        const std::string line = mutators::describe(*bot_note, bot_ids);
+        OA_CHECK(line.find("ridge-bot-a") != std::string::npos);
+        OA_CHECK(line.find("ridge-bot-b") != std::string::npos);
+    }
+    OA_CHECK(weapon_slot(bots, "RGGUN") == 1);
+    release(bots);
+
+    oa::AssetStore guns = open_ridge();
+    const mutators::PipelineResult gun = mutators::run_pipeline(guns, input_of({"ridge-gun-body"}));
+    OA_CHECK(gun.playable());
+    OA_CHECK(weapon_slot(guns, "RGGUN") == 1);
+    OA_CHECK(weapon_slot(guns, "RGBLAST") == 2);
+    OA_CHECK(weapon_slot(guns, "RGWANT") == 3);
+    const std::string text = text_of(guns.read("weapons/ridge.tdf").bytes);
+    OA_CHECK(text.find("77") != std::string::npos);
+    OA_CHECK(text.find("ID=99") == std::string::npos);
+    release(guns);
+}
+
+/// Download sections from two mutators join the mod's own entry.
+void test_download_sections_merge() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, input_of({"ridge-menu-a", "ridge-menu-b"}));
+    OA_CHECK(result.playable());
+    const std::string menu = text_of(store.read("download/rglab.tdf").bytes);
+    OA_CHECK(menu.find("MENU0") != std::string::npos);
+    OA_CHECK(menu.find("MENU1") != std::string::npos);
+    OA_CHECK(menu.find("MENU2") != std::string::npos);
+    release(store);
+}
+
+/// A rule in the same step sees the unit its own FBI just added.
+void test_rule_sees_its_own_unit_file() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, input_of({"ridge-rule-new"}));
+    OA_CHECK(result.playable());
+    OA_CHECK(text_of(store.read("units/RGADDED.fbi").bytes).find("4242") != std::string::npos);
+    release(store);
+}
+
+mutators::PipelineMutator scratch_mutator(const fs::path& package, std::string_view id) {
+    const std::string yaml =
+        "oamut: 1\nid: " + std::string{id} + "\nname: \"Ridge " + std::string{id} +
+        "\"\nversion: \"1.0\"\nauthor:\n  name: \"Ridge Maker\"\ntags: [\"gameplay\"]\n"
+        "works-with: [\"*\"]\nlayers: [\"files\"]\n";
+    write_bytes(package / "oamut.yaml", yaml);
+    write_bytes(
+        package / "mutator.lua",
+        "function mutate(ctx)\n  return { files = { add = { \"files\" } } }\nend\n"
+    );
+    return load_mutator(package);
+}
+
+/// Every id from 1 to 255 is taken, so the mutator that brings one more weapon
+/// is refused by name and the base files stay as they were.
+void test_full_weapon_table_refuses_the_mutator() {
+    const fs::path scratch = oa::test::make_scratch_directory("V13-full");
+    const fs::path copy = scratch / "ridge";
+    fs::copy(k_data / "ridge", copy, fs::copy_options::recursive);
+    std::string full;
+    for (int id = 1; id <= 255; ++id) {
+        full += "[BASE";
+        full += std::to_string(id);
+        full += "]\n{\nID=";
+        full += std::to_string(id);
+        full += ";\n}\n";
+    }
+    write_bytes(copy / "weapons" / "full.tdf", full);
+    const fs::path package = scratch / "ridge-full";
+    write_bytes(package / "files" / "weapons" / "extra.tdf", "[RGMORE]\n{\nID=1;\n}\n");
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(scratch_mutator(package, "ridge-full"));
+    const std::vector<uint8_t> ridge_bytes = read_bytes(copy / "weapons" / "ridge.tdf");
+    const std::vector<uint8_t> full_bytes = read_bytes(copy / "weapons" / "full.tdf");
+    oa::AssetStore store(copy);
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.mutators.size() == 1);
+    if (result.mutators.size() == 1) {
+        OA_CHECK(result.mutators[0].outcome == mutators::Outcome::failed);
+        OA_CHECK(result.mutators[0].phase == mutators::Phase::integrity);
+        OA_CHECK(result.mutators[0].cause == mutators::Cause::weapon_ids);
+        OA_CHECK(result.mutators[0].message.find("ridge-full") != std::string::npos);
+        OA_CHECK(result.mutators[0].message.find("RGMORE") != std::string::npos);
+    }
+    OA_CHECK(!lists_name(store, "weapons", ".tdf", "extra.tdf"));
+    OA_CHECK(store.read("weapons/ridge.tdf").bytes == ridge_bytes);
+    OA_CHECK(store.read("weapons/full.tdf").bytes == full_bytes);
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// The earlier mutator's one weapon fits. The later mutator's weapons do not,
+/// so that mutator is refused and the earlier weapon keeps its id.
+void test_overflow_refuses_only_the_later_mutator() {
+    const fs::path scratch = oa::test::make_scratch_directory("V13-overflow");
+    const fs::path earlier = scratch / "ridge-keep";
+    const fs::path later = scratch / "ridge-spill";
+    write_bytes(earlier / "files" / "weapons" / "keep.tdf", "[RGKEEP]\n{\n}\n");
+    write_bytes(
+        earlier / "files" / "units" / "RGKEEP.fbi",
+        "[UNITINFO]\n{\nUnitName=RGKEEP;\nWeapon1=RGKEEP;\n}\n"
+    );
+    std::string spill;
+    for (int number = 0; number < 253; ++number) {
+        std::string name = "B";
+        if (number < 100)
+            name.push_back('0');
+        if (number < 10)
+            name.push_back('0');
+        name += std::to_string(number);
+        spill += "[";
+        spill += name;
+        spill += "]\n{\n}\n";
+    }
+    write_bytes(later / "files" / "weapons" / "spill.tdf", spill);
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(scratch_mutator(earlier, "ridge-keep"));
+    list.push_back(scratch_mutator(later, "ridge-spill"));
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.mutators.size() == 2);
+    if (result.mutators.size() == 2) {
+        OA_CHECK(result.mutators[0].outcome == mutators::Outcome::applied);
+        OA_CHECK(result.mutators[1].outcome == mutators::Outcome::failed);
+        OA_CHECK(result.mutators[1].phase == mutators::Phase::integrity);
+        OA_CHECK(result.mutators[1].cause == mutators::Cause::weapon_ids);
+        OA_CHECK(result.mutators[1].message.find("ridge-spill") != std::string::npos);
+        OA_CHECK(result.mutators[1].message.find("B252") != std::string::npos);
+    }
+    OA_CHECK(weapon_slot(store, "RGGUN") == 1);
+    OA_CHECK(weapon_slot(store, "RGBLAST") == 2);
+    OA_CHECK(weapon_slot(store, "RGKEEP") == 3);
+    OA_CHECK(
+        text_of(store.read("units/RGKEEP.fbi").bytes).find("Weapon1=RGKEEP") != std::string::npos
+    );
+    OA_CHECK(!lists_name(store, "weapons", ".tdf", "spill.tdf"));
+    release(store);
+    fs::remove_all(scratch);
+}
+
+/// True when every ID= in `text` names a different number from 1 to 255.
+bool weapon_ids_are_unique(std::string_view text) {
+    std::vector<uint8_t> used(256, 0);
+    std::size_t offset = 0;
+    while (offset + 3 < text.size()) {
+        const bool marker = (text[offset] == 'I' || text[offset] == 'i') &&
+                            (text[offset + 1] == 'D' || text[offset + 1] == 'd') &&
+                            text[offset + 2] == '=';
+        if (!marker) {
+            ++offset;
+            continue;
+        }
+        offset += 3;
+        int value = 0;
+        bool digits = false;
+        while (offset < text.size() && text[offset] >= '0' && text[offset] <= '9') {
+            digits = true;
+            value = value * 10 + static_cast<int>(text[offset] - '0');
+            ++offset;
+            if (value > 255)
+                return false;
+        }
+        if (!digits || value < 1 || value > 255 || used[static_cast<std::size_t>(value)] != 0)
+            return false;
+        used[static_cast<std::size_t>(value)] = 1;
+    }
+    return true;
+}
+
+/// A rule or a hook that writes id on a base weapon is noted and not written.
+void check_base_weapon_id_stays(std::string_view id) {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result = mutators::run_pipeline(store, input_of({id}));
+    OA_CHECK(result.playable());
+    OA_CHECK(result.mutators.size() == 1);
+    if (result.mutators.size() == 1)
+        OA_CHECK(result.mutators[0].outcome == mutators::Outcome::applied);
+    OA_CHECK(weapon_slot(store, "RGGUN") == 1);
+    OA_CHECK(weapon_slot(store, "RGBLAST") == 2);
+    const std::string text = text_of(store.read("weapons/ridge.tdf").bytes);
+    OA_CHECK(weapon_ids_are_unique(text));
+    OA_CHECK(count_kind(result, mutators::ConflictKind::write_refused) == 1);
+    const std::vector<std::string> ids{std::string{id}};
+    const mutators::Conflict* refused = conflict_of(result, mutators::ConflictKind::write_refused);
+    OA_CHECK(refused != nullptr);
+    if (refused != nullptr) {
+        const std::string line = mutators::describe(*refused, ids);
+        OA_CHECK(line.find(id) != std::string::npos);
+        OA_CHECK(line.find("refused") != std::string::npos);
+    }
+    for (const mutators::JournalEntry& entry : result.journal.entries)
+        OA_CHECK(entry.field != "id");
+    release(store);
+}
+
+void test_rule_cannot_renumber_a_base_weapon() {
+    check_base_weapon_id_stays("ridge-id-rule");
+}
+
+void test_hook_cannot_renumber_a_base_weapon() {
+    check_base_weapon_id_stays("ridge-id-hook");
+}
+
+/// A write of id on a weapon this mutator brought is that weapon's request.
+void test_brought_weapon_keeps_its_requested_id() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, input_of({"ridge-id-own"}));
+    OA_CHECK(result.playable());
+    OA_CHECK(weapon_slot(store, "RGGUN") == 1);
+    OA_CHECK(weapon_slot(store, "RGBLAST") == 2);
+    OA_CHECK(weapon_slot(store, "RGOWN") == 9);
+    OA_CHECK(weapon_ids_are_unique(text_of(store.read("weapons/ridge.tdf").bytes)));
+    OA_CHECK(weapon_ids_are_unique(text_of(store.read("weapons/extra.tdf").bytes)));
+    OA_CHECK(count_kind(result, mutators::ConflictKind::write_refused) == 0);
+    release(store);
+}
+
+/// `count` sections named with `prefix` and `digits` digits. A request uses
+/// ID = index + 3, which is free once the base weapons hold 1 and 2.
+std::string numbered_weapons(char prefix, int count, int digits, bool request) {
+    std::string text;
+    for (int number = 0; number < count; ++number) {
+        std::string name(1, prefix);
+        std::string digits_text = std::to_string(number);
+        while (static_cast<int>(digits_text.size()) < digits)
+            digits_text.insert(digits_text.begin(), '0');
+        name += digits_text;
+        text += "[";
+        text += name;
+        text += "]\n{\n";
+        if (request) {
+            text += "ID=";
+            text += std::to_string(number + 3);
+            text += ";\n";
+        }
+        text += "}\n";
+    }
+    return text;
+}
+
+/// Ten unrequested weapons and 245 requests. In either list order the later
+/// mutator is the one refused, and the base weapons keep their ids.
+void test_request_overflow_follows_list_order() {
+    const fs::path scratch = oa::test::make_scratch_directory("V13-requests");
+    const fs::path earlier = scratch / "ridge-early";
+    const fs::path later = scratch / "ridge-late";
+    write_bytes(earlier / "files" / "weapons" / "early.tdf", numbered_weapons('E', 10, 3, false));
+    write_bytes(later / "files" / "weapons" / "late.tdf", numbered_weapons('L', 245, 3, true));
+    scratch_mutator(earlier, "ridge-early");
+    scratch_mutator(later, "ridge-late");
+
+    oa::AssetStore early_store = open_ridge();
+    std::vector<mutators::PipelineMutator> early_first;
+    early_first.push_back(load_mutator(earlier));
+    early_first.push_back(load_mutator(later));
+    const mutators::PipelineResult early_run =
+        mutators::run_pipeline(early_store, make_input(std::move(early_first)));
+    OA_CHECK(early_run.mutators.size() == 2);
+    if (early_run.mutators.size() == 2) {
+        OA_CHECK(early_run.mutators[0].outcome == mutators::Outcome::applied);
+        OA_CHECK(early_run.mutators[1].outcome == mutators::Outcome::failed);
+        OA_CHECK(early_run.mutators[1].phase == mutators::Phase::integrity);
+        OA_CHECK(early_run.mutators[1].cause == mutators::Cause::weapon_ids);
+        OA_CHECK(early_run.mutators[1].message.find("ridge-late") != std::string::npos);
+        OA_CHECK(early_run.mutators[1].message.find("L008") != std::string::npos);
+    }
+    OA_CHECK(weapon_slot(early_store, "RGGUN") == 1);
+    OA_CHECK(weapon_slot(early_store, "RGBLAST") == 2);
+    OA_CHECK(weapon_slot(early_store, "E000") == 3);
+    OA_CHECK(lists_name(early_store, "weapons", ".tdf", "early.tdf"));
+    OA_CHECK(!lists_name(early_store, "weapons", ".tdf", "late.tdf"));
+    release(early_store);
+
+    oa::AssetStore late_store = open_ridge();
+    std::vector<mutators::PipelineMutator> late_first;
+    late_first.push_back(load_mutator(later));
+    late_first.push_back(load_mutator(earlier));
+    const mutators::PipelineResult late_run =
+        mutators::run_pipeline(late_store, make_input(std::move(late_first)));
+    OA_CHECK(late_run.mutators.size() == 2);
+    if (late_run.mutators.size() == 2) {
+        OA_CHECK(late_run.mutators[0].outcome == mutators::Outcome::applied);
+        OA_CHECK(late_run.mutators[1].outcome == mutators::Outcome::failed);
+        OA_CHECK(late_run.mutators[1].phase == mutators::Phase::integrity);
+        OA_CHECK(late_run.mutators[1].cause == mutators::Cause::weapon_ids);
+        OA_CHECK(late_run.mutators[1].message.find("ridge-early") != std::string::npos);
+        OA_CHECK(late_run.mutators[1].message.find("E008") != std::string::npos);
+    }
+    OA_CHECK(weapon_slot(late_store, "RGGUN") == 1);
+    OA_CHECK(weapon_slot(late_store, "RGBLAST") == 2);
+    OA_CHECK(weapon_slot(late_store, "L000") == 3);
+    OA_CHECK(weapon_slot(late_store, "L244") == 247);
+    OA_CHECK(lists_name(late_store, "weapons", ".tdf", "late.tdf"));
+    OA_CHECK(!lists_name(late_store, "weapons", ".tdf", "early.tdf"));
+    release(late_store);
+    fs::remove_all(scratch);
+}
+
+/// A later unit file brings back a unit a hook removed, and a later download
+/// file brings back a download document that removal emptied.
+void test_removed_record_file_comes_back() {
+    oa::AssetStore bots = open_ridge();
+    const mutators::PipelineResult revived =
+        mutators::run_pipeline(bots, input_of({"ridge-remove-bot", "ridge-bot-a"}));
+    OA_CHECK(revived.playable());
+    OA_CHECK(revived.mutators.size() == 2);
+    if (revived.mutators.size() == 2) {
+        OA_CHECK(revived.mutators[0].outcome == mutators::Outcome::applied);
+        OA_CHECK(revived.mutators[1].outcome == mutators::Outcome::applied);
+    }
+    const std::string bot = text_of(bots.read("units/RGBOT.fbi").bytes);
+    OA_CHECK(bot.find("1111") != std::string::npos);
+    OA_CHECK(lists_name(bots, "units", ".fbi", "rgbot.fbi"));
+    release(bots);
+
+    oa::AssetStore menus = open_ridge();
+    const mutators::PipelineResult menu =
+        mutators::run_pipeline(menus, input_of({"ridge-remove-bot", "ridge-menu-a"}));
+    OA_CHECK(menu.playable());
+    OA_CHECK(menu.mutators.size() == 2);
+    if (menu.mutators.size() == 2) {
+        OA_CHECK(menu.mutators[0].outcome == mutators::Outcome::applied);
+        OA_CHECK(menu.mutators[1].outcome == mutators::Outcome::applied);
+    }
+    const std::string text = text_of(menus.read("download/rglab.tdf").bytes);
+    OA_CHECK(text.find("MENU1") != std::string::npos);
+    OA_CHECK(text.find("MENU0") == std::string::npos);
+    release(menus);
+}
+
+/// A weapon file brings back a weapon document a hook had emptied.
+void test_removed_weapon_file_comes_back() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, input_of({"ridge-clear-guns", "ridge-revive-gun"}));
+    OA_CHECK(result.playable());
+    OA_CHECK(result.mutators.size() == 2);
+    if (result.mutators.size() == 2) {
+        OA_CHECK(result.mutators[0].outcome == mutators::Outcome::applied);
+        OA_CHECK(result.mutators[1].outcome == mutators::Outcome::applied);
+    }
+    OA_CHECK(weapon_slot(store, "RGREVIVE") == 4);
+    OA_CHECK(weapon_slot(store, "RGGUN") == -1);
+    OA_CHECK(weapon_slot(store, "RGBLAST") == -1);
+    const std::string text = text_of(store.read("weapons/ridge.tdf").bytes);
+    OA_CHECK(text.find("RGREVIVE") != std::string::npos);
+    OA_CHECK(text.find("RGGUN") == std::string::npos);
+    OA_CHECK(weapon_ids_are_unique(text));
+    release(store);
+}
+
 } // namespace
 
 int main() {
@@ -1138,5 +1555,17 @@ int main() {
     test_string_cap_is_its_own_cause();
     test_unread_document_warned_once();
     test_player_option();
+    test_two_weapon_files_keep_both_weapons();
+    test_records_replace_and_base_weapon_id_stays();
+    test_download_sections_merge();
+    test_rule_sees_its_own_unit_file();
+    test_full_weapon_table_refuses_the_mutator();
+    test_overflow_refuses_only_the_later_mutator();
+    test_rule_cannot_renumber_a_base_weapon();
+    test_hook_cannot_renumber_a_base_weapon();
+    test_brought_weapon_keeps_its_requested_id();
+    test_request_overflow_follows_list_order();
+    test_removed_record_file_comes_back();
+    test_removed_weapon_file_comes_back();
     return oa::test::check_exit_status();
 }

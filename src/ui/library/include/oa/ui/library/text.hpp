@@ -108,8 +108,14 @@ inline constexpr std::string_view note_downloads_first =
 inline constexpr std::string_view note_download_first =
     "{names} download first, then sit above {name} in every list.";
 /// Why GET WITH is off: no listing offers the prerequisite inside its range.
+/// A prerequisite that names no range uses `blocked_prerequisite_any`, so
+/// the sentence does not keep a blank before the comma.
 inline constexpr std::string_view blocked_prerequisite =
     "Needs {name} {range}, which no registry offers";
+/// Why GET WITH is off, and why a picker row is locked, when the
+/// prerequisite names no version range.
+inline constexpr std::string_view blocked_prerequisite_any =
+    "Needs {name}, which no registry offers";
 /// Why GET WITH is off: the mutators name each other. `{ids}` joins the ids in the loop.
 inline constexpr std::string_view blocked_cycle = "These mutators need each other: {ids}";
 /// The uninstall question, before its last paragraph, when one other installed
@@ -836,6 +842,18 @@ change_texts(const Installed& installed, const UpdateNote& update, const TextHoo
 /// @return the words, such as "0.8.0 or later"
 [[nodiscard]] std::string
 engine_text(const formats::oamod::EngineRange& range, const TextHooks& text = {});
+
+/// Writes a mutator version range in the engine's comparison words.
+///
+/// An empty range is empty. A range that does not parse is returned as
+/// written. Several comparisons are joined with the list separator. The
+/// Library's Needs fact, GET WITH and the mutator picker all use this, so
+/// one range reads the same in each place.
+///
+/// @param range_text the range as the manifest writes it
+/// @param text how texts are looked up
+/// @return the words, such as "4.0 or later"
+[[nodiscard]] std::string range_words(std::string_view range_text, const TextHooks& text = {});
 
 /// Describes an engine requirement in a few characters.
 ///

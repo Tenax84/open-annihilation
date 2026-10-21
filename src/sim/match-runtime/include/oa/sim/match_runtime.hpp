@@ -250,6 +250,9 @@ struct OfflineInputs {
     // The sim hash of the profile the match plays (ModProfile::sim_hash),
     // with which its rule-state digest starts; none without a profile.
     std::optional<base::sha256::Digest> profile_sim_hash{};
+    // The mutator digest of the match, folded into the state digest when
+    // set. None when the match applied no mutator.
+    std::optional<base::sha256::Digest> mutator_digest{};
 };
 
 /// Returns a canonical 16.16 point as the raw words the legacy views use.
@@ -2578,6 +2581,13 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
         return input_.profile_sim_hash.has_value();
     }
 
+    /// Tells whether the match holds a mutator digest (OfflineInputs::mutator_digest).
+    ///
+    /// @return true when a mutator digest was given
+    [[nodiscard]] bool mutator_digest_held() const noexcept {
+        return input_.mutator_digest.has_value();
+    }
+
     /// Returns the rule-state tables, to which a rule adds its own while
     /// the match is built (rule_state.hpp).
     [[nodiscard]] RuleState& rule_state() noexcept { return rule_state_; }
@@ -2601,11 +2611,13 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
     }
 
     /// Folds the rule state into a 64-bit FNV-1a digest: nothing without a
-    /// table, otherwise the profile's sim hash and every table
-    /// (digest_rule_state).
+    /// table and without a mutator digest, otherwise the profile's sim hash
+    /// and every table when a table was added, then the mutator digest when
+    /// the match holds one (digest_rule_state).
     ///
     /// @param digest the digest so far
-    /// @return the new digest; `digest` itself when no table was added
+    /// @return the new digest; `digest` itself when no table was added and
+    ///         no mutator digest is held
     [[nodiscard]] uint64_t fold_rule_state(uint64_t digest) const noexcept;
 
     /// Returns the effect host: the LCG and synced streams and the grid and

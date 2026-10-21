@@ -78,12 +78,15 @@ struct PresenceFacts {
     std::string architecture;
     /// Developer Mode is on (Runtime::developer_mode).
     bool developer_mode{};
-    /// The simulation hash the game plays, as simulation_hash chooses it:
-    /// the played profile's, or the plain baseline's when the game plays 3.1c.
+    /// The simulation hash the game plays, as simulation_hash reports it:
+    /// the played profile's, or the plain baseline's when the game plays 3.1c,
+    /// folded with the running match's mutator digest when that match applied
+    /// mutators. With no mutators applied it is that profile hash alone.
     std::array<uint8_t, 32> sim_hash{};
-    /// The played profile's simulation hash differs from the plain baseline's.
-    /// With the settings not yet layered, any played profile counts as
-    /// differing. False when the game plays no profile.
+    /// The played profile's simulation hash differs from the plain baseline's,
+    /// or a running match has folded a mutator digest into the hash. With the
+    /// settings not yet layered, any played profile counts as differing.
+    /// False when the game plays no profile and no mutator digest.
     bool rules_differ_from_base{};
     /// The mod in play: its id, name, version and packaging revision
     /// (ModProfile::id, name, version, packaging.revision). None when the

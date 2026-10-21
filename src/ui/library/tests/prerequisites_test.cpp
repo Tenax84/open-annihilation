@@ -886,6 +886,28 @@ void uninstall_names_dependants() {
     }
 }
 
+/// A range reads in the shared words, and a range-free prerequisite leaves no blank.
+void a_range_free_prerequisite_reads_with_no_blank() {
+    OA_CHECK(lib::range_words(">= 4.0") == "4.0 or later");
+    OA_CHECK(lib::range_words(">= 4.0, < 5.0") == "4.0 or later, before 5.0");
+    OA_CHECK(lib::range_words("").empty());
+    OA_CHECK(lib::range_words("about 4") == "about 4");
+
+    lib::Inputs inputs = shelf();
+    inputs.listings.push_back(mutator_listing(
+        core, gatehouse_keep, "Gatehouse Keep", "2.0", 1, {prerequisite(gatehouse, "", "Gatehouse")}
+    ));
+    const lib::Library library = opened(std::move(inputs));
+    const lib::Entry* keep = mutator_at(library, core, gatehouse_keep);
+    OA_CHECK(keep != nullptr);
+    if (keep == nullptr)
+        return;
+    const lib::GetPlan plan = lib::get_plan(library, *keep);
+    OA_CHECK(plan.steps.empty());
+    check_text(plan.blocked, "Needs Gatehouse, which no registry offers");
+    OA_CHECK(plan.blocked.find(" ,") == std::string::npos);
+}
+
 /// A lookup translates the question's title and its button.
 void a_lookup_translates() {
     lib::Inputs inputs = shelf();
@@ -933,6 +955,7 @@ int main() {
     the_question_lists_every_package();
     the_note_names_what_downloads_first();
     uninstall_names_dependants();
+    a_range_free_prerequisite_reads_with_no_blank();
     a_lookup_translates();
     return oa::test::check_exit_status();
 }
