@@ -42,6 +42,8 @@
 #include <utility>
 #include <vector>
 
+#include "collections_sides.hpp"
+
 namespace oa::data::mutators {
 namespace rules = oa::data::mutation_rules;
 namespace host = oa::data::script_host;
@@ -185,6 +187,9 @@ struct HookBox {
     int function_ref{LUA_NOREF};
     int units{0};
     const ContextView* context{};
+    const oa::AssetStore* store{};
+    const defs::DataLayout* layout{};
+    const std::string* variant{};
 };
 
 /// The package files one sandbox may read, sorted byte by byte.
@@ -584,6 +589,8 @@ int push_hook(void* context, lua_State* state) {
     push_context(state, box->context);
     const int ctx = lua_gettop(state);
     box->collections->set_context_collections(state, ctx);
+    if (box->store != nullptr && box->layout != nullptr && box->variant != nullptr)
+        set_context_sides(state, ctx, *box->collections, *box->store, *box->layout, *box->variant);
     return 2;
 }
 
@@ -1044,7 +1051,15 @@ Collection collection_for_path(std::string_view path, const defs::DataLayout& la
         return Collection::menus;
     if (directory(defs::DataDirectory::download))
         return Collection::menus;
-    if (directory(defs::DataDirectory::gamedata)) {
+    // A language variant lives in "<gamedata>-<variant>/". The side loader
+    // reads sidedata from that folder when the file is there, and the build
+    // lists stay in the plain folder. Both are still game-data tables.
+    const std::string gamedata_name =
+        fold_copy(layout.directories[static_cast<std::size_t>(defs::DataDirectory::gamedata)]);
+    const bool gamedata_variant = first.size() > gamedata_name.size() &&
+                                  first.compare(0, gamedata_name.size(), gamedata_name) == 0 &&
+                                  first[gamedata_name.size()] == '-';
+    if (directory(defs::DataDirectory::gamedata) || gamedata_variant) {
         if (rest == "sidedata.tdf")
             return Collection::sides;
         return Collection::tables;
@@ -1333,6 +1348,15 @@ void parse_documents(
     consider_listed(documents, report, store, k_features_folder, ".tdf", true);
     consider_listed(documents, report, store, layout.directories[download], ".tdf", false);
     consider_variant_file(documents, report, store, layout, variant, "sidedata");
+    // Sides are read from the language variant when that file is present.
+    // Build lists are read from the plain gamedata/sidedata.tdf, including
+    // when a variant exists. Load the plain file as well so each write is
+    // served at the path its reader opens. The second add is a no-op when
+    // the variant file is absent, because that path is already the plain one.
+    {
+        const std::size_t gamedata = static_cast<std::size_t>(defs::DataDirectory::gamedata);
+        consider_document(documents, report, store, layout.directories[gamedata] + "/sidedata.tdf");
+    }
     consider_variant_file(documents, report, store, layout, variant, "moveinfo");
     const std::vector<sm::Target> targets = rules::targets_of(rule_sets);
     for (const sm::Target& target : targets) {
@@ -1460,6 +1484,9 @@ bool call_hook(
     int function_ref,
     bool units,
     const ContextView& context,
+    const oa::AssetStore& store,
+    const defs::DataLayout& layout,
+    const std::string& variant,
     std::size_t slot,
     FirstFailure& first
 ) {
@@ -1468,6 +1495,9 @@ bool call_hook(
     box.function_ref = function_ref;
     box.units = units ? 1 : 0;
     box.context = &context;
+    box.store = &store;
+    box.layout = &layout;
+    box.variant = &variant;
     host::CallHooks hooks;
     hooks.context = &box;
     hooks.push = push_hook;
@@ -2089,6 +2119,8 @@ bool run_pass(
         grant.units = declares(input.mutators[slot].manifest, oamut::Layer::units);
         grant.weapons = declares(input.mutators[slot].manifest, oamut::Layer::weapons);
         grant.features = declares(input.mutators[slot].manifest, oamut::Layer::features);
+        grant.sides = declares(input.mutators[slot].manifest, oamut::Layer::sides);
+        grant.tables = declares(input.mutators[slot].manifest, oamut::Layer::tables);
         collections->begin_mutator(ids[slot], grant);
         ContextView context;
         context.mod = &input.mod;
@@ -2097,7 +2129,16 @@ bool run_pass(
         bool hook_ok = true;
         if (plans[slot].units_hook != LUA_NOREF) {
             hook_ok = call_hook(
-                *sandboxes[slot], *collections, plans[slot].units_hook, true, context, slot, first
+                *sandboxes[slot],
+                *collections,
+                plans[slot].units_hook,
+                true,
+                context,
+                store,
+                layout,
+                input.variant,
+                slot,
+                first
             );
         }
         if (hook_ok && plans[slot].weapons_hook != LUA_NOREF) {
@@ -2107,6 +2148,9 @@ bool run_pass(
                 plans[slot].weapons_hook,
                 false,
                 context,
+                store,
+                layout,
+                input.variant,
                 slot,
                 first
             );

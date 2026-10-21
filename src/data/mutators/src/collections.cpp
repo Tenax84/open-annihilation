@@ -3103,6 +3103,41 @@ void Collections::begin_mutator(std::string mutator, WriteGrant grant) {
     mutator_ = std::move(mutator);
     grant_ = grant;
     active_ = true;
+    side_scratch_ = SideScratch{};
+}
+
+Collections::SideScratch& Collections::side_scratch() noexcept {
+    return side_scratch_;
+}
+
+int Collections::lookup_unit(lua_State* state, std::string_view sought) {
+    const CollectionsState::Rec* found = nullptr;
+    try {
+        found = find_named(*this, CollectionsState::Kind::units, sought, state);
+    } catch (const std::bad_alloc&) {
+        hold_error("out of memory");
+        return -1;
+    }
+    SideScratch& scratch = side_scratch_;
+    if (found == nullptr || found->section == nullptr) {
+        scratch.found = false;
+        scratch.builder_unit = false;
+        return 0;
+    }
+    const uint32_t properties = oa::formats::tdf::property_count(found->section);
+    if (state != nullptr) {
+        charge_visits(state, properties == 0 ? uint64_t{1} : properties);
+        charge_text(state, found->name.size());
+    }
+    scratch.found = true;
+    scratch.builder_unit = oa::formats::tdf::get_int(found->section, "builder", 0) != 0;
+    try {
+        scratch.text.assign(found->name);
+    } catch (const std::bad_alloc&) {
+        hold_error("out of memory");
+        return -1;
+    }
+    return 1;
 }
 
 void Collections::end_mutator() {
@@ -3143,6 +3178,61 @@ std::span<const RecordRemoval> Collections::removals() const {
 
 std::span<const HookNote> Collections::notes() const {
     return notes_;
+}
+
+bool Collections::accept_write(rules::FieldWrite write, std::string& reason) {
+    const std::string path = write.path;
+    const std::string record = write.record;
+    const std::string block = write.block;
+    const std::string key = write.key;
+    const std::vector<std::string> earlier = earlier_writers(*this, path, record, block, key);
+    const uint32_t notes = earlier.empty() ? 0u : 1u;
+    if (!room_for(*this, 1u, notes, reason))
+        return false;
+    writes_.push_back(std::move(write));
+    if (!earlier.empty()) {
+        HookNote note;
+        note.kind = HookNoteKind::hook_overwrote;
+        note.mutators = earlier;
+        note.mutators.push_back(mutator_);
+        note.path = path;
+        note.record = record;
+        note.key = key;
+        note.message = mutator_;
+        note.message.append(" replaced the value written by ");
+        note.message.append(earlier[0]);
+        for (std::size_t index = 1; index < earlier.size(); ++index) {
+            note.message.append(" and ");
+            note.message.append(earlier[index]);
+        }
+        notes_.push_back(std::move(note));
+    }
+    remember_writer(*this, path, record, block, key);
+    commit_tally(*this, 1u, notes);
+    return true;
+}
+
+bool Collections::accept_note(HookNote note, std::string& reason) {
+    if (!room_for(*this, 0u, 1u, reason))
+        return false;
+    notes_.push_back(std::move(note));
+    commit_tally(*this, 0u, 1u);
+    return true;
+}
+
+void Collections::hold_error(std::string message) {
+    std::string& pending = working(*this).pending_error;
+    if (pending.empty())
+        pending = std::move(message);
+}
+
+int Collections::raise_held(lua_State* state) {
+    std::string& text = working(*this).pending_error;
+    if (text.empty())
+        text = "the hook stopped";
+    lua_pushlstring(state, text.data(), text.size());
+    text.clear();
+    return lua_error(state);
 }
 
 } // namespace oa::data::mutators
