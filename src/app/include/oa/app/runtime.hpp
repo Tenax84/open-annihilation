@@ -2076,6 +2076,14 @@ class Runtime final : public menu::Host,
     /// @param runtime the running app
     /// @return the hash
     friend oa::base::sha256::Digest played_sim_hash(const Runtime& runtime);
+    /// The profile hash played_sim_hash folds the mutator digest into.
+    ///
+    /// run_mutators reports this digest as text in simulation_hash_without.
+    /// With no mutator digest it is the hash simulation_hash reports.
+    ///
+    /// @param runtime the running app
+    /// @return the profile hash, before mutators
+    friend oa::base::sha256::Digest profile_sim_hash(const Runtime& runtime);
     /// Reads what this machine is playing (presence_facts in
     /// presence_facts.hpp): Developer Mode, the simulation hash, whether the
     /// rules differ from 3.1c, the mod and which standard hacks are on.

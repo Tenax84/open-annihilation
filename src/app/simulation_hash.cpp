@@ -61,28 +61,50 @@ const std::string& baseline_hash() {
 
 } // namespace
 
-oa::base::sha256::Digest played_sim_hash(const Runtime& runtime) {
+oa::base::sha256::Digest profile_sim_hash(const Runtime& runtime) {
     // The hash simulation_hash chose before mutators. This function is the
-    // friend, so the profile fields stay here.
-    oa::base::sha256::Digest profile{};
-    if (const auto* mod = runtime.mod_profile()) {
-        profile = mod->sim_hash;
-    } else if (runtime.engine_settings_ && runtime.engine_settings_->layered) {
-        profile = runtime.engine_settings_->base_sim_hash;
-    } else if (runtime.options_.mod_profile) {
-        profile = runtime.options_.mod_profile->sim_hash;
-    } else {
-        const std::optional<oa::base::sha256::Digest> parsed =
-            oa::base::sha256::parse_hex(baseline_hash());
-        if (!parsed)
-            throw std::runtime_error("the plain baseline does not resolve");
-        profile = *parsed;
-    }
-    return oa::data::mutators::fold_sim_hash(profile, runtime.match_mutator_digest());
+    // friend, so the profile fields stay here. played_sim_hash and
+    // run_mutators both start from this digest.
+    if (const auto* mod = runtime.mod_profile())
+        return mod->sim_hash;
+    if (runtime.engine_settings_ && runtime.engine_settings_->layered)
+        return runtime.engine_settings_->base_sim_hash;
+    if (runtime.options_.mod_profile)
+        return runtime.options_.mod_profile->sim_hash;
+    const std::optional<oa::base::sha256::Digest> parsed =
+        oa::base::sha256::parse_hex(baseline_hash());
+    if (!parsed)
+        throw std::runtime_error("the plain baseline does not resolve");
+    return *parsed;
+}
+
+oa::base::sha256::Digest played_sim_hash(const Runtime& runtime) {
+    return oa::data::mutators::fold_sim_hash(
+        profile_sim_hash(runtime), runtime.match_mutator_digest()
+    );
 }
 
 std::string simulation_hash(const Runtime& runtime) {
     return profiles::digest_text(played_sim_hash(runtime));
+}
+
+RunMutators run_mutators(const Runtime& runtime) {
+    // The same profile and the same digest played_sim_hash folds, read once
+    // so the two calls cannot disagree.
+    const oa::base::sha256::Digest profile = profile_sim_hash(runtime);
+    const std::optional<oa::base::sha256::Digest> digest = runtime.match_mutator_digest();
+    RunMutators told;
+    told.simulation_hash_without = profiles::digest_text(profile);
+    if (!digest)
+        return told;
+    const oa::data::mutators::Loadout* loadout = runtime.match_loadout();
+    if (loadout == nullptr)
+        return told;
+    told.ids.reserve(loadout->entries.size());
+    for (const oa::data::mutators::LoadoutEntry& entry : loadout->entries)
+        told.ids.push_back(entry.id);
+    told.count = static_cast<uint32_t>(told.ids.size());
+    return told;
 }
 
 void Runtime::check_simulation_hash() {
@@ -99,6 +121,15 @@ void Runtime::check_simulation_hash() {
     const std::string played = simulation_hash(*this);
     if (played.size() != 64)
         throw std::runtime_error("the simulation hash is not 64 hexadecimal digits");
+    const auto expect_no_mutators = [this](const std::string& hash) {
+        const RunMutators told = run_mutators(*this);
+        if (told.count != 0 || !told.ids.empty() || told.simulation_hash_without != hash ||
+            simulation_hash(*this) != told.simulation_hash_without)
+            throw std::runtime_error(
+                "with no mutators run_mutators did not report the simulation hash alone"
+            );
+    };
+    expect_no_mutators(played);
     const std::string baseline = baseline_hash();
     if (!options_.mod_profile) {
         if (played != baseline)
@@ -140,6 +171,7 @@ void Runtime::check_simulation_hash() {
     choose_match_mutators(kept);
     if (simulation_hash(*this) != played || presence_facts(*this) != before)
         throw std::runtime_error("a list chosen but not yet built changed the simulation hash");
+    expect_no_mutators(played);
 
     start_benchmark_skirmish();
     const std::optional<oa::base::sha256::Digest> digest = match_mutator_digest();
@@ -158,6 +190,17 @@ void Runtime::check_simulation_hash() {
         );
     if (during == played)
         throw std::runtime_error("mutators left the simulation hash unchanged");
+    const RunMutators told = run_mutators(*this);
+    if (told.simulation_hash_without != played || told.simulation_hash_without == during ||
+        simulation_hash(*this) != during)
+        throw std::runtime_error("run_mutators did not report the hash from before the mutators");
+    if (told.count == 0 || static_cast<std::size_t>(told.count) != loadout->entries.size() ||
+        told.ids.size() != loadout->entries.size())
+        throw std::runtime_error("run_mutators did not list the loadout");
+    for (std::size_t index = 0; index < told.ids.size(); ++index) {
+        if (told.ids[index] != loadout->entries[index].id)
+            throw std::runtime_error("run_mutators listed the mutators out of order");
+    }
     const auto played_facts = presence_facts(*this);
     if (profiles::digest_text(played_facts.sim_hash) != during ||
         !played_facts.rules_differ_from_base)
@@ -175,6 +218,7 @@ void Runtime::check_simulation_hash() {
         throw std::runtime_error("leaving the match left the mutator digest in the hash");
     if (match_loadout() != nullptr || match_mutator_digest())
         throw std::runtime_error("leaving the match kept the loadout");
+    expect_no_mutators(played);
 
     const auto original = engine_settings();
     auto settings = original;
@@ -188,6 +232,7 @@ void Runtime::check_simulation_hash() {
         throw std::runtime_error(
             "a simulation-changing Developer Mode override left the simulation hash unchanged"
         );
+    expect_no_mutators(changed);
     const auto overridden = presence_facts(*this);
     if (!overridden.developer_mode || overridden.overrides.size() != 1 ||
         overridden.overrides[0].hack != "ai.attack-wave-size" || !overridden.overrides[0].on ||
@@ -207,6 +252,7 @@ void Runtime::check_simulation_hash() {
     apply_engine_settings(original);
     if (simulation_hash(*this) != played)
         throw std::runtime_error("turning Developer Mode off did not bring the hash back");
+    expect_no_mutators(played);
     if (presence_facts(*this) != before)
         throw std::runtime_error(
             "turning Developer Mode off did not bring the presence facts back"
