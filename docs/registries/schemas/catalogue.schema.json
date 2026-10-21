@@ -64,7 +64,19 @@
       "additionalProperties": true,
       "required": ["id", "label", "type"],
       "properties": {
-        "id": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "not": {
+            "enum": [
+              "and", "break", "do", "else", "elseif", "end", "false", "for",
+              "function", "goto", "if", "in", "local", "nil", "not", "or",
+              "repeat", "return", "then", "true", "until", "while"
+            ]
+          }
+        },
         "label": { "type": "string", "minLength": 1, "maxLength": 64 },
         "type": { "type": "string" },
         "default": { "description": "A boolean, one of the choice values, or a number on a step." },
@@ -167,6 +179,7 @@
           "items": { "$ref": "#/$defs/mutator_requirement" }
         },
         "layers": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "clashes": { "enum": ["add", "replace"] },
         "options": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/option" } }
       }
     }

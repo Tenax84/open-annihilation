@@ -72,6 +72,24 @@ inline constexpr std::size_t most_choice_value_bytes = 32;
 /// @return true when the length is in range and every byte is one of those
 [[nodiscard]] bool choice_value_text(std::string_view text) noexcept;
 
+/// Tells whether text is one of Lua 5.4's reserved words.
+///
+/// The match is the word itself, in that case. `format`, `ends` and `for_`
+/// are not reserved. `For` differs in case and is not this word.
+///
+/// @param text the id
+/// @return true for one of the 22 words
+[[nodiscard]] bool lua_reserved_word(std::string_view text) noexcept;
+
+/// Tells whether text is an option id a script can read as `ctx.options.<id>`.
+///
+/// A Lua name of 1 to 32 bytes: `[a-z][a-z0-9_]*`. One of Lua 5.4's
+/// reserved words is not a name. A capital, as in `For`, is not a name.
+///
+/// @param text the id
+/// @return true when a script can name it that way
+[[nodiscard]] bool option_id(std::string_view text) noexcept;
+
 /// The most steps a number option's range may hold.
 inline constexpr std::size_t most_number_steps = 1000;
 
@@ -148,6 +166,28 @@ enum class Layer : uint8_t {
     maps,     ///< map settings
     hacks,    ///< engine hacks for one match
 };
+
+/// How a mutator treats a unit or weapon that already has that name.
+///
+/// Add keeps the existing record and brings this mutator's beside it.
+/// Replace puts this mutator's record in its place. The game chooses when
+/// the manifest names neither.
+enum class ClashMode : uint8_t {
+    add,     ///< add the unit or weapon beside the one already there
+    replace, ///< replace the unit or weapon that already has that name
+};
+
+/// Returns a clash mode's manifest name.
+///
+/// @param mode the mode
+/// @return its name: add or replace
+[[nodiscard]] const char* clash_mode_name(ClashMode mode) noexcept;
+
+/// Reads a clash mode.
+///
+/// @param text the name, compared byte for byte
+/// @return the mode, or nothing when the text is not add or replace
+[[nodiscard]] std::optional<ClashMode> parse_clash_mode(std::string_view text) noexcept;
 
 /// How a player sets one option.
 enum class OptionType : uint8_t {
@@ -229,9 +269,12 @@ struct Manifest {
     std::vector<std::string> tags{};     ///< one to four tags, in the order written
     std::vector<Condition> works_with{}; ///< mods and the base game it fits
     std::string requires_engine{};       ///< the engine requirement, as written
-    std::vector<Condition> requires_mutators{};    ///< prerequisites, in the order they apply
-    std::vector<Condition> conflicts_with{};       ///< mutators it cannot run beside
-    std::vector<Layer> layers{};                   ///< the layers it uses, in the order written
+    std::vector<Condition> requires_mutators{}; ///< prerequisites, in the order they apply
+    std::vector<Condition> conflicts_with{};    ///< mutators it cannot run beside
+    std::vector<Layer> layers{};                ///< the layers it uses, in the order written
+    /// How units and weapons that already exist are treated. Absent when
+    /// the manifest names none; the game's default then applies.
+    std::optional<ClashMode> clashes{};
     std::vector<Option> options{};                 ///< the player's settings, in the order written
     std::vector<Translation> strings{};            ///< translations, in the order written
     std::string entry{std::string{default_entry}}; ///< the entry script

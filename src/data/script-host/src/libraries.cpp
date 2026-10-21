@@ -1156,6 +1156,7 @@ void open_libraries(lua_State* state) {
     luaL_requiref(state, "utf8", luaopen_utf8, 1);
     lua_pop(state, 1);
     open_math_library(state);
+    open_fixed_library(state);
 
     const char* const removed[] = {"load", "loadfile", "dofile", "collectgarbage"};
     for (const char* name : removed) {

@@ -154,12 +154,19 @@ members are read only on a mutator. On any other kind they are ignored.
 | `conflicts_with` | no | At most 32 objects of the same shape as `requires.mutators`. None is this entry's id or one of its prerequisites. |
 | `works_with` | no | At most 32 strings. Each is a condition: `*`, `ta-3.1c`, or a mod id with an optional version range. `*` stands only alone. |
 | `layers` | no | At most 16 strings. A known layer name is kept once, in the order written. An unknown name is skipped. |
+| `clashes` | no | `add` or `replace`. Absent stays absent; the game's default then applies. Any other value, including `Add` and a number, skips the entry. |
 | `options` | no | At most 16 objects, below. An option of an unknown type is skipped. Other members of an object are ignored. |
 
 The layer names are `files`, `units`, `weapons`, `features`, `sides`,
 `tables`, `menus`, `maps` and `hacks`.
 
 An option names `id` (an option id), `label` (1 to 64 bytes) and `type`.
+An option id is a Lua name of 1 to 32 bytes, `[a-z][a-z0-9_]*`. Lua 5.4's
+reserved words are not ids (`and`, `break`, `do`, `else`, `elseif`, `end`,
+`false`, `for`, `function`, `goto`, `if`, `in`, `local`, `nil`, `not`, `or`,
+`repeat`, `return`, `then`, `true`, `until`, `while`), matched in that case.
+`format`, `ends` and `for_` are ids. `For` is not, because of its capital.
+A reserved word leaves the package out, as any other refused mutator member does.
 `type` is `toggle`, `choice` or `number`. A choice names `values`, 2 to 16
 numbers or 2 to 16 identifiers, all of one kind, and may name `labels`, one
 string of 1 to 64 bytes for each value. An identifier is 1 to 32 bytes of
