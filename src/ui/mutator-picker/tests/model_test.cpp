@@ -1034,9 +1034,10 @@ void translated_row() {
     picker::Picker model;
     picker::open(model, std::move(inputs));
     OA_CHECK(picker::switch_on(model, "gatehouse-keep").changed);
-    const picker::Row* row = row_of(picker::rows(model), "gatehouse");
+    const std::vector<picker::Row> shown_rows = picker::rows(model);
+    const picker::Row* row = row_of(shown_rows, "gatehouse");
     OA_CHECK(row != nullptr);
-    OA_CHECK(row->line == "Requis par Gatehouse Keep");
+    OA_CHECK(row != nullptr && row->line == "Requis par Gatehouse Keep");
 }
 
 /// Refresh keeps the order, the options and the filters, and drops a mutator
