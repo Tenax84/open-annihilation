@@ -28,7 +28,7 @@ namespace oa::data::mutators {
 ///
 /// Each run of consecutive Lua blocks is one source, and each `sm` path is
 /// one source. A plan with more sources than this is refused.
-inline constexpr std::uint32_t max_plan_sources = 256;
+inline constexpr uint32_t max_plan_sources = 256;
 
 /// Publishes the rule forms in a state.
 ///
@@ -42,10 +42,16 @@ inline constexpr std::uint32_t max_plan_sources = 256;
 /// `sm` holds a path; it does not read. `empty` assigns empty text, the
 /// record a rule file writes with `field=;`.
 ///
+/// `where` and `:change` check every entry of their table when they are
+/// called, and an entry they refuse raises the error at that call. Each
+/// keeps its own copy of the table's entries, so changing or reusing the
+/// table afterwards changes no block already built.
+///
 /// The state is one the script host opened. The forms' metatables cannot
 /// be read or replaced. A script can hold a block after it has been
 /// collected: the block keeps its fields as Lua values and has no
-/// finalizer.
+/// finalizer. The forms keep no working state between calls, so states on
+/// different threads share nothing.
 ///
 /// @param state state to publish into
 void install_rule_forms(lua_State* state);
@@ -86,8 +92,9 @@ struct PlanRules {
 /// A Lua block joins the current source, which is named `entry_name`. A
 /// `sm` value ends that source and adds one source of its own. Anything
 /// else refuses the plan. A block `:change` was not called on refuses the
-/// plan, and the message names that block's call and its line. The records
-/// are copied out: the result does not use the state after return.
+/// plan, and the message names that block's place in the list, its call
+/// and its line, as does any other refusal of one block. The records are
+/// copied out: the result does not use the state after return.
 ///
 /// A rule-file path is a relative path inside the package. `\` is read as
 /// `/`. A path that is absolute, has a drive, or has a `..` segment is

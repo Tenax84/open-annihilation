@@ -669,6 +669,75 @@ return { make("Zeta", "alpha"), make("alpha", "Zeta") }
     }
 }
 
+void test_reused_tables(HostBox& box) {
+    constexpr const char* k_source = R"(local rules = {}
+local needs, changes = {}, {}
+for level = 1, 3 do
+  needs.techlevel = level
+  changes.workertime = scale(level)
+  rules[#rules + 1] = where(needs):change(changes)
+end
+local held = { canfly = true }
+local open = where(held)
+held.canfly = nil
+held[1] = "x"
+rules[#rules + 1] = open:change { maxvelocity = 2 }
+needs.techlevel = 9
+needs[1] = "x"
+changes.workertime = nil
+for n = 1, 5000 do
+  changes["f" .. n] = n
+end
+return rules
+)";
+    Eval eval;
+    eval.source = k_source;
+    eval.chunk = "reused.lua";
+    if (!run_source(box, eval)) {
+        std::fprintf(stderr, "reused script '%s'\n", eval.script_error.c_str());
+        OA_CHECK(false);
+        return;
+    }
+    if (!eval.plan.ok())
+        std::fprintf(stderr, "reused plan '%s'\n", eval.plan.error.c_str());
+    OA_CHECK(eval.plan.ok());
+    OA_CHECK(eval.plan.sources.size() == 1);
+    if (!eval.plan.ok() || eval.plan.sources.size() != 1)
+        return;
+    const std::vector<sm::Block>& blocks = eval.plan.sources[0].rules.blocks;
+    OA_CHECK(blocks.size() == 4);
+    if (blocks.size() != 4)
+        return;
+    for (std::size_t block_index = 0; block_index < 3; ++block_index) {
+        const sm::Block& block = blocks[block_index];
+        const double level = static_cast<double>(block_index + 1);
+        OA_CHECK(block.selector == sm::Selector::group);
+        OA_CHECK(block.needs.size() == 1);
+        OA_CHECK(block.changes.size() == 1);
+        if (block.needs.size() != 1 || block.changes.size() != 1)
+            continue;
+        OA_CHECK(block.needs[0].field == "techlevel");
+        OA_CHECK(block.needs[0].kind == sm::NeedKind::range);
+        OA_CHECK(block.needs[0].low == level);
+        OA_CHECK(block.needs[0].high == level);
+        OA_CHECK(block.changes[0].field == "workertime");
+        OA_CHECK(block.changes[0].kind == sm::ChangeKind::scale);
+        OA_CHECK(block.changes[0].value == level);
+        OA_CHECK(block.changes[0].line == 6);
+    }
+    const sm::Block& held = blocks[3];
+    OA_CHECK(held.needs.size() == 1);
+    OA_CHECK(held.changes.size() == 1);
+    if (held.needs.size() == 1 && held.changes.size() == 1) {
+        OA_CHECK(held.needs[0].field == "canfly");
+        OA_CHECK(held.needs[0].kind == sm::NeedKind::range);
+        OA_CHECK(!held.needs[0].negated);
+        OA_CHECK(held.needs[0].line == 9);
+        OA_CHECK(held.changes[0].field == "maxvelocity");
+        OA_CHECK(held.changes[0].value == 2);
+    }
+}
+
 void test_depth_order(HostBox& box) {
     constexpr const char* k_source = R"(local changes = {}
 changes["<alldepth2>"] = scale(2)
@@ -1177,6 +1246,7 @@ int main() {
     }
     test_pairs(box);
     test_order(box);
+    test_reused_tables(box);
     test_depth_order(box);
     test_lines_and_targets(box);
     test_mixed(box);

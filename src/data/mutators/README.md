@@ -314,16 +314,19 @@ message names the path, and a parse error names the line as well.
 Warnings stay on the result and the source is still kept.
 
 Needs are the same forms the collections use (`need_from_lua`). Changes
-are the forms a rule file writes. Field names in one block are stored in
-the order of those names after ASCII lower-casing, with the raw bytes
-breaking a tie, so the records do not follow Lua's iteration order. Two
-changes to one field are two blocks, because one table cannot hold the
-same key twice. A block's line is the line the host reports for the
-`where`, `all` or `named` call, or for `on` when `on` is what starts the
-block. Calling `on` on a block that already has a selector keeps that
-line and only replaces the folder and extension. A later `where`, `all`
-or `named` on a block that already has a selector is refused, and the
-message names the line of that call. An unfinished block refuses the
+are the forms a rule file writes. `where` and `:change` check their
+table when they are called and keep their own copy of it, so a loop that
+reuses one table builds a different block each time, and changing the
+table later changes no block already built. Field names in one block are
+stored in the order of those names after ASCII lower-casing, with the
+raw bytes breaking a tie, so the records do not follow Lua's iteration
+order. Two changes to one field are two blocks, because one table cannot
+hold the same key twice. A block's line is the line the host reports for
+the `where`, `all` or `named` call, or for `on` when `on` is what starts
+the block. Calling `on` on a block that already has a selector keeps
+that line and only replaces the folder and extension. A later `where`,
+`all` or `named` on a block that already has a selector is refused, and
+the message names the line of that call. An unfinished block refuses the
 plan, and the message names the call that started it and that call's
 line.
 

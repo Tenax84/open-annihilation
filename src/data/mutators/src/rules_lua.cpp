@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Lua spellings of rule blocks. A block is userdata the script can keep:
-// its selector, needs and changes live in the userdata and its uservalues,
-// which have no finalizer. The rule record is built when the plan is read.
-// A Lua error is raised only after every C++ value in the frame is gone,
-// because a Lua error leaves destructors unrun. The message waits in a
-// buffer that outlives the frame.
+// its selector lives in the userdata and its name, target, needs and
+// changes in its uservalues, which have no finalizer. `where` and `:change`
+// check the table they are given and keep a copy of it that only the block
+// can reach, so a later change to the script's table changes no block. The
+// rule record is built from those copies when the plan is read.
+//
+// Each form checks with C++ values first and builds in Lua only after they
+// are gone, because a Lua error leaves destructors unrun. A refusal's text
+// waits in a fixed buffer in the form's own frame until it is raised.
 #include "oa/data/mutators/rules_lua.hpp"
 
 #include "oa/data/mutators/collections.hpp"
@@ -15,9 +19,11 @@
 #include "lua.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <map>
 #include <new>
@@ -47,6 +53,10 @@ constexpr int kRuleValues = 5;
 
 constexpr std::string_view kDepthMarker = "<alldepth2>";
 
+/// The longest refusal a form raises: a field name at the text limit and the
+/// words around it. A longer one is cut.
+constexpr std::size_t kRefusalBytes = sm::max_text_bytes + 256;
+
 /// One change value built by set, scale, lock, remove or append.
 ///
 /// The text, when there is any, is uservalue 1. A number change leaves that
@@ -62,54 +72,80 @@ struct ChangeBox {
 /// One rule block the script can hold. Nothing here owns heap memory.
 ///
 /// Uservalue 1 is the record name, 2 the folder, 3 the extension, 4 the
-/// needs table and 5 the changes table. A missing folder or extension means
-/// the units folder and the fbi suffix. `selector_chosen` is set only by
-/// `where`, `all` and `named`, so `on` can still come first.
+/// needs and 5 the changes. The needs and changes are copies of the tables
+/// the script passed, made when `where` and `:change` were called. A missing
+/// folder or extension means the units folder and the fbi suffix.
+/// `selector_chosen` is set only by `where`, `all` and `named`, so `on` can
+/// still come first. `need_count` is the number of needs in uservalue 4.
 struct RuleBits {
     uint8_t complete{0};
     uint8_t selector_chosen{0};
     sm::Selector selector{sm::Selector::all};
     uint32_t line{0};
     uint32_t change_line{0};
+    uint32_t need_count{0};
 };
 
-/// The message the next raise reports. It outlives the frame that filled it.
-std::string& parked_reason() {
-    static std::string text;
-    return text;
+/// Why a form refused, kept in the form's own frame.
+///
+/// It has no destructor, so the form can raise it after every C++ value of
+/// its check is gone.
+struct Refusal {
+    std::array<char, kRefusalBytes> text{};
+    std::size_t length{0};
+};
+
+/// What a form's check found, for the part of the form that builds in Lua.
+///
+/// It has no destructor. Its texts point into strings on the form's stack.
+/// `table_slot` is the slot of the needs or changes table, and `count` the
+/// number of entries the check read from it.
+struct FormPlan {
+    RuleBits bits{};
+    bool has_prior{false};
+    int table_slot{0};
+    uint32_t count{0};
+    const char* first_text{nullptr};
+    std::size_t first_length{0};
+    const char* second_text{nullptr};
+    std::size_t second_length{0};
+};
+
+/// A form's check: fills the plan, or gives the reason it refuses. It does not raise.
+using FormCheck = bool (*)(lua_State*, FormPlan&, std::string&);
+
+void keep_refusal(Refusal& refusal, std::string_view reason) noexcept {
+    const std::size_t length = std::min(reason.size(), refusal.text.size());
+    if (length != 0)
+        std::memcpy(refusal.text.data(), reason.data(), length);
+    refusal.length = length;
 }
 
-/// Canonical folder and extension, parked so the frame can end before Lua copies them.
-std::string& held_text(int slot) {
-    static std::string texts[2];
-    return texts[slot == 0 ? 0 : 1];
+/// Runs a form's check. Its C++ values end with this call; a refusal is copied out.
+bool run_check(lua_State* state, FormCheck check, FormPlan& plan, Refusal& refusal) {
+    bool ok = false;
+    bool memory_failed = false;
+    try {
+        std::string reason;
+        ok = check(state, plan, reason);
+        if (!ok)
+            keep_refusal(refusal, reason);
+    } catch (const std::bad_alloc&) {
+        memory_failed = true;
+    }
+    if (memory_failed) {
+        keep_refusal(refusal, "out of memory");
+        return false;
+    }
+    return ok;
 }
 
-/// Needs gathered for one block. Static so a Lua error cannot drop the buffer.
-std::vector<sm::Need>& need_scratch() {
-    static std::vector<sm::Need> needs;
-    return needs;
-}
-
-/// Changes gathered for one block. Static so a Lua error cannot drop the buffer.
-std::vector<sm::Change>& change_scratch() {
-    static std::vector<sm::Change> changes;
-    return changes;
-}
-
-void release_scratch() {
-    need_scratch().clear();
-    change_scratch().clear();
-}
-
-/// Raises the parked message. Call it only after C++ objects in the frame are gone.
-int raise_parked(lua_State* state) {
-    std::string& text = parked_reason();
-    if (text.empty())
+/// Raises a refusal. Call it only when no C++ value in the frame has a destructor.
+int raise_refusal(lua_State* state, const Refusal& refusal) {
+    if (refusal.length == 0)
         lua_pushliteral(state, "a rule was refused");
     else
-        lua_pushlstring(state, text.data(), text.size());
-    text.clear();
+        lua_pushlstring(state, refusal.text.data(), refusal.length);
     return lua_error(state);
 }
 
@@ -149,17 +185,14 @@ std::string_view trim_ends(std::string_view text) noexcept {
     return text;
 }
 
-std::string folded_copy(std::string_view text) {
-    std::string folded;
-    folded.reserve(text.size());
-    for (const char raw : text) {
-        const auto byte = static_cast<unsigned char>(raw);
-        char piece = byte == '\\' ? '/' : static_cast<char>(byte);
-        if (piece >= 'A' && piece <= 'Z')
-            piece = static_cast<char>(piece - 'A' + 'a');
-        folded.push_back(piece);
-    }
-    return folded;
+/// One byte of a target: ASCII capitals lowered and `\` read as `/`.
+char folded_byte(char raw) noexcept {
+    const auto byte = static_cast<unsigned char>(raw);
+    if (byte == '\\')
+        return '/';
+    if (byte >= 'A' && byte <= 'Z')
+        return static_cast<char>(byte - 'A' + 'a');
+    return raw;
 }
 
 const char* selector_word(const RuleBits& bits) noexcept {
@@ -239,14 +272,36 @@ void copy_values(lua_State* state, int from, int to) {
     }
 }
 
-void set_value_from(lua_State* state, int rule, int value_slot, int from) {
-    lua_pushvalue(state, from);
-    lua_setiuservalue(state, rule, value_slot);
-}
-
 void clear_value(lua_State* state, int rule, int value_slot) {
     lua_pushnil(state);
     lua_setiuservalue(state, rule, value_slot);
+}
+
+/// Pushes a new table holding every pair of the table at `from`, read raw.
+///
+/// The keys and values are the same Lua values. Need and change values
+/// cannot be changed, so the new table keeps what the form was given.
+///
+/// @param count number of pairs, used to size the table
+void push_raw_copy(lua_State* state, int from, uint32_t count) {
+    from = lua_absindex(state, from);
+    lua_createtable(state, 0, static_cast<int>(std::min<uint32_t>(count, sm::max_statements)));
+    const int private_copy = lua_gettop(state);
+    lua_pushnil(state);
+    while (lua_next(state, from) != 0) {
+        lua_pushvalue(state, -2);
+        lua_insert(state, -2);
+        lua_rawset(state, private_copy);
+    }
+}
+
+/// Pushes `length` bytes of `text` with ASCII capitals lowered and `\` read as `/`.
+void push_folded(lua_State* state, const char* text, std::size_t length) {
+    luaL_Buffer buffer;
+    char* bytes = luaL_buffinitsize(state, &buffer, length);
+    for (std::size_t byte_index = 0; byte_index < length; ++byte_index)
+        bytes[byte_index] = folded_byte(text[byte_index]);
+    luaL_pushresultsize(&buffer, length);
 }
 
 void push_change(
@@ -292,6 +347,21 @@ bool reject_key(std::string_view raw, std::string& reason) {
         return true;
     }
     return false;
+}
+
+/// Reads the key at -2 as a field name, trimmed. False with `reason` when it cannot be one.
+bool field_at(lua_State* state, std::string_view& field, std::string& reason) {
+    if (lua_type(state, -2) != LUA_TSTRING) {
+        reason = "a field name must be a string";
+        return false;
+    }
+    std::size_t length = 0;
+    const char* text = lua_tolstring(state, -2, &length);
+    const std::string_view raw(text != nullptr ? text : "", length);
+    if (reject_key(raw, reason))
+        return false;
+    field = trim_ends(raw);
+    return true;
 }
 
 bool read_change_value(
@@ -355,91 +425,66 @@ bool read_change_value(
     return true;
 }
 
-bool gather_needs(lua_State* state, int table, uint32_t line, std::string& reason) {
-    auto& needs = need_scratch();
-    needs.clear();
-    table = lua_absindex(state, table);
-    lua_pushnil(state);
-    while (lua_next(state, table) != 0) {
-        if (lua_type(state, -2) != LUA_TSTRING) {
-            lua_pop(state, 2);
-            needs.clear();
-            reason = "a field name must be a string";
-            return false;
-        }
-        std::size_t length = 0;
-        const char* text = lua_tolstring(state, -2, &length);
-        const std::string_view raw(text != nullptr ? text : "", length);
-        if (reject_key(raw, reason)) {
-            lua_pop(state, 2);
-            needs.clear();
-            return false;
-        }
-        const std::string_view field = trim_ends(raw);
-        sm::Need need;
-        const bool accepted = need_from_lua(state, -1, field, need, &reason);
-        if (!accepted || !text_within_limit(need.text, reason)) {
-            lua_pop(state, 2);
-            needs.clear();
-            return false;
-        }
-        need.line = line;
-        needs.push_back(std::move(need));
-        lua_pop(state, 1);
-    }
-    std::sort(needs.begin(), needs.end(), [](const sm::Need& first, const sm::Need& second) {
-        return host::name_less(first.field, second.field);
-    });
-    return true;
+/// Reads the value at -1 as the need on `field`.
+bool read_need(lua_State* state, std::string_view field, sm::Need& need, std::string& reason) {
+    return need_from_lua(state, -1, field, need, &reason) && text_within_limit(need.text, reason);
 }
 
-bool gather_changes(lua_State* state, int table, uint32_t line, std::string& reason) {
-    auto& changes = change_scratch();
-    changes.clear();
+/// Reads the value at -1 as the change to `field`.
+bool read_change(
+    lua_State* state, std::string_view field, sm::Change& change, std::string& reason
+) {
+    return read_change_value(state, -1, field, change, reason);
+}
+
+/// Walks a needs or changes table, read raw. Does not raise.
+///
+/// Every key must be a field name, and `read_entry` checks each value. The
+/// walk stops with "too many statements" when the table holds more than
+/// `limit` entries. `into`, when not null, receives each entry with `line`.
+///
+/// @param[out] count number of entries read
+/// @return false with `reason` when an entry is refused
+template <typename Entry, typename ReadEntry>
+bool walk_table(
+    lua_State* state,
+    int table,
+    uint32_t line,
+    std::size_t limit,
+    std::vector<Entry>* into,
+    uint32_t& count,
+    std::string& reason,
+    ReadEntry read_entry
+) {
+    count = 0;
     table = lua_absindex(state, table);
     lua_pushnil(state);
     while (lua_next(state, table) != 0) {
-        if (lua_type(state, -2) != LUA_TSTRING) {
-            lua_pop(state, 2);
-            changes.clear();
-            reason = "a field name must be a string";
-            return false;
+        std::string_view field;
+        bool accepted = field_at(state, field, reason);
+        if (accepted && count >= limit) {
+            reason = "too many statements";
+            accepted = false;
         }
-        std::size_t length = 0;
-        const char* text = lua_tolstring(state, -2, &length);
-        const std::string_view raw(text != nullptr ? text : "", length);
-        if (reject_key(raw, reason)) {
-            lua_pop(state, 2);
-            changes.clear();
-            return false;
-        }
-        const std::string_view field = trim_ends(raw);
-        sm::Change change;
-        const bool accepted = read_change_value(state, -1, field, change, reason);
+        Entry entry;
+        if (accepted)
+            accepted = read_entry(state, field, entry, reason);
         if (!accepted) {
             lua_pop(state, 2);
-            changes.clear();
             return false;
         }
-        change.line = line;
-        changes.push_back(std::move(change));
+        entry.line = line;
+        if (into != nullptr)
+            into->push_back(std::move(entry));
+        ++count;
         lua_pop(state, 1);
     }
-    std::sort(
-        changes.begin(), changes.end(), [](const sm::Change& first, const sm::Change& second) {
-            return host::name_less(first.field, second.field);
-        }
-    );
     return true;
 }
 
-bool within_statements(std::size_t needs, std::size_t changes, std::string& reason) {
-    if (needs > sm::max_statements || changes > sm::max_statements ||
-        needs + changes > sm::max_statements) {
-        reason = "too many statements";
-        return false;
-    }
-    return true;
+/// How many changes a block with `need_count` needs may hold.
+std::size_t change_limit(uint32_t need_count) noexcept {
+    return need_count < sm::max_statements ? sm::max_statements - need_count : 0;
 }
 
 bool refuse_finished(const RuleBits* prior, std::string& reason) {
@@ -460,7 +505,20 @@ bool refuse_second_selector(
     return true;
 }
 
-bool build_where(lua_State* state, std::string& reason) {
+/// Starts the plan of a form that chooses a selector: the prior block's bits, unfinished.
+void choose_selector(FormPlan& plan, const RuleBits* prior, sm::Selector selector, uint32_t line) {
+    plan.has_prior = prior != nullptr;
+    if (prior != nullptr)
+        plan.bits = *prior;
+    plan.bits.complete = 0;
+    plan.bits.selector_chosen = 1;
+    plan.bits.selector = selector;
+    plan.bits.line = line;
+    plan.bits.change_line = 0;
+    plan.bits.need_count = 0;
+}
+
+bool check_where(lua_State* state, FormPlan& plan, std::string& reason) {
     const RuleBits* prior = rule_at(state, 1);
     const int table_slot = prior != nullptr ? 2 : 1;
     if (refuse_finished(prior, reason) || refuse_second_selector(state, prior, "where", reason))
@@ -470,31 +528,33 @@ bool build_where(lua_State* state, std::string& reason) {
         return false;
     }
     const uint32_t line = call_line(state);
-    if (!gather_needs(state, table_slot, line, reason) ||
-        !within_statements(need_scratch().size(), 0, reason)) {
-        release_scratch();
+    uint32_t count = 0;
+    if (!walk_table<sm::Need>(
+            state, table_slot, line, sm::max_statements, nullptr, count, reason, read_need
+        ))
         return false;
-    }
-    release_scratch();
-    RuleBits bits;
-    if (prior != nullptr)
-        bits = *prior;
-    bits.complete = 0;
-    bits.selector_chosen = 1;
-    bits.selector = sm::Selector::group;
-    bits.line = line;
-    bits.change_line = 0;
-    place_rule(state, bits);
-    const int created = lua_gettop(state);
-    if (prior != nullptr)
-        copy_values(state, 1, created);
-    set_value_from(state, created, kValueNeeds, table_slot);
-    clear_value(state, created, kValueName);
-    clear_value(state, created, kValueChanges);
+    choose_selector(plan, prior, sm::Selector::group, line);
+    plan.bits.need_count = count;
+    plan.table_slot = table_slot;
+    plan.count = count;
     return true;
 }
 
-bool build_all(lua_State* state, std::string& reason) {
+int place_where(lua_State* state, const FormPlan& plan) {
+    push_raw_copy(state, plan.table_slot, plan.count);
+    const int needs = lua_gettop(state);
+    place_rule(state, plan.bits);
+    const int created = lua_gettop(state);
+    if (plan.has_prior)
+        copy_values(state, 1, created);
+    lua_pushvalue(state, needs);
+    lua_setiuservalue(state, created, kValueNeeds);
+    clear_value(state, created, kValueName);
+    clear_value(state, created, kValueChanges);
+    return 1;
+}
+
+bool check_all(lua_State* state, FormPlan& plan, std::string& reason) {
     const RuleBits* prior = rule_at(state, 1);
     if (lua_gettop(state) >= 1 && prior == nullptr) {
         reason = "all takes no arguments";
@@ -502,25 +562,22 @@ bool build_all(lua_State* state, std::string& reason) {
     }
     if (refuse_finished(prior, reason) || refuse_second_selector(state, prior, "all", reason))
         return false;
-    RuleBits bits;
-    if (prior != nullptr)
-        bits = *prior;
-    bits.complete = 0;
-    bits.selector_chosen = 1;
-    bits.selector = sm::Selector::all;
-    bits.line = call_line(state);
-    bits.change_line = 0;
-    place_rule(state, bits);
+    choose_selector(plan, prior, sm::Selector::all, call_line(state));
+    return true;
+}
+
+int place_all(lua_State* state, const FormPlan& plan) {
+    place_rule(state, plan.bits);
     const int created = lua_gettop(state);
-    if (prior != nullptr)
+    if (plan.has_prior)
         copy_values(state, 1, created);
     clear_value(state, created, kValueName);
     clear_value(state, created, kValueNeeds);
     clear_value(state, created, kValueChanges);
-    return true;
+    return 1;
 }
 
-bool build_named(lua_State* state, std::string& reason) {
+bool check_named(lua_State* state, FormPlan& plan, std::string& reason) {
     const RuleBits* prior = rule_at(state, 1);
     const int name_slot = prior != nullptr ? 2 : 1;
     if (refuse_finished(prior, reason) || refuse_second_selector(state, prior, "named", reason))
@@ -538,87 +595,79 @@ bool build_named(lua_State* state, std::string& reason) {
     }
     if (!text_within_limit(name, reason))
         return false;
-    const uint32_t line = call_line(state);
-    RuleBits bits;
-    if (prior != nullptr)
-        bits = *prior;
-    bits.complete = 0;
-    bits.selector_chosen = 1;
-    bits.selector = sm::Selector::name;
-    bits.line = line;
-    bits.change_line = 0;
-    place_rule(state, bits);
-    const int created = lua_gettop(state);
-    if (prior != nullptr)
-        copy_values(state, 1, created);
-    lua_pushlstring(state, name.data(), name.size());
-    lua_setiuservalue(state, created, kValueName);
-    clear_value(state, created, kValueNeeds);
-    clear_value(state, created, kValueChanges);
+    choose_selector(plan, prior, sm::Selector::name, call_line(state));
+    plan.first_text = name.data();
+    plan.first_length = name.size();
     return true;
 }
 
-bool canonical_target(lua_State* state, int folder_slot, int extension_slot, std::string& reason) {
-    if (lua_type(state, folder_slot) != LUA_TSTRING ||
-        lua_type(state, extension_slot) != LUA_TSTRING) {
-        reason = "on expects a folder and an extension";
+int place_named(lua_State* state, const FormPlan& plan) {
+    place_rule(state, plan.bits);
+    const int created = lua_gettop(state);
+    if (plan.has_prior)
+        copy_values(state, 1, created);
+    lua_pushlstring(state, plan.first_text, plan.first_length);
+    lua_setiuservalue(state, created, kValueName);
+    clear_value(state, created, kValueNeeds);
+    clear_value(state, created, kValueChanges);
+    return 1;
+}
+
+/// The trimmed text of a string argument, or an empty view when it is not a string.
+std::string_view trimmed_argument(lua_State* state, int slot) {
+    if (lua_type(state, slot) != LUA_TSTRING)
+        return {};
+    std::size_t length = 0;
+    const char* text = lua_tolstring(state, slot, &length);
+    return trim_ends(std::string_view(text != nullptr ? text : "", length));
+}
+
+bool check_on(lua_State* state, FormPlan& plan, std::string& reason) {
+    const RuleBits* prior = rule_at(state, 1);
+    const int folder_slot = prior != nullptr ? 2 : 1;
+    const int extension_slot = prior != nullptr ? 3 : 2;
+    if (refuse_finished(prior, reason))
         return false;
-    }
-    std::size_t folder_length = 0;
-    std::size_t extension_length = 0;
-    const char* folder_text = lua_tolstring(state, folder_slot, &folder_length);
-    const char* extension_text = lua_tolstring(state, extension_slot, &extension_length);
-    std::string folder = folded_copy(
-        trim_ends(std::string_view(folder_text != nullptr ? folder_text : "", folder_length))
-    );
-    std::string extension = folded_copy(trim_ends(
-        std::string_view(extension_text != nullptr ? extension_text : "", extension_length)
-    ));
+    const std::string_view folder = trimmed_argument(state, folder_slot);
+    std::string_view extension = trimmed_argument(state, extension_slot);
     if (!extension.empty() && extension.front() == '.')
-        extension.erase(extension.begin());
+        extension.remove_prefix(1);
     if (folder.empty() || extension.empty()) {
         reason = "on expects a folder and an extension";
         return false;
     }
     if (!text_within_limit(folder, reason) || !text_within_limit(extension, reason))
         return false;
-    held_text(0) = std::move(folder);
-    held_text(1) = std::move(extension);
-    return true;
-}
-
-bool build_on(lua_State* state, std::string& reason) {
-    const RuleBits* prior = rule_at(state, 1);
-    const int folder_slot = prior != nullptr ? 2 : 1;
-    const int extension_slot = prior != nullptr ? 3 : 2;
-    if (refuse_finished(prior, reason))
-        return false;
-    if (!canonical_target(state, folder_slot, extension_slot, reason))
-        return false;
-    RuleBits bits;
+    plan.has_prior = prior != nullptr;
     if (prior != nullptr) {
-        bits = *prior;
+        plan.bits = *prior;
     } else {
-        bits.selector = sm::Selector::all;
-        bits.line = call_line(state);
+        plan.bits.selector = sm::Selector::all;
+        plan.bits.line = call_line(state);
     }
-    bits.complete = 0;
-    bits.change_line = 0;
-    place_rule(state, bits);
-    const int created = lua_gettop(state);
-    if (prior != nullptr)
-        copy_values(state, 1, created);
-    lua_pushlstring(state, held_text(0).data(), held_text(0).size());
-    lua_setiuservalue(state, created, kValueFolder);
-    lua_pushlstring(state, held_text(1).data(), held_text(1).size());
-    lua_setiuservalue(state, created, kValueExtension);
-    held_text(0).clear();
-    held_text(1).clear();
+    plan.bits.complete = 0;
+    plan.bits.change_line = 0;
+    plan.first_text = folder.data();
+    plan.first_length = folder.size();
+    plan.second_text = extension.data();
+    plan.second_length = extension.size();
     return true;
 }
 
-bool build_change(lua_State* state, std::string& reason) {
-    RuleBits* box = rule_at(state, 1);
+int place_on(lua_State* state, const FormPlan& plan) {
+    place_rule(state, plan.bits);
+    const int created = lua_gettop(state);
+    if (plan.has_prior)
+        copy_values(state, 1, created);
+    push_folded(state, plan.first_text, plan.first_length);
+    lua_setiuservalue(state, created, kValueFolder);
+    push_folded(state, plan.second_text, plan.second_length);
+    lua_setiuservalue(state, created, kValueExtension);
+    return 1;
+}
+
+bool check_change(lua_State* state, FormPlan& plan, std::string& reason) {
+    const RuleBits* box = rule_at(state, 1);
     if (box == nullptr) {
         reason = "change expects a rule";
         return false;
@@ -632,59 +681,27 @@ bool build_change(lua_State* state, std::string& reason) {
         return false;
     }
     const uint32_t line = call_line(state);
-    const int needs_type = lua_getiuservalue(state, 1, kValueNeeds);
-    const bool has_needs = needs_type == LUA_TTABLE;
-    if (needs_type != LUA_TNIL && !has_needs) {
-        lua_pop(state, 1);
-        reason = "where expects a table";
+    uint32_t count = 0;
+    if (!walk_table<sm::Change>(
+            state, 2, line, change_limit(box->need_count), nullptr, count, reason, read_change
+        ))
         return false;
-    }
-    bool needs_ok = true;
-    if (has_needs)
-        needs_ok = gather_needs(state, -1, box->line, reason);
-    lua_pop(state, 1);
-    if (!needs_ok) {
-        release_scratch();
-        return false;
-    }
-    if (!has_needs)
-        need_scratch().clear();
-    const std::size_t need_count = need_scratch().size();
-    if (!gather_changes(state, 2, line, reason) ||
-        !within_statements(need_count, change_scratch().size(), reason)) {
-        release_scratch();
-        return false;
-    }
-    release_scratch();
-    set_value_from(state, 1, kValueChanges, 2);
-    box->complete = 1;
-    box->change_line = line;
+    plan.bits = *box;
+    plan.bits.complete = 1;
+    plan.bits.change_line = line;
+    plan.table_slot = 2;
+    plan.count = count;
     return true;
 }
 
-int enter_form(lua_State* state, bool (*build)(lua_State*, std::string&)) {
-    bool ok = false;
-    bool memory_failed = false;
-    try {
-        std::string reason;
-        ok = build(state, reason);
-        if (!ok)
-            parked_reason() = std::move(reason);
-    } catch (const std::bad_alloc&) {
-        ok = false;
-        memory_failed = true;
-    }
-    if (memory_failed) {
-        try {
-            parked_reason() = "out of memory";
-        } catch (const std::bad_alloc&) {
-            lua_pushliteral(state, "out of memory");
-            return lua_error(state);
-        }
-    }
-    if (ok)
-        return 1;
-    return raise_parked(state);
+int place_change(lua_State* state, const FormPlan& plan) {
+    push_raw_copy(state, plan.table_slot, plan.count);
+    lua_setiuservalue(state, 1, kValueChanges);
+    auto* box = static_cast<RuleBits*>(lua_touserdata(state, 1));
+    box->complete = 1;
+    box->change_line = plan.bits.change_line;
+    lua_settop(state, 1);
+    return 1;
 }
 
 extern "C" {
@@ -724,27 +741,43 @@ static int rule_index(lua_State* state) {
 }
 
 static int form_where(lua_State* state) {
-    return enter_form(state, build_where);
+    Refusal refusal;
+    FormPlan plan;
+    if (!run_check(state, check_where, plan, refusal))
+        return raise_refusal(state, refusal);
+    return place_where(state, plan);
 }
 
 static int form_all(lua_State* state) {
-    return enter_form(state, build_all);
+    Refusal refusal;
+    FormPlan plan;
+    if (!run_check(state, check_all, plan, refusal))
+        return raise_refusal(state, refusal);
+    return place_all(state, plan);
 }
 
 static int form_named(lua_State* state) {
-    return enter_form(state, build_named);
+    Refusal refusal;
+    FormPlan plan;
+    if (!run_check(state, check_named, plan, refusal))
+        return raise_refusal(state, refusal);
+    return place_named(state, plan);
 }
 
 static int form_on(lua_State* state) {
-    return enter_form(state, build_on);
+    Refusal refusal;
+    FormPlan plan;
+    if (!run_check(state, check_on, plan, refusal))
+        return raise_refusal(state, refusal);
+    return place_on(state, plan);
 }
 
 static int form_change(lua_State* state) {
-    const int result = enter_form(state, build_change);
-    if (result != 1)
-        return result;
-    lua_settop(state, 1);
-    return 1;
+    Refusal refusal;
+    FormPlan plan;
+    if (!run_check(state, check_change, plan, refusal))
+        return raise_refusal(state, refusal);
+    return place_change(state, plan);
 }
 
 static int form_set(lua_State* state) {
@@ -871,6 +904,12 @@ std::string rules_slot(lua_Integer slot) {
     return "rules[" + std::to_string(static_cast<long long>(slot)) + "]";
 }
 
+/// Names a block in a plan error: its place in the list, the call that started it and that call's line.
+std::string block_label(lua_Integer slot, const RuleBits& bits) {
+    return rules_slot(slot) + ": the " + selector_word(bits) + " on line " +
+           std::to_string(bits.line);
+}
+
 const char* lua_type_name(lua_State* state, int slot) {
     const char* name = luaL_typename(state, slot);
     return name != nullptr ? name : "value";
@@ -887,10 +926,12 @@ std::string take_value_text(lua_State* state, int rule, int value_slot) {
     return text;
 }
 
+/// Builds the record of a finished block from the copies it keeps.
+///
+/// Called when the plan is read, outside any Lua call; nothing here raises.
 bool take_block(
     lua_State* state, int rule, const RuleBits& bits, sm::Block& block, std::string& reason
 ) {
-    release_scratch();
     block.selector = bits.selector;
     block.line = bits.line;
     block.target.folder = take_value_text(state, rule, kValueFolder);
@@ -901,39 +942,51 @@ bool take_block(
         block.target.extension = "fbi";
     if (bits.selector == sm::Selector::name)
         block.name = take_value_text(state, rule, kValueName);
+    std::vector<sm::Need> needs;
+    uint32_t need_count = 0;
     const int needs_type = lua_getiuservalue(state, rule, kValueNeeds);
+    bool ok = true;
     if (needs_type == LUA_TTABLE) {
-        if (!gather_needs(state, -1, bits.line, reason)) {
-            lua_pop(state, 1);
-            release_scratch();
-            return false;
-        }
+        ok = walk_table<sm::Need>(
+            state, -1, bits.line, sm::max_statements, &needs, need_count, reason, read_need
+        );
     } else if (needs_type != LUA_TNIL) {
-        lua_pop(state, 1);
         reason = "where expects a table";
-        release_scratch();
-        return false;
+        ok = false;
     }
     lua_pop(state, 1);
-    const int changes_type = lua_getiuservalue(state, rule, kValueChanges);
-    if (changes_type != LUA_TTABLE) {
-        lua_pop(state, 1);
+    if (!ok)
+        return false;
+    std::vector<sm::Change> changes;
+    uint32_t change_count = 0;
+    if (lua_getiuservalue(state, rule, kValueChanges) == LUA_TTABLE) {
+        ok = walk_table<sm::Change>(
+            state,
+            -1,
+            bits.change_line,
+            change_limit(need_count),
+            &changes,
+            change_count,
+            reason,
+            read_change
+        );
+    } else {
         reason = "change expects a table";
-        release_scratch();
-        return false;
-    }
-    if (!gather_changes(state, -1, bits.change_line, reason)) {
-        lua_pop(state, 1);
-        release_scratch();
-        return false;
+        ok = false;
     }
     lua_pop(state, 1);
-    if (!within_statements(need_scratch().size(), change_scratch().size(), reason)) {
-        release_scratch();
+    if (!ok)
         return false;
-    }
-    block.needs = std::move(need_scratch());
-    block.changes = std::move(change_scratch());
+    std::sort(needs.begin(), needs.end(), [](const sm::Need& first, const sm::Need& second) {
+        return host::name_less(first.field, second.field);
+    });
+    std::sort(
+        changes.begin(), changes.end(), [](const sm::Change& first, const sm::Change& second) {
+            return host::name_less(first.field, second.field);
+        }
+    );
+    block.needs = std::move(needs);
+    block.changes = std::move(changes);
     return true;
 }
 
@@ -995,8 +1048,7 @@ PlanRules assemble(
         const int value = lua_gettop(state);
         if (const RuleBits* bits = rule_at(state, value); bits != nullptr) {
             if (bits->complete == 0) {
-                result.error = rules_slot(slot) + ": the " + selector_word(*bits) + " on line " +
-                               std::to_string(bits->line) + " has no change";
+                result.error = block_label(slot, *bits) + " has no change";
                 return result;
             }
             if (!pending_open) {
@@ -1012,7 +1064,8 @@ PlanRules assemble(
             sm::Block block;
             std::string block_error;
             if (!take_block(state, value, *bits, block, block_error)) {
-                result.error = block_error.empty() ? "a rule was refused" : std::move(block_error);
+                result.error = block_label(slot, *bits) + ": " +
+                               (block_error.empty() ? "a rule was refused" : block_error);
                 return result;
             }
             pending.rules.blocks.push_back(std::move(block));
