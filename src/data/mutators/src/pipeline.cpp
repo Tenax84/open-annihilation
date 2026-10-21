@@ -14,8 +14,6 @@
 #include "oa/data/field_schema.hpp"
 #include "oa/data/mutators/allow_list.hpp"
 #include "oa/data/mutators/loadout.hpp"
-
-#include "collections_sides.hpp"
 #include "oa/data/mutators/rules_lua.hpp"
 #include "oa/data/mutation_rules/documents.hpp"
 #include "oa/formats/hpi.hpp"
@@ -41,6 +39,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "collections_sides.hpp"
 
 namespace oa::data::mutators {
 namespace rules = oa::data::mutation_rules;

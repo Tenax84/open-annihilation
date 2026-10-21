@@ -15,6 +15,7 @@
 #include "oa/data/mutation_rules/documents.hpp"
 #include "oa/formats/soft_mutator.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -158,6 +159,40 @@ class Collections {
     /// Ends the mutator's turn. Later writes are refused until the next begin.
     void end_mutator();
 
+    /// Names and paths the side and table bindings compute before they push.
+    ///
+    /// The object outlives the Lua callback. A callback fills it, returns,
+    /// and only then pushes, so a Lua error cannot skip a destructor.
+    struct SideScratch {
+        std::vector<std::string> names;
+        std::vector<std::string> raw_names;
+        std::string text;
+        std::string path;
+        std::string record;
+        std::string key;
+        std::string builder;
+        std::string side_path;
+        std::string list_path;
+        std::string side_error;
+        std::string list_error;
+        uint64_t visits = 0;
+        uint64_t text_units = 0;
+        uint64_t fields = 0;
+        uint64_t comparisons = 0;
+        bool scan = false;
+        bool found = false;
+        bool builder_unit = false;
+        bool present = false;
+        bool side_ready = false;
+        bool list_ready = false;
+        bool side_found = false;
+        bool list_found = false;
+        uint32_t count = 0;
+        uint32_t slot = 0;
+        std::size_t side_doc = 0;
+        std::size_t list_doc = 0;
+    };
+
     /// Pushes the units collection.
     ///
     /// @param state state to push into
@@ -231,6 +266,23 @@ class Collections {
     /// @return does not return
     int raise_held(lua_State* state);
 
+    /// The side bindings' working storage. It lives as long as the collections.
+    ///
+    /// @return the storage
+    SideScratch& side_scratch() noexcept;
+
+    /// Resolves one unit through the units index.
+    ///
+    /// Charges the index check and the matched section. Copies the canonical
+    /// name into `side_scratch().text` and the builder flag into
+    /// `side_scratch().builder_unit`. Call it with no local object still to
+    /// destroy: the charge can raise.
+    ///
+    /// @param state the state to charge, or null to build the index quietly
+    /// @param sought the unit name the script wrote
+    /// @return 1 when the unit is there, 0 when it is not, -1 on a held error
+    int lookup_unit(lua_State* state, std::string_view sought);
+
     oa::data::mutation_rules::DocumentSet* documents_;
     const oa::data::defs::DataLayout* layout_;
     bool active_{};
@@ -240,6 +292,7 @@ class Collections {
     std::vector<RecordRemoval> removals_;
     std::vector<HookNote> notes_;
     std::unique_ptr<CollectionsState> state_;
+    SideScratch side_scratch_{};
 };
 
 } // namespace oa::data::mutators

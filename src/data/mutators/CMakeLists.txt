@@ -29,6 +29,9 @@ if(BUILD_TESTING)
   add_test(NAME data-mutators-allow-list COMMAND oa-data-mutators-allow-list-test)
 
   add_executable(oa-data-mutators-charge-test tests/charge_test.cpp)
+  target_include_directories(
+    oa-data-mutators-charge-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  )
   target_link_libraries(
     oa-data-mutators-charge-test PRIVATE oa-data-mutators oa-data-script-host oa-test-support
   )

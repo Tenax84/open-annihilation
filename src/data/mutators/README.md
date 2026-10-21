@@ -35,9 +35,13 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   and `ctx.sides:each` walks the sides in that order. `canbuild`,
   `set_canbuild`, `add_canbuild` and `remove_canbuild` are methods of the
   collection.
-- A hook's `ctx.tables` opens the other per-match game-data tables.
-  `ctx.tables["los"]` and `ctx.tables["gamedata/los.tdf"]` are the same
-  table. `sections` lists section names in file order.
+- A hook's `ctx.tables` opens a `.tdf` directly in the layout's `gamedata`
+  folder, other than `sidedata.tdf`. A bare name such as `los` is that
+  file. Variant folders are not opened. Any other request is refused, and
+  the message names the request. `ctx.tables["los"]` and
+  `ctx.tables["gamedata/los.tdf"]` are the same table. `sections` lists
+  section names in file order. Walks of sides and of these tables are
+  charged against the hook's instruction allowance.
 
 ## State
 
@@ -78,7 +82,9 @@ it reads the packages and the store it is given, and mounts its layer there.
   gap. A list the builder did not have is created under the one
   `[CANBUILD]` section.
 - A protected game-data file is refused with the allow-list's own message.
-  `sidedata` is not opened here: the error is `use ctx.sides`.
+  `sidedata` is not opened here: the error is `use ctx.sides`. A table
+  request that is not a `.tdf` directly in `gamedata` is refused with the
+  request named in the message. `gamedata-<variant>/` is not a table path.
 
 ## Tests
 

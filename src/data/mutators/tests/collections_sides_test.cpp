@@ -777,6 +777,31 @@ void test_read_only(const fs::path& scratch) {
     OA_CHECK(result.layer.entries.empty());
 }
 
+void test_table_paths(const fs::path& scratch) {
+    const char* ids[] = {
+        "ridge-d04-escape-units",
+        "ridge-d04-escape-download",
+        "ridge-d04-escape-nested",
+        "ridge-d04-escape-parent",
+        "ridge-d04-escape-variant",
+    };
+    const char* requests[] = {
+        "units/RGCOM.fbi",
+        "download/rglab.tdf",
+        "gamedata/sub/x.tdf",
+        "../gamedata/los.tdf",
+        "gamedata-ridge/los.tdf",
+    };
+    for (std::size_t index = 0; index < 5; ++index) {
+        std::string script = "function mutate(ctx)\n  return {\n";
+        script += "    weapons = function(weapons, ctx)\n      local t = ctx.tables[\"";
+        script += requests[index];
+        script += "\"]\n      t.UNITINFO.footprintx = \"0\"\n";
+        script += "      t.UNITINFO.maxdamage = \"-5\"\n    end\n  }\nend\n";
+        expect_script(scratch, ids[index], "\"weapons\", \"tables\"", script, requests[index]);
+    }
+}
+
 void test_sound_and_sidedata(const fs::path& scratch) {
     oa::AssetStore sound_store(scratch / "game");
     const mutators::PipelineResult sound = run_script(
@@ -917,6 +942,7 @@ void synthetic_tests() {
     test_layers(scratch.path);
     test_read_only(scratch.path);
     test_sound_and_sidedata(scratch.path);
+    test_table_paths(scratch.path);
     test_two_runs(scratch.path);
 }
 

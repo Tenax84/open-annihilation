@@ -3103,6 +3103,41 @@ void Collections::begin_mutator(std::string mutator, WriteGrant grant) {
     mutator_ = std::move(mutator);
     grant_ = grant;
     active_ = true;
+    side_scratch_ = SideScratch{};
+}
+
+Collections::SideScratch& Collections::side_scratch() noexcept {
+    return side_scratch_;
+}
+
+int Collections::lookup_unit(lua_State* state, std::string_view sought) {
+    const CollectionsState::Rec* found = nullptr;
+    try {
+        found = find_named(*this, CollectionsState::Kind::units, sought, state);
+    } catch (const std::bad_alloc&) {
+        hold_error("out of memory");
+        return -1;
+    }
+    SideScratch& scratch = side_scratch_;
+    if (found == nullptr || found->section == nullptr) {
+        scratch.found = false;
+        scratch.builder_unit = false;
+        return 0;
+    }
+    const uint32_t properties = oa::formats::tdf::property_count(found->section);
+    if (state != nullptr) {
+        charge_visits(state, properties == 0 ? uint64_t{1} : properties);
+        charge_text(state, found->name.size());
+    }
+    scratch.found = true;
+    scratch.builder_unit = oa::formats::tdf::get_int(found->section, "builder", 0) != 0;
+    try {
+        scratch.text.assign(found->name);
+    } catch (const std::bad_alloc&) {
+        hold_error("out of memory");
+        return -1;
+    }
+    return 1;
 }
 
 void Collections::end_mutator() {
