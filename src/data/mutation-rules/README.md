@@ -156,11 +156,13 @@ the lowest band.
 ## State
 
 A step edits the `DocumentSet` it is given and the `ApplyState` the caller
-passes, and no other store. `ApplyState::locks` holds the fields a lock
-marked, and `ApplyState::writers` holds the mutator that last wrote each
-field, so a later step can name both mutators on a replacement. The caller
-starts from an empty state and passes the same value to each step. A step
-adds marks and does not clear one an earlier step made.
+passes, and no other store. `ApplyState::locks` maps each field a lock
+marked to the mutator that locked it, and `ApplyState::writers` maps each
+field to the mutator that last wrote it, so a later step can name both
+mutators on a replacement. Both maps are keyed by `FieldId`, so finding a
+field does not read every mark. The caller starts from an empty state and
+passes the same value to each step. A step adds marks and does not clear one
+an earlier step made.
 
 Paths are kept with `/` separators, in the order the documents were added,
 and a removed document stays in the set so its index does not move. This
@@ -169,9 +171,9 @@ only changes keys inside the trees, through the TDF editor. A document no
 write touched is left unmarked, including when a computed number matches the
 current value and is therefore not written.
 
-A lock mark names a field by its folded path, record, block and key. ASCII
-capitals are folded, and a path treats `\` as `/`. Two sections of the same
-name in one file share a lock.
+A `FieldId` names a field by its folded path, record, block and key. ASCII
+capitals are folded, and a path treats `\` as `/`. A change folds its field's
+names once. Two sections of the same name in one file share a lock.
 
 ## Invariants
 

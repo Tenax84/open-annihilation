@@ -362,56 +362,17 @@ const char* property_spelling(const tdf::Block* target, std::string_view key_tex
     return nullptr;
 }
 
-/// A mark for one field, naming the mutator that locked or wrote it.
+/// The state's id for one field, with its four names folded.
 ///
 /// @param place the field
-/// @param mutator the mutator
-/// @return the mark, with its names folded
-FieldMark mark_of(const Place& place, const std::string& mutator) {
-    FieldMark mark;
-    mark.path = fold_path(place.path);
-    mark.record = fold_copy(place.record);
-    mark.block = fold_copy(place.block);
-    mark.key = fold_copy(place.key);
-    mark.mutator = mutator;
-    return mark;
-}
-
-/// Reports whether two marks name the same field.
-///
-/// @param have a stored mark
-/// @param want the field being looked up
-/// @return true when the folded names match
-bool same_field(const FieldMark& have, const FieldMark& want) {
-    return have.path == want.path && have.record == want.record && have.block == want.block &&
-           have.key == want.key;
-}
-
-/// The mutator stored on a field, or null when the list has no such mark.
-///
-/// @param marks lock marks or writer marks
-/// @param want the field
-/// @return the mutator name, copied so a later insert cannot free it
-std::optional<std::string> mutator_of(const std::vector<FieldMark>& marks, const FieldMark& want) {
-    for (const FieldMark& have : marks) {
-        if (same_field(have, want))
-            return have.mutator;
-    }
-    return std::nullopt;
-}
-
-/// Records a mutator as the one that locked or last wrote a field.
-///
-/// @param marks the list to update
-/// @param mark the field and the mutator
-void remember(std::vector<FieldMark>& marks, FieldMark mark) {
-    for (FieldMark& have : marks) {
-        if (same_field(have, mark)) {
-            have.mutator = std::move(mark.mutator);
-            return;
-        }
-    }
-    marks.push_back(std::move(mark));
+/// @return the id
+FieldId field_id(const Place& place) {
+    FieldId id;
+    id.path = fold_path(place.path);
+    id.record = fold_copy(place.record);
+    id.block = fold_copy(place.block);
+    id.key = fold_copy(place.key);
+    return id;
 }
 
 /// Orders writes by path, record, block and key, compared after folding.
@@ -624,6 +585,7 @@ bool commit_write(
 /// @param state lock marks and last writers
 /// @param result the step result
 /// @param place the field
+/// @param id the field's folded id
 /// @param mutator the mutator that wrote
 /// @param source_name the rule source
 /// @param line the change's line
@@ -633,22 +595,24 @@ void remember_write(
     ApplyState& state,
     ApplyResult& result,
     const Place& place,
+    const FieldId& id,
     const std::string& mutator,
     const std::string& source_name,
     uint32_t line,
     bool replaces,
     bool locks
 ) {
-    const FieldMark id = mark_of(place, mutator);
-    if (replaces) {
-        const std::optional<std::string> earlier = mutator_of(state.writers, id);
-        if (earlier.has_value() && *earlier != mutator) {
+    const auto earlier = state.writers.find(id);
+    if (earlier == state.writers.end()) {
+        state.writers.emplace(id, mutator);
+    } else {
+        if (replaces && earlier->second != mutator) {
             std::vector<std::string> names;
-            names.push_back(*earlier);
+            names.push_back(earlier->second);
             names.push_back(mutator);
             std::string message = mutator;
             message += " replaced the value ";
-            message += *earlier;
+            message += earlier->second;
             message += " wrote";
             result.notes.push_back(make_note(
                 NoteKind::value_replaced,
@@ -659,10 +623,10 @@ void remember_write(
                 std::move(message)
             ));
         }
+        earlier->second = mutator;
     }
-    remember(state.writers, mark_of(place, mutator));
     if (locks)
-        remember(state.locks, mark_of(place, mutator));
+        state.locks.insert_or_assign(id, mutator);
 }
 
 /// Writes a finite number, or notes that it cannot be written.
@@ -676,6 +640,7 @@ void remember_write(
 /// @param options the field check
 /// @param result the step result
 /// @param place the field
+/// @param id the field's folded id
 /// @param current the field text, or null
 /// @param value the number to write
 /// @param mutator the mutator
@@ -689,6 +654,7 @@ void write_number(
     const ApplyOptions& options,
     ApplyResult& result,
     const Place& place,
+    const FieldId& id,
     const char* current,
     double value,
     const std::string& mutator,
@@ -722,12 +688,12 @@ void write_number(
     }
     if (same_number(current, value)) {
         if (locks)
-            remember(state.locks, mark_of(place, mutator));
+            state.locks.insert_or_assign(id, mutator);
         return;
     }
     if (!commit_write(documents, options, result, place, false, spelled, mutator, current))
         return;
-    remember_write(state, result, place, mutator, source_name, line, replaces, locks);
+    remember_write(state, result, place, id, mutator, source_name, line, replaces, locks);
 }
 
 /// Applies one change to one field of one record.
@@ -787,13 +753,13 @@ void apply_change(
     if (existing != nullptr)
         place.key = existing;
     const char* current = tdf::find_value(target, place.key.c_str());
-    const FieldMark id = mark_of(place, mutator);
-    const std::optional<std::string> locker = mutator_of(state.locks, id);
-    if (locker.has_value() && *locker != mutator) {
+    const FieldId id = field_id(place);
+    const auto locker = state.locks.find(id);
+    if (locker != state.locks.end() && locker->second != mutator) {
         std::vector<std::string> names;
-        names.push_back(*locker);
+        names.push_back(locker->second);
         names.push_back(mutator);
-        std::string message = *locker;
+        std::string message = locker->second;
         message += " locked ";
         message += place.key;
         message += ", so ";
@@ -859,6 +825,7 @@ void apply_change(
             options,
             result,
             place,
+            id,
             current,
             value,
             mutator,
@@ -877,6 +844,7 @@ void apply_change(
             options,
             result,
             place,
+            id,
             current,
             change.value,
             mutator,
@@ -893,7 +861,7 @@ void apply_change(
             return;
         if (!commit_write(documents, options, result, place, true, std::nullopt, mutator, current))
             return;
-        remember_write(state, result, place, mutator, source_name, change.line, true, false);
+        remember_write(state, result, place, id, mutator, source_name, change.line, true, false);
         return;
     }
 
@@ -903,7 +871,7 @@ void apply_change(
         const std::optional<std::string> text = change.text;
         if (!commit_write(documents, options, result, place, false, text, mutator, current))
             return;
-        remember_write(state, result, place, mutator, source_name, change.line, true, false);
+        remember_write(state, result, place, id, mutator, source_name, change.line, true, false);
         return;
     }
 
@@ -916,7 +884,7 @@ void apply_change(
     const std::optional<std::string> text = std::move(built);
     if (!commit_write(documents, options, result, place, false, text, mutator, current))
         return;
-    remember_write(state, result, place, mutator, source_name, change.line, false, false);
+    remember_write(state, result, place, id, mutator, source_name, change.line, false, false);
 }
 
 /// Applies a depth change to each key of each block directly inside the record.

@@ -11,8 +11,10 @@
 #include "oa/data/mutation_rules/documents.hpp"
 #include "oa/formats/soft_mutator.hpp"
 
+#include <compare>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -106,32 +108,44 @@ struct RuleNote {
     std::string message; ///< what happened, in plain words
 };
 
-/// One field a step has locked or written, so the next step can find it.
+/// One field a step has locked or written, as the step state names it.
 ///
 /// The four names are folded: ASCII capitals become lower case, and a path
-/// also treats '\\' as '/'. Two marks name one field when those four names
-/// match. The mutator is the one that locked the field, or the one that last
-/// wrote it.
-struct FieldMark {
-    std::string path;    ///< document path, folded
-    std::string record;  ///< record name, folded
-    std::string block;   ///< inner block name, folded; empty for a key of the record
-    std::string key;     ///< field name, folded
-    std::string mutator; ///< mutator that locked the field, or that last wrote it
+/// also treats '\\' as '/'. Two ids name one field when those four names
+/// match.
+struct FieldId {
+    std::string path;   ///< document path, folded
+    std::string record; ///< record name, folded
+    std::string block;  ///< inner block name, folded; empty for a key of the record
+    std::string key;    ///< field name, folded
+
+    /// Returns whether the four folded names match.
+    ///
+    /// @param other the id to compare
+    /// @return true when both ids name one field
+    [[nodiscard]] bool operator==(const FieldId& other) const = default;
+
+    /// Orders by path, then record, block and key, byte by byte.
+    ///
+    /// @param other the id to compare
+    /// @return the order of the two ids
+    [[nodiscard]] auto operator<=>(const FieldId& other) const = default;
 };
 
 /// Lock marks and last writers, kept from one step to the next.
 ///
 /// The caller starts from an empty state and passes the same value into each
-/// step of a run. A step reads both lists and adds to them. It does not clear
-/// a mark an earlier step made.
+/// step of a run. A step looks fields up in both maps and adds to them. It
+/// does not clear a mark an earlier step made.
 ///
 /// A lock mark is an entry of `locks`. The mutator named there set the field
 /// with a lock. A later step does not write that field, and notes the refusal,
 /// naming the mutator that locked it and the mutator that tried to change it.
 struct ApplyState {
-    std::vector<FieldMark> locks;   ///< fields a mutator locked, for the rest of the run
-    std::vector<FieldMark> writers; ///< mutator that last wrote each field
+    /// The mutator that locked each field. A lock lasts for the rest of the run.
+    std::map<FieldId, std::string> locks;
+    /// The mutator that last wrote each field.
+    std::map<FieldId, std::string> writers;
 };
 
 /// Options for one step.
