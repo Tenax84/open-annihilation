@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstddef>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <span>
@@ -48,16 +49,16 @@ std::string missing_mutator(std::string_view detail) {
 
 } // namespace
 
-struct Runtime::ReplayLoadoutHold {
-    /// True while a replay's list stands in for the player's.
+struct Runtime::LoadoutOnceHold {
+    /// True while a replay or a saved game stands in for the player's list.
     bool pending = false;
-    /// The teardown that opens the replay's match is not its end.
-    bool skip_opening_teardown = false;
+    /// True once the match that plays the held list has started.
+    bool started = false;
     /// The list the player had chosen.
     std::vector<mutators::ResolvedMutator> kept{};
 };
 
-void Runtime::destroy_replay_loadout_hold(ReplayLoadoutHold* hold) noexcept {
+void Runtime::destroy_loadout_once_hold(LoadoutOnceHold* hold) noexcept {
     delete hold;
 }
 
@@ -101,8 +102,11 @@ std::string Runtime::recorded_mutators_refusal(
     std::string parse_error;
     const std::optional<mutators::Loadout> parsed =
         mutators::parse_loadout(loadout_text, &parse_error);
-    if (!parsed)
+    if (!parsed) {
+        std::cerr << "open-annihilation: mutators: the recorded loadout cannot be read: "
+                  << parse_error << '\n';
         return std::string(oa::data::languages::interface_text(kUnreadable));
+    }
     const fs::path folder =
         user_folder() / std::string(oa::data::mutator_library::mutators_folder_name);
     std::string resolve_error;
@@ -116,32 +120,45 @@ std::string Runtime::recorded_mutators_refusal(
 }
 
 void Runtime::play_loadout_once(std::vector<mutators::ResolvedMutator> playback) {
-    if (replay_loadout_hold_ == nullptr) {
-        std::unique_ptr<ReplayLoadoutHold, void (*)(ReplayLoadoutHold*) noexcept> made{
-            new ReplayLoadoutHold, destroy_replay_loadout_hold
+    if (loadout_once_hold_ == nullptr) {
+        std::unique_ptr<LoadoutOnceHold, void (*)(LoadoutOnceHold*) noexcept> made{
+            new LoadoutOnceHold, destroy_loadout_once_hold
         };
-        replay_loadout_hold_ = std::move(made);
+        loadout_once_hold_ = std::move(made);
     }
-    ReplayLoadoutHold& hold = *replay_loadout_hold_;
+    LoadoutOnceHold& hold = *loadout_once_hold_;
     if (!hold.pending) {
         const std::span<const mutators::ResolvedMutator> chosen = chosen_match_mutators();
         hold.kept.assign(chosen.begin(), chosen.end());
     }
     hold.pending = true;
-    hold.skip_opening_teardown = true;
+    hold.started = false;
     choose_match_mutators(std::move(playback));
 }
 
-void Runtime::finish_replay_loadout() {
-    if (replay_loadout_hold_ == nullptr || !replay_loadout_hold_->pending)
+void Runtime::cancel_loadout_once() noexcept {
+    if (loadout_once_hold_ == nullptr || !loadout_once_hold_->pending)
         return;
-    ReplayLoadoutHold& hold = *replay_loadout_hold_;
-    if (hold.skip_opening_teardown) {
-        hold.skip_opening_teardown = false;
+    LoadoutOnceHold& hold = *loadout_once_hold_;
+    choose_match_mutators(std::exchange(hold.kept, {}));
+    hold.started = false;
+    hold.pending = false;
+}
+
+void Runtime::start_loadout_once() noexcept {
+    if (loadout_once_hold_ == nullptr || !loadout_once_hold_->pending)
         return;
-    }
-    choose_match_mutators(hold.kept);
-    hold.kept.clear();
+    loadout_once_hold_->started = true;
+}
+
+void Runtime::finish_loadout_once() {
+    if (loadout_once_hold_ == nullptr || !loadout_once_hold_->pending)
+        return;
+    LoadoutOnceHold& hold = *loadout_once_hold_;
+    if (!hold.started)
+        return;
+    choose_match_mutators(std::exchange(hold.kept, {}));
+    hold.started = false;
     hold.pending = false;
 }
 

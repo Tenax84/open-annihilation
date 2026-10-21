@@ -504,6 +504,9 @@ std::string Runtime::take_launch_mutators(
 }
 
 void Runtime::apply_match_mutators(const MatchBootstrap&) {
+    // The held list is the one this start plays, including a start that chooses
+    // none. A teardown before this line is not the end of that match.
+    start_loadout_once();
     if (mutator_state_ == nullptr || mutator_state_->chosen.empty())
         return;
     const std::vector<mutators::ResolvedMutator> listed = mutator_state_->chosen;

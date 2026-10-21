@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -126,9 +127,21 @@ void NetworkPlay::start_demo_playback() {
     }
     // The watcher leaves the battleroom with the recorded verdicts.
     // A recording without the sector plays with no mutators. The player's
-    // own list comes back when this match ends.
+    // own list comes back when this match ends, or at once when the start
+    // throws.
     const auto* verdicts = demo::demo_unit_sync(session->playback);
     runtime_.play_loadout_once(std::move(playback_mutators));
+
+    struct LoadoutOnceGuard {
+        Runtime& runtime;
+        int exceptions = std::uncaught_exceptions();
+
+        ~LoadoutOnceGuard() {
+            if (std::uncaught_exceptions() > exceptions)
+                runtime.cancel_loadout_once();
+        }
+    } loadout_once{runtime_};
+
     runtime_.bootstrap_match(
         {.units_per_player = recording.max_units,
          .place_commanders = false,
