@@ -4,9 +4,9 @@
 // One ordered run of mutators. The list is checked, each plan is read in a
 // sandbox, the files layer is mounted and documents are parsed from that
 // layer. Each mutator then applies its rules and then its hooks, in list
-// order. When the caller names a map, each maps entry then runs. A pass is a
-// transaction: a failure ends it, drops that mutator and anyone who requires
-// it, and the run starts again from the store.
+// order. When the caller names a map, map rules run, then each maps entry.
+// A pass is a transaction: a failure ends it, drops that mutator and anyone
+// who requires it, and the run starts again from the store.
 #include "oa/data/mutators/pipeline.hpp"
 
 #include "clone.hpp"
@@ -19,6 +19,7 @@
 #include "oa/data/mutators/allow_list.hpp"
 #include "oa/data/mutators/clashes.hpp"
 #include "oa/data/mutators/loadout.hpp"
+#include "oa/data/mutators/map_rules.hpp"
 #include "oa/data/mutators/maps.hpp"
 #include "oa/data/mutators/menus.hpp"
 #include "oa/data/mutators/rules_lua.hpp"
@@ -116,6 +117,16 @@ constexpr TargetLayerRow k_target_layers[] = {
     {rules::TargetKind::other, oamut::Layer::tables},
 };
 
+/// A rule folder that needs its own layer, ahead of the kind table.
+struct FolderLayerRow {
+    const char* folder{};
+    oamut::Layer layer{};
+};
+
+constexpr FolderLayerRow k_folder_layers[] = {
+    {"maps", oamut::Layer::maps},
+};
+
 /// Feature documents live under this folder. It is not one of the seven
 /// directories a mod may rename.
 constexpr const char* k_features_folder = "features";
@@ -126,6 +137,9 @@ struct Plan {
     bool has_files{false};
     rules::MutatorRules rules;
     bool has_rules{false};
+    /// `maps/*.ota` blocks, held until the maps phase.
+    rules::MutatorRules map_rules;
+    bool has_map_rules{false};
     std::vector<MutatorHack> hacks;
     bool has_maps{false};
     bool maps_function{false};
@@ -353,6 +367,15 @@ oamut::Layer layer_for_kind(rules::TargetKind kind) {
             return row.layer;
     }
     return oamut::Layer::tables;
+}
+
+/// The manifest layer a rule target writes. A `maps` folder needs `maps`.
+oamut::Layer layer_for_target(std::string_view folder, rules::TargetKind kind) {
+    for (const FolderLayerRow& row : k_folder_layers) {
+        if (same_path(folder, row.folder))
+            return row.layer;
+    }
+    return layer_for_kind(kind);
 }
 
 /// Reports whether the manifest lists `layer`.
@@ -1008,7 +1031,7 @@ PlanFault read_rules_part(
         const std::string folder = resolve_folder(target.folder, layout);
         const std::string extension = resolve_extension(target.extension, layout);
         const rules::TargetKind kind = kind_of(target.folder, folder, extension, layout);
-        const oamut::Layer layer = layer_for_kind(kind);
+        const oamut::Layer layer = layer_for_target(target.folder, kind);
         if (!declares(manifest, layer)) {
             const char* name = oamut::layer_name(layer);
             return refuse_plan(
@@ -1017,6 +1040,23 @@ PlanFault read_rules_part(
                     " layer but its manifest does not declare the " + name + " layer"
             );
         }
+    }
+    // Map OTA blocks wait for the maps phase. Anything else stays on the
+    // rules the rules phase already runs, so a map path is never loaded.
+    const SplitRules split = split_map_rules(one);
+    if (!split.refusals.empty())
+        return refuse_plan(Cause::invalid_plan, split.refusals.front());
+    plan.rules.sources.clear();
+    plan.has_rules = false;
+    if (!split.others.empty()) {
+        plan.rules.sources = std::move(split.others.front().sources);
+        plan.has_rules = !plan.rules.sources.empty();
+    }
+    plan.map_rules = {};
+    plan.has_map_rules = false;
+    if (!split.maps.empty()) {
+        plan.map_rules = std::move(split.maps.front());
+        plan.has_map_rules = !plan.map_rules.sources.empty();
     }
     return {};
 }
@@ -4272,6 +4312,103 @@ void fail_every(
     }
 }
 
+/// What applying the held map rules did. `error` empty means they ran.
+struct HeldMapRules {
+    std::string error;
+    std::size_t slot{k_no_slot};
+};
+
+/// Applies held `maps/*.ota` rules to the chosen map, before any maps hook.
+///
+/// Writes join the journal as rules, with D07's record names. Notes join
+/// the report. A changed OTA replaces `working` so the hooks read it back.
+/// An unreadable map fails the first mutator that held map rules.
+HeldMapRules apply_held_map_rules(
+    const std::vector<Plan>& plans,
+    const std::vector<uint8_t>& active,
+    const std::vector<std::string>& ids,
+    std::size_t limit,
+    const ChosenMap& map,
+    std::vector<uint8_t>& working,
+    std::vector<JournalEntry>& map_journal,
+    ConflictReport& report,
+    std::set<ReplacedField>& replaced_fields,
+    std::string& served_owner,
+    std::shared_ptr<const std::vector<uint8_t>>& served_ota
+) {
+    HeldMapRules held;
+    std::vector<rules::MutatorRules> held_rules;
+    for (std::size_t slot = 0; slot < plans.size() && slot < active.size() && slot < limit;
+         ++slot) {
+        if (active[slot] == 0 || !plans[slot].has_map_rules)
+            continue;
+        if (held.slot == k_no_slot)
+            held.slot = slot;
+        held_rules.push_back(plans[slot].map_rules);
+    }
+    if (held_rules.empty())
+        return held;
+    rules::DocumentSet map_documents;
+    rules::ApplyResult applied = apply_map_rules(held_rules, map, map_documents);
+    for (const rules::RuleNote& note : applied.notes) {
+        if (note.message == "the chosen map could not be read") {
+            held.error = note.message;
+            return held;
+        }
+    }
+    for (const rules::RuleNote& note : applied.notes)
+        append_rule_note(report, note, ids, replaced_fields);
+
+    std::vector<JournalEntry> fresh;
+    std::string owner;
+    uint16_t highest = 0;
+    bool have_owner = false;
+    const std::string path = map.ota_path.empty() ? "maps/" + map.key + ".ota" : map.ota_path;
+    for (const rules::FieldWrite& write : applied.writes) {
+        JournalEntry entry;
+        for (const std::string& name : write.mutators) {
+            const std::optional<uint16_t> index = index_of(ids, name);
+            if (!index.has_value())
+                continue;
+            entry.mutators.push_back(*index);
+            if (!have_owner || *index >= highest) {
+                highest = *index;
+                have_owner = true;
+                owner = ids[*index];
+            }
+        }
+        entry.phase = Phase::rules;
+        entry.collection = Collection::other;
+        entry.change = write.new_text.has_value() ? Change::set : Change::removed_field;
+        if (write.block.empty())
+            entry.record = "map:" + map.key;
+        else
+            entry.record = "map:" + map.key + "/" + write.block;
+        set_field(entry, write.key);
+        entry.path = path;
+        entry.old_text = write.old_text;
+        entry.new_text = write.new_text;
+        fresh.push_back(std::move(entry));
+    }
+    if (map_documents.size() == 0 || !map_documents.changed(0))
+        return held;
+    const std::optional<std::string> written = tdf::write_text(map_documents.at(0).document.get());
+    if (!written.has_value()) {
+        held.error = "the chosen map could not be written";
+        return held;
+    }
+    auto bytes = std::make_shared<const std::vector<uint8_t>>(written->begin(), written->end());
+    if (*bytes == working)
+        return held;
+    for (JournalEntry& entry : fresh)
+        map_journal.push_back(std::move(entry));
+    working.assign(bytes->begin(), bytes->end());
+    served_ota = std::move(bytes);
+    if (!owner.empty())
+        served_owner = std::move(owner);
+    return held;
+}
+
 /// One pass over the mutators that are still applied.
 ///
 /// A clean pass publishes its layer and returns true. A pass that finds a
@@ -4643,9 +4780,10 @@ bool run_pass(
         first.offer(id_result.mutator, Phase::integrity, Cause::weapon_ids, std::move(message));
     }
 
-    // One transaction per mutator that named maps. A turn that writes and
-    // then errors keeps none of its bytes. The served file, when the bytes
-    // differ from the map the caller passed, is published with the pass.
+    // Map rules for maps/*.ota run first, on this map only. Then one
+    // transaction per mutator that named maps. A turn that writes and then
+    // errors keeps none of its bytes. The served file, when the bytes differ
+    // from the map the caller passed, is published with the pass.
     std::vector<JournalEntry> map_journal;
     std::vector<Conflict> map_notes;
     std::shared_ptr<const std::vector<uint8_t>> served_ota;
@@ -4655,7 +4793,24 @@ bool run_pass(
             input.map->ota != nullptr ? *input.map->ota : std::vector<uint8_t>{};
         const std::vector<uint8_t> original = working;
         bool maps_done = true;
-        for (std::size_t slot = 0; slot < count && slot < first.slot; ++slot) {
+        const HeldMapRules held = apply_held_map_rules(
+            plans,
+            active,
+            ids,
+            first.slot,
+            *input.map,
+            working,
+            map_journal,
+            report,
+            replaced_fields,
+            served_owner,
+            served_ota
+        );
+        if (!held.error.empty()) {
+            first.offer(held.slot, Phase::rules, Cause::engine_error, held.error);
+            maps_done = false;
+        }
+        for (std::size_t slot = 0; slot < count && slot < first.slot && maps_done; ++slot) {
             if (active[slot] == 0 || !plans[slot].has_maps)
                 continue;
             if (!sandboxes[slot].has_value() || !collections.has_value()) {
@@ -4724,6 +4879,16 @@ bool run_pass(
         if (working == original)
             served_ota.reset();
         map_notes = map_conflicts(map_journal);
+    } else {
+        for (std::size_t slot = 0; slot < count && slot < first.slot; ++slot) {
+            if (active[slot] == 0 || !plans[slot].has_map_rules)
+                continue;
+            rules::RuleNote note;
+            note.kind = rules::NoteKind::matched_nothing;
+            note.mutators.push_back(ids[slot]);
+            note.message = "applies to the chosen map only";
+            append_rule_note(report, note, ids, replaced_fields);
+        }
     }
 
     std::vector<std::vector<Writer>> writers(documents.size());

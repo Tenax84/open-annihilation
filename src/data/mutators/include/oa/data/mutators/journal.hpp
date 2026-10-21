@@ -232,6 +232,8 @@ struct ConflictReport {
 /// or "on <path>" when no earlier mutator brought it. A rename reads as
 /// "ridge-kit renamed RGBOT to RGBOT_2". A factor on an absent field reads
 /// as "ridge-swift found no value to scale on units/rglab.fbi maxdamage".
+/// A refused write names the place, then the reason when `detail` holds
+/// one: "ridge-tough refused a write on units/rgcom.fbi maxdamage: kept".
 ///
 /// @param conflict the conflict
 /// @param ids mutator ids, in the same order as the conflict's indices
