@@ -285,6 +285,21 @@ class Collections {
     /// @param names section names, compared without ASCII case
     void keep_weapon_ids(std::span<const std::string> names);
 
+    /// Reports whether a unit or a feature of this name is in the documents now.
+    ///
+    /// The maps hook checks a placed name here, on the data the mutators
+    /// above it left: a unit an earlier hook cloned is there, and one a hook
+    /// removed is not. The name is compared without ASCII case through the
+    /// record index. With a state, the index visit and the matched name are
+    /// charged as a lookup by name is. Call it with no local object still to
+    /// destroy: the charge can raise.
+    ///
+    /// @param state the state to charge, or null to look without charging
+    /// @param feature true for the features, false for the units
+    /// @param sought the name the script wrote
+    /// @return 1 when it is there, 0 when it is not, -1 when memory ran out
+    [[nodiscard]] int has_record(lua_State* state, bool feature, std::string_view sought);
+
     /// Forgets a document the index has listed, so a later read sees it again.
     ///
     /// A hook that removed the document leaves the index holding that path.

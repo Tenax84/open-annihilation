@@ -30,6 +30,10 @@ struct Runtime::MutatorState {
     /// The applied loadout's digest together with its layer. Empty when
     /// none applied.
     std::optional<oa::base::sha256::Digest> digest{};
+    /// True when the mounted layer serves this match's rewritten map.
+    /// Release reads the chosen map again from the installed files and
+    /// clears it.
+    bool served_map{false};
     /// True after this match's hacks were copied into the played profile.
     /// Release puts the player's profile back and clears it.
     bool hacks_played{false};
