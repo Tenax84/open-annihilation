@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The mutation pipeline over the made-up Ridge packages. Identical inputs
-// are compared whole. Two rule-only mutators are compared by the bytes the
-// layer serves: the owner of a written file and the layer's label follow
-// the list, so those two fields are not the served bytes.
+// are compared whole, and so is a run with a failing mutator against the
+// run of the mutators that remain. Two rule-only mutators are compared by
+// the bytes the layer serves: the owner of a written file and the layer's
+// label follow the list, so those two fields are not the served bytes.
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 #include "oa/test/check.hpp"
@@ -260,6 +261,18 @@ void check_same_run(
     OA_CHECK(specs_match(with_failures.layer, survivors.layer));
     OA_CHECK(journals_match(with_failures, survivors));
     OA_CHECK(reports_match(with_failures, survivors));
+}
+
+/// Checks that no journal entry or conflict names `slot`.
+void check_no_trace(const mutators::PipelineResult& result, uint16_t slot) {
+    for (const mutators::JournalEntry& entry : result.journal.entries) {
+        for (const uint16_t named : entry.mutators)
+            OA_CHECK(named != slot);
+    }
+    for (const mutators::Conflict& conflict : result.report.conflicts) {
+        for (const uint16_t named : conflict.mutators)
+            OA_CHECK(named != slot);
+    }
 }
 
 /// Counts the paths in `paths` that end with `tail`, ignoring ASCII case.
@@ -683,6 +696,81 @@ void test_compatibility_and_repeat() {
     release(mounted);
 }
 
+void test_failure_ends_the_pass() {
+    // A failing hook's own rules never reach the hooks below it.
+    oa::AssetStore rule_store = open_ridge();
+    oa::AssetStore picky_store = open_ridge();
+    const mutators::PipelineResult rule_boom =
+        mutators::run_pipeline(rule_store, input_of({"ridge-rule-boom", "ridge-picky"}));
+    const mutators::PipelineResult picky_alone =
+        mutators::run_pipeline(picky_store, input_of({"ridge-picky"}));
+    OA_CHECK(rule_boom.mutators.size() == 2);
+    if (rule_boom.mutators.size() == 2) {
+        OA_CHECK(rule_boom.mutators[0].outcome == mutators::Outcome::failed);
+        OA_CHECK(rule_boom.mutators[0].phase == mutators::Phase::hooks);
+        OA_CHECK(rule_boom.mutators[0].cause == mutators::Cause::script_error);
+        OA_CHECK(rule_boom.mutators[0].message.find("rule-boom hook") != std::string::npos);
+        OA_CHECK(rule_boom.mutators[1].outcome == mutators::Outcome::applied);
+    }
+    check_same_run(rule_boom, picky_alone);
+    check_no_trace(rule_boom, 0);
+    OA_CHECK(text_of(rule_store.read("units/RGBOT.fbi").bytes).find("1234") != std::string::npos);
+    OA_CHECK(
+        text_of(rule_store.read("units/RGCOM.fbi").bytes).find("MaxDamage=3000") !=
+        std::string::npos
+    );
+    release(rule_store);
+    release(picky_store);
+
+    // A failing hook's own files never reach the hooks below it.
+    oa::AssetStore files_store = open_ridge();
+    oa::AssetStore no_extra_store = open_ridge();
+    const mutators::PipelineResult files_boom =
+        mutators::run_pipeline(files_store, input_of({"ridge-files-boom", "ridge-no-extra"}));
+    const mutators::PipelineResult no_extra_alone =
+        mutators::run_pipeline(no_extra_store, input_of({"ridge-no-extra"}));
+    OA_CHECK(files_boom.mutators.size() == 2);
+    if (files_boom.mutators.size() == 2) {
+        OA_CHECK(files_boom.mutators[0].outcome == mutators::Outcome::failed);
+        OA_CHECK(files_boom.mutators[0].phase == mutators::Phase::hooks);
+        OA_CHECK(files_boom.mutators[0].message.find("files-boom hook") != std::string::npos);
+        OA_CHECK(files_boom.mutators[1].outcome == mutators::Outcome::applied);
+    }
+    check_same_run(files_boom, no_extra_alone);
+    check_no_trace(files_boom, 0);
+    OA_CHECK(!lists_name(files_store, "units", ".fbi", "rgxtra.fbi"));
+    OA_CHECK(text_of(files_store.read("units/RGLAB.fbi").bytes).find("222") != std::string::npos);
+    release(files_store);
+    release(no_extra_store);
+
+    // The same with the failing mutator's dependant between them.
+    oa::AssetStore chain_store = open_ridge();
+    oa::AssetStore chain_alone_store = open_ridge();
+    const mutators::PipelineResult chain = mutators::run_pipeline(
+        chain_store, input_of({"ridge-rule-boom", "ridge-needs-rule-boom", "ridge-picky"})
+    );
+    const mutators::PipelineResult chain_alone =
+        mutators::run_pipeline(chain_alone_store, input_of({"ridge-picky"}));
+    OA_CHECK(chain.mutators.size() == 3);
+    if (chain.mutators.size() == 3) {
+        OA_CHECK(chain.mutators[0].outcome == mutators::Outcome::failed);
+        OA_CHECK(chain.mutators[1].outcome == mutators::Outcome::excluded);
+        OA_CHECK(chain.mutators[1].cause == mutators::Cause::prerequisite_failed);
+        OA_CHECK(chain.mutators[1].phase == mutators::Phase::loadout);
+        OA_CHECK(
+            chain.mutators[1].message.find("needs ridge-rule-boom, which failed") !=
+            std::string::npos
+        );
+        OA_CHECK(chain.mutators[2].outcome == mutators::Outcome::applied);
+    }
+    check_same_run(chain, chain_alone);
+    check_no_trace(chain, 0);
+    check_no_trace(chain, 1);
+    OA_CHECK(text_of(chain_store.read("units/RGBOT.fbi").bytes).find("777") == std::string::npos);
+    release(chain_store);
+    release(chain_alone_store);
+}
+
 void test_dependants_of_dependants() {
     oa::AssetStore with_store = open_ridge();
     oa::AssetStore swift_store = open_ridge();
@@ -801,6 +889,7 @@ int main() {
     test_files_layer();
     test_list_rules();
     test_compatibility_and_repeat();
+    test_failure_ends_the_pass();
     test_dependants_of_dependants();
     test_plan_tables_are_plain();
     test_string_cap_is_its_own_cause();

@@ -3,8 +3,9 @@
 
 // One ordered run of mutators. The list is checked, each plan is read in a
 // sandbox, the files layer is mounted, documents are parsed from that layer,
-// rules run once, and each hook is a transaction. A failure drops that
-// mutator and anyone who requires it, and the run starts again.
+// rules run once, and the hooks run in list order. A pass is a transaction:
+// a failure ends it, drops that mutator and anyone who requires it, and the
+// run starts again from the store.
 #include "oa/data/mutators/pipeline.hpp"
 
 #include "oa/base/sha256.hpp"
@@ -29,6 +30,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <new>
 #include <optional>
@@ -187,14 +189,6 @@ struct Listing {
     std::filesystem::path root;
     std::vector<std::string> paths;
     std::string error;
-};
-
-/// A document as it stood before one hook, so a failure can put it back.
-struct DocSnap {
-    std::string text;
-    bool removed{false};
-    bool added{false};
-    bool mark_added{false};
 };
 
 /// Unmounts a layer this run mounted, unless the run published it.
@@ -1064,29 +1058,36 @@ std::size_t find_document(const rules::DocumentSet& documents, std::string_view 
     return documents.size();
 }
 
-/// Records that `mutator` changed the document at `path`.
+/// One change to a document: the mutator, and the phase it made it in.
+struct Writer {
+    uint16_t mutator{};
+    Phase phase{};
+};
+
+/// Records that `mutator` changed the document at `path` in `phase`.
 void note_writer(
     const rules::DocumentSet& documents,
-    std::vector<std::vector<uint16_t>>& writers,
+    std::vector<std::vector<Writer>>& writers,
     std::vector<uint8_t>& menus,
     std::string_view path,
     uint16_t mutator,
+    Phase phase,
     Collection collection
 ) {
     const std::size_t slot = find_document(documents, path);
     if (slot >= writers.size())
         return;
-    writers[slot].push_back(mutator);
+    writers[slot].push_back(Writer{mutator, phase});
     if (collection == Collection::menus)
         menus[slot] = 1;
 }
 
 /// The last mutator in list order that changed a document.
-uint16_t owner_of(const std::vector<uint16_t>& slots) {
-    uint16_t best = slots.front();
-    for (const uint16_t slot : slots) {
-        if (slot > best)
-            best = slot;
+uint16_t owner_of(const std::vector<Writer>& changes) {
+    uint16_t best = changes.front().mutator;
+    for (const Writer& change : changes) {
+        if (change.mutator > best)
+            best = change.mutator;
     }
     return best;
 }
@@ -1235,7 +1236,6 @@ std::vector<std::string> unit_stems(const oa::AssetStore& store, const defs::Dat
 /// failure, and the warning names its path once however often it is listed.
 void consider_document(
     rules::DocumentSet& documents,
-    std::vector<std::string>& originals,
     ConflictReport& report,
     const oa::AssetStore& store,
     std::string path
@@ -1248,13 +1248,10 @@ void consider_document(
     }
     try {
         const oa::AssetData data = store.read(path);
-        std::string text(data.bytes.begin(), data.bytes.end());
+        const std::string text(data.bytes.begin(), data.bytes.end());
         std::string error;
-        if (!documents.add(path, text, &error)) {
+        if (!documents.add(path, text, &error))
             report.unread.push_back(std::move(path));
-            return;
-        }
-        originals.push_back(std::move(text));
     } catch (const std::exception&) {
         report.unread.push_back(std::move(path));
     }
@@ -1263,7 +1260,6 @@ void consider_document(
 /// Lists `directory` and parses each file whose name ends with `suffix`.
 void consider_listed(
     rules::DocumentSet& documents,
-    std::vector<std::string>& originals,
     ConflictReport& report,
     const oa::AssetStore& store,
     std::string_view directory,
@@ -1274,13 +1270,12 @@ void consider_listed(
         recursive ? store.list_effective_recursive(directory, suffix, true)
                   : store.list_effective_in_mount_order(directory, suffix, true);
     for (const std::string& name : names)
-        consider_document(documents, originals, report, store, name);
+        consider_document(documents, report, store, name);
 }
 
 /// Reads sidedata and moveinfo through the variant path the game uses.
 void consider_variant_file(
     rules::DocumentSet& documents,
-    std::vector<std::string>& originals,
     ConflictReport& report,
     oa::AssetStore& store,
     const defs::DataLayout& layout,
@@ -1302,13 +1297,12 @@ void consider_variant_file(
     );
     if (buffer[0] == '\0')
         return;
-    consider_document(documents, originals, report, store, std::string{buffer.data()});
+    consider_document(documents, report, store, std::string{buffer.data()});
 }
 
 /// Fills the document set from the mounted store, in listing order.
 void parse_documents(
     rules::DocumentSet& documents,
-    std::vector<std::string>& originals,
     ConflictReport& report,
     oa::AssetStore& store,
     const defs::DataLayout& layout,
@@ -1320,72 +1314,60 @@ void parse_documents(
     const std::size_t download = static_cast<std::size_t>(defs::DataDirectory::download);
     std::string unit_suffix = ".";
     unit_suffix += fold_copy(layout.unit_extension);
-    consider_listed(
-        documents, originals, report, store, layout.directories[units], unit_suffix, false
-    );
-    consider_listed(
-        documents, originals, report, store, layout.directories[weapons], ".tdf", false
-    );
-    consider_listed(documents, originals, report, store, k_features_folder, ".tdf", true);
-    consider_listed(
-        documents, originals, report, store, layout.directories[download], ".tdf", false
-    );
-    consider_variant_file(documents, originals, report, store, layout, variant, "sidedata");
-    consider_variant_file(documents, originals, report, store, layout, variant, "moveinfo");
+    consider_listed(documents, report, store, layout.directories[units], unit_suffix, false);
+    consider_listed(documents, report, store, layout.directories[weapons], ".tdf", false);
+    consider_listed(documents, report, store, k_features_folder, ".tdf", true);
+    consider_listed(documents, report, store, layout.directories[download], ".tdf", false);
+    consider_variant_file(documents, report, store, layout, variant, "sidedata");
+    consider_variant_file(documents, report, store, layout, variant, "moveinfo");
     const std::vector<sm::Target> targets = rules::targets_of(rule_sets);
     for (const sm::Target& target : targets) {
         const std::string folder = resolve_folder(target.folder, layout);
         const std::string extension = resolve_extension(target.extension, layout);
         std::string suffix = ".";
         suffix += fold_copy(extension);
-        consider_listed(documents, originals, report, store, folder, suffix, false);
+        consider_listed(documents, report, store, folder, suffix, false);
     }
 }
 
-/// The text a document had, so a hook can be rolled back onto it.
-std::vector<DocSnap>
-snapshot_documents(rules::DocumentSet& documents, const std::vector<std::string>& originals) {
-    std::vector<DocSnap> snaps(documents.size());
-    for (std::size_t slot = 0; slot < documents.size(); ++slot) {
-        rules::LoadedDocument& loaded = documents.at(slot);
-        const bool edited = tdf::document_edited(loaded.document.get());
-        snaps[slot].removed = loaded.removed;
-        snaps[slot].added = loaded.added;
-        snaps[slot].mark_added = (loaded.added || edited) && !loaded.removed;
-        if (!edited && !loaded.added) {
-            snaps[slot].text = originals[slot];
-            continue;
-        }
-        const std::optional<std::string> written = tdf::write_text(loaded.document.get());
-        snaps[slot].text = written.has_value() ? *written : originals[slot];
-    }
-    return snaps;
-}
+/// The position no failure has.
+constexpr std::size_t k_no_slot = std::numeric_limits<std::size_t>::max();
 
-/// Puts documents back to a snapshot. A document that had been edited is
-/// marked added, because parsing clears the edited flag and the file must
-/// still be written. False means a snapshot did not parse, so the set is
-/// not safe for a later hook.
-bool restore_documents(rules::DocumentSet& documents, const std::vector<DocSnap>& snaps) {
-    const std::size_t count = snaps.size() < documents.size() ? snaps.size() : documents.size();
-    for (std::size_t slot = 0; slot < count; ++slot) {
-        rules::LoadedDocument& loaded = documents.at(slot);
-        if (!loaded.document.parse(snaps[slot].text))
-            return false;
-        loaded.removed = snaps[slot].removed;
-        loaded.added = snaps[slot].added || snaps[slot].mark_added;
-    }
-    return true;
-}
+/// The failure a pass keeps: the one nearest the top of the list.
+///
+/// A mutator's files, rules and hooks can depend on what the mutators above
+/// it did, so only the first failure in list order is sure to be its own.
+/// The pass keeps that one, and the next pass judges the rest without it.
+struct FirstFailure {
+    std::size_t slot{k_no_slot};
+    Phase phase{};
+    Cause cause{};
+    std::string message;
 
-/// Calls one hook. A script error, a spent allowance or a C++ exception fails it.
+    /// Keeps this failure when it is nearer the top than the one kept.
+    void offer(std::size_t at, Phase in, Cause why, std::string text) {
+        if (at >= slot)
+            return;
+        slot = at;
+        phase = in;
+        cause = why;
+        message = std::move(text);
+    }
+
+    /// Reports whether the pass found a failure.
+    [[nodiscard]] bool found() const noexcept { return slot != k_no_slot; }
+};
+
+/// Calls one hook. A script error, a spent allowance or a C++ exception fails
+/// it, and the failure is offered as the pass's first.
 bool call_hook(
     host::Sandbox& sandbox,
     Collections& collections,
     int function_ref,
     bool units,
     const ContextView& context,
-    MutatorResult& result
+    std::size_t slot,
+    FirstFailure& first
 ) {
     HookBox box;
     box.collections = &collections;
@@ -1402,8 +1384,8 @@ bool call_hook(
     } catch (const std::bad_alloc&) {
         throw;
     } catch (const std::exception& ex) {
-        fail_mutator(
-            result,
+        first.offer(
+            slot,
             Phase::hooks,
             Cause::engine_error,
             ex.what() != nullptr ? ex.what() : "the hook stopped"
@@ -1412,7 +1394,7 @@ bool call_hook(
     }
     if (called)
         return true;
-    fail_mutator(result, Phase::hooks, cause_of(error.kind), error.message);
+    first.offer(slot, Phase::hooks, cause_of(error.kind), error.message);
     return false;
 }
 
@@ -1661,24 +1643,25 @@ void plan_mutator(
     }
 }
 
-/// True when a mutator that started this pass applied has since failed.
-///
-/// Mutators that failed on an earlier pass stay failed. They are not a new
-/// failure, and the mutators still applied must be allowed to publish.
-bool pass_failed(
-    const std::vector<MutatorResult>& results, const std::vector<uint8_t>& started_applied
+/// Fails every mutator still in the pass with an engine error.
+void fail_every(
+    std::vector<MutatorResult>& results,
+    const std::vector<uint8_t>& active,
+    Phase phase,
+    const std::string& message
 ) {
-    const std::size_t count =
-        results.size() < started_applied.size() ? results.size() : started_applied.size();
-    for (std::size_t slot = 0; slot < count; ++slot) {
-        if (started_applied[slot] != 0 && results[slot].outcome == Outcome::failed)
-            return true;
+    for (std::size_t slot = 0; slot < results.size() && slot < active.size(); ++slot) {
+        if (active[slot] != 0)
+            fail_mutator(results[slot], phase, Cause::engine_error, message);
     }
-    return false;
 }
 
-/// One pass over the mutators that are still applied. A clean pass publishes
-/// its layer and returns true. A failure leaves the store unmounted.
+/// One pass over the mutators that are still applied.
+///
+/// A clean pass publishes its layer and returns true. A pass that finds a
+/// failure records it, leaves the store unmounted and returns false. The
+/// pass's documents are its own, parsed from the store, so nothing needs
+/// rolling back: the next pass parses them again without what failed.
 bool run_pass(
     oa::AssetStore& store,
     const PipelineInput& input,
@@ -1691,17 +1674,24 @@ bool run_pass(
     MountGuard& guard
 ) {
     const std::size_t count = input.mutators.size();
-    std::vector<uint8_t> started_applied(count, 0);
-    for (std::size_t slot = 0; slot < count; ++slot) {
-        if (results[slot].outcome == Outcome::applied)
-            started_applied[slot] = 1;
-    }
+    // Destroyed in reverse order: every sandbox closes before the collections
+    // that were pushed into it, the collections go before the documents, and
+    // the listings the sandboxes read from go last.
+    rules::DocumentSet documents;
+    std::optional<Collections> collections;
     std::vector<Listing> listings(count);
     std::vector<std::vector<LoadoutOption>> options(count);
     std::vector<std::optional<host::Sandbox>> sandboxes(count);
     std::vector<Plan> plans(count);
+    std::vector<uint8_t> active(count, 0);
+    for (std::size_t slot = 0; slot < count; ++slot)
+        active[slot] = results[slot].outcome == Outcome::applied ? 1 : 0;
+
+    // A plan sees only its own package and options, so each plan failure is
+    // that mutator's own, and every one is kept.
+    bool planned = true;
     for (std::size_t slot = 0; slot < count; ++slot) {
-        if (results[slot].outcome != Outcome::applied)
+        if (active[slot] == 0)
             continue;
         options[slot] = resolve_options(input.mutators[slot]);
         plan_mutator(
@@ -1714,8 +1704,10 @@ bool run_pass(
             plans[slot],
             results[slot]
         );
+        if (results[slot].outcome != Outcome::applied)
+            planned = false;
     }
-    if (pass_failed(results, started_applied))
+    if (!planned)
         return false;
 
     std::vector<std::string> stems = unit_stems(store, layout);
@@ -1725,9 +1717,39 @@ bool run_pass(
         const std::string folded = fold_copy(name);
         return std::binary_search(stems.begin(), stems.end(), folded);
     };
+
+    // A rule target is judged by its own folder and the mod's unit names, so
+    // these failures are each mutator's own too.
+    bool targets_allowed = true;
+    for (std::size_t slot = 0; slot < count; ++slot) {
+        if (active[slot] == 0 || !plans[slot].has_rules)
+            continue;
+        std::vector<rules::MutatorRules> one;
+        one.push_back(plans[slot].rules);
+        const std::vector<sm::Target> targets = rules::targets_of(one);
+        for (const sm::Target& target : targets) {
+            std::string message;
+            if (!target_allowed(target, layout, paths, message)) {
+                fail_mutator(
+                    results[slot], Phase::rules, Cause::protected_path, std::move(message)
+                );
+                targets_allowed = false;
+                break;
+            }
+        }
+    }
+    if (!targets_allowed)
+        return false;
+
+    // From here a mutator's outcome can depend on the mutators above it: a
+    // mask or a layer-wide limit in the files layer, or the documents its
+    // hooks read. Only the first failure in list order is kept. A mutator the
+    // files layer refused sits out the rest of the pass, so the mutators
+    // above it are judged as they would be without it.
+    FirstFailure first;
     std::vector<MutatorFiles> files;
     for (std::size_t slot = 0; slot < count; ++slot) {
-        if (results[slot].outcome != Outcome::applied || !plans[slot].has_files)
+        if (active[slot] == 0 || !plans[slot].has_files)
             continue;
         MutatorFiles one;
         one.id = ids[slot];
@@ -1740,65 +1762,31 @@ bool run_pass(
         const std::optional<uint16_t> slot = index_of(ids, failure.mutator);
         if (!slot.has_value())
             continue;
-        fail_mutator(results[*slot], Phase::files, Cause::files_refused, failure.message);
-    }
-    if (pass_failed(results, started_applied)) {
-        guard.release();
-        return false;
+        first.offer(*slot, Phase::files, Cause::files_refused, failure.message);
+        active[*slot] = 0;
     }
 
     oa::MutatorLayerSpec spec = built.spec;
     if (!spec.entries.empty() || !spec.masks.empty() || !spec.archives.empty()) {
         std::string mount_error;
         if (!store.mount_mutator_layer(spec, &mount_error)) {
-            for (std::size_t slot = 0; slot < count; ++slot) {
-                fail_mutator(
-                    results[slot],
-                    Phase::files,
-                    Cause::engine_error,
-                    mount_error.empty() ? "the mutator layer could not be mounted" : mount_error
-                );
-            }
+            fail_every(
+                results,
+                active,
+                Phase::files,
+                mount_error.empty() ? "the mutator layer could not be mounted" : mount_error
+            );
             return false;
         }
         guard.arm();
     }
 
-    rules::DocumentSet documents;
-    std::vector<std::string> originals;
     std::vector<rules::MutatorRules> rule_sets;
     for (std::size_t slot = 0; slot < count; ++slot) {
-        if (results[slot].outcome == Outcome::applied && plans[slot].has_rules)
+        if (active[slot] != 0 && plans[slot].has_rules)
             rule_sets.push_back(plans[slot].rules);
     }
-    parse_documents(documents, originals, report, store, layout, input.variant, rule_sets);
-
-    for (std::size_t slot = 0; slot < count; ++slot) {
-        if (results[slot].outcome != Outcome::applied || !plans[slot].has_rules)
-            continue;
-        std::vector<rules::MutatorRules> one;
-        one.push_back(plans[slot].rules);
-        const std::vector<sm::Target> targets = rules::targets_of(one);
-        for (const sm::Target& target : targets) {
-            std::string message;
-            if (!target_allowed(target, layout, paths, message)) {
-                fail_mutator(
-                    results[slot], Phase::rules, Cause::protected_path, std::move(message)
-                );
-                break;
-            }
-        }
-    }
-    if (pass_failed(results, started_applied)) {
-        guard.release();
-        return false;
-    }
-
-    rule_sets.clear();
-    for (std::size_t slot = 0; slot < count; ++slot) {
-        if (results[slot].outcome == Outcome::applied && plans[slot].has_rules)
-            rule_sets.push_back(plans[slot].rules);
-    }
+    parse_documents(documents, report, store, layout, input.variant, rule_sets);
     rules::ApplyOptions apply_options;
     apply_options.layout = &layout;
     apply_options.check = [&layout](
@@ -1806,16 +1794,19 @@ bool run_pass(
                           ) { return check_field(field, text, layout); };
     const rules::ApplyResult applied = rules::apply_rules(rule_sets, documents, apply_options);
 
-    std::optional<Collections> collections;
+    // The hooks run in list order on the pass's documents. The first hook
+    // that fails ends the pass, so no later hook runs on what it left. Hooks
+    // below a failure the files layer found are not run: they cannot change
+    // which failure is first.
     collections.emplace(documents, &layout);
-    for (std::size_t slot = 0; slot < count; ++slot) {
-        if (results[slot].outcome != Outcome::applied)
+    bool hooks_done = true;
+    for (std::size_t slot = 0; slot < count && slot < first.slot; ++slot) {
+        if (active[slot] == 0)
             continue;
         if (plans[slot].units_hook == LUA_NOREF && plans[slot].weapons_hook == LUA_NOREF)
             continue;
-        if (!sandboxes[slot].has_value() || !collections.has_value())
+        if (!sandboxes[slot].has_value())
             continue;
-        const std::vector<DocSnap> snaps = snapshot_documents(documents, originals);
         WriteGrant grant;
         grant.units = declares(input.mutators[slot].manifest, oamut::Layer::units);
         grant.weapons = declares(input.mutators[slot].manifest, oamut::Layer::weapons);
@@ -1828,7 +1819,7 @@ bool run_pass(
         bool hook_ok = true;
         if (plans[slot].units_hook != LUA_NOREF) {
             hook_ok = call_hook(
-                *sandboxes[slot], *collections, plans[slot].units_hook, true, context, results[slot]
+                *sandboxes[slot], *collections, plans[slot].units_hook, true, context, slot, first
             );
         }
         if (hook_ok && plans[slot].weapons_hook != LUA_NOREF) {
@@ -1838,86 +1829,84 @@ bool run_pass(
                 plans[slot].weapons_hook,
                 false,
                 context,
-                results[slot]
+                slot,
+                first
             );
         }
         if (!hook_ok) {
-            if (!restore_documents(documents, snaps)) {
-                fail_mutator(
-                    results[slot],
-                    Phase::hooks,
-                    Cause::engine_error,
-                    "the pipeline could not restore a document"
-                );
-                sandboxes.clear();
-                collections.reset();
-                guard.release();
-                return false;
-            }
-            collections.reset();
-            collections.emplace(documents, &layout);
-            continue;
+            hooks_done = false;
+            break;
         }
         collections->end_mutator();
     }
-    if (pass_failed(results, started_applied)) {
+    if (!hooks_done) {
         sandboxes.clear();
         collections.reset();
         guard.release();
+        fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
         return false;
     }
 
-    std::vector<std::vector<uint16_t>> writers(documents.size());
+    std::vector<std::vector<Writer>> writers(documents.size());
     std::vector<uint8_t> menus(documents.size(), 0);
     for (const rules::FieldWrite& write : applied.writes) {
         journal.entries.push_back(entry_from_write(write, ids, Phase::rules, layout));
-        for (const uint16_t mutator : journal.entries.back().mutators)
+        for (const uint16_t mutator : journal.entries.back().mutators) {
             note_writer(
-                documents, writers, menus, write.path, mutator, journal.entries.back().collection
+                documents,
+                writers,
+                menus,
+                write.path,
+                mutator,
+                Phase::rules,
+                journal.entries.back().collection
             );
+        }
     }
     for (const rules::RuleNote& note : applied.notes)
         report.conflicts.push_back(conflict_from_rule(note, ids));
-    if (collections.has_value()) {
-        for (const rules::FieldWrite& write : collections->writes()) {
-            journal.entries.push_back(entry_from_write(write, ids, Phase::hooks, layout));
-            for (const uint16_t mutator : journal.entries.back().mutators) {
-                note_writer(
-                    documents,
-                    writers,
-                    menus,
-                    write.path,
-                    mutator,
-                    journal.entries.back().collection
-                );
-            }
+    for (const rules::FieldWrite& write : collections->writes()) {
+        journal.entries.push_back(entry_from_write(write, ids, Phase::hooks, layout));
+        for (const uint16_t mutator : journal.entries.back().mutators) {
+            note_writer(
+                documents,
+                writers,
+                menus,
+                write.path,
+                mutator,
+                Phase::hooks,
+                journal.entries.back().collection
+            );
         }
-        for (const RecordRemoval& removal : collections->removals()) {
-            JournalEntry entry;
-            const std::optional<uint16_t> mutator = index_of(ids, removal.mutator);
-            if (mutator.has_value())
-                entry.mutators.push_back(*mutator);
-            entry.phase = Phase::hooks;
-            entry.change = Change::removed;
-            entry.record = removal.name;
-            entry.path = removal.path;
-            if (removal.kind == RemovalKind::unit)
-                entry.collection = Collection::units;
-            else if (removal.kind == RemovalKind::weapon)
-                entry.collection = Collection::weapons;
-            else if (removal.kind == RemovalKind::feature)
-                entry.collection = Collection::features;
-            else if (removal.kind == RemovalKind::download_entry)
-                entry.collection = Collection::menus;
-            else
-                entry.collection = collection_for_path(removal.path, layout);
-            if (mutator.has_value())
-                note_writer(documents, writers, menus, removal.path, *mutator, entry.collection);
-            journal.entries.push_back(std::move(entry));
-        }
-        for (const HookNote& note : collections->notes())
-            report.conflicts.push_back(conflict_from_hook(note, ids));
     }
+    for (const RecordRemoval& removal : collections->removals()) {
+        JournalEntry entry;
+        const std::optional<uint16_t> mutator = index_of(ids, removal.mutator);
+        if (mutator.has_value())
+            entry.mutators.push_back(*mutator);
+        entry.phase = Phase::hooks;
+        entry.change = Change::removed;
+        entry.record = removal.name;
+        entry.path = removal.path;
+        if (removal.kind == RemovalKind::unit)
+            entry.collection = Collection::units;
+        else if (removal.kind == RemovalKind::weapon)
+            entry.collection = Collection::weapons;
+        else if (removal.kind == RemovalKind::feature)
+            entry.collection = Collection::features;
+        else if (removal.kind == RemovalKind::download_entry)
+            entry.collection = Collection::menus;
+        else
+            entry.collection = collection_for_path(removal.path, layout);
+        if (mutator.has_value()) {
+            note_writer(
+                documents, writers, menus, removal.path, *mutator, Phase::hooks, entry.collection
+            );
+        }
+        journal.entries.push_back(std::move(entry));
+    }
+    for (const HookNote& note : collections->notes())
+        report.conflicts.push_back(conflict_from_hook(note, ids));
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
         const std::optional<uint16_t> mutator = index_of(ids, entry.owner);
@@ -1941,49 +1930,44 @@ bool run_pass(
         journal.entries.push_back(std::move(hidden));
     }
 
-    bool protected_write = false;
     for (std::size_t slot = 0; slot < documents.size(); ++slot) {
         if (!documents.changed(slot))
             continue;
         const rules::LoadedDocument& loaded = documents.at(slot);
         if (writers[slot].empty()) {
-            for (MutatorResult& mutator : results) {
-                if (mutator.outcome != Outcome::applied)
+            for (std::size_t candidate = 0; candidate < count; ++candidate) {
+                if (active[candidate] == 0)
                     continue;
-                fail_mutator(
-                    mutator, Phase::hooks, Cause::engine_error, "a changed document has no writer"
+                first.offer(
+                    candidate, Phase::hooks, Cause::engine_error, "a changed document has no writer"
                 );
                 break;
             }
-            protected_write = true;
             continue;
         }
         const PathVerdict verdict = check_mutable_path(loaded.path, paths);
         const bool menus_pass = verdict.rule == PathRule::menus_only && menus[slot] != 0;
         if (!verdict.allowed() && !menus_pass) {
-            for (const uint16_t writer : writers[slot])
-                fail_mutator(results[writer], Phase::hooks, Cause::protected_path, verdict.message);
-            protected_write = true;
+            for (const Writer& writer : writers[slot])
+                first.offer(writer.mutator, writer.phase, Cause::protected_path, verdict.message);
             continue;
         }
+        const uint16_t owner = owner_of(writers[slot]);
         oa::MutatorLayerEntry entry;
         entry.path = loaded.path;
-        entry.owner = ids[owner_of(writers[slot])];
+        entry.owner = ids[owner];
         if (loaded.removed) {
             entry.kind = oa::MutatorSourceKind::hidden;
-            journal.entries.push_back(
-                file_entry(owner_of(writers[slot]), loaded.path, Change::hidden)
-            );
+            journal.entries.push_back(file_entry(owner, loaded.path, Change::hidden));
         } else {
             const std::optional<std::string> text = tdf::write_text(loaded.document.get());
             if (!text.has_value()) {
-                fail_mutator(
-                    results[owner_of(writers[slot])],
+                first.offer(
+                    owner,
                     Phase::hooks,
                     Cause::engine_error,
                     "a changed document could not be written"
                 );
-                protected_write = true;
                 continue;
             }
             entry.kind = oa::MutatorSourceKind::contents;
@@ -2003,8 +1987,9 @@ bool run_pass(
     }
     sandboxes.clear();
     collections.reset();
-    if (protected_write) {
+    if (first.found()) {
         guard.release();
+        fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
         return false;
     }
 
@@ -2029,14 +2014,12 @@ bool run_pass(
                                ? store.replace_mutator_layer(spec, &publish_error)
                                : store.mount_mutator_layer(spec, &publish_error);
     if (!published) {
-        for (std::size_t slot = 0; slot < count; ++slot) {
-            fail_mutator(
-                results[slot],
-                Phase::files,
-                Cause::engine_error,
-                publish_error.empty() ? "the mutator layer could not be mounted" : publish_error
-            );
-        }
+        fail_every(
+            results,
+            active,
+            Phase::files,
+            publish_error.empty() ? "the mutator layer could not be mounted" : publish_error
+        );
         guard.release();
         return false;
     }

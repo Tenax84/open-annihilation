@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // One ordered run of mutators: plan, files, parse, one rules pass, hooks,
-// then only the documents that changed. A mutator that fails is dropped
+// then only the documents that changed. A mutator that fails ends the pass,
 // and the run is repeated without it, so it leaves no file, rule or note.
 #pragma once
 
@@ -142,12 +142,15 @@ struct PipelineResult {
 /// mounted and no script runs. Each remaining manifest is checked against
 /// the mod and the engine. The rest are planned, their files mounted, the
 /// documents parsed from that layer, their rules applied once, and their
-/// hooks run in list order. A hook is a transaction: a script error, a
-/// spent allowance or an engine error rolls that mutator back. A mutator
-/// that fails, and every mutator that requires it, is then dropped and the
-/// run repeated. Nothing of a failed mutator remains. Only a document the
-/// run changed is written back. A plan key this engine does not support
-/// yet is refused, not ignored.
+/// hooks run in list order. Each pass over the list is a transaction. A
+/// failure in a plan or a rule target is the mutator's own, and every one
+/// is kept. Any later failure can depend on the mutators above it, so the
+/// pass keeps only the one nearest the top of the list, and stops at the
+/// first hook that fails: no later hook runs on what a failed mutator left.
+/// The mutator that failed, and every mutator that requires it, is then
+/// dropped and the pass repeated from the store, so the result is the run
+/// without them. Only a document the run changed is written back. A plan
+/// key this engine does not support yet is refused, not ignored.
 ///
 /// The call does not throw. A Lua error stays inside the run. The result
 /// names the mutator and the phase.
