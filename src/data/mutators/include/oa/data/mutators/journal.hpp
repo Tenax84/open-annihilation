@@ -117,7 +117,8 @@ enum class ConflictKind : uint8_t {
     added_path_hidden,   ///< a mask hid a file an earlier mutator added
     add_folder_missing,  ///< an add folder is not in the package
     same_field_hooked,   ///< two hooks wrote one field; the later one won
-    clamp_widened,       ///< a combined value lies outside one mutator's clamp
+    value_replaced,      ///< a later mutator's rule replaced a value an earlier mutator wrote
+    field_locked,        ///< a later mutator's rule left a field an earlier mutator locked alone
     text_change_dropped, ///< a text change was dropped
     matched_nothing,     ///< a rule selected no record
     value_past_limit,    ///< a value was kept past its comfortable limit
@@ -127,7 +128,9 @@ enum class ConflictKind : uint8_t {
 /// One stacking situation, for the log and the dry run.
 ///
 /// `mutators` are indices into the input list. For a situation with a
-/// winner, the winner is last. `field` is lower case.
+/// winner, the winner is last. A locked field is the exception: the mutator
+/// that locked it comes first and keeps its value, and the mutator whose
+/// change was left undone comes last. `field` is lower case.
 struct Conflict {
     /// Note or warning.
     Severity severity{};
@@ -169,9 +172,12 @@ struct ConflictReport {
 
 /// Turns one rules note into a conflict.
 ///
-/// Text cancellations, a factor on an absent field and a value that is not
-/// a number become `text_change_dropped`. A value that is not finite and a
-/// refused check become `write_refused`. `ids` is the input list, in order.
+/// A value a later mutator replaced becomes `value_replaced`, and a locked
+/// field a later mutator left alone becomes `field_locked`. Both are notes
+/// and keep the note's order: the earlier mutator, then the later one. A
+/// factor on an absent field and a value that is not a number become
+/// `text_change_dropped`. A value that is not finite and a refused check
+/// become `write_refused`. `ids` is the input list, in order.
 ///
 /// @param note the rules note
 /// @param ids mutator ids, in list order
@@ -195,7 +201,10 @@ struct ConflictReport {
 ///
 /// An index `ids` does not hold is left out of the line. A hook that won a
 /// field reads as "ridge-tougher wins units/RGCOM.fbi maxdamage over
-/// ridge-tough".
+/// ridge-tough". A replaced value reads as "ridge-tougher replaced
+/// ridge-tough's value on units/rgcom.fbi maxdamage", and a locked field as
+/// "ridge-tough locked units/rgcom.fbi maxdamage, so ridge-tougher left it
+/// alone".
 ///
 /// @param conflict the conflict
 /// @param ids mutator ids, in the same order as the conflict's indices
