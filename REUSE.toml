@@ -183,8 +183,9 @@ path = "src/formats/inno-setup/tests/data/**"
 SPDX-FileCopyrightText = "The Open Annihilation Authors; see COPYRIGHT"
 SPDX-License-Identifier = "GPL-3.0-only"
 
-# Made-up Ridge packages the mutation pipeline tests share. TDF, FBI, Lua
-# and rule files cannot carry SPDX header lines.
+# Made-up Ridge packages the mutation pipeline tests share. Their text files
+# carry their own header lines; the small pictures, which the tests compare
+# byte for byte, cannot.
 [[annotations]]
 path = "tests/data/mutators/**"
 SPDX-FileCopyrightText = "The Open Annihilation Authors; see COPYRIGHT"
