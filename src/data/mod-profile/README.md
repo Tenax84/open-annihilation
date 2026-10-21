@@ -50,7 +50,8 @@ in the generated files.
 `resolve_profile` reads a profile, checks it block by block, resolves each
 parameter in the registry's order (baseline while the entry is absent or
 false, default once on, preset, the profile's value, the player's settings
-for parameters the profile binds, the host's match options) and returns a
+for parameters the profile binds, the player's overrides, then the host's
+match options) and returns a
 `Resolution`: the `ModProfile` records, the effective profile as a `Value`
 tree, its sim-scope part, its canonical JSON (RFC 8785) and the provenance
 of every value. A profile writes a limit or hack as `true` (defaults), a
@@ -59,9 +60,13 @@ shorthand parameter, or `false` (off, the same as leaving it out).
 
 `ResolveOptions` carries the player's settings (`Settings`: INI Section/Key
 values and registry values, matched without case, the profile's registry
-seeds filling the gaps), the host's `MatchOption`s,
-`accept_unimplemented_hacks`, which turns the refusal of a hack this engine
-does not implement yet into a warning, for development, and `overrides`.
+seeds filling the gaps), the player's `overrides`, then the host's
+`MatchOption`s, and `accept_unimplemented_hacks`, which turns the refusal of
+a hack this engine does not implement yet into a warning, for development.
+`match_option_problem` runs the registry-only checks of one match option
+without a profile: a known parameter, adjustable per match, and a value of
+the right type inside its bounds. It returns the message resolving that
+option would report, or nothing when the registry accepts it.
 
 
 Every refusal is a `Diagnostic` naming the profile, the line and column, the
@@ -97,8 +102,8 @@ saved-game check hold every rule to that.
 (Developer Mode in the settings dialog), `HackOverride`s of
 `oa/data/mod_profile/overrides.hpp`: each turns one hack on or off and sets
 the parameters it names while on. The resolver lays them over the profile
-as its last step, after the profile, the player's settings and the host's
-match options: on gives the values the profile resolved for the hack, or
+after the profile and the player's settings, and before the host's match
+options: on gives the values the profile resolved for the hack, or
 its defaults when the profile has it off, with each parameter the override
 names in its place; off leaves the hack out, as `false` in a profile does.
 Each is checked as a profile's hack is: the hack and its parameters known,

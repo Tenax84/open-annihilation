@@ -68,6 +68,7 @@
 #include "oa/ui/engine_settings.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
 #include "oa/data/content_bundles/content_choice.hpp"
+#include "oa/data/mutators/maps.hpp"
 #include "oa/ui/pad_controls.hpp"
 #include "oa/app/acceleration_status.hpp"
 #include "oa/app/content_copy.hpp"
@@ -164,6 +165,7 @@ struct Listing;
 
 namespace oa::data::mutators {
 struct Loadout;
+struct PipelineInput;
 struct PipelineResult;
 struct ResolvedMutator;
 } // namespace oa::data::mutators
@@ -4429,11 +4431,66 @@ class Runtime final : public menu::Host,
     /// and before the match reads its game data.
     ///
     /// An empty choice does nothing: no pipeline, no layer and no log line.
-    /// A mutator that does not apply, or a list the pipeline refuses,
-    /// releases the layer and throws std::runtime_error naming it.
+    /// A list the pipeline refuses, or a mutator that does not apply for a
+    /// reason other than its hacks, releases the layer and throws
+    /// std::runtime_error naming it. A hack the registry or the profile
+    /// refuses fails that mutator in the plan phase, and a mutator excluded
+    /// only because it requires one is dropped with it. The match still starts.
+    /// When the layer serves the chosen map, the cached scenario is read again
+    /// and a campaign mission is bound again.
     ///
     /// @param bootstrap the match being started
     void apply_match_mutators(const MatchBootstrap& bootstrap);
+
+    /// Fills the pipeline's hack check from this run's profile.
+    ///
+    /// Developer Mode's overrides are the baseline. A hack that does not
+    /// resolve fails its mutator before any file, rule or hook is applied.
+    ///
+    /// @param input the pipeline input for this match
+    void bind_planned_hack_check(oa::data::mutators::PipelineInput& input);
+
+    /// Lays the applied mutators' hacks over the profile this match plays.
+    ///
+    /// The pipeline has already accepted these hacks. This copies that
+    /// resolution into the one profile the match plays, logs the values and
+    /// records the notes. With no records it does nothing. The same values
+    /// refused again refuse the start. Release puts the player's profile back.
+    void play_mutator_hacks();
+
+    /// The unit limit a mutator's hack set for this match.
+    ///
+    /// Set when limits.units-per-player.default came from a match choice.
+    /// Empty when this match's hacks did not set it.
+    ///
+    /// @return that limit, in units per player
+    [[nodiscard]] std::optional<uint16_t> mutator_units_per_player() const noexcept;
+
+    /// The map the match will play, read after the pack map is mounted.
+    ///
+    /// None when no map is selected. A selected name whose scenario file is
+    /// missing is still returned, with no bytes, so a maps hook refuses it.
+    ///
+    /// @return the chosen map, or none
+    [[nodiscard]] std::optional<oa::data::mutators::ChosenMap> chosen_map_for_mutators();
+
+    /// Reads the chosen map again from the store.
+    ///
+    /// Reparses the cached metadata and scenario document. Does not touch the
+    /// terrain or the start markers. Clears the skirmish map cache so the
+    /// next match reads the store. When `rebind_campaign` is set and a
+    /// campaign mission is running, binds that mission again.
+    ///
+    /// @param rebind_campaign true after a served rewrite, false after release
+    void reread_chosen_map(bool rebind_campaign);
+
+    /// Clears the skirmish map's cached mission name so the next read reloads.
+    void clear_campaign_map_cache();
+
+    /// Binds the running campaign mission again from the store.
+    ///
+    /// Throws std::runtime_error when the mission does not bind.
+    void rebind_campaign_mission();
 
     /// Resolves the command line's `--mutator` values and chooses them.
     ///
@@ -4445,10 +4502,14 @@ class Runtime final : public menu::Host,
     /// Unmounts the match's mutator layer and forgets its result, its loadout
     /// and its mutator digest.
     ///
-    /// Logs one line when a layer was unmounted or a result was held.
-    /// A quiet no-op when neither is true. When a mounted layer cannot be
-    /// dropped, the result, the loadout and the digest are kept so a later
-    /// call can try again.
+    /// When this match copied hacks into the played profile, the player's
+    /// profile is put back first. Logs one line when a layer was unmounted
+    /// or a result was held, or when the match had served a rewritten map.
+    /// A quiet no-op when none is true and no hacks were played. When a
+    /// mounted layer cannot be dropped, the result, the loadout and the
+    /// digest are kept so a later call can try again. When the match had
+    /// served a rewritten map, the cached scenario is read again from the
+    /// installed files. A campaign mission is not bound again here.
     void release_match_mutators() noexcept;
 
     /// The player's chosen mutators, held aside while one replay plays another list.

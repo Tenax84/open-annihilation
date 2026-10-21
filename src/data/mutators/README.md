@@ -13,10 +13,11 @@ sentence chosen from the rule, which is not this module's to write.
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
 `oa/data/mutators/choice.hpp`, `oa/data/mutators/collections.hpp`,
-`oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/files_layer.hpp`, `oa/data/mutators/hacks.hpp`,
 `oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
-`oa/data/mutators/pipeline.hpp`, `oa/data/mutators/rules_lua.hpp`,
-`oa/data/mutators/verdicts.hpp` and `oa/data/mutators/weapon_ids.hpp`.
+`oa/data/mutators/maps.hpp`, `oa/data/mutators/pipeline.hpp`,
+`oa/data/mutators/rules_lua.hpp`, `oa/data/mutators/verdicts.hpp` and
+`oa/data/mutators/weapon_ids.hpp`.
 
 - `check_mutable_path` judges one file path.
 - `check_mutable_mask` judges one mask. The pattern's shape is
@@ -25,6 +26,11 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 - `rule_name` returns the stable lower-case name of a `PathRule`.
 - `build_files_layer` turns an ordered list of files plans into one
   `MutatorLayerSpec`. See [Files layer](#files-layer).
+- `read_hacks` reads a plan's `hacks` table, `merge_hacks` keeps the later
+  value for each path, and `developer_conflicts` notes where those hacks
+  overlap Developer Mode or a mod that leaves the entry off. `hack_faults`
+  names the mutators a refused resolution of those hacks fails: each one
+  an error names, or every one when no error names any.
 - `run_pipeline` runs an ordered list of mutators against an asset store
   and returns each mutator's outcome, the layer it left mounted, the
   `Journal` of the changes kept and the `ConflictReport`. See
@@ -171,7 +177,10 @@ hook, its rules or its files would have reached the mutators below it, and
 with the mutators that require it. It also covers plans whose tables have
 metatables, the allowances and the string cap, files added, masked and
 hidden with their journal entries, a document that does not parse, a
-player's option, the list checks and two identical runs. It also runs two
+player's option, the list checks and two identical runs. A hack the
+check refuses, with a units hook beside it, fails in the plan phase and
+leaves no hook change and no journal entry.
+It also runs two
 mutators that share `weapons/extra.tdf`, a unit file that replaces a unit,
 a weapon body that must not move a base id, download sections from two
 mutators, a rule that sees the unit its own file added, and a weapon table
@@ -193,6 +202,9 @@ requests are what overflow, that later mutator is the one refused.
 
 `data-mutators-journal` (`tests/journal_test.cpp`) checks the entry order,
 `entries_of`, each note conversion and the sentences `describe` writes.
+`data-mutators-hacks` (`tests/hacks_test.cpp`) checks reading a hacks table,
+the value's normal form, merging two mutators, the Developer Mode notes,
+and the values the resolver plays.
 
 `data-mutators-sides` (`tests/collections_sides_test.cpp`) runs made-up
 Ridge packages through `run_pipeline` and checks side fields, build lists,
@@ -200,6 +212,19 @@ the language variant against the plain file, the other game-data tables,
 a failed mutator and the layer grants. `data-mutators-sides-data` is the
 same program with `--data`: it reads every side and every build list of
 the installed game and serves no game-data file.
+
+`data-mutators-maps` (`tests/maps_test.cpp`) runs maps hooks over a
+made-up Ridge scenario: header and schema writes and their refusals,
+placed units and features, `glob` and `pattern`, two mutators on one
+field, a write that then errors, and the session loader reading the
+served text. It also runs refused writes in a `pcall` loop, loops of
+long-key reads, writes, `:set` calls and unit lookups that stop on a
+small instruction allowance, a write count past the limit, and placed
+names that an earlier hook cloned or removed. `data-mutators-maps-data`
+is the same program with `--data`: it reads every installed map and
+writes nothing, then points every map whose schemas name a profile at
+another profile. Each rewrite must be served, and each map that loads as
+a skirmish session must read its rewrite back through the session loader.
 
 ## Limitations
 
@@ -240,6 +265,13 @@ the mutator still applies, and that file is not served. A base weapon
 file the pipeline cannot parse is unread too. The game may still load it,
 but its ids are not counted as taken, so a mutator weapon could share an
 id with one of them.
+
+A maps hook cannot add a placed unit or a placed feature, and it cannot
+move a start position or change how many there are. `type`, `missionname`,
+`planet` and `numplayers` stay as the map file wrote them. `glob` is `*`
+and `?` only, with no character classes and no full regular expressions.
+`pattern` is a Lua pattern. A placed unit's `xpos` and `zpos` are whole
+numbers from 0 to 32,767, and its `player` is a whole number from 1 to 255.
 
 A mutator cannot add or remove a side. Rectangle sub-sections of a side
 are neither shown nor changed. A build list keeps at most 1024 names. When
@@ -804,18 +836,31 @@ a weapon, and each section of a download file is an entry in that file.
 A record whose name already exists replaces that record. A new record is
 added. Other files stay whole files, and the later mutator wins the path.
 The mutator then applies its rules and then its hooks, on the documents
-the mutators above it left. Its units hook runs, then its weapons hook. A
-plan that returns map hooks is refused, so none run. Only a document the
-pass changed is written back, whole, with the text writer, at the path
-the store listed it under. A document a hook removed is hidden.
+the mutators above it left. Its units hook runs, then its weapons hook.
+When the caller names a map, each mutator's maps entry then runs, in list
+order, as a transaction of its own, after every mutator's records, rules
+and hooks and after the weapons are numbered. Only a document the pass
+changed is written back, whole, with the text writer, at the path the
+store listed it under. A document a hook removed is hidden. A scenario is
+served only when its bytes differ from the map the caller passed.
 
 The plan is read inside the plan phase, with the mutator's allowances and
 real-time limit in force, and by raw access only, so no metamethod of the
 script runs. The plan, its `files` table, the `mask` and `add` lists and the
 `rules` list must be plain tables. One with a metatable refuses the plan,
 because its raw contents need not be what the script meant. A plan key the
-engine does not support yet (`menus`, `sides`, `tables`, `maps` and
-`hacks`) refuses the plan instead of being ignored.
+engine does not support yet (`menus`, `sides` and `tables`) refuses the
+plan instead of being ignored. A `hacks` table sets match parameters of
+entries the registry marks `mutator: true`. Today those are
+`limits.units-per-player.default`, `console.game-speed-range.min` and
+`console.game-speed-range.max`. The manifest must list the `hacks` layer.
+Each value is kept in the registry's normal form. A hack the registry does
+not open, a value it refuses, a table it cannot read, or a `hacks` table
+whose manifest lacks the layer fails that mutator in the plan phase, as
+`Cause::hack_refused`, and the game starts without it.
+`PipelineInput::check_hacks` runs after the plans are read and before
+files, rules and hooks, so a hack the profile refuses fails the same way
+and the pass runs again without that mutator. Nothing of it is mounted.
 
 A pass is a transaction. A plan, or a rule aimed at a folder no mutator may
 change, depends on nothing but the mutator itself, so every such failure is
@@ -879,3 +924,72 @@ The pipeline prints nothing and keeps nothing between calls. The same input
 gives the same layer bytes, journal and report. The store must hold no
 mutator layer when the call starts. On return the final layer is mounted
 when it holds at least one entry or mask, and the caller unmounts it.
+
+## Maps
+
+A mutator's `maps` entry is a function `maps(map, ctx)` or a list of
+`where { … }:change { … }` blocks. It runs only once a match has chosen a
+map, after every other hook, and only for that match. The setup screens
+keep the installed scenario. The rewritten text is served from the mutator
+layer at `maps/<key>.ota` when a mutator changed the bytes.
+
+The 3.1c map hash covers the schemas, not only the header and the terrain:
+the GlobalHeader hash is taken over the block's whole text, and the
+`[Schema N]` blocks sit inside it. A rewritten OTA would therefore hash
+differently. What keeps a room together is when the rewrite is served.
+The battle room's map check reads the installed file before the match
+starts, and the rewrite is served only from the match's start, so the
+check and the hash itself are unchanged. Every machine that runs the same
+loadout writes the same bytes.
+
+`map.name` is the scenario's `missionname`, or the map key when that key is
+absent. `map.file` is the key. `map.planet` is the header's planet.
+`map.pack` is the id after the last `@`, or nil for a base map. `map.header`
+reads every GlobalHeader key, ignoring case. These keys can be written:
+
+- `minwindspeed`, `maxwindspeed`, `gravity` and `waterdamage`: whole numbers
+  from 0 to 32,767;
+- `lavaworld`, `waterdoesdamage` and `nosealeveltrigger`: 0 or 1;
+- `tidalstrength`, `killmul` and `timemul`: finite numbers from 0 to 1,000.
+
+Any other header key is refused. `map.schemas` is the `[Schema N]` blocks
+from 0, with `:each`, `:where`, `:set` and `:scale`. A schema's `index` is
+N, and `type` and `players` (its start-position count) are read-only.
+`aiprofile` is 1 to 31 letters, digits, `_` or `-`, and `ai/<name>.txt`
+must already be in the layered store, including a file this mutator added.
+`humanmetal`, `humanenergy`, `computermetal` and `computerenergy` are whole
+numbers from 0 to 1,000,000. `surfacemetal` is a whole number from 0 to 255.
+`:scale` multiplies a stored number; it cannot scale `aiprofile`.
+
+`schema.units` and `schema.features` are the placed entries, in order. A
+unit's `unitname` may name a unit that is in `units` as the mutators above
+left it: a unit an earlier hook cloned counts, and one a hook removed does
+not. Its `xpos` and `zpos` are whole numbers from 0 to 32,767, and its
+`player` is a whole number from 1 to 255. A feature's `featurename` may
+name a feature that is in `features` the same way. `:remove()` drops that
+one entry. Nothing in the view adds a placed unit, a placed feature or a
+schema, and start positions are never shown or written.
+
+In the list form, `where` reads `name`, `file`, `planet`, `pack` and header
+keys. A header key in `change` writes the header. A schema key writes every
+schema. A key that is neither is refused when the plan is read, and so is
+a read-only header or schema key. `glob` matches `*` and `?` only, ASCII
+case ignored, at most 256 bytes, with `/` ordinary. `pattern` is a Lua
+pattern, matched with the sandbox's `string.find`, so its case matters.
+Both are refused in a units rule with "glob() and pattern() match maps
+only". The list is applied in order. A later mutator's write wins, and
+both writes stay in the journal, with a `same_field_hooked` note for the
+pair. A mutator that writes and then errors leaves the scenario as the
+mutator above it left it, or unserved when it was the first to write.
+
+A refused write is an error the script can catch with `pcall`, and it
+names the field or the rule it broke. Every read and write of the view
+counts against the instruction allowance at the collections' rates: 8
+units for each field read or written, and one unit per 32 bytes of the
+key and of the value. A `:set`, a `:scale` or a list item costs that for
+each schema and key it writes, a walk or a `where` one unit for each
+element it visits plus the bytes it compares, and a profile or a placed
+name the lookup that checks it. A `where`, `:set` or `:scale` table holds
+at most 4096 keys. One mutator may journal at most 65536 map writes; a
+further write fails that mutator with "this mutator has changed too many
+fields", even when the script catches the error.

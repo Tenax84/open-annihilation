@@ -9,8 +9,10 @@ add_library(
   src/collections.cpp
   src/collections_sides.cpp
   src/files_layer.cpp
+  src/hacks.cpp
   src/journal.cpp
   src/loadout.cpp
+  src/maps.cpp
   src/pipeline.cpp
   src/rules_lua.cpp
   src/verdicts.cpp
@@ -21,9 +23,9 @@ target_include_directories(oa-data-mutators PUBLIC include)
 target_compile_features(oa-data-mutators PUBLIC cxx_std_20)
 target_link_libraries(
   oa-data-mutators
-  PUBLIC oa-base-sha256 oa-data-defs oa-data-mutation-rules oa-data-script-host oa-formats-hpi
-         oa-formats-oamut
-  PRIVATE oa-data-defs-assets oa-data-field-schema oa-data-mod-profile oa-data-mutator-library
+  PUBLIC oa-base-sha256 oa-data-defs oa-data-mod-profile oa-data-mutation-rules oa-data-script-host
+         oa-formats-hpi oa-formats-oamut
+  PRIVATE oa-data-defs-assets oa-data-field-schema oa-data-mutator-library
           oa-formats-json oa-formats-tdf oa-options
 )
 if(BUILD_TESTING)
@@ -90,6 +92,20 @@ if(BUILD_TESTING)
   add_test(NAME data-mutators-journal COMMAND oa-data-mutators-journal-test)
   set_tests_properties(data-mutators-journal PROPERTIES TIMEOUT 60)
 
+  add_executable(oa-data-mutators-maps-test tests/maps_test.cpp)
+  target_link_libraries(
+    oa-data-mutators-maps-test
+    PRIVATE oa-data-mutators oa-data-campaign oa-test-support oa-test-game-data
+  )
+  target_compile_definitions(
+    oa-data-mutators-maps-test
+    PRIVATE "OA_MUTATORS_TEST_DATA=\"${CMAKE_SOURCE_DIR}/tests/data/mutators\""
+  )
+  add_test(NAME data-mutators-maps COMMAND oa-data-mutators-maps-test)
+  set_tests_properties(data-mutators-maps PROPERTIES TIMEOUT 30)
+  oa_add_game_data_test(data-mutators-maps-data oa-data-mutators-maps-test --data)
+  set_tests_properties(data-mutators-maps-data PROPERTIES TIMEOUT 300)
+
   add_executable(oa-data-mutators-pipeline-test tests/pipeline_test.cpp)
   target_link_libraries(
     oa-data-mutators-pipeline-test PRIVATE oa-data-mutators oa-data-defs-assets oa-test-support
@@ -121,4 +137,9 @@ if(BUILD_TESTING)
   set_tests_properties(data-mutators-sides PROPERTIES TIMEOUT 30)
   oa_add_game_data_test(data-mutators-sides-data oa-data-mutators-sides-test --data)
   set_tests_properties(data-mutators-sides-data PROPERTIES TIMEOUT 120)
+
+  add_executable(oa-data-mutators-hacks-test tests/hacks_test.cpp)
+  target_link_libraries(oa-data-mutators-hacks-test PRIVATE oa-data-mutators oa-test-support)
+  add_test(NAME data-mutators-hacks COMMAND oa-data-mutators-hacks-test)
+  set_tests_properties(data-mutators-hacks PROPERTIES TIMEOUT 30)
 endif()

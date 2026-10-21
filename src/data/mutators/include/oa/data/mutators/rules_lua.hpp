@@ -33,8 +33,10 @@ inline constexpr uint32_t max_plan_sources = 256;
 /// Publishes the rule forms in a state.
 ///
 /// The globals are `where`, `all`, `named`, `on`, `set`, `scale`, `lock`,
-/// `remove`, `append`, `sm` and `empty`. `range`, `is`, `has`, `absent` and
-/// `not_` are published too, by `install_selection_forms`. `where`, `all`,
+/// `remove`, `append`, `sm` and `empty`. `range`, `is`, `has`, `absent`,
+/// `not_`, `glob` and `pattern` are published too, by `install_selection_forms`.
+/// `glob` and `pattern` match maps only: a units rule that names one is
+/// refused. `where`, `all`,
 /// `named` and `on` build an unfinished block. `:change { }` finishes it,
 /// and a second `:change` is an error. A block has one selector: a later
 /// `where`, `all` or `named` is an error that names the line. `on` may come
@@ -122,6 +124,43 @@ struct PlanRules {
 /// @return the sources, the findings and the error
 [[nodiscard]] PlanRules read_plan_rules(
     lua_State* state, int rules_index, const PackageReader& read, std::string_view entry_name
+);
+
+/// Reports whether the value is a finished `where():change()` block.
+///
+/// @param state state that holds the value
+/// @param index stack index
+/// @return true when the block chose `where` and `:change` has been called
+[[nodiscard]] bool finished_where_rule(lua_State* state, int index);
+
+/// Pushes the needs table a rule block keeps, or nil.
+///
+/// @param state state that holds the block
+/// @param rule stack index of the block
+void push_rule_needs(lua_State* state, int rule);
+
+/// Pushes the changes table a rule block keeps, or nil.
+///
+/// @param state state that holds the block
+/// @param rule stack index of the block
+void push_rule_changes(lua_State* state, int rule);
+
+/// Reads a `set` or `scale` value built by the rule forms.
+///
+/// @param state state that holds the value
+/// @param index stack index
+/// @param[out] kind the change kind; may be null
+/// @param[out] value the number or factor; may be null
+/// @param[out] low the lower clamp; may be null
+/// @param[out] high the upper clamp; may be null
+/// @return false when the value is not a change
+[[nodiscard]] bool rule_change_at(
+    lua_State* state,
+    int index,
+    oa::formats::soft_mutator::ChangeKind* kind,
+    double* value,
+    double* low,
+    double* high
 );
 
 } // namespace oa::data::mutators
