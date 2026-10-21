@@ -120,7 +120,7 @@ struct PipelineInput {
     /// Game-data variant word. Empty means the base files.
     std::string variant;
     /// The match seed. Each mutator's draws start from this and its id.
-    std::uint64_t seed{};
+    uint64_t seed{};
     /// Instruction and memory allowances. The default is the mutator profile's.
     oa::data::script_host::Budget budget{};
 };

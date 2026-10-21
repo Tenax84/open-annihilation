@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 #include <utility>
 
@@ -58,13 +59,13 @@ bool less_text(std::string_view left, std::string_view right) {
 }
 
 /// The index journal order uses for an entry that names no mutator.
-constexpr std::uint16_t k_no_mutator = 65535;
+constexpr uint16_t k_no_mutator = 65535;
 
 /// Returns the first mutator index, or `k_no_mutator` when there is none.
 ///
 /// @param entry the entry
 /// @return the index
-std::uint16_t first_mutator(const JournalEntry& entry) {
+uint16_t first_mutator(const JournalEntry& entry) {
     if (entry.mutators.empty())
         return k_no_mutator;
     return entry.mutators.front();
@@ -77,9 +78,9 @@ std::uint16_t first_mutator(const JournalEntry& entry) {
 /// @return true when `left` sorts first
 bool entry_before(const JournalEntry& left, const JournalEntry& right) {
     if (left.phase != right.phase)
-        return static_cast<std::uint8_t>(left.phase) < static_cast<std::uint8_t>(right.phase);
-    const std::uint16_t left_mutator = first_mutator(left);
-    const std::uint16_t right_mutator = first_mutator(right);
+        return static_cast<uint8_t>(left.phase) < static_cast<uint8_t>(right.phase);
+    const uint16_t left_mutator = first_mutator(left);
+    const uint16_t right_mutator = first_mutator(right);
     if (left_mutator != right_mutator)
         return left_mutator < right_mutator;
     if (left.path != right.path && less_text(left.path, right.path))
@@ -107,10 +108,10 @@ bool entry_before(const JournalEntry& left, const JournalEntry& right) {
 /// @param id the id to find
 /// @param[out] slot the index, when it was found
 /// @return true when `id` is in the list
-bool find_id(std::span<const std::string> ids, std::string_view id, std::uint16_t& slot) {
+bool find_id(std::span<const std::string> ids, std::string_view id, uint16_t& slot) {
     for (std::size_t index = 0; index < ids.size(); ++index) {
         if (ids[index] == id) {
-            slot = static_cast<std::uint16_t>(index);
+            slot = static_cast<uint16_t>(index);
             return true;
         }
     }
@@ -123,9 +124,9 @@ bool find_id(std::span<const std::string> ids, std::string_view id, std::uint16_
 /// @param id the id to append
 /// @param[in,out] slots the indices already gathered
 void append_id(
-    std::span<const std::string> ids, std::string_view id, std::vector<std::uint16_t>& slots
+    std::span<const std::string> ids, std::string_view id, std::vector<uint16_t>& slots
 ) {
-    std::uint16_t slot = 0;
+    uint16_t slot = 0;
     if (!id.empty() && find_id(ids, id, slot))
         slots.push_back(slot);
 }
@@ -138,7 +139,7 @@ void append_id(
 void append_ids(
     std::span<const std::string> ids,
     const std::vector<std::string>& names,
-    std::vector<std::uint16_t>& slots
+    std::vector<uint16_t>& slots
 ) {
     for (const std::string& name : names)
         append_id(ids, name, slots);
@@ -151,7 +152,7 @@ void append_ids(
 /// @return the joined ids, or "a mutator" when none resolve
 std::string joined_names(const Conflict& conflict, std::span<const std::string> ids) {
     std::string line;
-    for (const std::uint16_t slot : conflict.mutators) {
+    for (const uint16_t slot : conflict.mutators) {
         if (static_cast<std::size_t>(slot) >= ids.size())
             continue;
         if (!line.empty())
@@ -168,7 +169,7 @@ std::string joined_names(const Conflict& conflict, std::span<const std::string> 
 /// @param ids the input list
 /// @param slot the index
 /// @return the id
-std::string_view id_at(std::span<const std::string> ids, std::uint16_t slot) {
+std::string_view id_at(std::span<const std::string> ids, uint16_t slot) {
     if (static_cast<std::size_t>(slot) >= ids.size())
         return {};
     return ids[slot];
@@ -231,10 +232,10 @@ void Journal::order() {
     std::stable_sort(entries.begin(), entries.end(), entry_before);
 }
 
-std::vector<JournalEntry> Journal::entries_of(std::uint16_t mutator) const {
+std::vector<JournalEntry> Journal::entries_of(uint16_t mutator) const {
     std::vector<JournalEntry> found;
     for (const JournalEntry& entry : entries) {
-        for (const std::uint16_t slot : entry.mutators) {
+        for (const uint16_t slot : entry.mutators) {
             if (slot == mutator) {
                 found.push_back(entry);
                 break;

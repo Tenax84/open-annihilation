@@ -65,12 +65,12 @@ static_assert(
 );
 
 /// How a supported plan key is read. D04, D06, D07 and D08 add rows here.
-enum class KeyJob : std::uint8_t { files, rules, units_hook, weapons_hook };
+enum class KeyJob : uint8_t { files, rules, units_hook, weapons_hook };
 
 struct PlanKeyRow {
-    const char* name;
-    KeyJob job;
-    oamut::Layer layer;
+    const char* name{};
+    KeyJob job{};
+    oamut::Layer layer{};
 };
 
 constexpr PlanKeyRow k_plan_keys[] = {
@@ -82,8 +82,8 @@ constexpr PlanKeyRow k_plan_keys[] = {
 
 /// Which manifest layer a rule target uses. The same tickets add rows here.
 struct TargetLayerRow {
-    rules::TargetKind kind;
-    oamut::Layer layer;
+    rules::TargetKind kind{};
+    oamut::Layer layer{};
 };
 
 constexpr TargetLayerRow k_target_layers[] = {
@@ -333,18 +333,18 @@ Cause cause_of(host::ErrorKind kind) {
 
 /// The seed one mutator draws from: the first eight bytes of the SHA-256 of
 /// the seed's eight little-endian bytes followed by the id, read little-endian.
-std::uint64_t mutator_seed(std::uint64_t seed, std::string_view id) {
-    std::vector<std::uint8_t> bytes(8 + id.size());
+uint64_t mutator_seed(uint64_t seed, std::string_view id) {
+    std::vector<uint8_t> bytes(8 + id.size());
     for (int shift = 0; shift < 8; ++shift) {
         bytes[static_cast<std::size_t>(shift)] =
-            static_cast<std::uint8_t>((seed >> (8 * shift)) & 0xffu);
+            static_cast<uint8_t>((seed >> (8 * shift)) & 0xffu);
     }
     for (std::size_t offset = 0; offset < id.size(); ++offset)
-        bytes[8 + offset] = static_cast<std::uint8_t>(id[offset]);
+        bytes[8 + offset] = static_cast<uint8_t>(id[offset]);
     const oa::base::sha256::Digest digest = oa::base::sha256::digest_of(bytes);
-    std::uint64_t mixed = 0;
+    uint64_t mixed = 0;
     for (int shift = 0; shift < 8; ++shift) {
-        mixed |= static_cast<std::uint64_t>(digest[static_cast<std::size_t>(shift)]) << (8 * shift);
+        mixed |= static_cast<uint64_t>(digest[static_cast<std::size_t>(shift)]) << (8 * shift);
     }
     return mixed;
 }
@@ -439,7 +439,7 @@ Listing list_package(const std::filesystem::path& root) {
 }
 
 /// Reads `path` only when it is exactly one listed path. Never throws.
-bool read_listed(const Listing& listing, std::string_view path, std::vector<std::uint8_t>& bytes) {
+bool read_listed(const Listing& listing, std::string_view path, std::vector<uint8_t>& bytes) {
     bytes.clear();
     try {
         const auto found = std::lower_bound(listing.paths.begin(), listing.paths.end(), path);
@@ -468,7 +468,7 @@ bool read_listed(const Listing& listing, std::string_view path, std::vector<std:
 }
 
 /// SourceHooks reader. The context is a Listing.
-bool source_read(void* context, std::string_view path, std::vector<std::uint8_t>& bytes) {
+bool source_read(void* context, std::string_view path, std::vector<uint8_t>& bytes) {
     if (context == nullptr)
         return false;
     return read_listed(*static_cast<const Listing*>(context), path, bytes);
@@ -681,13 +681,13 @@ PlanFault read_rules_table(
         return fault;
     }
     const PackageReader reader = [&listing](std::string_view path, std::string* error) {
-        std::vector<std::uint8_t> bytes;
+        std::vector<uint8_t> bytes;
         if (!read_listed(listing, path, bytes)) {
             if (error != nullptr)
                 *error = "the package holds no such file";
-            return std::optional<std::vector<std::uint8_t>>{};
+            return std::optional<std::vector<uint8_t>>{};
         }
-        return std::optional<std::vector<std::uint8_t>>{std::move(bytes)};
+        return std::optional<std::vector<uint8_t>>{std::move(bytes)};
     };
     PlanRules parsed = read_plan_rules(state, table, reader, entry);
     if (!parsed.ok()) {
@@ -811,10 +811,10 @@ PlanFault read_returned_plan(
 }
 
 /// The index of `id` in the input list, or nullopt when it is not there.
-std::optional<std::uint16_t> index_of(const std::vector<std::string>& ids, std::string_view id) {
+std::optional<uint16_t> index_of(const std::vector<std::string>& ids, std::string_view id) {
     for (std::size_t slot = 0; slot < ids.size(); ++slot) {
         if (ids[slot] == id)
-            return static_cast<std::uint16_t>(slot);
+            return static_cast<uint16_t>(slot);
     }
     return std::nullopt;
 }
@@ -870,10 +870,10 @@ std::size_t find_document(const rules::DocumentSet& documents, std::string_view 
 /// Records that `mutator` changed the document at `path`.
 void note_writer(
     const rules::DocumentSet& documents,
-    std::vector<std::vector<std::uint16_t>>& writers,
-    std::vector<std::uint8_t>& menus,
+    std::vector<std::vector<uint16_t>>& writers,
+    std::vector<uint8_t>& menus,
     std::string_view path,
-    std::uint16_t mutator,
+    uint16_t mutator,
     Collection collection
 ) {
     const std::size_t slot = find_document(documents, path);
@@ -885,9 +885,9 @@ void note_writer(
 }
 
 /// The last mutator in list order that changed a document.
-std::uint16_t owner_of(const std::vector<std::uint16_t>& slots) {
-    std::uint16_t best = slots.front();
-    for (const std::uint16_t slot : slots) {
+uint16_t owner_of(const std::vector<uint16_t>& slots) {
+    uint16_t best = slots.front();
+    for (const uint16_t slot : slots) {
         if (slot > best)
             best = slot;
     }
@@ -912,7 +912,7 @@ JournalEntry entry_from_write(
     entry.new_text = write.new_text;
     entry.path = write.path;
     for (const std::string& name : write.mutators) {
-        const std::optional<std::uint16_t> slot = index_of(ids, name);
+        const std::optional<uint16_t> slot = index_of(ids, name);
         if (slot.has_value())
             entry.mutators.push_back(*slot);
     }
@@ -920,7 +920,7 @@ JournalEntry entry_from_write(
 }
 
 /// A file added or hidden in the files layer.
-JournalEntry file_entry(std::uint16_t mutator, std::string path, Change change) {
+JournalEntry file_entry(uint16_t mutator, std::string path, Change change) {
     JournalEntry entry;
     entry.mutators.push_back(mutator);
     entry.phase = Phase::files;
@@ -1465,7 +1465,7 @@ void plan_mutator(
 /// Mutators that failed on an earlier pass stay failed. They are not a new
 /// failure, and the mutators still applied must be allowed to publish.
 bool pass_failed(
-    const std::vector<MutatorResult>& results, const std::vector<std::uint8_t>& started_applied
+    const std::vector<MutatorResult>& results, const std::vector<uint8_t>& started_applied
 ) {
     const std::size_t count =
         results.size() < started_applied.size() ? results.size() : started_applied.size();
@@ -1490,7 +1490,7 @@ bool run_pass(
     MountGuard& guard
 ) {
     const std::size_t count = input.mutators.size();
-    std::vector<std::uint8_t> started_applied(count, 0);
+    std::vector<uint8_t> started_applied(count, 0);
     for (std::size_t slot = 0; slot < count; ++slot) {
         if (results[slot].outcome == Outcome::applied)
             started_applied[slot] = 1;
@@ -1536,7 +1536,7 @@ bool run_pass(
     }
     const FilesLayer built = build_files_layer(files, paths);
     for (const MutatorFailure& failure : built.failures) {
-        const std::optional<std::uint16_t> slot = index_of(ids, failure.mutator);
+        const std::optional<uint16_t> slot = index_of(ids, failure.mutator);
         if (!slot.has_value())
             continue;
         fail_mutator(results[*slot], Phase::files, Cause::files_refused, failure.message);
@@ -1666,11 +1666,11 @@ bool run_pass(
         return false;
     }
 
-    std::vector<std::vector<std::uint16_t>> writers(documents.size());
-    std::vector<std::uint8_t> menus(documents.size(), 0);
+    std::vector<std::vector<uint16_t>> writers(documents.size());
+    std::vector<uint8_t> menus(documents.size(), 0);
     for (const rules::FieldWrite& write : applied.writes) {
         journal.entries.push_back(entry_from_write(write, ids, Phase::rules, layout));
-        for (const std::uint16_t mutator : journal.entries.back().mutators)
+        for (const uint16_t mutator : journal.entries.back().mutators)
             note_writer(
                 documents, writers, menus, write.path, mutator, journal.entries.back().collection
             );
@@ -1680,7 +1680,7 @@ bool run_pass(
     if (collections.has_value()) {
         for (const rules::FieldWrite& write : collections->writes()) {
             journal.entries.push_back(entry_from_write(write, ids, Phase::hooks, layout));
-            for (const std::uint16_t mutator : journal.entries.back().mutators) {
+            for (const uint16_t mutator : journal.entries.back().mutators) {
                 note_writer(
                     documents,
                     writers,
@@ -1693,7 +1693,7 @@ bool run_pass(
         }
         for (const RecordRemoval& removal : collections->removals()) {
             JournalEntry entry;
-            const std::optional<std::uint16_t> mutator = index_of(ids, removal.mutator);
+            const std::optional<uint16_t> mutator = index_of(ids, removal.mutator);
             if (mutator.has_value())
                 entry.mutators.push_back(*mutator);
             entry.phase = Phase::hooks;
@@ -1719,7 +1719,7 @@ bool run_pass(
     }
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
-        const std::optional<std::uint16_t> mutator = index_of(ids, entry.owner);
+        const std::optional<uint16_t> mutator = index_of(ids, entry.owner);
         if (!mutator.has_value())
             continue;
         const Change change =
@@ -1730,11 +1730,11 @@ bool run_pass(
         report.conflicts.push_back(conflict_from_file(note, ids));
         if (note.kind != FileNoteKind::add_masked)
             continue;
-        const std::optional<std::uint16_t> masker = index_of(ids, note.mutator);
+        const std::optional<uint16_t> masker = index_of(ids, note.mutator);
         if (!masker.has_value())
             continue;
         JournalEntry hidden = file_entry(*masker, note.path, Change::hidden);
-        const std::optional<std::uint16_t> adder = index_of(ids, note.other);
+        const std::optional<uint16_t> adder = index_of(ids, note.other);
         if (adder.has_value())
             hidden.mutators.insert(hidden.mutators.begin(), *adder);
         journal.entries.push_back(std::move(hidden));
@@ -1760,7 +1760,7 @@ bool run_pass(
         const PathVerdict verdict = check_mutable_path(loaded.path, paths);
         const bool menus_pass = verdict.rule == PathRule::menus_only && menus[slot] != 0;
         if (!verdict.allowed() && !menus_pass) {
-            for (const std::uint16_t writer : writers[slot])
+            for (const uint16_t writer : writers[slot])
                 fail_mutator(results[writer], Phase::hooks, Cause::protected_path, verdict.message);
             protected_write = true;
             continue;
@@ -1787,7 +1787,7 @@ bool run_pass(
             }
             entry.kind = oa::MutatorSourceKind::contents;
             entry.contents =
-                std::make_shared<const std::vector<std::uint8_t>>(text->begin(), text->end());
+                std::make_shared<const std::vector<uint8_t>>(text->begin(), text->end());
         }
         bool replaced = false;
         for (std::size_t entry_index = 0; entry_index < spec.entries.size(); ++entry_index) {

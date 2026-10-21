@@ -60,7 +60,7 @@ enum class Change : uint8_t {
 /// record itself.
 struct JournalEntry {
     /// Mutators that made the change, as indices into the input list.
-    std::vector<std::uint16_t> mutators;
+    std::vector<uint16_t> mutators;
     /// The phase that made the change.
     Phase phase{};
     /// The collection the change belongs to.
@@ -97,7 +97,7 @@ struct Journal {
     ///
     /// @param mutator an index into the input list
     /// @return those entries
-    [[nodiscard]] std::vector<JournalEntry> entries_of(std::uint16_t mutator) const;
+    [[nodiscard]] std::vector<JournalEntry> entries_of(uint16_t mutator) const;
 };
 
 /// How loudly a conflict is reported.
@@ -129,7 +129,7 @@ struct Conflict {
     /// Which situation.
     ConflictKind kind{};
     /// Mutators involved, in list order. The winner is last when there is one.
-    std::vector<std::uint16_t> mutators;
+    std::vector<uint16_t> mutators;
     /// Record name. Empty when the conflict is not about one record.
     std::string record;
     /// Field name, lower case. Empty when the conflict is not about one field.

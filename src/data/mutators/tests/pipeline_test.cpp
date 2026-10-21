@@ -33,7 +33,7 @@ namespace fs = std::filesystem;
 
 const fs::path k_data{OA_MUTATORS_TEST_DATA};
 
-std::vector<std::uint8_t> read_bytes(const fs::path& path) {
+std::vector<uint8_t> read_bytes(const fs::path& path) {
     std::ifstream in(path, std::ios::binary);
     OA_CHECK(in.good());
     if (!in.good())
@@ -43,7 +43,7 @@ std::vector<std::uint8_t> read_bytes(const fs::path& path) {
     in.seekg(0);
     if (length <= 0)
         return {};
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
+    std::vector<uint8_t> bytes(static_cast<std::size_t>(length));
     in.read(reinterpret_cast<char*>(bytes.data()), length);
     return bytes;
 }
@@ -58,7 +58,7 @@ void write_bytes(const fs::path& path, std::string_view text) {
 mutators::PipelineMutator load_mutator(const fs::path& package) {
     mutators::PipelineMutator mutator;
     mutator.package = package;
-    const std::vector<std::uint8_t> bytes = read_bytes(package / "oamut.yaml");
+    const std::vector<uint8_t> bytes = read_bytes(package / "oamut.yaml");
     std::vector<oamut::Problem> problems;
     const bool read = oamut::read_manifest(bytes, mutator.manifest, problems);
     if (!read) {
@@ -109,7 +109,7 @@ void release(oa::AssetStore& store) {
     OA_CHECK(!store.mutator_layer_mounted());
 }
 
-std::string text_of(const std::vector<std::uint8_t>& bytes) {
+std::string text_of(const std::vector<uint8_t>& bytes) {
     return std::string(bytes.begin(), bytes.end());
 }
 
@@ -120,8 +120,8 @@ std::string served_text(const oa::MutatorLayerEntry& entry) {
 }
 
 bool same_contents(
-    const std::shared_ptr<const std::vector<std::uint8_t>>& left,
-    const std::shared_ptr<const std::vector<std::uint8_t>>& right
+    const std::shared_ptr<const std::vector<uint8_t>>& left,
+    const std::shared_ptr<const std::vector<uint8_t>>& right
 ) {
     if (left == nullptr || right == nullptr)
         return left == nullptr && right == nullptr;
@@ -174,9 +174,9 @@ bool specs_match(const oa::MutatorLayerSpec& left, const oa::MutatorLayerSpec& r
 /// conflicts name mutators by their index in the list a run was given, so
 /// two runs over different lists are compared by the ids those indices name.
 std::vector<std::string>
-ids_of(const std::vector<std::uint16_t>& slots, const mutators::PipelineResult& run) {
+ids_of(const std::vector<uint16_t>& slots, const mutators::PipelineResult& run) {
     std::vector<std::string> ids;
-    for (const std::uint16_t slot : slots) {
+    for (const uint16_t slot : slots) {
         OA_CHECK(slot < run.mutators.size());
         if (slot < run.mutators.size())
             ids.push_back(run.mutators[slot].id);
@@ -380,7 +380,7 @@ void test_failed_mutator_leaves_no_trace() {
     OA_CHECK(journals_match(with_boom, clean));
     OA_CHECK(reports_match(with_boom, clean));
     for (const mutators::JournalEntry& entry : with_boom.journal.entries) {
-        for (const std::uint16_t slot : entry.mutators)
+        for (const uint16_t slot : entry.mutators)
             OA_CHECK(slot != 1);
     }
     const oa::AssetData bot = with_boom_store.read("units/RGBOT.fbi");

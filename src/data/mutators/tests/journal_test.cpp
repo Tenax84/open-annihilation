@@ -20,7 +20,7 @@ const std::vector<std::string> k_ids{"ridge-tough", "ridge-tougher"};
 
 mutators::JournalEntry make_entry(
     mutators::Phase phase,
-    std::vector<std::uint16_t> mutators_of_entry,
+    std::vector<uint16_t> mutators_of_entry,
     std::string path,
     std::string record = {},
     std::string field = {}
