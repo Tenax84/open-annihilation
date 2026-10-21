@@ -22,6 +22,61 @@ inline constexpr std::size_t chunk_buffer_bytes = 160;
 inline constexpr std::size_t scratch_buffer_bytes = 3072;
 inline constexpr std::size_t budget_message_bytes = 160;
 
+/// Bytes of a string's length, or of a scan, that count as one instruction.
+///
+/// Making or walking a string byte by byte, as `upper` or `utf8.len` does,
+/// takes about as long per 32 bytes as a few instructions of the interpreter.
+inline constexpr std::size_t bytes_per_charge = 32;
+
+/// Longest string the interpreter keeps one shared copy of (Lua 5.4.9's
+/// short-string limit, the same on every build).
+///
+/// Making a string this short allocates only when no live copy exists, and
+/// whether one does depends on when the collector last ran. Such strings are
+/// not charged, so a script's count does not depend on the collector.
+inline constexpr std::size_t short_string_limit = 40;
+
+/// Units for one comparison that is not two strings, and the least two
+/// strings cost.
+///
+/// One comparison in `table.sort`, `pairs` or `math.max` takes about as long
+/// as one or two instructions of the interpreter.
+inline constexpr uint64_t comparison_unit = 2;
+
+/// Units for one value `string.format` converts or `warn` passes on.
+///
+/// One conversion takes about as long as one or two instructions of the
+/// interpreter.
+inline constexpr uint64_t argument_unit = 2;
+
+/// Units for one `next` call, or one walk that collects keys for `pairs`.
+///
+/// An emptied table can make that call visit every slot it used to hold.
+/// 4096 units spends the default allowance before a loop of those calls
+/// runs for long.
+inline constexpr uint64_t scan_call_charge = 4096;
+
+/// One Lua value, laid out as the interpreter's own value, plus its tag.
+///
+/// The header that names that value is private to the interpreter, so the
+/// sandbox keeps this copy. `table_range_limit` is
+/// `default_memory_budget / sizeof(TableSlot)`.
+union ValueSlot {
+    void* pointer;
+    lua_CFunction function;
+    lua_Integer integer;
+    lua_Number number;
+    unsigned char byte;
+};
+
+struct TableSlot {
+    ValueSlot value;
+    unsigned char tag{};
+};
+
+/// Most elements one table call may move or visit.
+inline constexpr std::size_t table_range_limit = default_memory_budget / sizeof(TableSlot);
+
 /// Which protected entry the trampoline runs.
 enum class PhaseMode : uint8_t { open_libraries, run_chunk, call, host, compile };
 
@@ -29,6 +84,19 @@ struct Sandbox::Control {
     std::size_t memory_cap{default_memory_budget};
     std::size_t memory_in_use{};
     bool allocation_refused{};
+
+    /// The state this block belongs to. Set before the libraries open.
+    lua_State* main_state{};
+    /// Set while the open measures the string header.
+    bool measuring_string_header{};
+    /// `nsize - length - 1` of one long string, or 0 until that measurement.
+    std::size_t string_header{};
+    /// A string past `string_length_limit` was refused. Sticky for the phase.
+    bool string_refused{};
+    uint64_t string_refused_length{};
+    /// Set while a chunk is being loaded, so a literal is blamed on that chunk.
+    bool loading_chunk{};
+    char string_message[budget_message_bytes]{};
 
     uint64_t instruction_allowance{default_instruction_budget};
     uint64_t instructions_used{};
@@ -185,6 +253,16 @@ void open_libraries(lua_State* state);
 /// @param state the sandbox state, with the `string` table on top
 void install_patterns(lua_State* state);
 
+/// Replaces `string.format`, `pack`, `packsize` and `unpack` in the table on
+/// top of the stack with the counted copies of Lua 5.4.9's.
+///
+/// They take the same arguments and give the same results and messages as
+/// Lua's own. Past the allowance they raise the budget message and mark the
+/// allowance spent.
+///
+/// @param state the sandbox state, with the `string` table on top
+void install_format_and_pack(lua_State* state);
+
 /// Opens the math library. May raise.
 ///
 /// @param state the state being opened
@@ -206,5 +284,124 @@ void install_require(lua_State* state);
 /// @param control the state that tried to load
 /// @param state the state, with the loader's message at the top
 void remember_load_error(HostDetail::Control* control, lua_State* state);
+
+/// Arms the count hook so the next instruction raises a spent allowance.
+///
+/// A `pcall` can catch the raise. With the hook set to one instruction, the
+/// next check fires outside that `pcall` and the phase ends. The hook itself
+/// stays in the state file.
+///
+/// @param state the sandbox state
+void rearm_count_hook(lua_State* state);
+
+/// How many instruction units `bytes` cost, one per `bytes_per_charge`, rounded up.
+///
+/// @param bytes requested bytes, not the size the allocator happened to reserve
+/// @return the units, 0 when `bytes` is 0
+inline uint64_t units_for_bytes(std::size_t bytes) {
+    return (static_cast<uint64_t>(bytes) + bytes_per_charge - 1) / bytes_per_charge;
+}
+
+/// Adds `units` to the phase count and marks the allowance spent when it is reached.
+///
+/// Does not raise. The allocator uses this, because it cannot call into the
+/// state. The count hook raises on its next check.
+///
+/// @param control the state being charged
+/// @param units instruction units to add; 0 adds nothing
+inline void add_charge(HostDetail::Control* control, uint64_t units) {
+    if (control == nullptr || units == 0)
+        return;
+    const uint64_t room = UINT64_MAX - control->instructions_used;
+    if (units > room)
+        control->instructions_used = UINT64_MAX;
+    else
+        control->instructions_used += units;
+    if (control->instructions_used >= control->instruction_allowance)
+        control->allowance_spent = true;
+}
+
+/// Units for ordering the values at `left` and `right`.
+///
+/// Two strings cost one unit per byte of the two lengths, and at least
+/// `comparison_unit`. Ordering a string full of zero bytes walks a segment
+/// per byte, so one unit per `bytes_per_charge` would let that sort run for
+/// too long. Any other pair costs `comparison_unit`. Reading the lengths does
+/// not allocate.
+///
+/// @param state the sandbox state
+/// @param left stack index of the first value
+/// @param right stack index of the second value
+/// @return the units to charge before the comparison
+inline uint64_t comparison_charge(lua_State* state, int left, int right) {
+    if (lua_type(state, left) == LUA_TSTRING && lua_type(state, right) == LUA_TSTRING) {
+        std::size_t left_length = 0;
+        std::size_t right_length = 0;
+        lua_tolstring(state, left, &left_length);
+        lua_tolstring(state, right, &right_length);
+        const uint64_t bytes =
+            static_cast<uint64_t>(left_length) + static_cast<uint64_t>(right_length);
+        if (bytes > comparison_unit)
+            return bytes;
+    }
+    return comparison_unit;
+}
+
+/// Adds `units` and raises, as the count hook does, when the allowance is spent.
+///
+/// A string refusal raises the string message instead. Each raise arms the
+/// count hook at one instruction first, so a `pcall` cannot keep the phase
+/// alive. No object with a destructor may be alive across this call.
+///
+/// @param state the sandbox state
+/// @param units instruction units to add
+inline void charge(lua_State* state, uint64_t units) {
+    HostDetail::Control* control = control_from(state);
+    if (control->string_refused) {
+        rearm_count_hook(state);
+        luaL_error(state, "%s", control->string_message);
+    }
+    if (control->allowance_spent) {
+        rearm_count_hook(state);
+        luaL_error(state, "%s", control->instruction_message);
+    }
+    add_charge(control, units);
+    if (control->allowance_spent) {
+        rearm_count_hook(state);
+        luaL_error(state, "%s", control->instruction_message);
+    }
+}
+
+/// Records that `length` bytes would pass the string cap, and where it happened.
+///
+/// The first refusal sticks. `message` null uses the standard sentence naming
+/// `length` and 65536. Later calls do nothing.
+///
+/// @param control the state that refused the string
+/// @param length how many bytes the string would have held
+/// @param message the sentence to keep, or null for the standard one
+void record_string_limit(HostDetail::Control* control, uint64_t length, const char* message);
+
+/// Records the refusal and raises at the calling line.
+///
+/// @param state the sandbox state
+/// @param length how many bytes the string would have held
+/// @param message the sentence to keep; null uses the standard one
+/// @return does not return
+void raise_string_limit(lua_State* state, uint64_t length, const char* message);
+
+/// Raises when `have + extra` would pass the string cap.
+///
+/// @param state the sandbox state
+/// @param have bytes already in the buffer
+/// @param extra bytes about to be added
+/// @param message the early sentence naming the function
+inline void
+reject_long_piece(lua_State* state, std::size_t have, std::size_t extra, const char* message) {
+    if (extra > string_length_limit || have > string_length_limit - extra) {
+        const uint64_t length = static_cast<uint64_t>(have) + static_cast<uint64_t>(extra);
+        raise_string_limit(state, length, message);
+    }
+}
 
 } // namespace oa::data::script_host

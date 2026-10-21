@@ -190,11 +190,11 @@ int main() {
     caught_loops_still_stop();
     each_phase_has_its_own_allowance();
     memory_cap_stops_the_phase(
-        "local kept = {}\nfor i = 1, 100 do\n  kept[i] = string.rep(\"x\", 100000)\nend\n"
+        "local kept = {}\nfor i = 1, 200 do\n  kept[i] = string.rep(\"x\", 65536)\nend\n"
     );
     memory_cap_stops_the_phase(
-        "local kept = {}\npcall(function()\n  for i = 1, 100 do\n    kept[i] = string.rep(\"x\", "
-        "100000)\n  end\nend)\n"
+        "local kept = {}\npcall(function()\n  for i = 1, 200 do\n    kept[i] = string.rep(\"x\", "
+        "65536)\n  end\nend)\n"
     );
     a_required_loop_is_reported_at_the_module();
     instruction_loop_stops(host::mutator_profile(), host::default_instruction_budget);

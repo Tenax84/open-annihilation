@@ -217,7 +217,17 @@ from [`third_party/lua/`](third_party/lua/). The script host also keeps a
 changed copy of the pattern matcher from that release, in
 [`src/data/script-host/src/patterns.cpp`](src/data/script-host/src/patterns.cpp),
 which counts each step of `string.find`, `string.match`, `string.gmatch` and
-`string.gsub` against the script's instruction allowance. The licence is the MIT
+`string.gsub` against the script's instruction allowance. It keeps the same
+kind of copy in
+[`src/data/script-host/src/libraries.cpp`](src/data/script-host/src/libraries.cpp)
+for `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `table.move`,
+`table.insert`, `table.remove`, `table.concat`, `table.pack`,
+`table.unpack`, `table.sort`, `utf8.char`, `utf8.len`, `utf8.codepoint`,
+`utf8.offset` and `utf8.codes`, and in
+[`src/data/script-host/src/string_format.cpp`](src/data/script-host/src/string_format.cpp)
+for `string.format`, `string.pack`, `string.packsize` and `string.unpack`,
+counting the bytes, elements or comparisons those calls perform. The
+licence is the MIT
 licence. The licence text is in
 [`licenses/lua-LICENSE.txt`](licenses/lua-LICENSE.txt).
 
