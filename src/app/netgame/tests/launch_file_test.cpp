@@ -1855,6 +1855,30 @@ void check_mutators() {
         "an option value is not a list"
     );
     expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        health: \"1000,extra=true\"\n"
+        ) == "launch.oalaunch: content.mutators[1].options.health: expected a value of letters, "
+             "digits, _, - or .",
+        "a value cannot carry another option"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        health: \"1000,health=3000\"\n"
+        ) == "launch.oalaunch: content.mutators[1].options.health: expected a value of letters, "
+             "digits, _, - or .",
+        "a value cannot repeat an option"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        health: \"two thousand\"\n"
+        ) == "launch.oalaunch: content.mutators[1].options.health: expected a value of letters, "
+             "digits, _, - or .",
+        "a value is an identifier"
+    );
+    expect(
         refused_text("oalaunch: 1\ncontent:\n  mutators: [wide-sight, wide-sight]\n") ==
             "launch.oalaunch: content.mutators[2]: \"wide-sight\" is named twice",
         "the same id twice"

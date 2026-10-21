@@ -10,6 +10,7 @@
 #include "oa/base/text.hpp"
 #include "oa/core/game_state.h"
 #include "oa/data/content_bundles/content_choice.hpp"
+#include "oa/data/mutators/choice.hpp"
 #include "oa/netgame/dplay.hpp"
 #include "oa/platform/log_files.hpp"
 
@@ -836,18 +837,10 @@ void adopt_launch_run(Options& options) {
         options.mutator_versions.reserve(net.launch_content.mutators.size());
         for (std::size_t index = 0; index < net.launch_content.mutators.size(); ++index) {
             const netgame::LaunchMutator& one = net.launch_content.mutators[index];
-            std::string text = one.id;
-            if (!one.options.empty()) {
-                text.push_back(':');
-                for (std::size_t option = 0; option < one.options.size(); ++option) {
-                    if (option != 0)
-                        text.push_back(',');
-                    text += one.options[option].first;
-                    text.push_back('=');
-                    text += one.options[option].second;
-                }
-            }
-            options.mutators.push_back(std::move(text));
+            oa::data::mutators::MutatorChoice choice;
+            choice.target = one.id;
+            choice.options = one.options;
+            options.mutators.push_back(oa::data::mutators::format_choice(choice));
             options.mutator_fields.push_back("content.mutators[" + std::to_string(index + 1) + "]");
             options.mutator_versions.push_back(one.version);
         }

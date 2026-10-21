@@ -26,7 +26,7 @@ target_link_libraries(oa-app-netgame-options PUBLIC oa::app::headers oa-app-netg
   oa-app-command-line oa-ui-frontend-renderer oa-ui-frontend-state oa-sim-scenario oa-ui-screen-registry
   oa-core-types
   PRIVATE oa-netgame oa-options oa-formats-oamod oa-formats-oamut oa-base-text oa-platform-shims oa-base-threads
-  oa-platform-file-types oa-data-content-bundles)
+  oa-platform-file-types oa-data-content-bundles oa-data-mutators)
 
 # The network rules a mod profile gives network play, which their test
 # reads without a running app.
@@ -113,7 +113,8 @@ if(BUILD_TESTING)
   target_link_libraries(oa-netgame-launch-switches-test PRIVATE oa-app-netgame-launch oa-options)
   add_test(NAME net-launch-switches COMMAND oa-netgame-launch-switches-test)
   add_executable(oa-netgame-options-test tests/options_test.cpp)
-  target_link_libraries(oa-netgame-options-test PRIVATE oa-app-netgame-options oa-app-game-options oa-netgame oa-options)
+  target_link_libraries(oa-netgame-options-test PRIVATE oa-app-netgame-options oa-app-game-options oa-netgame oa-options
+    oa-test-support)
   add_test(NAME netgame-game-options COMMAND oa-netgame-options-test)
   add_executable(oa-netgame-launch-file-test tests/launch_file_test.cpp)
   target_link_libraries(oa-netgame-launch-file-test PRIVATE oa-app-netgame-options oa-app-game-options

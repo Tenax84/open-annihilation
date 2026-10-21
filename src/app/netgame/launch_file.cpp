@@ -887,6 +887,10 @@ std::string read_option_value(const oamod::Node& item, const LaunchPlace& place)
         return "true";
     if (item.text == "off" || item.text == "false")
         return "false";
+    // A value is pasted into id:name=value with no escaping, so it has to be
+    // an identifier the choice grammar already accepts.
+    if (!oa::formats::oamut::choice_value_text(item.text))
+        refuse(place, "expected a value of letters, digits, _, - or .");
     return item.text;
 }
 
@@ -902,7 +906,9 @@ LaunchMutator read_mutator_group(const oamod::Node& item, const LaunchPlace& pla
     for (const oamod::Node& child : item.children) {
         if (child.key.kind != oamod::KeyKind::string)
             refuse(place, "a key is not text");
-        const std::string name = std::string(place.name) + "." + child.key.text;
+        std::string name(place.name);
+        name += '.';
+        name += child.key.text;
         const LaunchPlace at{place.source, name};
         if (child.key.text == "id")
             id = &child;
@@ -943,7 +949,9 @@ LaunchMutator read_mutator_group(const oamod::Node& item, const LaunchPlace& pla
                     LaunchPlace{place.source, std::string(place.name) + ".options"},
                     "a key is not text"
                 );
-            const std::string name = std::string(place.name) + ".options." + option.key.text;
+            std::string name(place.name);
+            name += ".options.";
+            name += option.key.text;
             const LaunchPlace at{place.source, name};
             if (!oa::formats::oamut::option_id(option.key.text))
                 refuse(at, "expected an option id");

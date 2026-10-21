@@ -28,6 +28,7 @@
 #include "oa/app/check_host.hpp"
 #include "oa/app/netgame/opened_launch.hpp"
 #include "oa/data/languages/interface_text.hpp"
+#include "oa/data/mutators/choice.hpp"
 #include "oa/netgame/frontend/multiplayer_states.hpp"
 #include "oa/netgame/messages/departures.hpp"
 #include "oa/session/demo.hpp"
@@ -487,18 +488,10 @@ void open_launched_battle_room() {
 /// @param one the mutator
 /// @return its text
 std::string launch_mutator_text(const oa::app::netgame::LaunchMutator& one) {
-    std::string text = one.id;
-    if (one.options.empty())
-        return text;
-    text.push_back(':');
-    for (std::size_t index = 0; index < one.options.size(); ++index) {
-        if (index != 0)
-            text.push_back(',');
-        text += one.options[index].first;
-        text.push_back('=');
-        text += one.options[index].second;
-    }
-    return text;
+    oa::data::mutators::MutatorChoice choice;
+    choice.target = one.id;
+    choice.options = one.options;
+    return oa::data::mutators::format_choice(choice);
 }
 
 void follow_opened_launches(Runtime& runtime, NetworkPlay& play) {

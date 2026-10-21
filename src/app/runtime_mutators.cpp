@@ -336,14 +336,28 @@ std::string Runtime::launch_mutator_refusal(
 ) const {
     const fs::path folder =
         user_folder_ / std::string(oa::data::mutator_library::mutators_folder_name);
+    std::vector<mutators::PipelineMutator> listed;
+    std::vector<std::string> installed;
+    listed.reserve(texts.size());
+    installed.reserve(texts.size());
     for (std::size_t index = 0; index < texts.size(); ++index) {
         const std::string version = index < versions.size() ? versions[index] : std::string{};
         const std::string field =
             index < fields.size() ? fields[index] : std::string("content.mutators");
         std::string error;
-        if (!resolve_run_mutator(texts[index], version, folder, nullptr, &error))
+        mutators::ResolvedMutator resolved;
+        if (!resolve_run_mutator(texts[index], version, folder, &resolved, &error))
             return std::string(source) + ": " + field + ": " + error;
+        mutators::PipelineMutator entry;
+        entry.package = resolved.folder;
+        entry.manifest = resolved.manifest;
+        entry.options = resolved.options;
+        installed.push_back(oa::formats::oamut::version_text(resolved.manifest.version));
+        listed.push_back(std::move(entry));
     }
+    const std::string refusal = mutators::list_refusal(listed, installed);
+    if (!refusal.empty())
+        return std::string(source) + ": content.mutators: " + refusal;
     return {};
 }
 
