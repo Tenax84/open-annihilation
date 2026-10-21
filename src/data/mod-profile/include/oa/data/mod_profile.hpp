@@ -171,6 +171,24 @@ struct MatchOption {
 /// @return that message, or none when the registry accepts the choice
 [[nodiscard]] std::optional<std::string> match_option_problem(const MatchOption& option);
 
+/// The registry's reading of one match option.
+struct MatchOptionReading {
+    /// The refusal, or none when the registry accepts the value.
+    std::optional<std::string> problem{};
+    /// The value's normal form when it is accepted. Empty when it is refused.
+    std::string normal{};
+};
+
+/// The registry-only reading of a match option, including its normal form.
+///
+/// The same checks as `match_option_problem`. When the value is accepted,
+/// `normal` is the text the registry stores, so a comment after a number
+/// is not part of the value.
+///
+/// @param option the choice
+/// @return the refusal, or the value's normal form
+[[nodiscard]] MatchOptionReading match_option_reading(const MatchOption& option);
+
 /// What resolution takes besides the profile.
 struct ResolveOptions {
     Settings settings{};

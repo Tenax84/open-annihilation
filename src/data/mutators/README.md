@@ -153,12 +153,14 @@ hook, its rules or its files would have reached the mutators below it, and
 with the mutators that require it. It also covers plans whose tables have
 metatables, the allowances and the string cap, files added, masked and
 hidden with their journal entries, a document that does not parse, a
-player's option, the list checks and two identical runs.
+player's option, the list checks and two identical runs. A hack the
+check refuses, with a units hook beside it, fails in the plan phase and
+leaves no hook change and no journal entry.
 `data-mutators-journal` (`tests/journal_test.cpp`) checks the entry order,
 `entries_of`, each note conversion and the sentences `describe` writes.
 `data-mutators-hacks` (`tests/hacks_test.cpp`) checks reading a hacks table,
-merging two mutators, the Developer Mode notes, and the values the resolver
-plays.
+the value's normal form, merging two mutators, the Developer Mode notes,
+and the values the resolver plays.
 
 `data-mutators-sides` (`tests/collections_sides_test.cpp`) runs made-up
 Ridge packages through `run_pipeline` and checks side fields, build lists,
@@ -713,8 +715,11 @@ the plan instead of being ignored. A `hacks` table sets match parameters of
 entries the registry marks `mutator: true`. Today those are
 `limits.units-per-player.default`, `console.game-speed-range.min` and
 `console.game-speed-range.max`. The manifest must list the `hacks` layer.
-A hack the registry does not open, or a value it refuses, fails that mutator
-alone.
+Each value is kept in the registry's normal form. A hack the registry does
+not open, or a value it refuses, fails that mutator in the plan phase.
+`PipelineInput::check_hacks` runs after the plans are read and before
+files, rules and hooks, so a hack the profile refuses fails the same way
+and the pass runs again without that mutator. Nothing of it is mounted.
 
 A pass is a transaction. A plan, or a rule aimed at a folder no mutator may
 change, depends on nothing but the mutator itself, so every such failure is

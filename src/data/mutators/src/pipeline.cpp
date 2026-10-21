@@ -961,6 +961,23 @@ PlanFault read_rules_part(
     return {};
 }
 
+/// The cause a hacks refusal belongs to.
+///
+/// A missing layer stays undeclared. A table of the wrong shape is an
+/// invalid plan. Every other refusal is a hack the registry does not accept.
+Cause cause_of_hacks(const std::string& problem) {
+    if (problem.find("does not declare the hacks layer") != std::string::npos)
+        return Cause::undeclared_layer;
+    if (problem.starts_with("hacks: hacks must be") ||
+        problem.find("a hacks key must be text") != std::string::npos ||
+        problem.find("a parameter table must be plain") != std::string::npos ||
+        problem.find("a parameter name must be text") != std::string::npos ||
+        problem.find("a parameter value must be a scalar") != std::string::npos) {
+        return Cause::invalid_plan;
+    }
+    return Cause::hack_refused;
+}
+
 /// Turns the hacks table the plan phase found into records, or refuses it.
 PlanFault read_hacks_part(
     lua_State* state, const PlanShape& shape, const oamut::Manifest& manifest, Plan& plan
@@ -984,10 +1001,7 @@ PlanFault read_hacks_part(
     lua_pop(state, 1);
     if (problem.empty())
         return {};
-    const Cause cause = problem.find("does not declare the hacks layer") != std::string::npos
-                            ? Cause::undeclared_layer
-                            : Cause::invalid_plan;
-    return refuse_plan(cause, std::move(problem));
+    return refuse_plan(cause_of_hacks(problem), std::move(problem));
 }
 
 /// Checks one hook the plan phase found and keeps its reference.
@@ -2079,6 +2093,32 @@ bool run_pass(
     }
     if (!planned)
         return false;
+
+    // Hacks are judged before any file, rule or hook, so a refusal drops
+    // that mutator on the next pass and leaves nothing of it mounted.
+    if (input.check_hacks) {
+        std::vector<MutatorHack> planned_hacks;
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            if (active[slot] == 0)
+                continue;
+            planned_hacks.insert(
+                planned_hacks.end(), plans[slot].hacks.begin(), plans[slot].hacks.end()
+            );
+        }
+        if (!planned_hacks.empty()) {
+            bool refused = false;
+            const std::vector<HackCheckError> errors = input.check_hacks(planned_hacks);
+            for (const HackCheckError& error : errors) {
+                const std::optional<uint16_t> slot = index_of(ids, error.mutator);
+                if (!slot.has_value() || active[*slot] == 0)
+                    continue;
+                fail_mutator(results[*slot], Phase::plan, Cause::hack_refused, error.message);
+                refused = true;
+            }
+            if (refused)
+                return false;
+        }
+    }
 
     std::vector<std::string> stems = unit_stems(store, layout);
     PathContext paths;

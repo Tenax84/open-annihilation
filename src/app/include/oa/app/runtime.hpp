@@ -32,7 +32,6 @@
 #include "oa/data/languages.hpp"
 #include "oa/data/languages/language_pack.hpp"
 #include "oa/data/limits.hpp"
-#include "oa/data/mutators/hacks.hpp"
 #include "oa/sim/gameplay_input/input.hpp"
 #include "oa/sim/gameplay_input/order_cursor.hpp"
 #include "oa/ui/gui_input/gadget_panel.hpp"
@@ -164,6 +163,7 @@ struct Listing;
 } // namespace oa::data::mutator_library
 
 namespace oa::data::mutators {
+struct PipelineInput;
 struct PipelineResult;
 struct ResolvedMutator;
 } // namespace oa::data::mutators
@@ -4346,20 +4346,36 @@ class Runtime final : public menu::Host,
     /// An empty choice does nothing: no pipeline, no layer and no log line.
     /// A list the pipeline refuses, or a mutator that does not apply for a
     /// reason other than its hacks, releases the layer and throws
-    /// std::runtime_error naming it. A hack the registry refuses fails that
-    /// mutator alone, and the match still starts.
+    /// std::runtime_error naming it. A hack the registry or the profile
+    /// refuses fails that mutator in the plan phase, and a mutator excluded
+    /// only because it requires one is dropped with it. The match still starts.
     ///
     /// @param bootstrap the match being started
     void apply_match_mutators(const MatchBootstrap& bootstrap);
 
+    /// Fills the pipeline's hack check from this run's profile.
+    ///
+    /// Developer Mode's overrides are the baseline. A hack that does not
+    /// resolve fails its mutator before any file, rule or hook is applied.
+    ///
+    /// @param input the pipeline input for this match
+    void bind_planned_hack_check(oa::data::mutators::PipelineInput& input);
+
     /// Lays the applied mutators' hacks over the profile this match plays.
     ///
-    /// With no records it does nothing. A hack the registry refuses fails
-    /// that mutator alone. The values are copied into the one profile the
-    /// match plays. The match's teardown puts the player's profile back.
+    /// The pipeline has already accepted these hacks. This copies that
+    /// resolution into the one profile the match plays, logs the values and
+    /// records the notes. With no records it does nothing. The same values
+    /// refused again refuse the start. Release puts the player's profile back.
+    void play_mutator_hacks();
+
+    /// The unit limit a mutator's hack set for this match.
     ///
-    /// @param hacks the hack records of the mutators that applied, in list order
-    void play_mutator_hacks(const std::vector<oa::data::mutators::MutatorHack>& hacks);
+    /// Set when limits.units-per-player.default came from a match choice.
+    /// Empty when this match's hacks did not set it.
+    ///
+    /// @return that limit, in units per player
+    [[nodiscard]] std::optional<uint16_t> mutator_units_per_player() const noexcept;
 
     /// Resolves the command line's `--mutator` values and chooses them.
     ///
@@ -4370,9 +4386,11 @@ class Runtime final : public menu::Host,
 
     /// Unmounts the match's mutator layer and forgets its result.
     ///
-    /// Logs one line when a layer was unmounted or a result was held.
-    /// A quiet no-op when neither is true. When a mounted layer cannot be
-    /// dropped, the result is kept so a later call can try again.
+    /// When this match copied hacks into the played profile, the player's
+    /// profile is put back first. Logs one line when a layer was unmounted
+    /// or a result was held. A quiet no-op when neither is true and no hacks
+    /// were played. When a mounted layer cannot be dropped, the result is
+    /// kept so a later call can try again.
     void release_match_mutators() noexcept;
 
     /// The name an installed pack gives a map, for a campaign load.

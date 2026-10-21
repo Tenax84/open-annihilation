@@ -1096,7 +1096,28 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         prepared_map_->sight_masks,
         prepared_map_->sight_width,
         prepared_map_->sight_height,
-        bootstrap.units_per_player,
+        // A mutator's units-per-player hack is the cap this match plays.
+        // The run's bounds size the unit tables, so a value outside them
+        // is held and the match plays the bound.
+        [&]() {
+            const std::optional<uint16_t> asked = mutator_units_per_player();
+            if (!asked.has_value())
+                return bootstrap.units_per_player;
+            const auto& bounds = limits_.units_per_player;
+            uint16_t played = *asked;
+            if (played < bounds.minimum)
+                played = bounds.minimum;
+            if (played > bounds.maximum)
+                played = bounds.maximum;
+            if (played != *asked) {
+                std::cerr << "open-annihilation: mutators: limits.units-per-player.default "
+                          << static_cast<unsigned>(*asked) << " is outside this run's "
+                          << static_cast<unsigned>(bounds.minimum) << " to "
+                          << static_cast<unsigned>(bounds.maximum) << "; the match plays "
+                          << static_cast<unsigned>(played) << '\n';
+            }
+            return played;
+        }(),
         visibility_flags,
         local_player,
         30,
@@ -1225,9 +1246,11 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         // A skirmish starts at the configured unit limit (Game.max_units_setting); a
         // save's Summary writes it back as "maxunits". A campaign plays at
         // its mission's limit and keeps the run's limit in the setting.
+        // The pool above already holds a mutator's unit cap. A campaign keeps
+        // the run's limit in the setting, as it did before.
         world.game.max_units_setting = campaign_mission_
                                            ? EngineSettingsState::run_unit_limit(*this)
-                                           : bootstrap.units_per_player;
+                                           : world.game.units_per_player;
         bind_session_options();
         // Game.player_count, the players Start counted (two in a campaign): the
         // kills board has a row for each.

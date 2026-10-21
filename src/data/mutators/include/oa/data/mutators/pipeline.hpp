@@ -18,6 +18,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -51,6 +53,7 @@ enum class Cause : uint8_t {
     engine_version,      ///< the engine is outside the mutator's requirement
     prerequisite_failed, ///< a mutator it requires did not apply
     engine_error,        ///< the engine stopped while running the mutator
+    hack_refused,        ///< the registry or the profile refused a hack
 };
 
 /// One mutator's outcome.
@@ -96,6 +99,16 @@ struct PipelineMutator {
     std::vector<LoadoutOption> options;
 };
 
+/// One planned hack the check refuses, before anything of that mutator is applied.
+struct HackCheckError {
+    /// The mutator the error names.
+    std::string mutator;
+    /// The parameter path, or the entry id when the error is a constraint.
+    std::string path;
+    /// The refusal, as the plan message records it.
+    std::string message;
+};
+
 /// What one run needs. The same input produces the same layer, journal and report.
 struct PipelineInput {
     /// The mutators, top of the list first.
@@ -112,6 +125,10 @@ struct PipelineInput {
     uint64_t seed{};
     /// Instruction and memory allowances. The default is the mutator profile's.
     oa::data::script_host::Budget budget{};
+    /// Called after every plan is read and before files, rules and hooks.
+    /// Empty skips the check. Each error fails that mutator in the plan
+    /// phase, and the pass runs again without it.
+    std::function<std::vector<HackCheckError>(std::span<const MutatorHack>)> check_hacks{};
 };
 
 /// What one run produced.
@@ -157,8 +174,11 @@ list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::
 /// requirement an earlier mutator does not meet, or two mutators that
 /// conflict, refuses the list: every result is excluded, nothing is
 /// mounted and no script runs. Each remaining manifest is checked against
-/// the mod and the engine. The rest are planned, their files mounted, the
-/// documents parsed from that layer. Each mutator in list order then
+/// the mod and the engine. The rest are planned. `check_hacks`, when set,
+/// then judges the planned hacks, before any file, rule or hook. A hack it
+/// refuses fails that mutator in the plan phase and the pass runs again
+/// without it. The files are mounted and the documents parsed from that
+/// layer. Each mutator in list order then
 /// applies its rules and then its hooks. A plan that returns map hooks is
 /// refused, so none run. Each pass over the list is a transaction. A
 /// failure in a plan or a rule target is the mutator's own, and every one

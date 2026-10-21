@@ -123,6 +123,18 @@ void test_reading() {
     }
     {
         LuaTable lua;
+        lua_newtable(lua.state);
+        lua_pushstring(lua.state, "15 # open-annihilation: injected");
+        lua_setfield(lua.state, -2, "max");
+        lua_setfield(lua.state, -2, "console.game-speed-range");
+        std::vector<MutatorHack> out;
+        OA_CHECK(read_top(lua, "steady-pace", true, out).empty());
+        OA_CHECK(out.size() == 1);
+        if (out.size() == 1)
+            OA_CHECK(out[0].value == "15");
+    }
+    {
+        LuaTable lua;
         lua_pushboolean(lua.state, 1);
         lua_setfield(lua.state, -2, "console.game-speed-range");
         std::vector<MutatorHack> out;

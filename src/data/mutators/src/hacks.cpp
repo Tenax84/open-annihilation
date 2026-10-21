@@ -7,6 +7,7 @@
 
 #include "oa/data/mod_profile.hpp"
 #include "oa/data/mod_profile/registry.hpp"
+#include "oa/data/mod_profile/value.hpp"
 
 #include "lua.hpp"
 
@@ -111,10 +112,15 @@ std::string take_parameter(
     oa::data::mod_profile::MatchOption option;
     option.path = id + "." + std::string{name};
     option.value = raw;
-    const std::optional<std::string> problem = oa::data::mod_profile::match_option_problem(option);
-    if (problem.has_value())
-        return "hacks: " + id + ": " + *problem;
-    made.push_back(MutatorHack{std::string{mutator}, option.path, raw});
+    const oa::data::mod_profile::MatchOptionReading reading =
+        oa::data::mod_profile::match_option_reading(option);
+    if (reading.problem.has_value())
+        return "hacks: " + id + ": " + *reading.problem;
+    made.push_back(
+        MutatorHack{
+            std::string{mutator}, option.path, reading.normal.empty() ? raw : reading.normal
+        }
+    );
     return {};
 }
 

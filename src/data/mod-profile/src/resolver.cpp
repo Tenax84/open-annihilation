@@ -2132,12 +2132,23 @@ std::string format_diagnostic(const Diagnostic& diagnostic) {
     return text + diagnostic.message;
 }
 
-std::optional<std::string> match_option_problem(const MatchOption& option) {
+MatchOptionReading match_option_reading(const MatchOption& option) {
+    MatchOptionReading reading;
     const auto [entry, index] = bound_parameter(option.path);
-    if (entry == nullptr || index < 0)
-        return std::string{"unknown parameter"};
+    if (entry == nullptr || index < 0) {
+        reading.problem = std::string{"unknown parameter"};
+        return reading;
+    }
     Value normal{};
-    return registry_match_problem(*entry, index, option.value, "match " + option.path, normal);
+    reading.problem =
+        registry_match_problem(*entry, index, option.value, "match " + option.path, normal);
+    if (!reading.problem.has_value())
+        reading.normal = value_text(normal);
+    return reading;
+}
+
+std::optional<std::string> match_option_problem(const MatchOption& option) {
+    return match_option_reading(option).problem;
 }
 
 std::optional<MatchOption> parse_match_option(std::string_view text) {

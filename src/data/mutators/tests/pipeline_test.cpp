@@ -6,6 +6,8 @@
 // run of the mutators that remain. Two rule-only mutators are compared by
 // the bytes the layer serves: the owner of a written file and the layer's
 // label follow the list, so those two fields are not the served bytes.
+#include "oa/data/mod_profile.hpp"
+#include "oa/data/mod_profile/overrides.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 #include "oa/test/check.hpp"
@@ -14,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -1090,6 +1093,138 @@ void test_lock_holds_against_rules_not_hooks() {
     release(store);
 }
 
+/// The entry a parameter path names.
+std::string entry_of_path(std::string_view path) {
+    const std::size_t dot = path.rfind('.');
+    if (dot == std::string_view::npos)
+        return std::string{path};
+    return std::string{path.substr(0, dot)};
+}
+
+/// Resolves the planned hacks against the base profile, as the app's check does.
+std::vector<mutators::HackCheckError>
+refuse_unresolved_hacks(std::span<const mutators::MutatorHack> hacks) {
+    std::vector<mutators::HackCheckError> faults;
+    if (hacks.empty())
+        return faults;
+    const std::string text = oa::data::mod_profile::base_game_profile_text();
+    oa::data::mod_profile::ResolveOptions options;
+    options.accept_unimplemented_hacks = true;
+    for (const mutators::MutatorHack& hack : hacks) {
+        oa::data::mod_profile::MatchOption option;
+        option.path = hack.path;
+        option.value = hack.value;
+        option.source = hack.mutator;
+        option.turn_on = true;
+        options.match.push_back(std::move(option));
+    }
+    const oa::data::mod_profile::ResolveResult resolved = oa::data::mod_profile::resolve_profile(
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(text.data()), text.size()},
+        "base",
+        options
+    );
+    if (resolved.resolution.has_value())
+        return faults;
+    std::vector<std::string> named;
+    for (const mutators::MutatorHack& hack : hacks) {
+        bool seen = false;
+        for (const std::string& id : named) {
+            if (id == hack.mutator)
+                seen = true;
+        }
+        if (seen)
+            continue;
+        named.push_back(hack.mutator);
+        std::string message;
+        std::string path;
+        for (const oa::data::mod_profile::Diagnostic& diagnostic : resolved.errors) {
+            const std::string entry = entry_of_path(hack.path);
+            if (diagnostic.path != "match " + hack.path && diagnostic.path != entry)
+                continue;
+            message = "hacks: " + entry + ": " + diagnostic.message;
+            path = diagnostic.path;
+            break;
+        }
+        if (message.empty()) {
+            const std::string entry = entry_of_path(hack.path);
+            const std::string fallback = resolved.errors.empty()
+                                             ? std::string{"the hacks were refused"}
+                                             : resolved.errors.front().message;
+            message = "hacks: " + entry + ": " + fallback;
+            path = entry;
+        }
+        faults.push_back(
+            mutators::HackCheckError{hack.mutator, std::move(path), std::move(message)}
+        );
+    }
+    return faults;
+}
+
+void test_refused_hack_drops_the_hook() {
+    const fs::path scratch = oa::test::make_scratch_directory("D08-bad-range");
+    const fs::path bad = scratch / "ridge-bad-range";
+    const fs::path needs = scratch / "ridge-needs-bad-range";
+    write_bytes(
+        bad / "oamut.yaml",
+        "oamut: 1\nid: ridge-bad-range\nname: \"Ridge Bad Range\"\nversion: \"1.0\"\n"
+        "author:\n  name: \"Ridge Maker\"\ntags: [\"gameplay\"]\nworks-with: [\"*\"]\n"
+        "layers: [\"hacks\", \"units\"]\n"
+    );
+    write_bytes(
+        bad / "mutator.lua",
+        "function mutate(ctx)\n"
+        "  return {\n"
+        "    hacks = { [\"console.game-speed-range\"] = { min = 15, max = 5 } },\n"
+        "    units = function(units, ctx)\n"
+        "      units:where { commander = true }:set { maxdamage = 7000 }\n"
+        "    end\n"
+        "  }\n"
+        "end\n"
+    );
+    write_bytes(
+        needs / "oamut.yaml",
+        "oamut: 1\nid: ridge-needs-bad-range\nname: \"Ridge Needs Bad Range\"\nversion: \"1.0\"\n"
+        "author:\n  name: \"Ridge Maker\"\ntags: [\"gameplay\"]\nworks-with: [\"*\"]\n"
+        "requires:\n  mutators: [\"ridge-bad-range >= 1.0\"]\nlayers: [\"units\"]\n"
+    );
+    write_bytes(
+        needs / "mutator.lua",
+        "function mutate(ctx)\n"
+        "  return {\n"
+        "    units = function(units, ctx)\n"
+        "      units:where { commander = true }:set { maxdamage = 8000 }\n"
+        "    end\n"
+        "  }\n"
+        "end\n"
+    );
+    mutators::PipelineInput input = make_input({load_mutator(bad), load_mutator(needs)});
+    input.check_hacks = refuse_unresolved_hacks;
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result = mutators::run_pipeline(store, input);
+    OA_CHECK(result.refusal.empty());
+    OA_CHECK(result.mutators.size() == 2);
+    if (result.mutators.size() == 2) {
+        OA_CHECK(result.mutators[0].outcome == mutators::Outcome::failed);
+        OA_CHECK(result.mutators[0].phase == mutators::Phase::plan);
+        OA_CHECK(result.mutators[0].cause == mutators::Cause::hack_refused);
+        OA_CHECK(result.mutators[0].message.find("min <= max") != std::string::npos);
+        OA_CHECK(result.mutators[0].hacks.empty());
+        OA_CHECK(result.mutators[1].outcome == mutators::Outcome::excluded);
+        OA_CHECK(result.mutators[1].cause == mutators::Cause::prerequisite_failed);
+        OA_CHECK(result.mutators[1].message.find("ridge-bad-range") != std::string::npos);
+    }
+    OA_CHECK(result.journal.entries.empty());
+    check_no_trace(result, 0);
+    check_no_trace(result, 1);
+    OA_CHECK(!store.mutator_layer_mounted());
+    const std::string commander = text_of(store.read("units/RGCOM.fbi").bytes);
+    OA_CHECK(commander.find("MaxDamage=3000") != std::string::npos);
+    OA_CHECK(commander.find("7000") == std::string::npos);
+    OA_CHECK(commander.find("8000") == std::string::npos);
+    release(store);
+    fs::remove_all(scratch);
+}
+
 void test_player_option() {
     mutators::PipelineMutator swift = load_id("ridge-swift");
     for (const oamut::Option& option : swift.manifest.options) {
@@ -1138,5 +1273,6 @@ int main() {
     test_string_cap_is_its_own_cause();
     test_unread_document_warned_once();
     test_player_option();
+    test_refused_hack_drops_the_hook();
     return oa::test::check_exit_status();
 }

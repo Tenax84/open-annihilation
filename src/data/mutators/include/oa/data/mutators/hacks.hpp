@@ -23,7 +23,7 @@ struct MutatorHack {
     std::string mutator;
     /// ENTRY.PARAM, such as console.game-speed-range.max.
     std::string path;
-    /// The value, written as in a profile.
+    /// The value in the registry's normal form, such as 15.
     std::string value;
 };
 

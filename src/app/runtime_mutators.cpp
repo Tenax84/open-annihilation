@@ -226,6 +226,59 @@ void log_applied(
     }
 }
 
+/// True when this mutator failed because its hacks were refused, or was
+/// excluded only because a mutator it requires failed that way, directly
+/// or through another exclusion.
+bool hack_refusal_only(
+    std::size_t slot,
+    const std::vector<mutators::MutatorResult>& results,
+    const std::vector<mutators::ResolvedMutator>& listed,
+    std::vector<uint8_t>& seen
+) {
+    if (slot >= results.size())
+        return false;
+    const mutators::MutatorResult& one = results[slot];
+    if (one.outcome == mutators::Outcome::failed)
+        return one.cause == mutators::Cause::hack_refused;
+    if (one.outcome != mutators::Outcome::excluded ||
+        one.cause != mutators::Cause::prerequisite_failed)
+        return false;
+    if (slot < seen.size() && seen[slot] != 0)
+        return false;
+    if (slot < seen.size())
+        seen[slot] = 1;
+    if (slot >= listed.size())
+        return false;
+    bool unmet = false;
+    for (const oa::formats::oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
+        bool satisfied = false;
+        std::vector<std::size_t> failed;
+        for (std::size_t other = 0; other < results.size() && other < listed.size(); ++other) {
+            if (other == slot)
+                continue;
+            const std::string version =
+                oa::formats::oamut::version_text(listed[other].manifest.version);
+            if (!oa::formats::oamut::condition_met(condition, results[other].id, version))
+                continue;
+            if (results[other].outcome == mutators::Outcome::applied) {
+                satisfied = true;
+                break;
+            }
+            failed.push_back(other);
+        }
+        if (satisfied)
+            continue;
+        if (failed.empty())
+            continue;
+        unmet = true;
+        for (const std::size_t other : failed) {
+            if (!hack_refusal_only(other, results, listed, seen))
+                return false;
+        }
+    }
+    return unmet;
+}
+
 } // namespace
 
 bool resolve_run_mutator(
@@ -416,6 +469,7 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     input.layout = &oa::data::defs::data_layout();
     input.variant = side_files_language_;
     input.seed = mutator_seed(*this, listed);
+    bind_planned_hack_check(input);
 
     mutators::PipelineResult result = mutators::run_pipeline(assets_, input);
     if (mutator_state_ == nullptr) {
@@ -423,22 +477,18 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         throw std::runtime_error("the mutators did not apply");
     }
     mutator_state_->result = std::move(result);
-    std::vector<mutators::MutatorHack> hacks;
-    for (const mutators::MutatorResult& one : mutator_state_->result->mutators) {
-        if (one.outcome != mutators::Outcome::applied)
-            continue;
-        hacks.insert(hacks.end(), one.hacks.begin(), one.hacks.end());
-    }
-    play_mutator_hacks(hacks);
+    play_mutator_hacks();
     log_applied(listed, *mutator_state_->result);
     bool blocking = !mutator_state_->result->refusal.empty();
     if (!blocking) {
-        for (const mutators::MutatorResult& one : mutator_state_->result->mutators) {
-            if (one.outcome == mutators::Outcome::applied)
+        std::vector<uint8_t> seen(mutator_state_->result->mutators.size(), 0);
+        for (std::size_t slot = 0; slot < mutator_state_->result->mutators.size(); ++slot) {
+            if (mutator_state_->result->mutators[slot].outcome == mutators::Outcome::applied)
                 continue;
-            // A refused hack fails that mutator alone. Anything else still
-            // refuses the start, as a plan or a rule failure does.
-            if (!one.message.starts_with("hacks: ")) {
+            // A refused hack, and a mutator excluded only because it requires
+            // one, fails that mutator alone. Anything else still refuses the
+            // start, as a plan or a rule failure does.
+            if (!hack_refusal_only(slot, mutator_state_->result->mutators, listed, seen)) {
                 blocking = true;
                 break;
             }
@@ -456,6 +506,11 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
 
 void Runtime::release_match_mutators() noexcept {
     try {
+        if (mutator_state_ != nullptr && mutator_state_->hacks_played) {
+            play_latest_profile();
+            mutator_state_->hacks_played = false;
+            mutator_state_->units_per_player.reset();
+        }
         const bool held = mutator_state_ != nullptr && mutator_state_->result.has_value();
         bool unmounted = false;
         if (assets_.mutator_layer_mounted()) {
