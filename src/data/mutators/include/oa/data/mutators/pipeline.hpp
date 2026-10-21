@@ -169,11 +169,14 @@ list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::
 /// without them. Only a document the run changed is written back. After the
 /// last hook, every weapon a mutator brought, by a record file or by
 /// `weapons:clone`, is given an id. The game's and the mod's weapons keep
-/// theirs. A requested `ID=` from 1 to 255 is kept when that id is free;
-/// the rest take free ids from 1 to 255, in list order and then by name.
-/// Slot 0 is never given out. When no id remains, the mutator whose weapon
-/// could not be numbered fails in the integrity phase and the run is
-/// repeated without it. The written weapon files carry the final ids. A plan
+/// theirs. Numbering takes each mutator in list order: its requested ids
+/// from 1 to 255 when those ids are still free, then free ids for its
+/// other weapons. A later request for an id already held takes another
+/// free id. A write of `id` on a weapon the game already numbered is left
+/// undone and noted. Slot 0 is never given out. When no id remains, the
+/// mutator whose weapon could not be numbered fails in the integrity phase
+/// and the run is repeated without it. The written weapon files carry the
+/// final ids. A plan
 /// key this engine does not support yet is refused, not ignored.
 ///
 /// The call does not throw. A Lua error stays inside the run. The result

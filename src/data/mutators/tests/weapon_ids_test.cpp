@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Weapon ids for weapons a mutator brought. Base weapons keep their ids.
-// A requested id is kept when it is free. Nothing is written when the
-// table has no id left.
+// Each mutator, in list order, keeps the requested ids that are still
+// free and then takes ids for its other weapons. A later request for a
+// taken id takes another free one. Nothing is written when the table has
+// no id left, and the mutator that overflows is the one refused.
 #include "oa/data/mutators/weapon_ids.hpp"
 #include "oa/formats/tdf.hpp"
 #include "oa/test/check.hpp"
@@ -120,6 +122,95 @@ void test_zero_and_out_of_range_are_not_requests() {
     OA_CHECK(id_text(documents, "weapons/extra.tdf", "RGZERO") == "3");
 }
 
+/// The earlier mutator has no request, so it takes the lowest free id.
+/// The later mutator's request for that id then takes the next free one.
+void test_earlier_unrequested_keeps_a_later_request() {
+    rules::DocumentSet documents;
+    add_doc(
+        documents, "weapons/ridge.tdf", "[RGGUN]\n{\nID=1;\n}\n[EARLY]\n{\n}\n[LATE]\n{\nID=2;\n}\n"
+    );
+    std::vector<mutators::BroughtWeapon> brought;
+    brought.push_back(brought_of("EARLY", 0, "weapons/ridge.tdf"));
+    brought.push_back(brought_of("LATE", 1, "weapons/ridge.tdf"));
+    mutators::WeaponIdResult result;
+    OA_CHECK(mutators::assign_weapon_ids(documents, defs::data_layout(), brought, result));
+    OA_CHECK(result.ok);
+    OA_CHECK(brought[0].assigned_id == 2);
+    OA_CHECK(brought[1].assigned_id == 3);
+    OA_CHECK(id_text(documents, "weapons/ridge.tdf", "RGGUN") == "1");
+    OA_CHECK(id_text(documents, "weapons/ridge.tdf", "EARLY") == "2");
+    OA_CHECK(id_text(documents, "weapons/ridge.tdf", "LATE") == "3");
+}
+
+/// Base weapons hold 1 to 253, so 254 and 255 are the only free ids.
+std::string bases_through_253() {
+    std::string text;
+    for (int id = 1; id <= 253; ++id) {
+        text += "[BASE";
+        text += std::to_string(id);
+        text += "]\n{\nID=";
+        text += std::to_string(id);
+        text += ";\n}\n";
+    }
+    return text;
+}
+
+/// The earlier mutator's two weapons take 254 and 255. The later mutator
+/// asked for those ids, so it is the one left without an id, and nothing
+/// is written.
+void test_later_requests_overflow_after_an_earlier_mutator() {
+    rules::DocumentSet documents;
+    add_doc(
+        documents,
+        "weapons/full.tdf",
+        bases_through_253() + "[EARLYA]\n{\n}\n[EARLYB]\n{\n}\n[LATEA]\n{\nID=254;\n}\n"
+                              "[LATEB]\n{\nID=255;\n}\n"
+    );
+    std::vector<mutators::BroughtWeapon> brought;
+    brought.push_back(brought_of("EARLYB", 0, "weapons/full.tdf"));
+    brought.push_back(brought_of("EARLYA", 0, "weapons/full.tdf"));
+    brought.push_back(brought_of("LATEB", 1, "weapons/full.tdf"));
+    brought.push_back(brought_of("LATEA", 1, "weapons/full.tdf"));
+    mutators::WeaponIdResult result;
+    OA_CHECK(!mutators::assign_weapon_ids(documents, defs::data_layout(), brought, result));
+    OA_CHECK(!result.ok);
+    OA_CHECK(result.mutator == 1);
+    OA_CHECK(result.weapon == "LATEA");
+    OA_CHECK(brought[0].assigned_id == 0);
+    OA_CHECK(brought[3].assigned_id == 0);
+    OA_CHECK(id_text(documents, "weapons/full.tdf", "BASE1") == "1");
+    OA_CHECK(id_text(documents, "weapons/full.tdf", "BASE253") == "253");
+    OA_CHECK(id_text(documents, "weapons/full.tdf", "LATEA") == "254");
+    OA_CHECK(id_text(documents, "weapons/full.tdf", "LATEB") == "255");
+}
+
+/// The earlier mutator keeps both of the ids it asked for. The later
+/// mutator's weapons then have none left, so that mutator is refused.
+void test_earlier_requests_leave_the_later_mutator_to_overflow() {
+    rules::DocumentSet documents;
+    add_doc(
+        documents,
+        "weapons/full.tdf",
+        bases_through_253() + "[LATEA]\n{\nID=254;\n}\n[LATEB]\n{\nID=255;\n}\n"
+                              "[EARLYA]\n{\n}\n[EARLYB]\n{\n}\n"
+    );
+    std::vector<mutators::BroughtWeapon> brought;
+    brought.push_back(brought_of("LATEB", 0, "weapons/full.tdf"));
+    brought.push_back(brought_of("LATEA", 0, "weapons/full.tdf"));
+    brought.push_back(brought_of("EARLYB", 1, "weapons/full.tdf"));
+    brought.push_back(brought_of("EARLYA", 1, "weapons/full.tdf"));
+    mutators::WeaponIdResult result;
+    OA_CHECK(!mutators::assign_weapon_ids(documents, defs::data_layout(), brought, result));
+    OA_CHECK(!result.ok);
+    OA_CHECK(result.mutator == 1);
+    OA_CHECK(result.weapon == "EARLYA");
+    OA_CHECK(brought[2].assigned_id == 0);
+    OA_CHECK(brought[3].assigned_id == 0);
+    OA_CHECK(id_text(documents, "weapons/full.tdf", "LATEA") == "254");
+    OA_CHECK(id_text(documents, "weapons/full.tdf", "EARLYA") == "");
+    OA_CHECK(id_text(documents, "weapons/full.tdf", "BASE253") == "253");
+}
+
 void test_full_table_writes_nothing() {
     std::string text;
     for (int id = 1; id <= 255; ++id) {
@@ -152,6 +243,9 @@ int main() {
     test_one_id_goes_to_the_earlier_mutator();
     test_same_mutator_orders_by_name();
     test_zero_and_out_of_range_are_not_requests();
+    test_earlier_unrequested_keeps_a_later_request();
+    test_later_requests_overflow_after_an_earlier_mutator();
+    test_earlier_requests_leave_the_later_mutator_to_overflow();
     test_full_table_writes_nothing();
     return oa::test::check_exit_status();
 }

@@ -38,8 +38,10 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   add a copy of one record. A unit clone keeps the source model by writing
   `Objectname` and serves the source script, picture and build pages under
   the new name. A weapon clone asks for the lowest free id from 1 to 255.
-  `assign_weapon_ids` gives that id, or another free one when a weapon
-  brought earlier asked for the same id.
+  `assign_weapon_ids` gives that id when it is still free. Each mutator is
+  numbered in list order: its requested ids, then ids for its other weapons.
+  A later request for an id an earlier weapon already holds takes another
+  free one.
 - `record_file_kind` says whether a path is a unit FBI, a weapon TDF, a
   download TDF, or a whole file. `build_files_layer` keeps every kept
   mutator's copy of a record file in `FilesLayer::records`.
@@ -159,13 +161,21 @@ player's option, the list checks and two identical runs. It also runs two
 mutators that share `weapons/extra.tdf`, a unit file that replaces a unit,
 a weapon body that must not move a base id, download sections from two
 mutators, a rule that sees the unit its own file added, and a weapon table
-with no id left.
+with no id left. It also checks a rule and a hook that try to renumber a
+base weapon, a weapon that mutator brought whose rule sets its id, a
+request list that overflows in either order, a record file that brings a
+removed document back, and the journal entry and note when one record
+file replaces another's.
 
 `data-mutators-weapon-ids` (`tests/weapon_ids_test.cpp`) checks
-`assign_weapon_ids`: a requested id is kept when it is free, two requests
-for one id are split in list order and then by name, a missing id or an id
-outside 1 to 255 is not a request, slot 0 is never given out, a full table
-refuses and writes nothing, and a base weapon's id text stays.
+`assign_weapon_ids`: a requested id is kept when it is free, each mutator
+takes its free requests and then ids for its other weapons before the next
+mutator is numbered, a later request for a taken id takes another free id,
+a missing id or an id outside 1 to 255 is not a request, slot 0 is never
+given out, a full table refuses the mutator that overflows and writes
+nothing, and a base weapon's id text stays. Two mutators that both ask
+for ids are numbered in that same list order, so when the later one's
+requests are what overflow, that later mutator is the one refused.
 
 `data-mutators-journal` (`tests/journal_test.cpp`) checks the entry order,
 `entries_of`, each note conversion and the sentences `describe` writes.
@@ -196,9 +206,26 @@ download-linked button art (`anims/<unit>_gadget.gaf`). A download-linked
 button for a clone draws with no picture. A weapon clone never takes slot
 0, which is the default weapon. Until the clash mode lands, a record whose
 name already exists replaces that record. A replaced base or mod weapon
-keeps the id it had. Two mutators never share an id. When no id from 1 to
-255 is free, the mutator whose weapon could not be numbered is refused and
+keeps the id it had. A rule or a hook that writes `id` on a weapon the
+game already numbered does not change it, and the note names the mutator.
+A write of `id` on a weapon that mutator brought is that weapon's request.
+Two mutators never share an id. Numbering takes each mutator in list
+order, its requests and then its other weapons, so an earlier mutator is
+not refused for a later mutator's requests. When no id from 1 to 255 is
+free, the mutator whose weapon could not be numbered is refused and
 named, and nothing of that mutator is served.
+
+A download entry is the section name in its file. Two mutators that write
+the same name, such as `MENUENTRY1`, replace each other. A later clash
+mode, and menus read as lists, should treat an entry as its builder and
+its unit, not as that section name.
+
+A text that does not parse is unread. A unit, weapon or download file
+that does not parse is left unread the same way: the path is warned once,
+the mutator still applies, and that file is not served. A base weapon
+file the pipeline cannot parse is unread too. The game may still load it,
+but its ids are not counted as taken, so a mutator weapon could share an
+id with one of them.
 
 A mutator cannot add or remove a side. Rectangle sub-sections of a side
 are neither shown nor changed. A build list keeps at most 1024 names. When
@@ -760,13 +787,19 @@ no file, rule, journal entry or note.
 
 The journal keeps every change of the last pass: each rule write, naming
 the mutator that made it, each hook write and removal, each file a mutator
-added, and each file of the mod a mask hides. It is sorted by the first
-mutator, then by phase, so one mutator's rules come before its hooks, then
-by path, record, block and field. The conflict report holds the stacking
-notes, and the paths a parse left out, one warning each. Among the notes,
-`value_replaced` is a value a later mutator's rule replaced. One such note
-is kept for each field name and pair of mutators, so a stack that rewrites
-the same field on many records does not flood the report. `field_locked`
+added, each record a file added or replaced, and each file of the mod a
+mask hides. A replaced record is `added`, and `old_text` names the record
+that was already there. It is sorted by the first mutator, then by phase,
+so one mutator's rules come before its hooks, then by path, record, block
+and field. The conflict report holds the stacking notes, and the paths a
+parse left out, one warning each. A text that does not parse is unread. A
+record file that does not parse is unread the same way, and it is not
+served. Among the notes, `value_replaced` is a value a later mutator's
+rule replaced, and also a record a later mutator's file replaced when an
+earlier mutator had brought that record. One such note is kept for each
+field name and pair of mutators, and a record note is kept once for each
+collection and pair, so a stack that rewrites the same field or the same
+kind of record on many records does not flood the report. `field_locked`
 is a field an earlier mutator locked, so a later mutator's rule left it
 alone. A later hook that writes a field names the mutator who last wrote
 it, which may be a rule rather than an earlier hook, and then itself. One
@@ -779,15 +812,23 @@ never `script_error`.
 
 After the last hook, every weapon a mutator brought, by a record file or
 by `weapons:clone`, is given an id. The game's weapons and the mod's
-weapons keep theirs. A section's `ID=` is a request when it is a number
-from 1 to 255, and it is kept when that id is free. The rest take free
-ids from 1 to 255, earlier mutators first and, within a mutator, by name.
-Slot 0 is never given out. The weapons are numbered before anything is
-written. When one weapon has no free id, nothing is written, that
-mutator's result is `failed` in the phase `integrity` with cause
-`weapon_ids`, and the message names the mutator and the weapon. The run
-is repeated without that mutator. The written weapon files carry the
-final ids.
+weapons keep theirs. A rule or a hook that writes `id` on one of those
+weapons does not change it, and the note names the mutator. A write of
+`id` on a weapon that mutator brought is a request. A section's `ID=` is
+a request when it is a number from 1 to 255. Numbering takes each mutator
+in list order. That mutator's requests are kept when the ids are still
+free, and its other weapons then take free ids from 1 to 255, by name.
+A later mutator's request for an id an earlier weapon already holds takes
+another free id. Slot 0 is never given out. The weapons are numbered
+before anything is written. When one weapon has no free id, nothing is
+written, that mutator's result is `failed` in the phase `integrity` with
+cause `weapon_ids`, and the message names the mutator and the weapon. The
+run is repeated without that mutator. The written weapon files carry the
+final ids. A record file that replaces a record an earlier mutator brought
+is journaled, and one note names the two mutators. A document a hook
+removed is brought back when a later mutator's file uses that path: a
+unit file replaces the document, and a weapon or download file starts
+again from an empty document.
 
 The pipeline prints nothing and keeps nothing between calls. The same input
 gives the same layer bytes, journal and report. The store must hold no

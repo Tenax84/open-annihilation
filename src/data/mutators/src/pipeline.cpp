@@ -34,6 +34,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <new>
 #include <optional>
@@ -1183,13 +1184,57 @@ record_kind(const rules::FieldRef& field, const defs::DataLayout& layout) {
     return std::nullopt;
 }
 
+/// True when `field` is the id of a weapon the game already numbered.
+bool weapon_id_stays(const rules::FieldRef& field, const std::vector<std::string>& kept) {
+    if (field.kind != rules::TargetKind::weapons || !field.block.empty())
+        return false;
+    if (!same_text(field.key, "id"))
+        return false;
+    const std::string folded = fold_copy(field.record);
+    return std::binary_search(kept.begin(), kept.end(), folded);
+}
+
+/// Folded names of the weapon sections loaded before any mutator file runs.
+std::vector<std::string>
+kept_weapon_names(const rules::DocumentSet& documents, const defs::DataLayout& layout) {
+    std::vector<std::string> names;
+    const std::size_t weapons = static_cast<std::size_t>(defs::DataDirectory::weapons);
+    const std::vector<std::size_t> docs =
+        documents.documents_in(layout.directories[weapons], ".tdf", false);
+    for (const std::size_t doc_index : docs) {
+        const rules::LoadedDocument& loaded = documents.at(doc_index);
+        const tdf::Block* root = loaded.document.get()->root;
+        if (root == nullptr)
+            continue;
+        const uint32_t sections = tdf::child_count(root);
+        for (uint32_t section_index = 0; section_index < sections; ++section_index) {
+            const tdf::Block* section = tdf::child_at(root, section_index);
+            if (section == nullptr || section->name == nullptr || section->name[0] == '\0')
+                continue;
+            names.push_back(fold_copy(section->name));
+        }
+    }
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    return names;
+}
+
 /// A removal is accepted without a check. Known records go through the schema.
+///
+/// A write or a removal of `id` on a weapon the game already numbered is
+/// refused. The weapon keeps the id it had when the documents were parsed.
 rules::CheckResult check_field(
     const rules::FieldRef& field,
     const std::optional<std::string>& text,
-    const defs::DataLayout& layout
+    const defs::DataLayout& layout,
+    const std::vector<std::string>& kept_weapons
 ) {
     rules::CheckResult result;
+    if (weapon_id_stays(field, kept_weapons)) {
+        result.outcome = rules::CheckOutcome::refuse;
+        result.reason = "a base weapon keeps its id";
+        return result;
+    }
     if (!text.has_value()) {
         result.outcome = rules::CheckOutcome::ok;
         return result;
@@ -2170,11 +2215,45 @@ std::size_t brought_index(const std::vector<BroughtWeapon>& brought, std::string
     return brought.size();
 }
 
+/// Puts `text` into a document a hook had removed, and clears that mark.
+///
+/// The index forgets the document first, so the old sections are not left
+/// pointing at a tree the parse frees. A unit file passes its own text. A
+/// weapon or download file passes an empty document and then adds sections.
+bool revive_document(
+    rules::LoadedDocument& loaded,
+    std::string_view text,
+    Collections& collections,
+    std::string& error
+) {
+    collections.release_document(loaded.path);
+    tdf::ParseError parse_error;
+    if (!loaded.document.parse(text, &parse_error)) {
+        error = loaded.path;
+        error.append(": ");
+        error.append(tdf::describe(parse_error));
+        return false;
+    }
+    loaded.removed = false;
+    loaded.added = true;
+    return true;
+}
+
 /// Opens `path` as an empty document when the set does not already hold it.
-rules::LoadedDocument*
-ensure_document(rules::DocumentSet& documents, const std::string& path, std::string& error) {
-    if (rules::LoadedDocument* existing = documents.find(path))
+///
+/// A document a hook removed is brought back empty, so a later file can
+/// fill it. The path stays the one the set already holds.
+rules::LoadedDocument* ensure_document(
+    rules::DocumentSet& documents,
+    const std::string& path,
+    Collections& collections,
+    std::string& error
+) {
+    if (rules::LoadedDocument* existing = documents.find(path)) {
+        if (existing->removed && !revive_document(*existing, "\n", collections, error))
+            return nullptr;
         return existing;
+    }
     if (!documents.add(path, "\n", &error))
         return nullptr;
     rules::LoadedDocument* created = documents.find(path);
@@ -2211,6 +2290,7 @@ bool apply_unit_file(
     const tdf::Block* root,
     uint16_t mutator,
     std::vector<RecordTouch>& touches,
+    Collections& collections,
     std::string& error
 ) {
     const tdf::Block* info = nullptr;
@@ -2253,9 +2333,15 @@ bool apply_unit_file(
         path.push_back('.');
         path.append(layout.unit_extension);
     }
-    if (documents.find(path) != nullptr) {
-        error = path + ": already holds a unit";
-        return false;
+    if (rules::LoadedDocument* holding = documents.find(path)) {
+        if (!holding->removed) {
+            error = path + ": already holds a unit";
+            return false;
+        }
+        if (!revive_document(*holding, text, collections, error))
+            return false;
+        touch_record(touches, holding->path, mutator, Collection::units, true, name);
+        return true;
     }
     if (!documents.add(path, text, &error))
         return false;
@@ -2281,6 +2367,7 @@ bool apply_weapon_file(
     uint16_t mutator,
     std::vector<BroughtWeapon>& brought,
     std::vector<RecordTouch>& touches,
+    Collections& collections,
     std::string& error
 ) {
     const uint32_t sections = tdf::child_count(root);
@@ -2375,7 +2462,7 @@ bool apply_weapon_file(
             touch_record(touches, loaded->path, mutator, Collection::weapons, false, name);
             continue;
         }
-        rules::LoadedDocument* loaded = ensure_document(documents, path, error);
+        rules::LoadedDocument* loaded = ensure_document(documents, path, collections, error);
         if (loaded == nullptr)
             return false;
         tdf::Block* dest_root = tdf::editable_root(loaded->document.get());
@@ -2411,6 +2498,7 @@ bool apply_download_file(
     const tdf::Block* root,
     uint16_t mutator,
     std::vector<RecordTouch>& touches,
+    Collections& collections,
     std::string& error
 ) {
     (void)report;
@@ -2438,6 +2526,8 @@ bool apply_download_file(
         error = path + ": the download file disappeared";
         return false;
     }
+    if (loaded->removed && !revive_document(*loaded, "\n", collections, error))
+        return false;
     tdf::Block* dest_root = tdf::editable_root(loaded->document.get());
     if (dest_root == nullptr) {
         error = path + ": the download file has no root";
@@ -2478,6 +2568,7 @@ bool apply_record_file(
     uint16_t mutator,
     std::vector<BroughtWeapon>& brought,
     std::vector<RecordTouch>& touches,
+    Collections& collections,
     std::string& error
 ) {
     if (record.bytes == nullptr) {
@@ -2499,14 +2590,16 @@ bool apply_record_file(
     const RecordFileKind kind = record_file_kind(record.path, layout);
     if (kind == RecordFileKind::unit)
         return apply_unit_file(
-            documents, report, layout, record, text, root, mutator, touches, error
+            documents, report, layout, record, text, root, mutator, touches, collections, error
         );
     if (kind == RecordFileKind::weapon)
         return apply_weapon_file(
-            documents, layout, record, text, root, mutator, brought, touches, error
+            documents, layout, record, text, root, mutator, brought, touches, collections, error
         );
     if (kind == RecordFileKind::download)
-        return apply_download_file(documents, report, record, text, root, mutator, touches, error);
+        return apply_download_file(
+            documents, report, record, text, root, mutator, touches, collections, error
+        );
     return true;
 }
 
@@ -2520,15 +2613,118 @@ bool apply_mutator_records(
     uint16_t mutator,
     std::vector<BroughtWeapon>& brought,
     std::vector<RecordTouch>& touches,
+    Collections& collections,
     std::string& error
 ) {
     for (const RecordFile& record : records) {
         if (record.mutator != mutator_id)
             continue;
-        if (!apply_record_file(documents, report, layout, record, mutator, brought, touches, error))
+        if (!apply_record_file(
+                documents, report, layout, record, mutator, brought, touches, collections, error
+            ))
             return false;
     }
     return true;
+}
+
+/// One record the pass has already seen, so a later file can name who brought it.
+struct SeenRecord {
+    /// Units, weapons or menus. Menus also use the path.
+    Collection collection{};
+    /// Folded path. Empty except for a download entry, whose name is per file.
+    std::string path;
+    /// Folded record name.
+    std::string name;
+
+    /// Orders by collection, then path, then name.
+    ///
+    /// @param other the other record
+    /// @return true when this record sorts first
+    bool operator<(const SeenRecord& other) const {
+        if (collection != other.collection)
+            return static_cast<uint8_t>(collection) < static_cast<uint8_t>(other.collection);
+        if (path != other.path)
+            return path < other.path;
+        return name < other.name;
+    }
+};
+
+/// One pair of mutators whose records of one kind already produced a note.
+struct RecordPair {
+    /// The collection the note covers.
+    Collection collection{};
+    /// The earlier mutator.
+    uint16_t earlier{};
+    /// The later mutator.
+    uint16_t later{};
+
+    /// Orders by collection, then the earlier mutator, then the later one.
+    ///
+    /// @param other the other pair
+    /// @return true when this pair sorts first
+    bool operator<(const RecordPair& other) const {
+        if (collection != other.collection)
+            return static_cast<uint8_t>(collection) < static_cast<uint8_t>(other.collection);
+        if (earlier != other.earlier)
+            return earlier < other.earlier;
+        return later < other.later;
+    }
+};
+
+/// Journals every record a file added or replaced.
+///
+/// A replacement keeps the record name in `old_text`. When the record is one
+/// an earlier mutator brought, one `value_replaced` note is kept for that
+/// collection and that pair of mutators.
+void journal_record_touches(
+    Journal& journal,
+    ConflictReport& report,
+    const std::vector<RecordTouch>& touches,
+    const rules::DocumentSet& documents,
+    std::vector<std::vector<Writer>>& writers,
+    std::vector<uint8_t>& menus
+) {
+    std::map<SeenRecord, uint16_t> owners;
+    std::set<RecordPair> noted;
+    for (const RecordTouch& touch : touches) {
+        note_writer(
+            documents, writers, menus, touch.path, touch.mutator, Phase::files, touch.collection
+        );
+        JournalEntry entry;
+        entry.mutators.push_back(touch.mutator);
+        entry.phase = Phase::files;
+        entry.collection = touch.collection;
+        entry.change = Change::added;
+        entry.record = touch.record;
+        entry.path = touch.path;
+        if (!touch.added)
+            entry.old_text = touch.record;
+        journal.entries.push_back(std::move(entry));
+
+        SeenRecord identity;
+        identity.collection = touch.collection;
+        identity.name = fold_copy(touch.record);
+        if (touch.collection == Collection::menus)
+            identity.path = fold_copy(touch.path);
+        const auto found = owners.find(identity);
+        if (!touch.added && found != owners.end() && found->second != touch.mutator) {
+            RecordPair pair;
+            pair.collection = touch.collection;
+            pair.earlier = found->second;
+            pair.later = touch.mutator;
+            if (noted.insert(pair).second) {
+                Conflict conflict;
+                conflict.severity = Severity::note;
+                conflict.kind = ConflictKind::value_replaced;
+                conflict.mutators.push_back(pair.earlier);
+                conflict.mutators.push_back(pair.later);
+                conflict.record = touch.record;
+                conflict.path = touch.path;
+                report.conflicts.push_back(std::move(conflict));
+            }
+        }
+        owners.insert_or_assign(std::move(identity), touch.mutator);
+    }
 }
 
 /// Drops record-file entries from the spec that will be mounted.
@@ -2692,11 +2888,12 @@ bool run_pass(
             rule_sets.push_back(plans[slot].rules);
     }
     parse_documents(documents, report, store, layout, input.variant, rule_sets);
+    const std::vector<std::string> kept_weapons = kept_weapon_names(documents, layout);
     rules::ApplyOptions apply_options;
     apply_options.layout = &layout;
-    apply_options.check = [&layout](
+    apply_options.check = [&layout, &kept_weapons](
                               const rules::FieldRef& field, const std::optional<std::string>& text
-                          ) { return check_field(field, text, layout); };
+                          ) { return check_field(field, text, layout, kept_weapons); };
     rules::ApplyState apply_state;
     std::vector<rules::FieldWrite> rule_writes;
     std::set<ReplacedField> replaced_fields;
@@ -2710,6 +2907,7 @@ bool run_pass(
     // the files layer found does not run either.
     collections.emplace(documents, &layout);
     collections->bind_store(&store);
+    collections->keep_weapon_ids(kept_weapons);
     std::vector<BroughtWeapon> brought;
     std::vector<RecordTouch> touches;
     bool steps_done = true;
@@ -2726,6 +2924,7 @@ bool run_pass(
                 static_cast<uint16_t>(slot),
                 brought,
                 touches,
+                *collections,
                 record_error
             )) {
             first.offer(slot, Phase::files, Cause::engine_error, ids[slot] + ": " + record_error);
@@ -2915,21 +3114,7 @@ bool run_pass(
         }
         journal.entries.push_back(std::move(entry));
     }
-    for (const RecordTouch& touch : touches) {
-        note_writer(
-            documents, writers, menus, touch.path, touch.mutator, Phase::files, touch.collection
-        );
-        if (!touch.added)
-            continue;
-        JournalEntry added;
-        added.mutators.push_back(touch.mutator);
-        added.phase = Phase::files;
-        added.collection = touch.collection;
-        added.change = Change::added;
-        added.record = touch.record;
-        added.path = touch.path;
-        journal.entries.push_back(std::move(added));
-    }
+    journal_record_touches(journal, report, touches, documents, writers, menus);
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
         const std::optional<uint16_t> mutator = index_of(ids, entry.owner);

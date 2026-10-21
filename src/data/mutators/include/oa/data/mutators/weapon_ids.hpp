@@ -45,17 +45,20 @@ struct WeaponIdResult {
 /// A live weapon section whose name is not in `brought` keeps its id and
 /// occupies that slot when the id is from 1 to 255. A missing id, an id of
 /// 0, an id past 255 and a value that does not start with a number occupy
-/// nothing. The brought weapons are ordered by mutator index, then by name
-/// without ASCII case, then by the raw name. Each keeps its section's `ID=`
-/// when that value is from 1 to 255 and still free. The rest take the lowest
-/// free id from 1 to 255. Slot 0 is never given out. Two brought weapons
-/// never share an id.
+/// nothing. The brought weapons are taken one mutator at a time, in list
+/// order, and within a mutator by name without ASCII case, then by the raw
+/// name. That mutator's requested ids, from 1 to 255, are kept when they
+/// are still free. Its other weapons then take the lowest free id from 1
+/// to 255. A later mutator's request for an id an earlier weapon already
+/// holds takes another free id. Slot 0 is never given out. Two brought
+/// weapons never share an id.
 ///
 /// Every id is chosen before any section is written. When one weapon has no
 /// free id, nothing is written, `result.ok` is false, and `result` names
 /// that weapon and its mutator. The first such weapon in the order above is
-/// the one named. On success each section's `ID=` is the assigned id, as a
-/// decimal, and `assigned_id` is set.
+/// the one named, so the mutator that overflows is the one refused. On
+/// success each section's `ID=` is the assigned id, as a decimal, and
+/// `assigned_id` is set.
 ///
 /// @param documents the run's documents; brought sections are edited on success
 /// @param layout the mod's directory names

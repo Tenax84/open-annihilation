@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Numbers the weapons a mutator run brought. Base and mod weapons keep their
-// ids. A requested id is kept when it is free. The rest take free ids from
-// 1 to 255. Nothing is written when one weapon cannot be numbered.
+// ids. Each mutator, in list order, keeps the requested ids that are still
+// free, then takes free ids for its other weapons. Nothing is written when
+// one weapon cannot be numbered.
 #include "oa/data/mutators/weapon_ids.hpp"
 
 #include "oa/formats/tdf.hpp"
@@ -215,34 +216,47 @@ bool assign_weapon_ids(
         if (placed[index].section == nullptr)
             chosen[index] = -1;
     }
-    for (const std::size_t index : order) {
-        if (chosen[index] != 0 || !placed[index].has_request)
-            continue;
-        const int request = placed[index].request;
-        if (used[static_cast<std::size_t>(request)])
-            continue;
-        chosen[index] = request;
-        used[static_cast<std::size_t>(request)] = true;
-    }
-    for (const std::size_t index : order) {
-        if (chosen[index] != 0)
-            continue;
-        int free_id = 0;
-        for (int candidate = 1; candidate < k_weapon_slots; ++candidate) {
-            if (!used[static_cast<std::size_t>(candidate)]) {
-                free_id = candidate;
-                break;
+    // One mutator at a time. Its free requests come before its other weapons,
+    // and before the next mutator's requests.
+    std::size_t group = 0;
+    while (group < order.size()) {
+        const uint16_t mutator = brought[placed[order[group]].index].mutator;
+        std::size_t group_end = group + 1;
+        while (group_end < order.size() &&
+               brought[placed[order[group_end]].index].mutator == mutator)
+            ++group_end;
+        for (std::size_t place = group; place < group_end; ++place) {
+            const std::size_t index = order[place];
+            if (chosen[index] != 0 || !placed[index].has_request)
+                continue;
+            const int request = placed[index].request;
+            if (used[static_cast<std::size_t>(request)])
+                continue;
+            chosen[index] = request;
+            used[static_cast<std::size_t>(request)] = true;
+        }
+        for (std::size_t place = group; place < group_end; ++place) {
+            const std::size_t index = order[place];
+            if (chosen[index] != 0)
+                continue;
+            int free_id = 0;
+            for (int candidate = 1; candidate < k_weapon_slots; ++candidate) {
+                if (!used[static_cast<std::size_t>(candidate)]) {
+                    free_id = candidate;
+                    break;
+                }
             }
+            if (free_id == 0) {
+                const BroughtWeapon& weapon = brought[placed[index].index];
+                result.ok = false;
+                result.mutator = weapon.mutator;
+                result.weapon = weapon.name;
+                return false;
+            }
+            chosen[index] = free_id;
+            used[static_cast<std::size_t>(free_id)] = true;
         }
-        if (free_id == 0) {
-            const BroughtWeapon& weapon = brought[placed[index].index];
-            result.ok = false;
-            result.mutator = weapon.mutator;
-            result.weapon = weapon.name;
-            return false;
-        }
-        chosen[index] = free_id;
-        used[static_cast<std::size_t>(free_id)] = true;
+        group = group_end;
     }
 
     for (std::size_t index = 0; index < placed.size(); ++index) {
