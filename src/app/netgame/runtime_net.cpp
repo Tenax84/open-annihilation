@@ -553,6 +553,7 @@ inline constexpr uint32_t override_id = 0x100;  ///< an override's hack id break
 inline constexpr uint32_t no_reserve = 0x200;   ///< the record leaves no room for a map pack
 inline constexpr uint32_t bundles = 0x400;      ///< the base game or an expansion breaks its rule
 inline constexpr uint32_t mutators = 0x800;     ///< the mutator list breaks its rule
+inline constexpr uint32_t mutator_modes = 0x1000; ///< the clash-mode mask breaks its rule
 } // namespace presence_problem
 
 /// The content and language a presence record adds to the facts.
@@ -626,12 +627,15 @@ bool presence_keeps_rules(const oa::netgame::PresenceRecord& record) {
 /// @param[in,out] reported the presence_problem bits already reported
 /// @param played the base game, expansions and language
 /// @param mutators the mutators field, or null when this machine plays none
+/// @param mutator_modes the host's clash-mode mask, sent with the mutator
+///        field; nothing when this machine sends none
 /// @return the record; empty only when nothing could be written
 std::vector<uint8_t> write_presence_record(
     const PresenceFacts& facts,
     uint32_t& reported,
     const PresencePlayed& played,
-    const oa::netgame::PresenceMutators* mutators
+    const oa::netgame::PresenceMutators* mutators,
+    std::optional<uint32_t> mutator_modes
 ) {
     namespace ng = oa::netgame;
     const auto report = [&](uint32_t problem, const char* what) {
@@ -731,6 +735,18 @@ std::vector<uint8_t> write_presence_record(
             record.mutators = std::move(probe.mutators);
         else
             report(presence_problem::mutators, "the mutator list");
+    }
+    // The host sends each mutator's mode whenever it sends the list. A mask
+    // the record refuses is left out, and a guest then builds every mode
+    // as Replace.
+    if (record.mutators && mutator_modes) {
+        probe = {};
+        probe.mutators = *record.mutators;
+        probe.mutator_modes = *mutator_modes;
+        if (presence_keeps_rules(probe))
+            record.mutator_modes = *mutator_modes;
+        else
+            report(presence_problem::mutator_modes, "the mutator modes");
     }
 
     const auto hacks =
@@ -2324,7 +2340,8 @@ void NetworkPlay::follow_presence() {
         presence_facts_,
         presence_reported_,
         played,
-        presence_mutators_held_ ? &presence_mutators_ : nullptr
+        presence_mutators_held_ ? &presence_mutators_ : nullptr,
+        presence_mutators_held_ ? runtime_.room_mutator_modes() : std::nullopt
     );
     if (!first && record == bound_presence_record_)
         return;
