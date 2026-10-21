@@ -12,7 +12,8 @@ sentence chosen from the rule, which is not this module's to write.
 
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
-`oa/data/mutators/collections.hpp` and `oa/data/mutators/files_layer.hpp`.
+`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`
+and `oa/data/mutators/verdicts.hpp`.
 
 - `check_mutable_path` judges one file path.
 - `check_mutable_mask` judges one mask. The pattern's shape is
@@ -297,3 +298,40 @@ mutator has made too many notes".
 
 `data-mutators-collections` builds a small Ridge document set and runs
 the fixtures in `tests/collections`.
+
+## Verdicts
+
+A dry run's answer for one list of mutators against one mod is a
+`Verdict`: `compatible`, `no_effect`, `incompatible` or `failed`. The
+file and the log spell `no_effect` as `no-effect`. A compatible verdict
+carries `ChangeCounts`, twelve counts per collection (units, weapons and
+features changed, added and removed, then menu entries, files added and
+files hidden). `any` says whether one of them is above zero. `incompatible`
+and `failed` carry a reason; the other two do not. `mod_label` is the
+mod's name and version, empty for the base game. `one_line_reason` turns
+a reason or a label into one line of at most 200 bytes.
+
+A verdict is remembered under a `VerdictKey`: the loadout digest of the
+whole checked list (prerequisites included), the mod key, and the engine
+version text. `RememberedVerdict` pairs that key with a `VerdictRecord`.
+
+The file is named `mutator-verdicts.tsv`. Each line is UTF-8, ends with
+a line feed, and is tab-separated: `1`, the loadout digest as 64
+lower-case hex digits, the mod key likewise, the engine version
+(printable ASCII, no space, 1 to 64 bytes), the verdict word, the twelve
+counts as unsigned decimals without leading zeros joined by `,`, the mod
+label, the reason. The label and the reason are written through
+`one_line_reason`. A line is dropped when it has another field count,
+another form than `1`, a digest that is not 64 lower-case hex digits, a
+bad engine version, an unknown verdict word, a count that is not a
+decimal within `uint32_t`, a reason on a compatible or no-effect verdict,
+more than 2048 bytes, a carriage return, or bytes that are not UTF-8.
+When two lines share a key, the later record wins and keeps the earlier
+line's place. The file holds at most 1024 verdicts and 4 MiB. Past 1024,
+the oldest goes. A longer span reads as empty.
+
+`read_verdicts` and `write_verdicts` are the codec. `remember_verdict`
+replaces a key and moves it to the newest place. `find_verdict` looks a
+key up. The dry run fills the records. The Library and the picker show
+them. Nothing here decides which outcome is which verdict, and nothing
+here opens the file.
