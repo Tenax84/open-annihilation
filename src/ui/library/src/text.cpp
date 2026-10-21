@@ -5,6 +5,7 @@
 // written from the patterns in text.hpp.
 #include "oa/ui/library/text.hpp"
 
+#include "oa/data/mutators/verdicts.hpp"
 #include "oa/ui/kit/text.hpp"
 
 #include <algorithm>
@@ -420,8 +421,94 @@ std::string_view action_text(Action action, const TextHooks& text) {
         return shown(text, words::action_turn_off);
     case Action::turn_on:
         return shown(text, words::action_turn_on);
+    case Action::check_with_mod:
+        return shown(text, words::action_check_with_mod);
     }
     return {};
+}
+
+namespace {
+
+/// Joins phrases with a comma between all but the last pair, which uses `last`.
+///
+/// @param text how texts are looked up
+/// @param parts the phrases
+/// @param last the pattern for the last pair, `names_and` or `names_or`
+/// @return the joined phrases; empty when there are none
+std::string
+join_parts(const TextHooks& text, const std::vector<std::string>& parts, std::string_view last) {
+    if (parts.empty())
+        return {};
+    if (parts.size() == 1)
+        return parts.front();
+    std::string joined = parts.front();
+    for (std::size_t index = 1; index + 1 < parts.size(); ++index)
+        joined = filled(text, words::names_comma, {{"left", joined}, {"right", parts[index]}});
+    return filled(text, last, {{"left", joined}, {"right", parts.back()}});
+}
+
+/// Writes one non-zero count, singular at one.
+///
+/// @param text how texts are looked up
+/// @param count the count; zero writes nothing
+/// @param one the singular pattern
+/// @param many the plural pattern
+/// @return the phrase; empty when the count is zero
+std::string
+count_phrase(const TextHooks& text, uint32_t count, std::string_view one, std::string_view many) {
+    if (count == 0)
+        return {};
+    return filled(text, count == 1 ? one : many, {{"count", std::to_string(count)}});
+}
+
+/// Writes a compatible verdict's counts, non-zero ones in ChangeCounts order.
+///
+/// @param counts the counts
+/// @param text how texts are looked up
+/// @return the summary; empty when every count is zero
+std::string counts_summary(const oa::data::mutators::ChangeCounts& counts, const TextHooks& text) {
+    std::vector<std::string> parts;
+    const auto add = [&](uint32_t count, std::string_view one, std::string_view many) {
+        std::string phrase = count_phrase(text, count, one, many);
+        if (!phrase.empty())
+            parts.push_back(std::move(phrase));
+    };
+    add(counts.units_changed, words::changes_units_one, words::changes_units);
+    add(counts.units_added, words::adds_units_one, words::adds_units);
+    add(counts.units_removed, words::removes_units_one, words::removes_units);
+    add(counts.weapons_changed, words::changes_weapons_one, words::changes_weapons);
+    add(counts.weapons_added, words::adds_weapons_one, words::adds_weapons);
+    add(counts.weapons_removed, words::removes_weapons_one, words::removes_weapons);
+    add(counts.features_changed, words::changes_features_one, words::changes_features);
+    add(counts.features_added, words::adds_features_one, words::adds_features);
+    add(counts.features_removed, words::removes_features_one, words::removes_features);
+    add(counts.menu_entries_changed, words::changes_menus_one, words::changes_menus);
+    add(counts.files_added, words::adds_files_one, words::adds_files);
+    add(counts.files_hidden, words::hides_files_one, words::hides_files);
+    return join_parts(text, parts, words::names_and);
+}
+
+} // namespace
+
+Verdict verdict_of_record(const oa::data::mutators::VerdictRecord& record, const TextHooks& text) {
+    Verdict verdict;
+    verdict.reason = record.reason;
+    switch (record.verdict) {
+    case oa::data::mutators::Verdict::compatible:
+        verdict.state = Verdict::State::compatible;
+        verdict.summary = counts_summary(record.counts, text);
+        break;
+    case oa::data::mutators::Verdict::no_effect:
+        verdict.state = Verdict::State::no_effect;
+        break;
+    case oa::data::mutators::Verdict::incompatible:
+        verdict.state = Verdict::State::incompatible;
+        break;
+    case oa::data::mutators::Verdict::failed:
+        verdict.state = Verdict::State::failed;
+        break;
+    }
+    return verdict;
 }
 
 std::string registry_initials(std::string_view name) {
