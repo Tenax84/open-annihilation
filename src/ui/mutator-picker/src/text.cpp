@@ -257,6 +257,29 @@ std::size_t filter_count(const Picker& picker, Filter filter) {
     return count;
 }
 
+std::size_t tag_count(const Picker& picker, std::string_view tag) {
+    std::size_t count = 0;
+    for (const Mutator& mutator : picker.inputs.mutators) {
+        if (!filter_keeps(mutator, picker.filter))
+            continue;
+        if (detail::listed(mutator.tags, tag))
+            ++count;
+    }
+    return count;
+}
+
+std::string default_options_text(const Picker& picker, std::string_view id) {
+    const Mutator* mutator = detail::find_mutator(picker, id);
+    if (mutator == nullptr)
+        return {};
+    Chosen chosen;
+    chosen.id = mutator->id;
+    for (const OptionSpec& spec : mutator->options)
+        chosen.options.emplace_back(spec.id, spec.fallback);
+    chosen.clash = detail::default_clash(*mutator, picker.inputs);
+    return option_lines(picker, *mutator, chosen);
+}
+
 std::vector<std::string> tags_shown(const Picker& picker) {
     std::vector<std::string> have;
     for (const Mutator& mutator : picker.inputs.mutators) {

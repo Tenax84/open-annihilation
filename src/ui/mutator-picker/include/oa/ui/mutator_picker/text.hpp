@@ -121,10 +121,16 @@ inline constexpr std::string_view tag_with_count = "Tag: {tag} ({count})";
 inline constexpr std::string_view search_mutators = "Search mutators";
 /// The heading over the On rows.
 inline constexpr std::string_view heading_on = "ON · APPLIED TOP TO BOTTOM";
-/// The heading over the Off rows, and a switch's Off half.
-inline constexpr std::string_view heading_off = "OFF";
-/// A switch's On half.
+/// The heading over the Off rows. Not a switch's Off half.
+inline constexpr std::string_view heading_off = "OFF · NOT APPLIED";
+/// A switch's Off half. The catalogue's shared OFF, which every switch uses.
+inline constexpr std::string_view switch_off = "OFF";
+/// A switch's On half. The catalogue's shared ON.
 inline constexpr std::string_view switch_on = "ON";
+/// The clash strip's Add caption, on a mutator that brings units or weapons.
+inline constexpr std::string_view clash_mode_add = "ADD";
+/// The clash strip's Replace caption.
+inline constexpr std::string_view clash_mode_replace = "REPLACE";
 /// The details' order label.
 inline constexpr std::string_view order_label = "Order";
 /// The button that moves the selected mutator up.

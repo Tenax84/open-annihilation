@@ -15,6 +15,7 @@
 #include "oa/ui/kit/chrome.hpp"
 #include "oa/ui/kit/components.hpp"
 #include "oa/ui/kit/controls.hpp"
+#include "oa/ui/kit/rows.hpp"
 #include "oa/ui/kit/tag_icon.hpp"
 #include "oa/ui/kit/text.hpp"
 #include "oa/ui/library/screen.hpp"
@@ -33,16 +34,16 @@
 namespace oa::ui::mutator_picker {
 namespace {
 
-/// The order label. Kind area, as the hint is. Not one of the names a journey
-/// is told to press; a control still needs a name.
-constexpr kit::ControlId order_id = 21;
-constexpr std::string_view name_order = "mutators.order";
-/// The list's scroll bar. A control needs a name; it takes no focus.
-constexpr std::string_view name_list_bar = "mutators.list.bar";
-/// The details' scroll bar. A control needs a name; it takes no focus.
-constexpr std::string_view name_details_bar = "mutators.details.bar";
 /// The accent line drawn across the list at a drag's target, in points.
 constexpr int32_t drag_line = 2;
+
+/// How much of a row is added. A drag keeps the controls on the well and
+/// draws the moving row as items only.
+enum class RowPaint : uint8_t {
+    both,     ///< the items and the controls
+    controls, ///< the controls, on the well
+    items,    ///< the items, with no control
+};
 
 /// The window's rows and columns at a size class.
 struct Window {
@@ -66,7 +67,6 @@ struct MenuEntry {
 
 /// A drop-down whose menu is open, drawn over everything else.
 struct OpenMenu {
-    Menu kind{Menu::none};          ///< which
     kit::Rect field{};              ///< its field
     std::vector<MenuEntry> items{}; ///< its items, in order
     int32_t chosen{-1};             ///< the item shown as chosen
@@ -92,6 +92,8 @@ struct Building {
     std::vector<kit::ControlId> tag_pills{};  ///< the tag pills, in the order shown
     std::vector<kit::ControlId> option_ids{}; ///< the selected mutator's option controls
     std::optional<OpenMenu> menu_open{};      ///< the open drop-down
+    int32_t number_width{0};                  ///< the On number column for this layout
+    int32_t row_switch_width{0};              ///< every row switch, one column
 };
 
 /// Returns the window's rows and columns for a frame.
@@ -313,32 +315,6 @@ kit::Colour tone_colour(Tone tone) noexcept {
     return kit::colour::hint;
 }
 
-/// Returns the word a layer id shows. An id that is not one of the nine is empty.
-///
-/// @param id the layer id
-/// @return the English word; empty when the id is not known
-std::string_view layer_word(std::string_view id) noexcept {
-    if (id == "files")
-        return library::words::layer_files;
-    if (id == "units")
-        return library::words::layer_units;
-    if (id == "weapons")
-        return library::words::layer_weapons;
-    if (id == "features")
-        return library::words::layer_features;
-    if (id == "sides")
-        return library::words::layer_sides;
-    if (id == "tables")
-        return library::words::layer_tables;
-    if (id == "menus")
-        return library::words::layer_menus;
-    if (id == "maps")
-        return library::words::tab_maps;
-    if (id == "hacks")
-        return library::words::fact_hacks;
-    return {};
-}
-
 /// Returns a badge's picture. The picture points into the badge.
 ///
 /// @param badge the badge; may be null
@@ -363,7 +339,6 @@ void add_mutator_badge(
     Building& building, const Mutator& mutator, const kit::Rect& rect, const kit::Rect& clip
 ) {
     kit::BadgeLook look;
-    look.face = kit::colour::hint;
     const oa::ui::frontend_renderer::RgbaPicture picture = picture_of(mutator.badge);
     if (oa::ui::frontend_renderer::picture_drawable(picture)) {
         look.picture = picture;
@@ -393,32 +368,6 @@ int32_t button_span(const Building& building, std::string_view caption) {
     return std::max(
         building.metrics->button_width, words + building.metrics->prompt_button_padding
     );
-}
-
-/// Returns how many inputs the current filter keeps that carry a tag.
-///
-/// The count is taken before the tag and the search, and it counts On and
-/// Off the same. It does not read the rows.
-///
-/// @param picker the picker
-/// @param tag the catalogue id
-/// @return how many
-std::size_t tag_count(const Picker& picker, std::string_view tag) {
-    std::size_t count = 0;
-    for (const Mutator& mutator : picker.inputs.mutators) {
-        const bool kept = picker.filter == Filter::all ||
-                          (picker.filter == Filter::installed && mutator.installed) ||
-                          (picker.filter == Filter::downloads && !mutator.installed);
-        if (!kept)
-            continue;
-        for (const std::string& id : mutator.tags) {
-            if (id == tag) {
-                ++count;
-                break;
-            }
-        }
-    }
-    return count;
 }
 
 /// Returns the setup's word, already looked up.
@@ -479,36 +428,38 @@ std::string tag_caption(const Building& building, std::string_view tag) {
     );
 }
 
-/// Returns the option lines an Off mutator shows, one sentence.
+/// The On number column: the class's least width, or the widest On number shown.
 ///
-/// The same shape as an On row's option line, from each option's default and
-/// the clash mode the manifest or the inputs name. Not the row's line.
-///
-/// @param picker the picker
-/// @param mutator the mutator
-/// @return the line; empty when there is nothing to show
-std::string options_summary(const Picker& picker, const Mutator& mutator) {
-    const library::TextHooks& hooks = picker.inputs.text;
-    std::vector<std::string> parts;
-    for (const OptionSpec& spec : mutator.options) {
-        const std::string caption = detail::option_caption(spec, spec.fallback);
-        parts.push_back(
-            library::filled(hooks, words::option_line, {{"label", spec.label}, {"value", caption}})
+/// @param building the layout
+/// @param shown the rows
+/// @return the width, in points
+int32_t measured_number_column(const Building& building, const std::vector<Row>& shown) {
+    const bool compact = building.size_class == kit::SizeClass::compact;
+    int32_t width = compact ? compact_number_column : number_column;
+    for (const Row& row : shown) {
+        if (!row.on)
+            continue;
+        width = std::max(
+            width,
+            kit::text_width(*building.fonts, kit::FontRole::small, std::to_string(row.number))
         );
     }
-    if (mutator.brings) {
-        const Clash mode = mutator.clashes ? *mutator.clashes : picker.inputs.clash_default;
-        const std::string_view which = mode == Clash::add ? words::clash_add : words::clash_replace;
-        parts.push_back(
-            library::filled(
-                hooks,
-                words::option_line,
-                {{"label", std::string(library::shown(hooks, words::clash_label))},
-                 {"value", std::string(library::shown(hooks, which))}}
-            )
-        );
-    }
-    return detail::join_dot(hooks, parts);
+    return width;
+}
+
+/// Every row switch's width, from the shared OFF and ON, so they share one column.
+///
+/// @param building the layout
+/// @return the width, in points
+int32_t measured_switch_width(const Building& building) {
+    const library::TextHooks& hooks = building.picker->inputs.text;
+    const int32_t off_width = kit::text_width(
+        *building.fonts, kit::FontRole::small, library::shown(hooks, words::switch_off)
+    );
+    const int32_t on_width = kit::text_width(
+        *building.fonts, kit::FontRole::small, library::shown(hooks, words::switch_on)
+    );
+    return kit::switch_width_for(std::max(off_width, on_width));
 }
 
 /// Appends a text in a box.
@@ -796,7 +747,6 @@ void add_filters(Building& building, const Window& window, const std::vector<std
         building.top.back().parts = std::move(part_words);
         if (building.state->menu == Menu::filter) {
             OpenMenu menu_open;
-            menu_open.kind = Menu::filter;
             menu_open.field = field;
             menu_open.items = std::move(entries);
             menu_open.chosen = chosen;
@@ -861,14 +811,15 @@ void add_filters(Building& building, const Window& window, const std::vector<std
     std::vector<std::string> used_words;
     std::vector<std::string> overflow_words;
     std::vector<MenuEntry> overflow;
-    bool tag_in_overflow = false;
+    int32_t overflow_chosen = -1;
+    bool stopped = false;
     for (std::size_t place = 0; place < tags.size(); ++place) {
         const std::string word = unique_word(used_words, controls::name_word(tags[place]));
         kit::PillLook measure;
         measure.text = std::string(library::tag_label(tags[place], hooks));
         measure.tag = kit::tag_icon_of(tags[place]);
         const int32_t width = kit::pill_width(*building.fonts, measure);
-        const bool fits = cursor + width <= pill_limit;
+        const bool fits = !stopped && cursor + width <= pill_limit;
         if (fits) {
             const kit::ControlId id =
                 controls::first_tag_pill + static_cast<kit::ControlId>(static_cast<int32_t>(place));
@@ -887,16 +838,18 @@ void add_filters(Building& building, const Window& window, const std::vector<std
             building.tag_pills.push_back(id);
             cursor += width + gap;
         } else {
+            stopped = true;
             MenuEntry entry;
             entry.word = word;
             entry.caption = measure.text;
             if (picker.tag == tags[place])
-                tag_in_overflow = true;
+                overflow_chosen = static_cast<int32_t>(overflow.size());
             overflow_words.push_back(word);
             overflow.push_back(std::move(entry));
         }
     }
 
+    const bool tags_on = !overflow.empty();
     const kit::Rect tags_rect{tags_x, row, std::max(tags_w, int32_t{0}), metrics.field_height};
     kit::ChoiceLook tags_look;
     tags_look.text =
@@ -904,32 +857,24 @@ void add_filters(Building& building, const Window& window, const std::vector<std
             kit::FontRole::regular,
             tags_word,
             tags_rect.width - metrics.choice_text_inset - metrics.choice_arrow_room);
-    tags_look.hovered = hovered(building, controls::tags, true);
-    tags_look.open = building.state->menu == Menu::tags;
+    tags_look.hovered = hovered(building, controls::tags, tags_on);
+    tags_look.open = tags_on && building.state->menu == Menu::tags;
     const std::size_t tags_before = building.list.controls.size();
     const std::string tags_name(name_tags);
     keep_name(building, tags_name);
     kit::add_choice(building.list, tags_rect, tags_look, controls::tags, tags_name);
     move_controls(building.list, tags_before, building.top);
     building.top.back().parts = overflow_words;
-    building.top.back().checked = tag_in_overflow;
-    if (building.state->menu == Menu::tags) {
+    building.top.back().checked = overflow_chosen >= 0;
+    if (!tags_on) {
+        building.top.back().enabled = false;
+        building.top.back().focusable = false;
+    }
+    if (tags_look.open) {
         OpenMenu menu_open;
-        menu_open.kind = Menu::tags;
         menu_open.field = tags_rect;
         menu_open.items = std::move(overflow);
-        menu_open.chosen = -1;
-        if (tag_in_overflow) {
-            for (std::size_t place = 0; place < tags.size(); ++place) {
-                if (picker.tag != tags[place])
-                    continue;
-                for (std::size_t slot = 0; slot < menu_open.items.size(); ++slot) {
-                    if (menu_open.items[slot].caption ==
-                        std::string(library::tag_label(tags[place], hooks)))
-                        menu_open.chosen = static_cast<int32_t>(slot);
-                }
-            }
-        }
+        menu_open.chosen = overflow_chosen;
         menu_open.name = tags_name;
         building.menu_open = std::move(menu_open);
     }
@@ -955,21 +900,27 @@ void add_filters(Building& building, const Window& window, const std::vector<std
 
 /// One piece of the list's scrolling content.
 struct ListPiece {
-    enum class Kind : uint8_t { hint, heading, row };
-    Kind kind{Kind::row};
+    /// What the piece is.
+    enum class Kind : uint8_t {
+        hint,    ///< the hint under the filters
+        heading, ///< an On or Off heading
+        row,     ///< one mutator
+        empty,   ///< the sentence when a filter hides every Off row
+    };
+    Kind kind{Kind::row};             ///< what it is
     int32_t y{};                      ///< the top, in content points
     int32_t height{};                 ///< the height, in points
     bool on_heading{false};           ///< a heading: the On heading when true
     std::size_t row{0};               ///< a row's place in the shown rows
-    std::vector<std::string> lines{}; ///< a hint's lines
+    std::vector<std::string> lines{}; ///< a hint's or an empty sentence's lines
     std::string text{};               ///< a heading's words
 };
 
 /// The list's content, measured and not yet drawn.
 struct ListPlan {
-    std::vector<ListPiece> pieces{};
-    int32_t height{0};
-    int32_t width{0};
+    std::vector<ListPiece> pieces{}; ///< the hint, the headings and the rows
+    int32_t height{0};               ///< the content's height, in points
+    int32_t width{0};                ///< the content's width, in points
 };
 
 /// Measures the list's hint, headings and rows at a width. Adds nothing.
@@ -1041,8 +992,23 @@ ListPlan plan_list(
         y += row_height;
         plan.pieces.push_back(std::move(piece));
     }
+    const Picker& picker = *building.picker;
+    const bool narrowed =
+        picker.filter != Filter::all || !picker.tag.empty() || !picker.query.empty();
     if (any_off)
         heading(false);
+    else if (any_on && narrowed) {
+        heading(false);
+        ListPiece piece;
+        piece.kind = ListPiece::Kind::empty;
+        piece.y = y;
+        const std::string sentence(library::shown(picker.inputs.text, words::empty_filtered));
+        piece.lines = wrap_lines(building, kit::FontRole::small, sentence, plan.width, 3);
+        piece.height =
+            std::max(static_cast<int32_t>(piece.lines.size()), int32_t{1}) * metrics.small_line;
+        y += piece.height;
+        plan.pieces.push_back(std::move(piece));
+    }
     for (std::size_t place = 0; place < shown_rows.size(); ++place) {
         if (shown_rows[place].on)
             continue;
@@ -1108,19 +1074,20 @@ int32_t line_at(const ListPlan& plan, const std::vector<Row>& shown_rows, const 
 /// @param rect the row, in window points
 /// @param clip the list's view
 /// @param selected_look the selected face, whatever the model says
+/// @param paint the items, the controls, or both
 void add_row(
     Building& building,
     const std::vector<Row>& shown_rows,
     std::size_t place,
     const kit::Rect& rect,
     const kit::Rect& clip,
-    bool selected_look
+    bool selected_look,
+    RowPaint paint
 ) {
     const kit::Metrics& metrics = *building.metrics;
     const Picker& picker = *building.picker;
     const Row& row = shown_rows[place];
     const bool read_only = picker.inputs.read_only;
-    const bool compact = building.size_class == kit::SizeClass::compact;
     const Mutator* mutator = detail::find_mutator(picker, row.id);
     const bool model_selected = picker.selected && *picker.selected == row.id;
     const kit::ControlId row_id =
@@ -1129,20 +1096,24 @@ void add_row(
         controls::first_grip + static_cast<kit::ControlId>(static_cast<int32_t>(place));
     const kit::ControlId switch_id =
         controls::first_switch + static_cast<kit::ControlId>(static_cast<int32_t>(place));
+    const bool visuals = paint != RowPaint::controls;
+    const bool named = paint != RowPaint::items;
 
-    add_item(building.list, kit::Role::fill, rect, clip).colour =
-        selected_look ? kit::colour::list_selected : kit::colour::list;
-    add_item(
-        building.list,
-        kit::Role::rule,
-        {rect.x, rect.y + rect.height - metrics.hairline, rect.width, metrics.hairline},
-        clip
-    )
-        .colour = kit::colour::rule;
+    if (visuals) {
+        add_item(building.list, kit::Role::fill, rect, clip).colour =
+            selected_look ? kit::colour::list_selected : kit::colour::list;
+        add_item(
+            building.list,
+            kit::Role::rule,
+            {rect.x, rect.y + rect.height - metrics.hairline, rect.width, metrics.hairline},
+            clip
+        )
+            .colour = kit::colour::rule;
+    }
 
-    const int32_t number_w = compact ? compact_number_column : number_column;
+    const int32_t number_w = building.number_width;
     int32_t x = rect.x + metrics.list_row_inset;
-    if (row.on) {
+    if (visuals && row.on) {
         const std::string number = std::to_string(row.number);
         add_text(
             building,
@@ -1168,20 +1139,36 @@ void add_row(
         kit::grip_height,
     };
     const std::string row_name =
-        unique_name(building, std::string(name_row_prefix) + controls::name_word(row.id));
-    const std::string grip_name = row_name + std::string(name_grip_suffix);
-    keep_name(building, grip_name);
-    const std::size_t grip_before = building.list.controls.size();
-    kit::add_grip(building.list, grip_rect, grip_look, grip_id, grip_name);
-    move_controls(building.list, grip_before, building.rows);
-    building.rows.back().focusable = false;
-    building.rows.back().clip = clip;
-    building.rows.back().group = controls::list_group;
-    if (!building.list.items.empty())
-        building.list.items.back().clip = clip;
+        named ? unique_name(building, std::string(name_row_prefix) + controls::name_word(row.id))
+              : std::string{};
+    if (visuals || named) {
+        const std::string grip_name =
+            named ? row_name + std::string(name_grip_suffix) : std::string("grip");
+        if (named)
+            keep_name(building, grip_name);
+        const std::size_t grip_controls = building.list.controls.size();
+        const std::size_t grip_items = building.list.items.size();
+        kit::add_grip(building.list, grip_rect, grip_look, grip_id, grip_name);
+        if (named) {
+            move_controls(building.list, grip_controls, building.rows);
+            building.rows.back().focusable = false;
+            building.rows.back().clip = clip;
+            building.rows.back().group = controls::list_group;
+            if (!visuals)
+                building.list.items.resize(grip_items);
+            else if (!building.list.items.empty())
+                building.list.items.back().clip = clip;
+        } else {
+            building.list.controls.resize(grip_controls);
+            if (!building.list.items.empty()) {
+                building.list.items.back().control = kit::no_control;
+                building.list.items.back().clip = clip;
+            }
+        }
+    }
     x += kit::grip_width + metrics.list_row_gap;
 
-    if (mutator != nullptr) {
+    if (visuals && mutator != nullptr) {
         const kit::Rect badge{
             x,
             rect.y + (rect.height - row_badge_side) / 2,
@@ -1193,10 +1180,10 @@ void add_row(
     x += row_badge_side + metrics.list_row_gap;
 
     const bool switch_locked = row.locked || read_only;
-    const int32_t switch_w = metrics.switch_width;
+    const int32_t switch_w = building.row_switch_width;
     const int32_t switch_x = rect.x + rect.width - metrics.list_row_inset - switch_w;
     int32_t text_right = switch_x - metrics.list_row_gap;
-    if (row.to_download) {
+    if (visuals && row.to_download) {
         const int32_t icon = metrics.state_icon_side;
         text_right -= icon + metrics.list_row_gap;
         kit::ChipLook icon_look;
@@ -1216,73 +1203,93 @@ void add_row(
     const int32_t block = metrics.regular_line + metrics.small_line;
     const int32_t text_y = rect.y + std::max((rect.height - block) / 2, int32_t{0});
     const std::string name = mutator != nullptr ? detail::display_name(*mutator) : row.id;
-    add_text(
-        building,
-        kit::FontRole::regular,
-        cut(building, kit::FontRole::regular, name, text_w),
-        {x, text_y, text_w, metrics.regular_line},
-        kit::Align::left,
-        kit::colour::text,
-        clip
-    );
-    add_text(
-        building,
-        kit::FontRole::small,
-        cut(building, kit::FontRole::small, one_line(row.line), text_w),
-        {x, text_y + metrics.regular_line, text_w, metrics.small_line},
-        kit::Align::left,
-        tone_colour(row.tone),
-        clip
-    );
-
-    kit::SwitchLook switch_look;
-    switch_look.on = row.on;
-    switch_look.locked = switch_locked;
-    switch_look.off_caption = std::string(library::shown(picker.inputs.text, words::heading_off));
-    switch_look.on_caption = std::string(library::shown(picker.inputs.text, words::switch_on));
-    switch_look.hovered = hovered(building, switch_id, !switch_locked);
-    const kit::Rect switch_rect{
-        switch_x,
-        rect.y + (rect.height - metrics.button_height) / 2,
-        switch_w,
-        metrics.button_height,
-    };
-    const std::string switch_name = row_name + std::string(name_switch_suffix);
-    keep_name(building, switch_name);
-    const std::size_t switch_before = building.list.controls.size();
-    kit::add_switch(building.list, switch_rect, switch_look, switch_id, switch_name);
-    move_controls(building.list, switch_before, building.rows);
-    building.rows.back().focusable = false;
-    building.rows.back().clip = clip;
-    building.rows.back().group = controls::list_group;
-    if (!building.list.items.empty())
-        building.list.items.back().clip = clip;
-
-    if (selected_look) {
-        add_item(building.list, kit::Role::outline, rect, clip).colour = kit::colour::accent;
+    if (visuals) {
+        add_text(
+            building,
+            kit::FontRole::regular,
+            cut(building, kit::FontRole::regular, name, text_w),
+            {x, text_y, text_w, metrics.regular_line},
+            kit::Align::left,
+            kit::colour::text,
+            clip
+        );
+        add_text(
+            building,
+            kit::FontRole::small,
+            cut(building, kit::FontRole::small, one_line(row.line), text_w),
+            {x, text_y + metrics.regular_line, text_w, metrics.small_line},
+            kit::Align::left,
+            tone_colour(row.tone),
+            clip
+        );
     }
-    if (row.locked)
+
+    if (visuals || named) {
+        kit::SwitchLook switch_look;
+        switch_look.on = row.on;
+        switch_look.locked = switch_locked;
+        switch_look.off_caption =
+            std::string(library::shown(picker.inputs.text, words::switch_off));
+        switch_look.on_caption = std::string(library::shown(picker.inputs.text, words::switch_on));
+        switch_look.hovered = hovered(building, switch_id, !switch_locked);
+        const kit::Rect switch_rect{
+            switch_x,
+            rect.y + (rect.height - metrics.button_height) / 2,
+            switch_w,
+            metrics.button_height,
+        };
+        const std::string switch_name =
+            named ? row_name + std::string(name_switch_suffix) : std::string("switch");
+        if (named)
+            keep_name(building, switch_name);
+        const std::size_t switch_controls = building.list.controls.size();
+        const std::size_t switch_items = building.list.items.size();
+        kit::add_switch(building.list, switch_rect, switch_look, switch_id, switch_name);
+        if (named) {
+            move_controls(building.list, switch_controls, building.rows);
+            building.rows.back().focusable = false;
+            building.rows.back().clip = clip;
+            building.rows.back().group = controls::list_group;
+            if (!visuals)
+                building.list.items.resize(switch_items);
+            else if (!building.list.items.empty())
+                building.list.items.back().clip = clip;
+        } else {
+            building.list.controls.resize(switch_controls);
+            if (!building.list.items.empty()) {
+                building.list.items.back().control = kit::no_control;
+                building.list.items.back().clip = clip;
+            }
+        }
+    }
+
+    if (visuals && selected_look)
+        add_item(building.list, kit::Role::outline, rect, clip).colour = kit::colour::accent;
+    if (visuals && row.locked)
         add_item(building.list, kit::Role::locked_fade, rect, clip);
 
-    kit::Control control;
-    control.id = row_id;
-    control.rect = rect;
-    control.clip = clip;
-    control.enabled = true;
-    control.focusable = false;
-    control.name = row_name;
-    control.kind = kit::ControlKind::list_item;
-    control.group = controls::list_group;
-    control.checked = model_selected;
-    control.text = name;
-    building.rows.push_back(std::move(control));
+    if (named) {
+        kit::Control control;
+        control.id = row_id;
+        control.rect = rect;
+        control.clip = clip;
+        control.enabled = true;
+        control.focusable = false;
+        control.name = row_name;
+        control.kind = kit::ControlKind::list_item;
+        control.group = controls::list_group;
+        control.checked = model_selected;
+        control.text = name;
+        building.rows.push_back(std::move(control));
+    }
 }
 
 /// Appends the list pane: the hint, the headings, the rows, and the scroll bar.
 ///
 /// An empty list draws its sentence in the pane and does not scroll. A drag
-/// draws the row at the state's y, leaves its place as the well, and draws
-/// the accent line when the target is set.
+/// leaves the row's controls on the well and draws the row, as items only,
+/// whole inside the list's view. The accent line is drawn when the target
+/// is set, under the moving row.
 ///
 /// @param[in,out] building the layout
 /// @param pane the pane
@@ -1428,14 +1435,37 @@ void add_list(
                 .look = std::move(look);
             continue;
         }
+        if (piece.kind == ListPiece::Kind::empty) {
+            int32_t line_y = window_y;
+            for (const std::string& line : piece.lines) {
+                add_text(
+                    building,
+                    kit::FontRole::small,
+                    line,
+                    {port.x, line_y, port.width, metrics.small_line},
+                    kit::Align::centre,
+                    kit::colour::hint,
+                    port
+                );
+                line_y += metrics.small_line;
+            }
+            continue;
+        }
         const bool is_dragged = dragged && *dragged == piece.row;
         if (is_dragged) {
             add_item(
                 building.list, kit::Role::fill, {port.x, window_y, port.width, piece.height}, port
             )
                 .colour = kit::colour::well;
-            const kit::Rect floating{port.x, building.state->drag->y, port.width, piece.height};
-            add_row(building, shown_rows, piece.row, floating, port, true);
+            add_row(
+                building,
+                shown_rows,
+                piece.row,
+                {port.x, window_y, port.width, piece.height},
+                port,
+                false,
+                RowPaint::controls
+            );
             continue;
         }
         const bool selected =
@@ -1446,7 +1476,8 @@ void add_list(
             piece.row,
             {port.x, window_y, port.width, piece.height},
             port,
-            selected
+            selected,
+            RowPaint::both
         );
     }
 
@@ -1455,6 +1486,30 @@ void add_list(
         const int32_t window_y = content_y + port.y - offset;
         add_item(building.list, kit::Role::fill, {port.x, window_y, port.width, drag_line}, port)
             .colour = kit::colour::accent;
+    }
+
+    if (dragged) {
+        int32_t row_height = 0;
+        for (const ListPiece& piece : plan.pieces) {
+            if (piece.kind == ListPiece::Kind::row && piece.row == *dragged)
+                row_height = piece.height;
+        }
+        const int32_t least = port.y;
+        const int32_t most = port.y + std::max(port.height - row_height, int32_t{0});
+        int32_t top = building.state->drag->y;
+        if (top < least)
+            top = least;
+        if (top > most)
+            top = most;
+        add_row(
+            building,
+            shown_rows,
+            *dragged,
+            {port.x, top, port.width, row_height},
+            port,
+            true,
+            RowPaint::items
+        );
     }
 
     kit::Control list_control;
@@ -1524,44 +1579,52 @@ struct OptionPlan {
 
 /// One fact, measured in the details' content.
 struct FactPlan {
-    int32_t y{0};
-    int32_t height{0};
-    int32_t label_width{0};
-    int32_t value_x{0};
-    int32_t value_w{0};
-    std::string label{};
-    std::vector<std::string> lines{};
-    kit::Colour ink{kit::colour::text};
+    int32_t y{0};                       ///< the fact's top, in content points
+    int32_t height{0};                  ///< the fact's height
+    int32_t label_width{0};             ///< the label's columns
+    int32_t value_x{0};                 ///< the value's left column
+    int32_t value_w{0};                 ///< the value's columns
+    std::string label{};                ///< the label, as drawn
+    std::vector<std::string> lines{};   ///< the value, wrapped
+    kit::Colour ink{kit::colour::text}; ///< the value's colour
 };
 
 /// The details' content, measured and not yet drawn.
 struct DetailsPlan {
-    bool show{false};
-    int32_t width{0};
-    int32_t height{0};
-    std::string name{};
-    std::string version{};
-    int32_t name_y{0};
-    int32_t name_x{0};
-    int32_t name_w{0};
-    std::vector<std::string> description{};
-    int32_t description_y{0};
-    std::string summary{};
-    int32_t summary_y{0};
-    bool has_summary{false};
-    std::vector<OptionPlan> options{};
-    int32_t order_y{0};
-    int32_t up_x{0};
-    int32_t up_w{0};
-    int32_t down_x{0};
-    int32_t down_w{0};
-    int32_t order_w{0};
-    bool up_enabled{false};
-    bool down_enabled{false};
-    std::string order{};
-    std::string up_caption{};
-    std::string down_caption{};
-    std::vector<FactPlan> facts{};
+    int32_t width{0};                          ///< the content's width
+    int32_t height{0};                         ///< the content's height
+    std::string name{};                        ///< the mutator's name, as drawn
+    std::string version{};                     ///< the version and author, as drawn
+    int32_t name_y{0};                         ///< the name's top
+    int32_t name_x{0};                         ///< the name's left column
+    int32_t name_w{0};                         ///< the name's columns
+    std::vector<std::string> description{};    ///< the description, wrapped
+    int32_t description_y{0};                  ///< the description's top
+    std::string summary{};                     ///< an Off mutator's option line, as drawn
+    int32_t summary_y{0};                      ///< that line's top
+    bool has_summary{false};                   ///< the line is drawn
+    std::vector<OptionPlan> options{};         ///< the option controls, when it is on
+    bool has_clash{false};                     ///< it brings units or weapons and is on
+    int32_t clash_label_y{0};                  ///< the clash label's top
+    int32_t clash_y{0};                        ///< the clash strip's top
+    int32_t clash_w{0};                        ///< the clash strip's width
+    int32_t clash_level_width{0};              ///< one clash caption's columns
+    std::size_t clash_chosen{0};               ///< 0 is Add, 1 is Replace
+    bool clash_locked{false};                  ///< it cannot be changed
+    std::string clash_label{};                 ///< the clash label, as drawn
+    std::vector<std::string> clash_captions{}; ///< Add and Replace, as drawn
+    int32_t order_y{0};                        ///< the order row's top
+    int32_t up_x{0};                           ///< ▲ UP's left column
+    int32_t up_w{0};                           ///< ▲ UP's width
+    int32_t down_x{0};                         ///< ▼ DOWN's left column
+    int32_t down_w{0};                         ///< ▼ DOWN's width
+    int32_t order_w{0};                        ///< the order label's columns
+    bool up_enabled{false};                    ///< ▲ UP can be pressed
+    bool down_enabled{false};                  ///< ▼ DOWN can be pressed
+    std::string order{};                       ///< the order label, as drawn
+    std::string up_caption{};                  ///< ▲ UP's words
+    std::string down_caption{};                ///< ▼ DOWN's words
+    std::vector<FactPlan> facts{};             ///< Checked, Works with and Changes
 };
 
 /// Returns the caption a choice or a toggle shows for one value.
@@ -1600,7 +1663,6 @@ DetailsPlan plan_details(
     const bool compact = building.size_class == kit::SizeClass::compact;
     const bool read_only = picker.inputs.read_only;
     DetailsPlan plan;
-    plan.show = true;
     plan.width = std::max(width, int32_t{0});
     plan.name = detail::display_name(mutator);
     if (!mutator.version.empty() && !mutator.author.empty()) {
@@ -1629,7 +1691,7 @@ DetailsPlan plan_details(
 
     const bool on = on_at.has_value() && chosen != nullptr;
     if (!on) {
-        const std::string summary = options_summary(picker, mutator);
+        const std::string summary = default_options_text(picker, mutator.id);
         if (!summary.empty()) {
             y += metrics.paragraph_gap;
             plan.summary_y = y;
@@ -1660,10 +1722,22 @@ DetailsPlan plan_details(
             if (spec.type == OptionSpec::Type::toggle) {
                 option.form = OptionForm::toggle;
                 option.control_h = metrics.button_height;
-                option.control_w = metrics.switch_width;
                 option.on = spec.values.size() > 1 && value == spec.values[1];
                 option.off_caption = caption_at(spec, 0);
                 option.on_caption = caption_at(spec, 1);
+                const int32_t off_width =
+                    kit::text_width(*building.fonts, kit::FontRole::small, option.off_caption);
+                const int32_t on_width =
+                    kit::text_width(*building.fonts, kit::FontRole::small, option.on_caption);
+                option.control_w = kit::switch_width_for(std::max(off_width, on_width));
+                if (plan.width > 0 && option.control_w > plan.width) {
+                    option.control_w = plan.width;
+                    const int32_t room = std::max((option.control_w - 2) / 2, int32_t{0});
+                    option.off_caption =
+                        cut(building, kit::FontRole::small, option.off_caption, room);
+                    option.on_caption =
+                        cut(building, kit::FontRole::small, option.on_caption, room);
+                }
             } else if (spec.type == OptionSpec::Type::number) {
                 option.form = OptionForm::slider;
                 option.control_h = std::max(metrics.knob_height, metrics.small_line);
@@ -1749,6 +1823,41 @@ DetailsPlan plan_details(
             y += option.control_h;
             plan.options.push_back(std::move(option));
         }
+        if (mutator.brings) {
+            y += metrics.paragraph_gap;
+            plan.has_clash = true;
+            plan.clash_locked = read_only;
+            plan.clash_label_y = y;
+            const std::string label(library::shown(hooks, words::clash_label));
+            plan.clash_label = cut(building, kit::FontRole::regular, label, plan.width);
+            y += metrics.regular_line + metrics.hint_gap;
+            plan.clash_y = y;
+            const Clash mode = chosen->clash.value_or(Clash::replace);
+            plan.clash_chosen = mode == Clash::add ? std::size_t{0} : std::size_t{1};
+            plan.clash_captions = {
+                std::string(library::shown(hooks, words::clash_mode_add)),
+                std::string(library::shown(hooks, words::clash_mode_replace)),
+            };
+            int32_t widest = 0;
+            for (const std::string& caption : plan.clash_captions) {
+                widest = std::max(
+                    widest, kit::text_width(*building.fonts, kit::FontRole::small, caption)
+                );
+            }
+            plan.clash_level_width = widest + 2 * metrics.chip_padding;
+            constexpr int32_t count = 2;
+            int32_t strip = 2 + count * plan.clash_level_width;
+            if (strip > plan.width) {
+                plan.clash_level_width = std::max((plan.width - 2) / count, int32_t{1});
+                strip = 2 + count * plan.clash_level_width;
+                const int32_t caption_room =
+                    std::max(plan.clash_level_width - 2 * metrics.chip_padding, int32_t{0});
+                for (std::string& caption : plan.clash_captions)
+                    caption = cut(building, kit::FontRole::small, caption, caption_room);
+            }
+            plan.clash_w = std::min(strip, std::max(plan.width, int32_t{0}));
+            y += metrics.button_height;
+        }
     }
 
     y += metrics.paragraph_gap;
@@ -1764,9 +1873,9 @@ DetailsPlan plan_details(
         building, kit::FontRole::regular, library::shown(hooks, words::order_label), plan.order_w
     );
     const std::size_t on_index = on_at.has_value() ? *on_at : std::size_t{0};
-    const bool band_ok = on && band.first <= band.last;
-    plan.up_enabled = band_ok && on_index > band.first;
-    plan.down_enabled = band_ok && on_index < band.last;
+    const bool may_move = on && !read_only && band.first <= band.last;
+    plan.up_enabled = may_move && on_index > band.first;
+    plan.down_enabled = may_move && on_index < band.last;
     y += metrics.button_height;
 
     y += metrics.paragraph_gap;
@@ -1787,51 +1896,22 @@ DetailsPlan plan_details(
     const std::string mod = picker.inputs.mod_name.empty()
                                 ? std::string(library::shown(hooks, words::no_mod))
                                 : picker.inputs.mod_name;
-    std::string checked_value;
+    const library::CheckedWords checked = library::checked_text(mutator.verdict, mod, hooks);
+    const std::string checked_value = checked.value;
     kit::Colour checked_ink = kit::colour::text;
-    switch (mutator.verdict.state) {
-    case library::Verdict::State::compatible:
-        checked_value = library::filled(
-            hooks,
-            library::words::checked_good,
-            {{"mod", mod}, {"summary", mutator.verdict.summary}}
-        );
+    if (checked.mark == library::Mark::good)
         checked_ink = kit::colour::accent;
-        break;
-    case library::Verdict::State::no_effect:
-        checked_value = library::filled(hooks, library::words::checked_no_effect, {{"mod", mod}});
+    else if (checked.mark == library::Mark::warn)
         checked_ink = kit::colour::lock;
-        break;
-    case library::Verdict::State::incompatible:
-        checked_value = library::filled(
-            hooks,
-            library::words::checked_incompatible,
-            {{"mod", mod}, {"reason", mutator.verdict.reason}}
-        );
+    else if (checked.mark == library::Mark::bad)
         checked_ink = kit::colour::danger;
-        break;
-    case library::Verdict::State::failed:
-        checked_value = library::filled(
-            hooks,
-            library::words::checked_failed,
-            {{"mod", mod}, {"reason", mutator.verdict.reason}}
-        );
-        checked_ink = kit::colour::danger;
-        break;
-    case library::Verdict::State::checking:
-        checked_value = library::filled(hooks, library::words::checked_running, {{"mod", mod}});
-        break;
-    case library::Verdict::State::unchecked:
-        checked_value = library::filled(hooks, library::words::checked_not_yet, {{"mod", mod}});
-        break;
-    }
     const std::string works_value =
         mutator.works_with_text.empty()
             ? std::string(library::shown(hooks, library::words::works_with_any))
             : mutator.works_with_text;
     std::vector<std::string> layer_names;
     for (const std::string& id : mutator.layers) {
-        const std::string_view word = layer_word(id);
+        const std::string_view word = library::layer_word(id);
         if (!word.empty())
             layer_names.emplace_back(library::shown(hooks, word));
         else if (!id.empty())
@@ -1984,7 +2064,6 @@ void emit_details(
             kit::add_choice(building.list, control_rect, look, id, name);
             if (look.open) {
                 OpenMenu menu_open;
-                menu_open.kind = Menu::choice;
                 menu_open.field = control_rect;
                 menu_open.chosen = static_cast<int32_t>(option.chosen);
                 menu_open.name = name;
@@ -2011,6 +2090,46 @@ void emit_details(
         building.option_ids.push_back(id);
     }
 
+    if (plan.has_clash) {
+        add_text(
+            building,
+            kit::FontRole::regular,
+            plan.clash_label,
+            at(0, plan.clash_label_y, plan.width, metrics.regular_line),
+            kit::Align::left,
+            kit::colour::text,
+            port
+        );
+        kit::LevelsLook look;
+        look.captions = plan.clash_captions;
+        look.level_width = plan.clash_level_width;
+        look.chosen = plan.clash_chosen;
+        look.offered = plan.clash_captions.size();
+        look.locked = plan.clash_locked;
+        look.hovered = hovered(building, controls::clash, !plan.clash_locked);
+        const std::string clash_name(name_clash);
+        keep_name(building, clash_name);
+        const std::size_t before = building.list.controls.size();
+        kit::add_levels(
+            building.list,
+            at(0, plan.clash_y, plan.clash_w, metrics.button_height),
+            look,
+            controls::clash,
+            clash_name
+        );
+        move_controls(building.list, before, building.detail);
+        kit::Control& control = building.detail.back();
+        control.clip = port;
+        control.group = controls::details_group;
+        control.parts = {"add", "replace"};
+        if (plan.clash_locked) {
+            control.enabled = false;
+            control.focusable = false;
+        }
+        if (!building.list.items.empty())
+            building.list.items.back().clip = port;
+    }
+
     add_text(
         building,
         kit::FontRole::regular,
@@ -2019,17 +2138,6 @@ void emit_details(
         kit::Align::left,
         kit::colour::text,
         port
-    );
-    const std::string order_name(name_order);
-    keep_name(building, order_name);
-    add_label(
-        building.detail,
-        order_id,
-        at(0, plan.order_y, plan.order_w, metrics.button_height),
-        order_name,
-        plan.order,
-        port,
-        controls::details_group
     );
 
     const auto add_order = [&](kit::ControlId id,
@@ -2265,6 +2373,9 @@ void add_footer(Building& building, const Window& window, const Footer& foot, bo
             false,
             true
         );
+        const bool details_on =
+            building.picker->selected &&
+            detail::find_mutator(*building.picker, *building.picker->selected) != nullptr;
         add_footer_button(
             building,
             cursor,
@@ -2273,7 +2384,7 @@ void add_footer(Building& building, const Window& window, const Footer& foot, bo
             name_details,
             std::string(library::shown(hooks, words::details_button)),
             false,
-            true
+            details_on
         );
     } else {
         add_footer_button(
@@ -2362,6 +2473,7 @@ void declare_tabs(Building& building, bool page) {
     if (page) {
         for (const kit::ControlId id : building.option_ids)
             stop(id);
+        stop(controls::clash);
         stop(controls::up);
         stop(controls::down);
         stop(controls::back);
@@ -2391,6 +2503,7 @@ void declare_tabs(Building& building, bool page) {
     stop(controls::list);
     for (const kit::ControlId id : building.option_ids)
         stop(id);
+    stop(controls::clash);
     stop(controls::up);
     stop(controls::down);
     stop(controls::cancel);
@@ -2541,6 +2654,8 @@ lay(const Picker& picker,
     const Window window = window_of(frame);
     const bool compact = frame.size_class == kit::SizeClass::compact;
     const std::vector<Row> shown_rows = rows(picker);
+    building.number_width = measured_number_column(building, shown_rows);
+    building.row_switch_width = measured_switch_width(building);
     const Footer foot = footer(picker);
     const std::string hint_text = hint(picker);
     const std::vector<std::string> tags = tags_shown(picker);

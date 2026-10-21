@@ -1744,6 +1744,45 @@ void clash_rows() {
     OA_CHECK(walls_row != nullptr && walls_row->line == "Units and weapons: Add");
 }
 
+/// Tag counts follow the current filter and ignore the tag and the search.
+/// An Off mutator's default line uses the clash mode open would keep.
+void counts_and_default_lines() {
+    picker::Mutator scout = made("scout-post", "Scout Post");
+    scout.tags = {"ai", "economy"};
+    scout.brings = true;
+    scout.options.push_back(choice_option("speed", "Speed", {"1x", "2x"}, {"1x", "2x"}, "1x"));
+    picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
+    keep.installed = false;
+    keep.tags = {"ai"};
+    keep.brings = true;
+    keep.clashes = picker::Clash::add;
+    picker::Mutator walls = made("ridge-walls", "Ridge Walls");
+    walls.tags = {"maps"};
+    picker::Inputs inputs;
+    inputs.mod_name = "Ridge";
+    inputs.clash_default = picker::Clash::replace;
+    inputs.mutators.push_back(scout);
+    inputs.mutators.push_back(keep);
+    inputs.mutators.push_back(walls);
+    picker::Picker model;
+    picker::open(model, inputs);
+    model.tag = "maps";
+    model.query = "zzz-no-match";
+    OA_CHECK(picker::tag_count(model, "ai") == 2);
+    OA_CHECK(picker::tag_count(model, "economy") == 1);
+    OA_CHECK(picker::tag_count(model, "maps") == 1);
+    OA_CHECK(picker::tag_count(model, "missing") == 0);
+    model.filter = picker::Filter::installed;
+    OA_CHECK(picker::tag_count(model, "ai") == 1);
+    OA_CHECK(
+        picker::default_options_text(model, "scout-post") ==
+        "Speed: 1x · Units and weapons: Replace"
+    );
+    OA_CHECK(picker::default_options_text(model, "gatehouse-keep") == "Units and weapons: Add");
+    OA_CHECK(picker::default_options_text(model, "ridge-walls").empty());
+    OA_CHECK(picker::default_options_text(model, "gone").empty());
+}
+
 /// The size of the random walks' pool of mutators.
 constexpr std::size_t walk_size = 8;
 
@@ -2172,6 +2211,7 @@ int main() {
     confirm_recomputes();
     number_values_and_spellings();
     clash_rows();
+    counts_and_default_lines();
     random_walks();
     return oa::test::check_exit_status();
 }

@@ -3,20 +3,25 @@
 
 // The mutator picker drawn in the installed game's fonts, over a made-up
 // set: Compact in the 640x480 window at 1x, Regular in 1920x1080 and Large
-// in 2560x1440 at 2x, Compact's details page, a drag at Regular, read-only
-// at Regular and Compact in French. Each is laid out and drawn twice into a
-// picture with a margin round the window: the two drawings are byte for byte
-// the same, the margin keeps its colour, and every pixel of the window is
-// drawn. In the game's fonts every text fits and every part lies in the
-// window. The characters the game's fonts lack are drawn in the modern fonts
-// beside the test, as the game draws them. Given --frames DIR, it writes
+// in 2560x1440 at 2x, Compact's details page, a drag at Regular over a
+// middle row, read-only at Regular and Compact in the catalogue's French.
+// Each is laid out and drawn twice into a picture with a margin round the
+// window: the two drawings are byte for byte the same, the margin keeps its
+// colour, and every pixel of the window is drawn. In the game's fonts every
+// text fits and every part lies in the window, including the list, Compact's
+// details page and read-only at each class in German, French, Spanish and
+// Italian, and the On numbers through 24 at Compact and Regular. The
+// characters the game's fonts lack are drawn in the modern fonts beside the
+// test, as the game draws them. Given --frames DIR, it writes
 // mutator-picker-compact.png, mutator-picker-regular.png,
 // mutator-picker-large.png, mutator-picker-details-compact.png,
 // mutator-picker-drag-regular.png, mutator-picker-view-regular.png and
 // mutator-picker-fr-compact.png.
 //
-//   oa-ui-mutator-picker-draw-test --data [--frames DIR]
+//   oa-ui-mutator-picker-draw-test --data INTERFACE_TDF [--frames DIR]
 
+#include "oa/data/languages.hpp"
+#include "oa/data/languages/interface_text.hpp"
 #include "oa/formats/png.hpp"
 #include "oa/platform/text_font.hpp"
 #include "oa/present/game_text.hpp"
@@ -43,6 +48,7 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -56,9 +62,13 @@ namespace {
 namespace kit = oa::ui::kit;
 namespace picker = oa::ui::mutator_picker;
 namespace lib = oa::ui::library;
+namespace languages = oa::data::languages;
 namespace renderer = oa::ui::frontend_renderer;
 namespace png = oa::formats::png;
 namespace text_font = oa::platform::text_font;
+
+/// The catalogue the French picture and the fit cases read. Null shows English.
+const languages::InterfaceText* catalogue = nullptr;
 
 /// The points of margin drawn round the window, which nothing may touch.
 constexpr int32_t margin_points = 4;
@@ -117,46 +127,22 @@ std::shared_ptr<const oa::present::TextMask> draw_modern(
     return mask;
 }
 
-/// The French of the mockup, for the French picture only.
+/// Looks a word up in the installed interface catalogue.
 ///
 /// @param context unused
 /// @param english the English word
-/// @return the French, or the English when this picture leaves it
-std::string_view french_shown(void* /*context*/, std::string_view english) {
-    using picker::words::cancel;
-    using picker::words::details_button;
-    using picker::words::filter_all;
-    using picker::words::heading_off;
-    using picker::words::heading_on;
-    using picker::words::no_mod;
-    using picker::words::search_mutators;
-    using picker::words::setup_skirmish;
-    using picker::words::switch_on;
-    using picker::words::title_mutators;
-    using picker::words::use_these;
-    if (english == title_mutators)
-        return "Mutateurs";
-    if (english == setup_skirmish)
-        return "Escarmouche";
-    if (english == no_mod)
-        return "Sans mod";
-    if (english == filter_all)
-        return "Tous";
-    if (english == search_mutators)
-        return "Rechercher des mutateurs";
-    if (english == heading_on)
-        return "Actifs · appliqués de haut en bas";
-    if (english == heading_off)
-        return "Non";
-    if (english == switch_on)
-        return "Oui";
-    if (english == details_button)
-        return "Détails";
-    if (english == cancel)
-        return "Annuler";
-    if (english == use_these)
-        return "Valider";
-    return english;
+/// @return the catalogue's text; the view stays valid until the language changes
+std::string_view catalogue_shown(void* /*context*/, std::string_view english) {
+    return languages::interface_text(english);
+}
+
+/// Reads a file whole.
+///
+/// @param path the file
+/// @return its bytes; empty when it cannot be read
+std::string read_file(const char* path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
 /// A made-up mutator.
@@ -201,6 +187,7 @@ picker::Picker opened(lib::TextHooks text, bool read_only) {
         scout.description += "The scout watches the ridge. ";
     scout.tags = {"gameplay", "statistics"};
     scout.layers = {"units", "weapons"};
+    scout.brings = true;
     picker::OptionSpec speed;
     speed.id = "speed";
     speed.type = picker::OptionSpec::Type::choice;
@@ -430,6 +417,29 @@ texts_not_fitting(const kit::DisplayList& list, const kit::Fonts& measured) {
                     "placeholder \"" + look->placeholder + "\""
                 );
             break;
+        case kit::Role::toggle:
+            if (const auto* look = std::get_if<kit::SwitchLook>(&item.look)) {
+                const int32_t half = std::max((item.rect.width - 2) / 2, int32_t{0});
+                check(
+                    width(kit::FontRole::small, look->off_caption) <= half,
+                    "switch off \"" + look->off_caption + "\""
+                );
+                check(
+                    width(kit::FontRole::small, look->on_caption) <= half,
+                    "switch on \"" + look->on_caption + "\""
+                );
+            }
+            break;
+        case kit::Role::levels:
+            if (const auto* look = std::get_if<kit::LevelsLook>(&item.look)) {
+                for (const std::string& caption : look->captions) {
+                    check(
+                        width(kit::FontRole::small, caption) <= look->level_width,
+                        "level \"" + caption + "\""
+                    );
+                }
+            }
+            break;
         default:
             break;
         }
@@ -448,7 +458,7 @@ enum class SceneKind : uint8_t {
 
 /// One picture.
 struct Scene {
-    const char* name;                ///< the file's name after "mutator-picker-"
+    const char* name{};              ///< the file's name after "mutator-picker-"
     kit::Viewport window{};          ///< the window it is laid out for
     SceneKind kind{SceneKind::list}; ///< which picture
 };
@@ -475,33 +485,19 @@ kit::Viewport window_of(int32_t width, int32_t height, int32_t percent) {
     return viewport;
 }
 
-/// The bottom of the lowest row.
-///
-/// @param list the display list
-/// @return the row's bottom, in window points
-int32_t lowest_row_bottom(const kit::DisplayList& list) {
-    int32_t bottom = 0;
-    for (const kit::Control& control : list.controls) {
-        if (control.kind != kit::ControlKind::list_item)
-            continue;
-        if (control.name.rfind("mutators.row.", 0) != 0)
-            continue;
-        if (control.name.ends_with(".grip") || control.name.ends_with(".switch"))
-            continue;
-        bottom = std::max(bottom, control.rect.y + control.rect.height);
-    }
-    return bottom;
-}
-
 /// Lays a scene out.
 ///
 /// @param scene the scene
 /// @param measured the fonts
-/// @return the model, the state and the display list
+/// @return the display list
 kit::DisplayList layout_scene(const Scene& scene, const kit::Fonts& measured) {
     lib::TextHooks text;
-    if (scene.kind == SceneKind::french)
-        text.shown = french_shown;
+    if (scene.kind == SceneKind::french && catalogue != nullptr) {
+        if (const languages::Language* french = languages::find_by_tag("fr")) {
+            languages::set_interface_language(catalogue, *french);
+            text.shown = catalogue_shown;
+        }
+    }
     const bool read_only = scene.kind == SceneKind::viewing;
     const picker::Picker model = opened(text, read_only);
     const kit::Frame frame = kit::frame_of(scene.window);
@@ -510,9 +506,14 @@ kit::DisplayList layout_scene(const Scene& scene, const kit::Fonts& measured) {
         state.details_page = true;
     if (scene.kind == SceneKind::drag) {
         const kit::DisplayList resting = picker::picker_layout(model, state, frame, measured);
+        const kit::Control* gatehouse = nullptr;
+        for (const kit::Control& control : resting.controls) {
+            if (control.name == "mutators.row.gatehouse")
+                gatehouse = &control;
+        }
         picker::DragShown drag;
         drag.id = "scout-post";
-        drag.y = lowest_row_bottom(resting);
+        drag.y = gatehouse != nullptr ? gatehouse->rect.y + 10 : 0;
         drag.target = picker::Drop{true, 1};
         state.drag = std::move(drag);
     }
@@ -628,19 +629,137 @@ bool write_window(const Drawing& drawing, const std::filesystem::path& path) {
     return static_cast<bool>(output);
 }
 
+/// Reports texts that do not fit, and fails the check when any do.
+///
+/// @param list the display list
+/// @param measured the fonts
+/// @param where the case
+void expect_fitting(const kit::DisplayList& list, const kit::Fonts& measured, const char* where) {
+    for (const std::string& problem : texts_not_fitting(list, measured)) {
+        std::fprintf(stderr, "%s: %s does not fit\n", where, problem.c_str());
+        ++oa::test::failed_checks();
+    }
+}
+
+/// Lays the list, the details page and read-only out in one language, at
+/// each size class, and checks that every text fits.
+///
+/// @param measured the game's fonts
+/// @param tag the language's tag
+void check_language_fit(const kit::Fonts& measured, const char* tag) {
+    const languages::Language* language = languages::find_by_tag(tag);
+    OA_CHECK(language != nullptr);
+    if (language == nullptr || catalogue == nullptr)
+        return;
+    languages::set_interface_language(catalogue, *language);
+    OA_CHECK(languages::interface_text(picker::words::switch_on) != picker::words::switch_on);
+    OA_CHECK(languages::interface_text(picker::words::heading_off) != picker::words::heading_off);
+    lib::TextHooks text;
+    text.shown = catalogue_shown;
+    const picker::Picker model = opened(text, false);
+    const picker::Picker guest = opened(text, true);
+    const kit::Viewport windows[] = {
+        window_of(640, 480, 100),
+        window_of(1920, 1080, 200),
+        window_of(2560, 1440, 200),
+    };
+    const char* names[] = {"compact", "regular", "large"};
+    for (std::size_t place = 0; place < 3; ++place) {
+        const kit::Frame frame = kit::frame_of(windows[place]);
+        const std::string where = std::string(tag) + " " + names[place];
+        picker::ScreenState state;
+        const kit::DisplayList list = picker::picker_layout(model, state, frame, measured);
+        expect_fitting(list, measured, (where + " list").c_str());
+        state.details_page = true;
+        const kit::DisplayList page = picker::details_page_layout(model, state, frame, measured);
+        expect_fitting(page, measured, (where + " details").c_str());
+        picker::ScreenState view;
+        const kit::DisplayList locked = picker::picker_layout(guest, view, frame, measured);
+        expect_fitting(locked, measured, (where + " read-only").c_str());
+    }
+}
+
+/// Checks that every On number through 24 is drawn whole at Compact and Regular.
+///
+/// @param measured the game's fonts
+void check_wide_numbers(const kit::Fonts& measured) {
+    constexpr int count = 24;
+    picker::Inputs inputs;
+    inputs.mod_name = "Ridge";
+    inputs.setup = picker::Setup::skirmish;
+    for (int number = 1; number <= count; ++number) {
+        const std::string id = "ridge-" + std::to_string(number);
+        picker::Mutator mutator;
+        mutator.id = id;
+        mutator.name = "Ridge " + std::to_string(number);
+        mutator.installed = true;
+        mutator.summary = "A ridge.";
+        inputs.mutators.push_back(mutator);
+        picker::Chosen chosen;
+        chosen.id = id;
+        inputs.last_set.push_back(std::move(chosen));
+    }
+    picker::Picker model;
+    picker::open(model, std::move(inputs));
+    OA_CHECK(model.on.size() == static_cast<std::size_t>(count));
+    const kit::Viewport windows[] = {window_of(640, 480, 100), window_of(1920, 1080, 200)};
+    const char* names[] = {"compact numbers", "regular numbers"};
+    for (std::size_t place = 0; place < 2; ++place) {
+        const kit::Frame frame = kit::frame_of(windows[place]);
+        picker::ScreenState state;
+        const kit::DisplayList list = picker::picker_layout(model, state, frame, measured);
+        expect_fitting(list, measured, names[place]);
+        std::vector<std::string> numbers;
+        for (const kit::Item& item : list.items) {
+            if (item.role != kit::Role::text || item.font != kit::FontRole::small)
+                continue;
+            if (item.align != kit::Align::right || item.colour != kit::colour::quiet)
+                continue;
+            if (item.text.find(kit::ellipsis) != std::string::npos)
+                std::fprintf(stderr, "%s: number \"%s\" is cut\n", names[place], item.text.c_str());
+            OA_CHECK(item.text.find(kit::ellipsis) == std::string::npos);
+            numbers.push_back(item.text);
+        }
+        OA_CHECK(numbers.size() == static_cast<std::size_t>(count));
+        for (int number = 1; number <= count && number <= static_cast<int>(numbers.size());
+             ++number)
+            OA_CHECK(numbers[static_cast<std::size_t>(number - 1)] == std::to_string(number));
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     std::optional<std::filesystem::path> frames;
+    std::optional<std::filesystem::path> catalogue_path;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--frames" && index + 1 < argc)
             frames = std::filesystem::path(argv[++index]);
-        else if (argument != oa::test::kGameDataSwitch) {
+        else if (argument == oa::test::kGameDataSwitch)
+            continue;
+        else if (!argument.empty() && argument.front() != '-')
+            catalogue_path = std::filesystem::path(argv[index]);
+        else {
             std::fprintf(stderr, "draw: unexpected argument %s\n", argv[index]);
             return 2;
         }
     }
+    if (!catalogue_path) {
+        std::fprintf(
+            stderr, "usage: oa-ui-mutator-picker-draw-test --data INTERFACE_TDF [--frames DIR]\n"
+        );
+        return 2;
+    }
+    languages::InterfaceText loaded;
+    std::string error;
+    const bool read = loaded.add(read_file(catalogue_path->string().c_str()), &error);
+    if (!read)
+        std::fprintf(stderr, "%s: %s\n", catalogue_path->string().c_str(), error.c_str());
+    OA_CHECK(read);
+    if (!read)
+        return oa::test::check_exit_status();
+    catalogue = &loaded;
     oa::AssetStore assets = oa::test::require_game_assets("the mutator picker's pictures");
     const kit::Fonts measured = kit::load_game_fonts(assets);
     const std::unique_ptr<text_font::FontStack> modern =
@@ -657,9 +776,9 @@ int main(int argc, char** argv) {
         );
     }
     if (frames) {
-        std::error_code error;
-        std::filesystem::create_directories(*frames, error);
-        if (error) {
+        std::error_code directory_error;
+        std::filesystem::create_directories(*frames, directory_error);
+        if (directory_error) {
             std::fprintf(stderr, "draw: cannot make %s\n", frames->string().c_str());
             return 1;
         }
@@ -698,6 +817,11 @@ int main(int argc, char** argv) {
             OA_CHECK(written);
         }
     }
+    for (const char* tag : {"de", "fr", "es", "it"})
+        check_language_fit(measured, tag);
+    languages::set_interface_language(nullptr, languages::english());
+    check_wide_numbers(measured);
     oa::present::set_game_text_hooks({});
+    languages::set_interface_language(nullptr, languages::english());
     return oa::test::check_exit_status();
 }

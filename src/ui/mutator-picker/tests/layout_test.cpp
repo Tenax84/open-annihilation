@@ -140,6 +140,16 @@ bool has_room(const kit::Rect& rect) {
     return rect.width > 0 && rect.height > 0;
 }
 
+/// Tells whether two rectangles are the same place.
+///
+/// @param left one rectangle
+/// @param right the other
+/// @return true when each edge matches
+bool same_rect(const kit::Rect& left, const kit::Rect& right) {
+    return left.x == right.x && left.y == right.y && left.width == right.width &&
+           left.height == right.height;
+}
+
 /// Lists the parts of a layout that lie outside its window.
 ///
 /// @param list the display list
@@ -272,6 +282,29 @@ texts_not_fitting(const kit::DisplayList& list, const kit::Fonts& measured) {
                     "placeholder \"" + look->placeholder + "\""
                 );
             break;
+        case kit::Role::toggle:
+            if (const auto* look = std::get_if<kit::SwitchLook>(&item.look)) {
+                const int32_t half = std::max((item.rect.width - 2) / 2, int32_t{0});
+                check(
+                    width(kit::FontRole::small, look->off_caption) <= half,
+                    "switch off \"" + look->off_caption + "\""
+                );
+                check(
+                    width(kit::FontRole::small, look->on_caption) <= half,
+                    "switch on \"" + look->on_caption + "\""
+                );
+            }
+            break;
+        case kit::Role::levels:
+            if (const auto* look = std::get_if<kit::LevelsLook>(&item.look)) {
+                for (const std::string& caption : look->captions) {
+                    check(
+                        width(kit::FontRole::small, caption) <= look->level_width,
+                        "level \"" + caption + "\""
+                    );
+                }
+            }
+            break;
         default:
             break;
         }
@@ -346,9 +379,8 @@ std::vector<std::string> meeting_controls(const kit::DisplayList& list) {
     return problems;
 }
 
-/// The French of the mockup, for this test only. OFF is the switch's "Non":
-/// the heading and the switch share one English word, so the heading says
-/// Non here too.
+/// The design's French, for this test only. The Off heading and the switch
+/// use different words.
 ///
 /// @param context unused
 /// @param english the English word
@@ -363,6 +395,7 @@ std::string_view french_shown(void* /*context*/, std::string_view english) {
     using picker::words::no_mod;
     using picker::words::search_mutators;
     using picker::words::setup_skirmish;
+    using picker::words::switch_off;
     using picker::words::switch_on;
     using picker::words::title_mutators;
     using picker::words::use_these;
@@ -379,6 +412,8 @@ std::string_view french_shown(void* /*context*/, std::string_view english) {
     if (english == heading_on)
         return "Actifs · appliqués de haut en bas";
     if (english == heading_off)
+        return "Inactifs · non appliqués";
+    if (english == switch_off)
         return "Non";
     if (english == switch_on)
         return "Oui";
@@ -406,6 +441,7 @@ std::string_view german_shown(void* /*context*/, std::string_view english) {
     using picker::words::details_button;
     using picker::words::heading_off;
     using picker::words::heading_on;
+    using picker::words::switch_off;
     using picker::words::switch_on;
     using picker::words::use_these;
     if (english == use_these)
@@ -421,6 +457,8 @@ std::string_view german_shown(void* /*context*/, std::string_view english) {
     if (english == heading_on)
         return "Aktiv · von oben nach unten angewandt";
     if (english == heading_off)
+        return "AUS · NICHT ANGEWANDT";
+    if (english == switch_off)
         return "AUS";
     if (english == switch_on)
         return "AN";
@@ -531,6 +569,7 @@ picker::Picker opened(lib::TextHooks text, bool read_only) {
         scout.description += "The scout watches the ridge. ";
     scout.tags = {"gameplay", "statistics", "commanders", "signal-post-marker"};
     scout.layers = {"units", "weapons"};
+    scout.brings = true;
     scout.options.push_back(choice_option("speed", "Speed", {"1x", "2x", "4x"}, "2x"));
     scout.options.push_back(choice_option(
         "signal", "Signal", {"North", "South", "East", "West", "Near", "Far"}, "North"
@@ -596,9 +635,9 @@ laid_out(const picker::Picker& model, const picker::ScreenState& state, const ki
 
 /// The frames the screen is checked at, and the window each one gives.
 struct FrameCase {
-    const char* name;  ///< the case
-    kit::Frame frame;  ///< the frame
-    kit::Point window; ///< the window's size
+    const char* name{};  ///< the case
+    kit::Frame frame{};  ///< the frame
+    kit::Point window{}; ///< the window's size
 };
 
 /// Returns one window frame.
@@ -669,6 +708,19 @@ std::vector<std::string> tab_names(const kit::DisplayList& list) {
     return names;
 }
 
+/// Tells whether Tab stops on a name.
+///
+/// @param list the display list
+/// @param name the name
+/// @return true when that control is in Tab's order
+bool in_tab(const kit::DisplayList& list, std::string_view name) {
+    for (const std::string& one : tab_names(list)) {
+        if (one == name)
+            return true;
+    }
+    return false;
+}
+
 /// Checks Tab's order against the controls that can take it.
 ///
 /// @param list the display list
@@ -701,6 +753,7 @@ void check_tabs(
         if (starts(control.name, picker::name_option_prefix) && tabbable(control))
             expected.push_back(control.name);
     }
+    append_tab(expected, list, picker::name_clash);
     append_tab(expected, list, picker::name_up);
     append_tab(expected, list, picker::name_down);
     if (page)
@@ -915,6 +968,7 @@ void check_frame(
     const kit::Control* range = find_named(list, "mutators.option.range");
     if (compact) {
         OA_CHECK(speed == nullptr);
+        OA_CHECK(find_named(list, picker::name_clash) == nullptr);
         OA_CHECK(find_named(list, picker::name_details) != nullptr);
         OA_CHECK(find_named(list, picker::name_filter) != nullptr);
         OA_CHECK(find_named(list, picker::name_tags) == nullptr);
@@ -926,6 +980,28 @@ void check_frame(
         OA_CHECK(signal != nullptr && signal->kind == kit::ControlKind::choice);
         OA_CHECK(alarm != nullptr && alarm->kind == kit::ControlKind::toggle);
         OA_CHECK(range != nullptr && range->kind == kit::ControlKind::slider);
+        const kit::Control* clash = find_named(list, picker::name_clash);
+        OA_CHECK(clash != nullptr && clash->kind == kit::ControlKind::levels);
+        OA_CHECK(clash != nullptr && clash->enabled && clash->focusable);
+        if (clash != nullptr) {
+            OA_CHECK(clash->parts.size() == 2);
+            OA_CHECK(clash->parts.size() == 2 && clash->parts[0] == "add");
+            OA_CHECK(clash->parts.size() == 2 && clash->parts[1] == "replace");
+            bool strip = false;
+            for (const kit::Item& item : list.items) {
+                if (item.control != clash->id || item.role != kit::Role::levels)
+                    continue;
+                const auto* look = std::get_if<kit::LevelsLook>(&item.look);
+                OA_CHECK(look != nullptr && look->chosen == 1);
+                OA_CHECK(look != nullptr && look->captions.size() == 2);
+                if (look != nullptr && look->captions.size() == 2) {
+                    OA_CHECK(look->captions[0] == picker::words::clash_mode_add);
+                    OA_CHECK(look->captions[1] == picker::words::clash_mode_replace);
+                }
+                strip = true;
+            }
+            OA_CHECK(strip);
+        }
         OA_CHECK(find_named(list, picker::name_up) != nullptr);
         OA_CHECK(find_named(list, picker::name_down) != nullptr);
         OA_CHECK(find_named(list, picker::name_tags) != nullptr);
@@ -975,27 +1051,152 @@ void check_band(
     OA_CHECK(down->enabled == down_enabled);
 }
 
-/// The bottom of the lowest row, in window points.
+/// Returns where a dragged row's top is clamped into the list's view.
+///
+/// @param port the list's view
+/// @param row_height the row's height
+/// @param asked the y the drag asks for
+/// @return the top, inside the view
+int32_t clamped_row_top(const kit::Rect& port, int32_t row_height, int32_t asked) {
+    const int32_t least = port.y;
+    const int32_t most = port.y + std::max(port.height - row_height, int32_t{0});
+    int32_t top = asked;
+    if (top < least)
+        top = least;
+    if (top > most)
+        top = most;
+    return top;
+}
+
+/// Finds the floating row: the selected fill at a top.
 ///
 /// @param list the display list
-/// @return the row's bottom, or 0 when there is none
-int32_t lowest_row_bottom(const kit::DisplayList& list) {
-    int32_t bottom = 0;
-    for (const kit::Control& control : list.controls) {
-        if (control.kind != kit::ControlKind::list_item)
+/// @param top the clamped top
+/// @param row_height the row's height
+/// @param[out] at the fill's place in the items; -1 when it is missing
+/// @return the fill's rectangle; empty when it is missing
+kit::Rect floating_row(const kit::DisplayList& list, int32_t top, int32_t row_height, int& at) {
+    at = -1;
+    for (std::size_t index = 0; index < list.items.size(); ++index) {
+        const kit::Item& item = list.items[index];
+        if (item.role != kit::Role::fill || item.colour != kit::colour::list_selected)
             continue;
+        if (item.rect.y != top || item.rect.height != row_height)
+            continue;
+        at = static_cast<int>(index);
+        return item.rect;
+    }
+    return {};
+}
+
+/// Checks one drag: the controls stay on the well, nothing meets, and the
+/// floating row is drawn last and whole inside the list's view.
+///
+/// @param model the picker
+/// @param frame the frame
+/// @param window the window
+/// @param asked the y the drag asks for
+/// @param targeted true when the drop has a place
+/// @param where the case
+void check_one_drag(
+    const picker::Picker& model,
+    const kit::Frame& frame,
+    kit::Point window,
+    int32_t asked,
+    bool targeted,
+    const std::string& where
+) {
+    picker::ScreenState resting_state;
+    const kit::DisplayList resting = laid_out(model, resting_state, frame);
+    const kit::Control* home = find_named(resting, "mutators.row.scout-post");
+    const kit::Control* home_grip = find_named(resting, "mutators.row.scout-post.grip");
+    const kit::Control* home_switch = find_named(resting, "mutators.row.scout-post.switch");
+    const kit::Control* view = find_named(resting, picker::name_list);
+    OA_CHECK(home != nullptr && home_grip != nullptr && home_switch != nullptr && view != nullptr);
+    if (home == nullptr || view == nullptr)
+        return;
+
+    picker::ScreenState state;
+    picker::DragShown drag;
+    drag.id = "scout-post";
+    drag.y = asked;
+    if (targeted)
+        drag.target = picker::Drop{true, 1};
+    state.drag = drag;
+    const kit::DisplayList moving = laid_out(model, state, frame);
+    OA_EXPECT_NONE(outside_window(moving, window), where);
+    OA_EXPECT_NONE(meeting_controls(moving), where);
+
+    const kit::Control* row = find_named(moving, "mutators.row.scout-post");
+    const kit::Control* grip = find_named(moving, "mutators.row.scout-post.grip");
+    const kit::Control* toggle = find_named(moving, "mutators.row.scout-post.switch");
+    const kit::Control* port = find_named(moving, picker::name_list);
+    OA_CHECK(row != nullptr && grip != nullptr && toggle != nullptr && port != nullptr);
+    if (row == nullptr || grip == nullptr || toggle == nullptr || port == nullptr ||
+        home_grip == nullptr || home_switch == nullptr)
+        return;
+    OA_CHECK(same_rect(row->rect, home->rect));
+    OA_CHECK(same_rect(grip->rect, home_grip->rect));
+    OA_CHECK(same_rect(toggle->rect, home_switch->rect));
+
+    const int32_t top = clamped_row_top(port->rect, home->rect.height, asked);
+    int float_at = -1;
+    const kit::Rect floating = floating_row(moving, top, home->rect.height, float_at);
+    OA_CHECK(float_at >= 0);
+    OA_CHECK(kit::wholly_in(floating, port->rect));
+    if (float_at < 0)
+        return;
+
+    bool well = false;
+    bool line = false;
+    bool line_before = false;
+    for (std::size_t index = 0; index < moving.items.size(); ++index) {
+        const kit::Item& item = moving.items[index];
+        if (item.role == kit::Role::fill && item.colour == kit::colour::well &&
+            same_rect(item.rect, home->rect))
+            well = true;
+        if (item.role == kit::Role::fill && item.colour == kit::colour::accent &&
+            item.rect.height == 2) {
+            line = true;
+            if (static_cast<int>(index) < float_at)
+                line_before = true;
+        }
+        if (static_cast<int>(index) <= float_at)
+            continue;
+        if (!has_room(kit::intersect(item.rect, floating)))
+            continue;
+        if (!kit::wholly_in(item.rect, floating)) {
+            std::fprintf(
+                stderr, "%s: an item after the floating row paints over it\n", where.c_str()
+            );
+            OA_CHECK(false);
+        }
+    }
+    OA_CHECK(well);
+    OA_CHECK(line == targeted);
+    OA_CHECK(!targeted || line_before);
+
+    for (const kit::Control& control : moving.controls) {
         if (!starts(control.name, picker::name_row_prefix))
             continue;
         if (control.name.ends_with(picker::name_grip_suffix) ||
             control.name.ends_with(picker::name_switch_suffix))
             continue;
-        bottom = std::max(bottom, control.rect.y + control.rect.height);
+        if (control.name == "mutators.row.scout-post")
+            continue;
+        for (std::size_t index = 0; index < moving.items.size(); ++index) {
+            const kit::Item& item = moving.items[index];
+            if (!has_room(kit::intersect(item.rect, control.rect)))
+                continue;
+            if (static_cast<int>(index) >= float_at && kit::wholly_in(item.rect, floating))
+                continue;
+            OA_CHECK(static_cast<int>(index) < float_at);
+        }
     }
-    return bottom;
 }
 
-/// Checks a drag: the row moves, its place is the well, and the line is drawn
-/// only when the drop has a target.
+/// Checks a drag onto a middle row, a y past the view, a y above it, and a
+/// refused drop.
 ///
 /// @param model the picker
 /// @param frame the frame
@@ -1003,33 +1204,27 @@ int32_t lowest_row_bottom(const kit::DisplayList& list) {
 void check_drag(const picker::Picker& model, const kit::Frame& frame, kit::Point window) {
     picker::ScreenState state;
     const kit::DisplayList resting = laid_out(model, state, frame);
-    const int32_t y = lowest_row_bottom(resting);
+    const kit::Control* gatehouse = find_named(resting, "mutators.row.gatehouse");
+    const kit::Control* port = find_named(resting, picker::name_list);
+    const kit::Control* home = find_named(resting, "mutators.row.scout-post");
+    OA_CHECK(gatehouse != nullptr && port != nullptr && home != nullptr);
+    if (gatehouse == nullptr || port == nullptr || home == nullptr)
+        return;
+
+    const std::string where(
+        frame.size_class == kit::SizeClass::compact ? "drag compact"
+        : frame.size_class == kit::SizeClass::large ? "drag large"
+                                                    : "drag"
+    );
+    check_one_drag(model, frame, window, gatehouse->rect.y + 10, true, where);
+    const int32_t most = port->rect.y + std::max(port->rect.height - home->rect.height, int32_t{0});
+    check_one_drag(model, frame, window, 2000, true, where + " below");
+    check_one_drag(model, frame, window, port->rect.y - 80, true, where + " above");
+
     picker::DragShown drag;
     drag.id = "scout-post";
-    drag.y = y;
-    drag.target = picker::Drop{true, 1};
+    drag.y = most;
     state.drag = drag;
-    const kit::DisplayList moving = laid_out(model, state, frame);
-    OA_EXPECT_NONE(outside_window(moving, window), "drag");
-    OA_EXPECT_NONE(meeting_controls(moving), "drag");
-    const kit::Control* row = find_named(moving, "mutators.row.scout-post");
-    OA_CHECK(row != nullptr && row->rect.y == y);
-    if (row == nullptr)
-        return;
-    bool well = false;
-    bool line = false;
-    for (const kit::Item& item : moving.items) {
-        if (item.role == kit::Role::fill && item.colour == kit::colour::well &&
-            item.rect.height == row->rect.height)
-            well = true;
-        if (item.role == kit::Role::fill && item.colour == kit::colour::accent &&
-            item.rect.height == 2)
-            line = true;
-    }
-    OA_CHECK(well);
-    OA_CHECK(line);
-
-    state.drag->target.reset();
     const kit::DisplayList refused = laid_out(model, state, frame);
     bool refused_line = false;
     for (const kit::Item& item : refused.items) {
@@ -1039,7 +1234,14 @@ void check_drag(const picker::Picker& model, const kit::Frame& frame, kit::Point
     }
     OA_CHECK(!refused_line);
     const kit::Control* moved = find_named(refused, "mutators.row.scout-post");
-    OA_CHECK(moved != nullptr && moved->rect.y == y);
+    OA_CHECK(moved != nullptr && same_rect(moved->rect, home->rect));
+    int float_at = -1;
+    const kit::Rect floating = floating_row(refused, most, home->rect.height, float_at);
+    const kit::Control* refused_port = find_named(refused, picker::name_list);
+    OA_CHECK(float_at >= 0 && refused_port != nullptr);
+    if (refused_port != nullptr)
+        OA_CHECK(kit::wholly_in(floating, refused_port->rect));
+    OA_CHECK(floating.y == most);
 }
 
 /// Checks read-only viewing: locked switches, disabled grips, CLOSE alone.
@@ -1061,6 +1263,32 @@ void check_read_only(const kit::Frame& frame, kit::Point window) {
     OA_CHECK(find_named(list, picker::name_back) == nullptr);
     OA_CHECK(find_named(list, picker::name_close) != nullptr);
     OA_CHECK(find_named(list, picker::name_verdict) == nullptr);
+    const bool compact = frame.size_class == kit::SizeClass::compact;
+    const kit::Control* up = find_named(list, picker::name_up);
+    const kit::Control* down = find_named(list, picker::name_down);
+    const kit::Control* clash = find_named(list, picker::name_clash);
+    if (compact) {
+        OA_CHECK(up == nullptr);
+        OA_CHECK(down == nullptr);
+        OA_CHECK(clash == nullptr);
+    } else {
+        OA_CHECK(up != nullptr && !up->enabled);
+        OA_CHECK(down != nullptr && !down->enabled);
+        OA_CHECK(!in_tab(list, picker::name_up));
+        OA_CHECK(!in_tab(list, picker::name_down));
+        OA_CHECK(clash != nullptr && !clash->enabled && !clash->focusable);
+        OA_CHECK(!in_tab(list, picker::name_clash));
+        bool clash_locked = false;
+        if (clash != nullptr) {
+            for (const kit::Item& item : list.items) {
+                if (item.control != clash->id || item.role != kit::Role::levels)
+                    continue;
+                const auto* look = std::get_if<kit::LevelsLook>(&item.look);
+                clash_locked = look != nullptr && look->locked && look->chosen == 1;
+            }
+        }
+        OA_CHECK(clash_locked);
+    }
     const kit::Control* search = find_named(list, picker::name_search);
     OA_CHECK(search != nullptr && search->focusable && search->enabled);
     for (const kit::Control& control : list.controls) {
@@ -1128,7 +1356,24 @@ void check_empty(const kit::Frame& frame, kit::Point window) {
             none_drawn = true;
     }
     OA_CHECK(none_drawn);
-    OA_CHECK(find_named(bare, picker::name_list) == nullptr || picker::rows(empty).empty());
+    OA_CHECK(picker::rows(empty).empty());
+    const kit::Control* bare_list = find_named(bare, picker::name_list);
+    OA_CHECK(bare_list != nullptr);
+    bool sentence_in_list = false;
+    if (bare_list != nullptr) {
+        for (const kit::Item& item : bare.items) {
+            if (item.role == kit::Role::text &&
+                item.text.find("No mutators here yet") != std::string::npos &&
+                kit::wholly_in(item.rect, bare_list->rect))
+                sentence_in_list = true;
+        }
+    }
+    OA_CHECK(sentence_in_list);
+    if (frame.size_class == kit::SizeClass::compact) {
+        const kit::Control* details = find_named(bare, picker::name_details);
+        OA_CHECK(details != nullptr && !details->enabled);
+        OA_CHECK(!in_tab(bare, picker::name_details));
+    }
 
     picker::Inputs filtered_inputs;
     filtered_inputs.mod_name = "Ridge";
@@ -1168,6 +1413,7 @@ void check_language(const kit::Frame& frame, kit::Point window, const std::strin
     OA_EXPECT_NONE(cut_buttons(french_list), where + " fr");
     bool title = false;
     bool heading = false;
+    bool off_heading = false;
     bool placeholder = false;
     bool switched = false;
     for (const kit::Item& item : french_list.items) {
@@ -1177,6 +1423,8 @@ void check_language(const kit::Frame& frame, kit::Point window, const std::strin
         if (const auto* look = std::get_if<kit::HeadingLook>(&item.look)) {
             if (look->text == "Actifs · appliqués de haut en bas")
                 heading = true;
+            if (look->text == "Inactifs · non appliqués")
+                off_heading = true;
         }
         if (const auto* look = std::get_if<kit::SearchLook>(&item.look))
             placeholder = look->placeholder == "Rechercher des mutateurs";
@@ -1185,6 +1433,7 @@ void check_language(const kit::Frame& frame, kit::Point window, const std::strin
     }
     OA_CHECK(title);
     OA_CHECK(heading);
+    OA_CHECK(off_heading);
     OA_CHECK(placeholder);
     OA_CHECK(switched);
     const kit::Control* use = find_named(french_list, picker::name_use);
@@ -1211,12 +1460,23 @@ void check_language(const kit::Frame& frame, kit::Point window, const std::strin
         OA_CHECK(details->rect.width > kit::compact_metrics.button_width);
     }
     bool german_heading = false;
+    bool german_off = false;
+    bool german_switch = false;
     for (const kit::Item& item : german_list.items) {
-        const auto* look = std::get_if<kit::HeadingLook>(&item.look);
-        if (look != nullptr && look->text == "Aktiv · von oben nach unten angewandt")
+        const auto* heading_look = std::get_if<kit::HeadingLook>(&item.look);
+        if (heading_look != nullptr &&
+            heading_look->text == "Aktiv · von oben nach unten angewandt")
             german_heading = true;
+        if (heading_look != nullptr && heading_look->text == "AUS · NICHT ANGEWANDT")
+            german_off = true;
+        const auto* switch_look = std::get_if<kit::SwitchLook>(&item.look);
+        if (switch_look != nullptr && switch_look->off_caption == "AUS" &&
+            switch_look->on_caption == "AN")
+            german_switch = true;
     }
     OA_CHECK(german_heading);
+    OA_CHECK(german_off);
+    OA_CHECK(german_switch);
 }
 
 /// Checks Compact's details page.
@@ -1248,6 +1508,15 @@ void check_details_page(const picker::Picker& model, const kit::Frame& frame, ki
     OA_CHECK(signal != nullptr && signal->kind == kit::ControlKind::choice);
     OA_CHECK(alarm != nullptr && alarm->kind == kit::ControlKind::toggle);
     OA_CHECK(range != nullptr && range->kind == kit::ControlKind::slider);
+    const kit::Control* clash = find_named(page, picker::name_clash);
+    OA_CHECK(clash != nullptr && clash->kind == kit::ControlKind::levels && clash->enabled);
+    if (clash != nullptr && clash->clip.height > 0 && !kit::wholly_in(clash->rect, clash->clip))
+        state.details_scroll = std::max(clash->rect.y - clash->clip.y, int32_t{0});
+    const kit::DisplayList scrolled = laid_out(model, state, frame);
+    const kit::Control* seen = find_named(scrolled, picker::name_clash);
+    OA_CHECK(seen != nullptr && seen->enabled && seen->focusable);
+    OA_CHECK(in_tab(scrolled, picker::name_clash));
+    check_tabs(scrolled, frame, true, "details scrolled");
     bool badge = false;
     for (const kit::Item& item : page.items) {
         if (item.role == kit::Role::package_badge && item.rect.width == picker::details_badge_side)
@@ -1291,7 +1560,7 @@ void check_focus_and_menu(
         const kit::DisplayList focused = laid_out(model, state, regular);
         bool ring = false;
         for (const kit::Item& item : focused.items) {
-            if (item.role == kit::Role::focus_ring && item.control == cancel->id)
+            if (item.role == kit::Role::focus_ring && same_rect(item.rect, cancel->rect))
                 ring = true;
         }
         OA_CHECK(ring);
@@ -1336,20 +1605,116 @@ void check_focus_and_menu(
         if (control.kind == kit::ControlKind::list_item)
             overflow.push_back(control.name.substr(std::string(picker::name_tags).size() + 1));
     }
-    std::size_t pill_at = 0;
-    std::size_t overflow_at = 0;
-    for (const std::string& tag : shown) {
-        if (pill_at < pills.size() && pills[pill_at] == tag)
-            ++pill_at;
-        else if (overflow_at < overflow.size() && overflow[overflow_at] == tag)
-            ++overflow_at;
-        else {
-            std::fprintf(stderr, "tag \"%s\" is neither a pill nor a menu item\n", tag.c_str());
+    std::size_t at = 0;
+    for (const std::string& pill : pills) {
+        if (at >= shown.size() || shown[at] != pill) {
+            std::fprintf(stderr, "pill \"%s\" is not the next tag\n", pill.c_str());
             OA_CHECK(false);
         }
+        ++at;
     }
-    OA_CHECK(pill_at == pills.size());
-    OA_CHECK(overflow_at == overflow.size());
+    for (const std::string& item : overflow) {
+        if (at >= shown.size() || shown[at] != item) {
+            std::fprintf(stderr, "menu item \"%s\" is not the next tag\n", item.c_str());
+            OA_CHECK(false);
+        }
+        ++at;
+    }
+    OA_CHECK(at == shown.size());
+}
+
+/// Checks that TAGS is disabled when every tag is a pill.
+///
+/// @param frame a Regular frame
+void check_tags_idle(const kit::Frame& frame) {
+    picker::Inputs inputs;
+    inputs.mod_name = "Ridge";
+    inputs.setup = picker::Setup::skirmish;
+    picker::Mutator watch = made("watch", "Watch", true);
+    watch.summary = "A watch.";
+    watch.tags = {"ai"};
+    inputs.mutators.push_back(std::move(watch));
+    picker::Picker model;
+    picker::open(model, std::move(inputs));
+    picker::ScreenState state;
+    state.menu = picker::Menu::tags;
+    const kit::DisplayList list = laid_out(model, state, frame);
+    const kit::Control* tags = find_named(list, picker::name_tags);
+    OA_CHECK(tags != nullptr && !tags->enabled && !tags->focusable);
+    OA_CHECK(!in_tab(list, picker::name_tags));
+    for (const kit::Control& control : list.controls) {
+        OA_CHECK(
+            !(control.kind == kit::ControlKind::list_item &&
+              starts(control.name, std::string(picker::name_tags) + "."))
+        );
+    }
+}
+
+/// Checks that DETAILS is disabled when nothing is selected, and when the
+/// selection names no mutator.
+///
+/// @param model the picker
+/// @param frame a Compact frame
+void check_details_locked(const picker::Picker& model, const kit::Frame& frame) {
+    const auto check = [&](picker::Picker picked, const char* where) {
+        picker::ScreenState state;
+        const kit::DisplayList list = laid_out(picked, state, frame);
+        const kit::Control* details = find_named(list, picker::name_details);
+        if (details == nullptr || details->enabled || in_tab(list, picker::name_details))
+            std::fprintf(stderr, "%s: DETAILS is open\n", where);
+        OA_CHECK(details != nullptr && !details->enabled);
+        OA_CHECK(!in_tab(list, picker::name_details));
+    };
+    picker::Picker empty_selection = model;
+    empty_selection.selected.reset();
+    check(std::move(empty_selection), "no selection");
+    picker::Picker gone = model;
+    gone.selected = "gone";
+    check(std::move(gone), "missing selection");
+}
+
+/// Checks the Off heading and the empty sentence when a search hides every
+/// Off row and leaves the On rows.
+///
+/// @param model the picker
+/// @param frame the frame
+void check_off_hidden(const picker::Picker& model, const kit::Frame& frame) {
+    picker::Picker filtered = model;
+    filtered.query = "zzz-no-match";
+    picker::ScreenState state;
+    const kit::DisplayList list = laid_out(filtered, state, frame);
+    OA_CHECK(find_named(list, "mutators.row.scout-post") != nullptr);
+    OA_CHECK(find_named(list, "mutators.row.grounded") == nullptr);
+    OA_CHECK(find_named(list, "mutators.row.ridge-walls") == nullptr);
+    bool off_heading = false;
+    bool sentence = false;
+    for (const kit::Item& item : list.items) {
+        const auto* look = std::get_if<kit::HeadingLook>(&item.look);
+        if (item.role == kit::Role::heading && look != nullptr &&
+            look->text == picker::words::heading_off)
+            off_heading = true;
+        if (item.role == kit::Role::text &&
+            item.text.find("No mutator matches these filters") != std::string::npos)
+            sentence = true;
+    }
+    OA_CHECK(off_heading);
+    OA_CHECK(sentence);
+}
+
+/// Checks that a mutator which brings nothing has no clash strip.
+///
+/// @param model the picker
+/// @param frame a Regular frame
+void check_no_clash(const picker::Picker& model, const kit::Frame& frame) {
+    for (const char* id : {"gatehouse", "grounded"}) {
+        picker::Picker picked = model;
+        picked.selected = id;
+        picker::ScreenState state;
+        const kit::DisplayList list = laid_out(picked, state, frame);
+        if (find_named(list, picker::name_clash) != nullptr)
+            std::fprintf(stderr, "%s shows a clash strip\n", id);
+        OA_CHECK(find_named(list, picker::name_clash) == nullptr);
+    }
 }
 
 } // namespace
@@ -1375,8 +1740,8 @@ int main() {
         OA_CHECK(shown[0].id == "fast-builders" && shown[0].on && shown[0].number == 1);
         OA_CHECK(shown[1].id == "scout-post" && shown[1].number == 2);
         OA_CHECK(shown[2].id == "gatehouse" && shown[2].number == 3);
-        OA_CHECK(shown[3].id == "gatehouse-keep" && shown[3].on && shown[3].to_download);
-        OA_CHECK(shown[4].id == "grounded" && !shown[4].on);
+        OA_CHECK(shown[3].id == "gatehouse-keep" && shown[3].on && !shown[3].to_download);
+        OA_CHECK(shown[4].id == "grounded" && !shown[4].on && shown[4].to_download);
         OA_CHECK(shown[5].id == "ridge-walls" && shown[5].locked);
     }
 
@@ -1403,6 +1768,11 @@ int main() {
     check_language(regular, cases[1].window, "regular");
     check_details_page(model, cases[0].frame, cases[0].window);
     check_focus_and_menu(model, cases[0].frame, regular, cases[0].window);
+    check_tags_idle(regular);
+    check_details_locked(model, cases[0].frame);
+    check_off_hidden(model, regular);
+    check_off_hidden(model, cases[0].frame);
+    check_no_clash(model, regular);
 
     picker::ScreenState page_state;
     page_state.details_page = true;

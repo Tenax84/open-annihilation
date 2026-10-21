@@ -6031,7 +6031,7 @@
 	de=Hier sind noch keine Mutatoren. Die Bibliothek im Hauptmenü holt sie.;
 	fr=Pas encore de mutateurs ici. La Bibliothèque du menu principal les récupère.;
 	es=Aquí todavía no hay mutadores. La Biblioteca del menú principal los trae.;
-	it=Qui non ci sono ancora mutatori. La Biblioteca del menu principale li prende.;
+	it=Qui non ci sono ancora mutatori. La Biblioteca del menu principale li scarica.;
 	}
 
 [No names match.]
@@ -6408,6 +6408,14 @@
 	fr=ARRÊT;
 	es=APAGADO;
 	it=SPENTO;
+	}
+
+[OFF · NOT APPLIED]
+	{
+	de=AUS · NICHT ANGEWANDT;
+	fr=INACTIFS · NON APPLIQUÉS;
+	es=INACTIVOS · NO SE APLICAN;
+	it=INATTIVI · NON APPLICATI;
 	}
 
 [OK]
@@ -13820,7 +13828,7 @@
 
 [▲ UP]
 	{
-	de=▲ HOCH;
+	de=▲ NACH OBEN;
 	fr=▲ HAUT;
 	es=▲ ARRIBA;
 	it=▲ SU;
@@ -13828,7 +13836,7 @@
 
 [▼ DOWN]
 	{
-	de=▼ RUNTER;
+	de=▼ NACH UNTEN;
 	fr=▼ BAS;
 	es=▼ ABAJO;
 	it=▼ GIÙ;

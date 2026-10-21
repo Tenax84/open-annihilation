@@ -53,6 +53,8 @@ inline constexpr kit::ControlId verdict_label = 18;
 inline constexpr kit::ControlId list_bar = 19;
 /// The details' scroll bar.
 inline constexpr kit::ControlId details_bar = 20;
+/// The clash mode, on a mutator that brings units or weapons.
+inline constexpr kit::ControlId clash = 21;
 
 /// The first row. The row at place p is first_row + p.
 inline constexpr kit::ControlId first_row = 1000;

@@ -34,10 +34,11 @@ if(BUILD_TESTING)
   # same and nothing outside the window; with --frames DIR it writes them.
   add_executable(oa-ui-mutator-picker-draw-test tests/draw_test.cpp)
   target_link_libraries(oa-ui-mutator-picker-draw-test PRIVATE oa-ui-mutator-picker oa-ui-kit
-    oa-formats-png oa-formats-hpi oa-platform-text-font oa-present oa-test-game-data
-    oa-test-support oa-options)
+    oa-data-languages oa-formats-png oa-formats-hpi oa-platform-text-font oa-present
+    oa-test-game-data oa-test-support oa-options)
   oa_copy_text_fonts(oa-ui-mutator-picker-draw-test
     "$<TARGET_FILE_DIR:oa-ui-mutator-picker-draw-test>")
-  oa_add_game_data_test(ui-mutator-picker-draw-data oa-ui-mutator-picker-draw-test --data)
+  oa_add_game_data_test(ui-mutator-picker-draw-data oa-ui-mutator-picker-draw-test --data
+    "${PROJECT_SOURCE_DIR}/languages/interface.tdf")
   set_tests_properties(ui-mutator-picker-draw-data PROPERTIES TIMEOUT 60)
 endif()

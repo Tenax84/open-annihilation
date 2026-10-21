@@ -51,6 +51,8 @@ inline constexpr std::string_view name_grip_suffix = ".grip";
 inline constexpr std::string_view name_switch_suffix = ".switch";
 /// What an option control's name starts with. The option's id, as a name word, follows.
 inline constexpr std::string_view name_option_prefix = "mutators.option.";
+/// Add or Replace, on a mutator that brings units or weapons. Parts `add` and `replace`.
+inline constexpr std::string_view name_clash = "mutators.clash";
 /// ▲ UP.
 inline constexpr std::string_view name_up = "mutators.up";
 /// ▼ DOWN.
@@ -73,6 +75,10 @@ inline constexpr std::string_view name_hint = "mutators.hint";
 inline constexpr std::string_view name_summary = "mutators.summary";
 /// The verdict chip's words. Kind area, as the hint is.
 inline constexpr std::string_view name_verdict = "mutators.verdict";
+/// The list's scroll bar. It takes no focus.
+inline constexpr std::string_view name_list_bar = "mutators.list.bar";
+/// The details' scroll bar. It takes no focus.
+inline constexpr std::string_view name_details_bar = "mutators.details.bar";
 
 /// The list pane's width at Regular, in points.
 inline constexpr int32_t regular_list_width = 400;
@@ -90,9 +96,10 @@ inline constexpr int32_t compact_row_height = 32;
 inline constexpr int32_t regular_row_height = 34;
 /// A row's height at Large, in points.
 inline constexpr int32_t large_row_height = 36;
-/// The number column's width at Regular and Large, in points.
+/// The least width of the number column at Regular and Large, in points.
+/// A layout widens it to the widest On number it shows.
 inline constexpr int32_t number_column = 12;
-/// The number column's width at Compact, in points.
+/// The least width of the number column at Compact, in points.
 inline constexpr int32_t compact_number_column = 9;
 /// A row's badge, in points. A square.
 inline constexpr int32_t row_badge_side = 20;
@@ -163,10 +170,12 @@ struct ScreenState {
 /// At Compact the details are a page of their own: while details_page is
 /// set this returns what details_page_layout returns. Every control is
 /// named (the names above). Tab's order is the filters, TAGS, the search,
-/// the list, the details' option controls, ▲ UP, ▼ DOWN, the footer's
-/// buttons and the close mark. At Compact it is the drop-down, the search,
-/// the list, DETAILS, CANCEL, USE THESE and the close mark. The grips and
-/// the labels take no focus, and neither does a row's switch.
+/// the list, the details' option controls, the clash mode when the mutator
+/// brings units or weapons, ▲ UP, ▼ DOWN, the footer's buttons and the
+/// close mark. At Compact it is the drop-down, the search, the list,
+/// DETAILS, CANCEL, USE THESE and the close mark. The grips and the labels
+/// take no focus, and neither does a row's switch. A drag draws the row
+/// whole inside the list's view, and leaves its controls on the well.
 ///
 /// @param picker the picker
 /// @param state the screen's state
@@ -181,8 +190,9 @@ struct ScreenState {
 /// details, and BACK and USE THESE.
 ///
 /// picker_layout calls this while details_page is set at Compact. Tab's
-/// order is the option controls, ▲ UP, ▼ DOWN, BACK, USE THESE and the
-/// close mark. A read-only page shows the summary and CLOSE alone.
+/// order is the option controls, the clash mode when the mutator brings
+/// units or weapons, ▲ UP, ▼ DOWN, BACK, USE THESE and the close mark. A
+/// read-only page shows the summary and CLOSE alone.
 ///
 /// @param picker the picker
 /// @param state the screen's state
