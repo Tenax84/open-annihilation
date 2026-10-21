@@ -206,7 +206,15 @@ name under Add and under Replace, an identical weapon that is shared, a
 renamed unit whose menu button, side list and clone follow the private
 name, two download entries that share a section name and name different
 units, and the clash mode taken from the player, the manifest and the
-setting, in that order.
+setting, in that order. In Add mode a menus hook that names a builder or
+a unit its mutator renamed reaches the private record, in one call or
+two, beside the game's button for that unit, and its `remove` leaves the
+game's buttons; a renamed unit's own script leaves the asked path to the
+earlier mutator's patch there, and a renamed unit with no script takes an
+earlier patch or the game's file, never a later patch. A Replace clone
+serves the source's script and picture under the replaced name, and the
+replacement notes name the earlier mutator's clone or file, the game or
+the mod.
 
 `data-mutators-clashes` (`tests/clashes_test.cpp`) checks that order on
 `effective_clash`, the preference text, the private-name rule and that
@@ -523,8 +531,8 @@ the same packages and the same list build the same paths, owners, kinds,
 archive order, masks and label. That is the table the loadout digest hashes.
 
 `data-mutators-files-layer` builds made-up packages in a scratch folder and
-checks the order, the notes, the failures and a spec mounted on an asset
-store. A link case is skipped where the system cannot make a link.
+checks the order, the notes, the failures, the displaced files, from a
+loose file and from an archive, and a spec mounted on an asset store. A link case is skipped where the system cannot make a link.
 
 Still protected:
 
@@ -1107,8 +1115,8 @@ the model is the unit name, `anims/<NAME><n>.GAF`,
 mutator brought is served under the private name and leaves the asked
 path, so the unit already there keeps what it had: an earlier mutator's
 file at that path, which this mutator's had displaced, is served again,
-and the note that this mutator won the path goes. A file this mutator
-did not bring is copied as the path stood at its turn: the latest file a
+and the note that this mutator won the path is dropped. A file this
+mutator did not bring is copied as the path stood at its turn: the latest file a
 mutator above it brought, else the game's or the mod's, read beneath the
 layer. A later mutator's file at the asked path belongs to the unit
 already there and does not reach the private one. In Add mode
