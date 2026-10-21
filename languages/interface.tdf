@@ -3308,10 +3308,10 @@
 
 [GET BOTH]
 	{
-	de=Beide holen;
-	fr=Tout obtenir;
-	es=Obtener ambos;
-	it=Ottieni entrambi;
+	de=BEIDE HOLEN;
+	fr=TOUT OBTENIR;
+	es=OBTENER AMBOS;
+	it=OTTIENI ENTRAMBI;
 	}
 
 [GET MAP]
