@@ -314,6 +314,7 @@ void check_game_files_options(Options& options) {
         {options.check_side_orders, "--check-side-orders"},
         {options.check_factory_orders, "--check-factory-orders"},
         {options.check_unit_speech, "--check-unit-speech"},
+        {options.check_mutator_layer, "--check-mutator-layer"},
         {options.check_side_data_per_match, "--check-side-data-per-match"},
         {options.check_gadget_art_per_match, "--check-gadget-art-per-match"},
         {options.check_download_builds, "--check-download-builds"},
@@ -537,6 +538,7 @@ void check_director_options(Options& options) {
         {options.check_side_orders, "--check-side-orders"},
         {options.check_factory_orders, "--check-factory-orders"},
         {options.check_unit_speech, "--check-unit-speech"},
+        {options.check_mutator_layer, "--check-mutator-layer"},
         {options.check_side_data_per_match, "--check-side-data-per-match"},
         {options.check_gadget_art_per_match, "--check-gadget-art-per-match"},
         {options.check_download_builds, "--check-download-builds"},
@@ -624,6 +626,7 @@ void refuse_left_out_self_checks([[maybe_unused]] const Options& options) {
             {options.check_side_orders, "--check-side-orders"},
             {options.check_factory_orders, "--check-factory-orders"},
             {options.check_unit_speech, "--check-unit-speech"},
+            {options.check_mutator_layer, "--check-mutator-layer"},
             {options.check_side_data_per_match, "--check-side-data-per-match"},
             {options.check_gadget_art_per_match, "--check-gadget-art-per-match"},
             {options.check_download_builds, "--check-download-builds"},
@@ -841,6 +844,7 @@ constexpr FlagOption kFlagOptions[] = {
     {"--check-side-orders", &Options::check_side_orders},
     {"--check-factory-orders", &Options::check_factory_orders},
     {"--check-unit-speech", &Options::check_unit_speech},
+    {"--check-mutator-layer", &Options::check_mutator_layer},
     {"--check-side-data-per-match", &Options::check_side_data_per_match},
     {"--check-gadget-art-per-match", &Options::check_gadget_art_per_match},
     {"--check-download-builds", &Options::check_download_builds},
@@ -1430,7 +1434,7 @@ void write_startup_line(std::string_view text) {
                      "[--check-match-dialogs] [--check-match-layers] "
                      "[--check-render-tiers [--force-capable]] "
                      "[--check-match-orders] [--check-side-orders] [--check-factory-orders] "
-                     "[--check-unit-speech] [--check-side-data-per-match] "
+                     "[--check-unit-speech] [--check-mutator-layer] [--check-side-data-per-match] "
                      "[--check-gadget-art-per-match] "
                      "[--check-download-builds] [--check-stockpile-builds] "
                      "[--check-unit-page-memory] [--check-side-column] [--check-match-bars] "
@@ -1655,7 +1659,7 @@ void write_startup_line(std::string_view text) {
         result.check_challenge || result.check_registries || result.check_library ||
         result.check_library_install || result.check_library_map_previews ||
         result.check_library_content || result.check_renderer_ladder || result.check_match_orders ||
-        result.check_factory_orders || result.check_unit_speech ||
+        result.check_factory_orders || result.check_unit_speech || result.check_mutator_layer ||
         result.check_side_data_per_match || result.check_gadget_art_per_match ||
         result.check_download_builds || result.check_stockpile_builds ||
         result.check_unit_page_memory || result.check_side_column || result.check_match_bars ||

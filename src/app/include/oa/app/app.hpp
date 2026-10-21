@@ -444,6 +444,10 @@ struct Options {
     // presenter, in two skirmishes one after the other, and checks the
     // select and order lines it says.
     bool check_unit_speech = false;
+    // Plays skirmishes with the mutators the command line named and checks
+    // the commanders' health, and that a mutator which does not apply
+    // leaves no layer.
+    bool check_mutator_layer = false;
     // Plays skirmishes over a --mod-dir folder and checks each match reads
     // side data again when gamedata/sidedata.tdf has changed.
     bool check_side_data_per_match = false;

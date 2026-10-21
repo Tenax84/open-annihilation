@@ -1145,7 +1145,8 @@ set(oa_game_self_check_sources src/app/runtime_checks.cpp src/app/runtime_order_
   src/app/runtime_match_panel_keys_check.cpp src/app/runtime_turret_draw_check.cpp
   src/app/runtime_megamap_check.cpp src/app/runtime_radar_orders_check.cpp
   src/app/runtime_inactive_loop_check.cpp src/app/runtime_factory_check.cpp
-  src/app/runtime_unit_speech_check.cpp src/app/runtime_side_data_check.cpp
+  src/app/runtime_unit_speech_check.cpp src/app/runtime_mutator_layer_check.cpp
+  src/app/runtime_side_data_check.cpp
   src/app/runtime_gadget_art_check.cpp
   src/app/runtime_build_page_check.cpp
   src/app/runtime_language_check.cpp src/app/runtime_language_switch_check.cpp
@@ -1732,6 +1733,19 @@ if(OA_BUILD_PLATFORM)
         --preferences-file "${oa_simulation_hash_dir}/simulation-hash-mod.conf")
       set_tests_properties(native-simulation-hash native-simulation-hash-mod PROPERTIES
         TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT} WORKING_DIRECTORY "${oa_simulation_hash_dir}"
+        ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
+      # Mutators at match start: none, then ridge-tough's commanders at 4000
+      # with the layer mounted, then none again with the first health back,
+      # then ridge-boom stopping the start and leaving no layer.
+      set(oa_mutator_layer_dir "${CMAKE_CURRENT_BINARY_DIR}/native-checks/mutator-layer")
+      file(MAKE_DIRECTORY "${oa_mutator_layer_dir}")
+      add_test(NAME native-mutator-layer COMMAND oa-game --game-dir "${OA_GAME_DIR}"
+        --skip-intro --mute --check-mutator-layer
+        --mutator "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-tough"
+        --mutator "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-boom"
+        --preferences-file "${oa_mutator_layer_dir}/mutator-layer.conf")
+      set_tests_properties(native-mutator-layer PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+        WORKING_DIRECTORY "${oa_mutator_layer_dir}"
         ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
       # The player's own folder beside the check's preferences file: saved
       # games where earlier versions kept them, beside the preferences file
@@ -3247,6 +3261,16 @@ endforeach()
           --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
           --scratch-root "${CMAKE_CURRENT_BINARY_DIR}/native-checks")
         set_tests_properties(native-unreadable-unit-script PROPERTIES
+          TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
+        # --mutator on a headless skirmish: no mutators, one package, a
+        # number option, two packages in each order, a missing id, an
+        # unknown option and a mutator whose script stops.
+        add_test(NAME native-mutators-command-line COMMAND ${Python3_EXECUTABLE}
+          "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_native_mutators.py"
+          --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+          --packages "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages"
+          --scratch-root "${CMAKE_CURRENT_BINARY_DIR}/native-checks")
+        set_tests_properties(native-mutators-command-line PROPERTIES
           TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
         # A mod folder whose sides name commanders of their own, without the
         # commander flag, and bar colours of their own, with a third side that

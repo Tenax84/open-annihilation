@@ -11996,6 +11996,15 @@ class Runtime final : public menu::Host,
     /// must sing. Throws std::runtime_error on a failure.
     void check_unit_speech();
 
+    /// Plays skirmishes with the mutators the command line named.
+    ///
+    /// None, then ridge-tough alone, then none again, then ridge-boom alone.
+    /// The commanders return to the health the first match recorded, ridge-tough
+    /// leaves both at 4000 with a mutator layer mounted, and ridge-boom stops
+    /// the start with its name and leaves no layer. Prints
+    /// "mutator layer check: passed". Throws std::runtime_error on a failure.
+    void check_mutator_layer();
+
     /// Plays skirmishes and checks each one reads gamedata/sidedata.tdf again.
     ///
     /// Needs --mod-dir on a folder that does not already hold that file. The first match keeps
