@@ -468,6 +468,8 @@ std::string_view word_of(lib::Action action) {
         return "use-now";
     case lib::Action::check_with_mod:
         return "check-with-mod";
+    case lib::Action::get_with:
+        return "get-with";
     default:
         return "other";
     }
@@ -4919,11 +4921,85 @@ void mutator_actions_rules_and_danger() {
     }
 }
 
+/// GET WITH is a control at every class, and the first action at Compact.
+void get_with_is_a_control() {
+    lib::Inputs inputs;
+    lib::Registry registry;
+    registry.id = std::string(fixture::core);
+    registry.name = "Fixture Core";
+    registry.built_in = true;
+    inputs.registries.push_back(std::move(registry));
+    inputs.engine = {0, 8, 0};
+    inputs.version_text = "v0.8.0";
+    lib::Listing gate = fixture::listing(
+        fixture::core,
+        lib::Kind::mutator,
+        "gatehouse",
+        "Gatehouse",
+        "4.1",
+        1024,
+        "A gate.",
+        {"gameplay"}
+    );
+    lib::MutatorFacts gate_facts;
+    gate_facts.tags = {"gameplay"};
+    gate.mutator = gate_facts;
+    lib::Listing keep = fixture::listing(
+        fixture::core,
+        lib::Kind::mutator,
+        "gatehouse-keep",
+        "Gatehouse Keep",
+        "2.0",
+        1024,
+        "Above the gate.",
+        {"gameplay"}
+    );
+    lib::MutatorFacts keep_facts;
+    keep_facts.tags = {"gameplay"};
+    keep_facts.needs.push_back({"gatehouse", ">= 4.0", "Gatehouse"});
+    keep.mutator = std::move(keep_facts);
+    keep.homepage = "https://example.test/keep";
+    inputs.listings.push_back(std::move(gate));
+    inputs.listings.push_back(std::move(keep));
+    lib::Library library;
+    lib::refresh(library, std::move(inputs));
+    lib::set_tab(library, lib::Tab::mutators);
+    lib::select(library, {std::string(fixture::core), lib::Kind::mutator, "gatehouse-keep"});
+    lib::open_details(library);
+    const lib::Entry* selected = lib::selected_entry(library);
+    OA_CHECK(selected != nullptr);
+    if (selected == nullptr)
+        return;
+    const std::vector<lib::ActionButton> actions = lib::entry_actions(library, *selected);
+    OA_CHECK(
+        !actions.empty() && actions.front().action == lib::Action::get_with &&
+        actions.front().enabled
+    );
+    for (const fixture::NamedFrame& named : fixture::frames()) {
+        const bool compact = named.frame.size_class == kit::SizeClass::compact;
+        lib::ScreenState state;
+        if (compact)
+            state.details_page = true;
+        const kit::DisplayList list = laid_out(library, state, named.frame);
+        OA_CHECK(fixture::named(list, "library.action.get-with") != nullptr);
+        const kit::Control* first_action = nullptr;
+        for (const kit::Control& control : list.controls) {
+            if (control.name.starts_with("library.action.")) {
+                first_action = &control;
+                break;
+            }
+        }
+        if (compact)
+            OA_CHECK(first_action != nullptr && first_action->name == "library.action.get-with");
+    }
+}
+
 int main() {
     every_frame_holds_its_invariants();
     mutators_tab_holds_its_invariants();
     mutator_rows_show_badges_chips_and_icons();
     mutator_actions_rules_and_danger();
+    get_with_is_a_control();
     wordy_tabs_take_the_row_over_the_search();
     larger_classes_show_more();
     built_in_languages_show_on_the_list();

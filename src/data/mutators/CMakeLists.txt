@@ -4,7 +4,10 @@
 add_library(
   oa-data-mutators
   src/allow_list.cpp
+  src/choice.cpp
+  src/clone.cpp
   src/collections.cpp
+  src/collections_sides.cpp
   src/files_layer.cpp
   src/journal.cpp
   src/loadout.cpp
@@ -19,8 +22,8 @@ target_link_libraries(
   oa-data-mutators
   PUBLIC oa-base-sha256 oa-data-defs oa-data-mutation-rules oa-data-script-host oa-formats-hpi
          oa-formats-oamut
-  PRIVATE oa-data-defs-assets oa-data-field-schema oa-data-mod-profile oa-formats-json oa-formats-tdf
-          oa-options
+  PRIVATE oa-data-defs-assets oa-data-field-schema oa-data-mod-profile oa-data-mutator-library
+          oa-formats-json oa-formats-tdf oa-options
 )
 if(BUILD_TESTING)
   add_executable(oa-data-mutators-allow-list-test tests/allow_list_test.cpp)
@@ -28,10 +31,22 @@ if(BUILD_TESTING)
   add_test(NAME data-mutators-allow-list COMMAND oa-data-mutators-allow-list-test)
 
   add_executable(oa-data-mutators-charge-test tests/charge_test.cpp)
+  target_include_directories(
+    oa-data-mutators-charge-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  )
   target_link_libraries(
     oa-data-mutators-charge-test PRIVATE oa-data-mutators oa-data-script-host oa-test-support
   )
   add_test(NAME data-mutators-charge COMMAND oa-data-mutators-charge-test)
+
+  add_executable(oa-data-mutators-choice-test tests/choice_test.cpp)
+  target_link_libraries(oa-data-mutators-choice-test PRIVATE oa-data-mutators oa-test-support)
+  add_test(NAME data-mutators-choice COMMAND oa-data-mutators-choice-test)
+
+  add_executable(oa-data-mutators-clone-test tests/clone_test.cpp)
+  target_link_libraries(oa-data-mutators-clone-test PRIVATE oa-data-mutators oa-test-support)
+  add_test(NAME data-mutators-clone COMMAND oa-data-mutators-clone-test)
+  set_tests_properties(data-mutators-clone PROPERTIES TIMEOUT 30)
 
   add_executable(oa-data-mutators-collections-test tests/collections_test.cpp)
   target_link_libraries(
@@ -87,4 +102,13 @@ if(BUILD_TESTING)
   target_link_libraries(oa-data-mutators-verdicts-test PRIVATE oa-data-mutators oa-test-support)
   add_test(NAME data-mutators-verdicts COMMAND oa-data-mutators-verdicts-test)
   set_tests_properties(data-mutators-verdicts PROPERTIES TIMEOUT 30)
+
+  add_executable(oa-data-mutators-sides-test tests/collections_sides_test.cpp)
+  target_link_libraries(
+    oa-data-mutators-sides-test PRIVATE oa-data-mutators oa-test-support oa-test-game-data
+  )
+  add_test(NAME data-mutators-sides COMMAND oa-data-mutators-sides-test)
+  set_tests_properties(data-mutators-sides PROPERTIES TIMEOUT 30)
+  oa_add_game_data_test(data-mutators-sides-data oa-data-mutators-sides-test --data)
+  set_tests_properties(data-mutators-sides-data PROPERTIES TIMEOUT 120)
 endif()

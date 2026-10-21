@@ -544,6 +544,20 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
     // nothing of them afterwards.
     preallocate_full_match_textures();
     set_load_progress(0, 10);
+
+    // A start that fails after the mutators are applied, including a
+    // campaign start that does not tear the match down, drops the layer.
+    struct MutatorLayerGuard {
+        Runtime& runtime;
+        int exceptions = std::uncaught_exceptions();
+
+        ~MutatorLayerGuard() {
+            if (std::uncaught_exceptions() > exceptions)
+                runtime.release_match_mutators();
+        }
+    } mutator_layer{*this};
+
+    apply_match_mutators(bootstrap);
     if (bootstrap.place_commanders && selected_start_markers_.empty() && !campaign_mission_)
         throw std::runtime_error("selected map has no start-position schema");
     session_schema_ = session_schema();

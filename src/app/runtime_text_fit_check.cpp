@@ -26,6 +26,7 @@
 #include "oa/ui/kit/components_more.hpp"
 #include "oa/ui/kit/text.hpp"
 #include "oa/ui/library/library.hpp"
+#include "oa/ui/library/prerequisites.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -272,8 +273,11 @@ void Runtime::check_text_fit() {
         paint(screen);
     };
 
-    /// Two made-up mutators, one not installed and one installed, on the
-    /// Mutators tab. The host's check stays unset, so there is no Checked fact.
+    /// Made-up mutators on the Mutators tab. Fast Builders is not installed
+    /// and Steady Hands is. Gatehouse Keep needs Gatehouse, and Outer Wall
+    /// needs Gatehouse and Ridge Walls: two downloads, then three. None of
+    /// those four is installed, and Fit Core offers each one. The host's
+    /// check stays unset, so there is no Checked fact.
     const auto inject_mutators = [&] {
         LibraryHost& host = library_host();
         library::Inputs inputs = host.model.inputs;
@@ -342,6 +346,46 @@ void Runtime::check_text_fit() {
         steady.mutator = std::move(steady_facts);
         inputs.listings.push_back(std::move(steady_listing));
         inputs.installed.push_back(std::move(steady));
+
+        // GET WITH's question: one missing prerequisite, then two. The names
+        // are the ones the question writes, so each language's body is fitted.
+        const auto offered = [&](std::string_view key,
+                                 std::string_view name,
+                                 std::string_view version,
+                                 std::vector<library::Prerequisite> needs) {
+            library::Listing listing;
+            listing.registry = "fit-core";
+            listing.kind = library::Kind::mutator;
+            listing.key = std::string(key);
+            listing.name = std::string(name);
+            listing.version = std::string(version);
+            listing.release = 1;
+            listing.author = "Ada";
+            listing.summary = "A made-up mutator.";
+            listing.size = 1024;
+            listing.requires_engine = ">= 0.8.0";
+            library::MutatorFacts facts;
+            facts.works_with.push_back({"*", {}, {}});
+            facts.layers.push_back("units");
+            facts.needs = std::move(needs);
+            listing.mutator = std::move(facts);
+            inputs.listings.push_back(std::move(listing));
+        };
+        offered("gatehouse", "Gatehouse", "4.1", {});
+        offered("ridge-walls", "Ridge Walls", "1.2", {});
+        offered(
+            "gatehouse-keep",
+            "Gatehouse Keep",
+            "2.0",
+            {library::Prerequisite{"gatehouse", ">= 4.0", "Gatehouse"}}
+        );
+        offered(
+            "outer-wall",
+            "Outer Wall",
+            "1.0",
+            {library::Prerequisite{"gatehouse", {}, "Gatehouse"},
+             library::Prerequisite{"ridge-walls", {}, "Ridge Walls"}}
+        );
 
         library::refresh(host.model, std::move(inputs));
         library::set_tab(host.model, library::Tab::mutators);
@@ -557,6 +601,28 @@ void Runtime::check_text_fit() {
                 );
                 apply_output_mode();
             }
+            // GET WITH, over the injected plans: two packages, then three.
+            // The question is built while the injected model is still held.
+            const auto paint_get_with = [&](std::string_view key, std::string_view screen) {
+                LibraryHost& host = library_host();
+                const library::Entry* entry = library::find_entry(
+                    host.model, {"fit-core", library::Kind::mutator, std::string(key)}
+                );
+                require(entry != nullptr, std::string(screen) + " has no " + std::string(key));
+                oa_layer().push(
+                    std::make_unique<QuestionScreen>(
+                        oa_layer(),
+                        Screen::main_menu,
+                        library::get_with_question(host.model, *entry),
+                        QuestionScreen::Host{}
+                    )
+                );
+                paint_held(screen);
+                if (LayerScreen* question = oa_layer().find(QuestionScreen::screen_name))
+                    oa_layer().close(question);
+            };
+            paint_get_with("gatehouse-keep", "library/get-with");
+            paint_get_with("outer-wall", "library/get-all");
             library_host().refreshed = false;
             if (oa_layer().find(library_screen_name) != nullptr) {
                 kit::Question asked;

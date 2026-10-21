@@ -32,11 +32,14 @@
 // its folder, the question for a built-in registry's mod, CANCEL removing
 // nothing and UNINSTALL its folder with the copy ROLL BACK keeps, its row
 // staying not installed, and a mod of the player's own leaving the Library.
-// The fourth plays No Mod and installs a made-up mutator, Fast Builders:
-// GET queues it, the package installs under Mutators with its origin record,
-// CHECK WITH THIS MOD runs the fixture's fake checker and shows its verdict,
-// OPEN FOLDER and HOMEPAGE reach the recorders, and UNINSTALL asks and
-// removes the folder. The fifth is a run nobody watches, on SDL's dummy
+// The fourth plays No Mod. GET WITH on Gatehouse Keep asks, CANCEL queues
+// nothing and GET BOTH queues Gatehouse then Gatehouse Keep; with both
+// installed, uninstalling Gatehouse says Gatehouse Keep needs it. The
+// folders are then removed. Fast Builders follows: GET queues it, the
+// package installs under Mutators with its origin record, CHECK WITH THIS
+// MOD runs the fixture's fake checker and shows its verdict, OPEN FOLDER
+// and HOMEPAGE reach the recorders, and UNINSTALL asks and removes the
+// folder. The fifth is a run nobody watches, on SDL's dummy
 // video driver without the prompts the other runs show: a built-in registry's
 // update waits in the inbox while the Library is closed, then installs with
 // no prompt once the Library shows, the folder it drops deleted; an added
@@ -133,6 +136,10 @@ constexpr std::string_view kArchipelago = "archipelago";
 constexpr std::string_view kPseudo = "en-XA";
 /// A made-up mutator the fourth run gets, checks and uninstalls.
 constexpr std::string_view kFast = "fast-builders";
+/// A made-up mutator Gatehouse Keep needs, downloaded with it.
+constexpr std::string_view kGatehouse = "gatehouse";
+/// A made-up mutator that needs Gatehouse.
+constexpr std::string_view kGatehouseKeep = "gatehouse-keep";
 /// The most frames a step of the check runs before it gives up.
 constexpr int kMostFrames = 400;
 /// The frames a step runs to show that something waits: nothing comes of it.
@@ -374,6 +381,100 @@ void write_mutator(const fs::path& file) {
     require(static_cast<bool>(out), "a mutator could not be written");
 }
 
+/// Writes a made-up mutator package: its manifest, its entry and a note.
+///
+/// @param file the package
+/// @param id its id
+/// @param name its name
+/// @param version its version
+/// @param requires_yaml lines inserted after works-with, or none
+void write_named_mutator(
+    const fs::path& file,
+    std::string_view id,
+    std::string_view name,
+    std::string_view version,
+    std::string_view requires_yaml
+) {
+    const std::string manifest = "oamut: 1\n"
+                                 "id: " +
+                                 std::string(id) +
+                                 "\n"
+                                 "name: \"" +
+                                 std::string(name) +
+                                 "\"\n"
+                                 "version: \"" +
+                                 std::string(version) +
+                                 "\"\n"
+                                 "author:\n"
+                                 "  name: \"Ada\"\n"
+                                 "description: \"A made-up mutator.\"\n"
+                                 "tags: [\"gameplay\"]\n"
+                                 "works-with: [\"*\"]\n" +
+                                 std::string(requires_yaml) +
+                                 "layers: [\"files\"]\n"
+                                 "entry: \"mutator.lua\"\n";
+    const std::string script = "return {}\n";
+    const std::string note = std::string(name) + "\n";
+    const std::vector<uint8_t> manifest_bytes(manifest.begin(), manifest.end());
+    const std::vector<uint8_t> script_bytes(script.begin(), script.end());
+    const std::vector<uint8_t> note_bytes(note.begin(), note.end());
+    const std::vector<oa::formats::zip::NewEntry> listed{
+        {"oamut.yaml", manifest_bytes},
+        {"mutator.lua", script_bytes},
+        {"README.md", note_bytes},
+    };
+    std::vector<uint8_t> archive;
+    oa::formats::zip::ZipError error{};
+    require(oa::formats::zip::write_archive(listed, archive, error), "a mutator could not be made");
+    std::error_code made;
+    fs::create_directories(file.parent_path(), made);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(
+        reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size())
+    );
+    require(static_cast<bool>(out), "a mutator could not be written");
+}
+
+/// Copies requires.mutators from an installed mutator's manifest into its facts.
+///
+/// A line that is not a flow list is left unread. Fast Builders' manifest
+/// names none, so its facts stay empty of needs.
+///
+/// @param folder the installed folder
+/// @param[in,out] facts the facts; needs are appended
+void read_mutator_needs(const fs::path& folder, library::MutatorFacts& facts) {
+    std::ifstream manifest(folder / "oamut.yaml");
+    if (!manifest)
+        return;
+    std::string line;
+    while (std::getline(manifest, line)) {
+        const std::string::size_type marker = line.find("mutators:");
+        if (marker == std::string::npos)
+            continue;
+        std::string::size_type cursor = marker;
+        for (;;) {
+            const std::string::size_type open = line.find('"', cursor);
+            if (open == std::string::npos)
+                break;
+            const std::string::size_type close = line.find('"', open + 1);
+            if (close == std::string::npos)
+                break;
+            const std::string text = line.substr(open + 1, close - open - 1);
+            library::Prerequisite need;
+            const std::string::size_type space = text.find(' ');
+            if (space == std::string::npos) {
+                need.id = text;
+            } else {
+                need.id = text.substr(0, space);
+                need.range = text.substr(space + 1);
+            }
+            if (!need.id.empty())
+                facts.needs.push_back(std::move(need));
+            cursor = close + 1;
+        }
+    }
+}
+
 /// Returns the SHA-256 of a file.
 ///
 /// @param file the file
@@ -536,6 +637,7 @@ void Runtime::check_library_install() {
                 shown.author = held.author;
                 shown.description = held.description;
                 shown.mutator = library::MutatorFacts{};
+                read_mutator_needs(folder, *shown.mutator);
                 if (record && record->kind == install::OriginKind::catalogue) {
                     shown.key = record->catalogue_id;
                     shown.registry = record->registry;
@@ -1782,7 +1884,10 @@ void Runtime::check_library_install() {
         return;
     }
     case 3: {
-        // 12. No Mod is played. GET on Fast Builders queues it, the package
+        // 12. No Mod is played. GET WITH on Gatehouse Keep asks, CANCEL queues
+        // nothing and GET BOTH queues Gatehouse then Gatehouse Keep. With both
+        // installed, uninstalling Gatehouse says Gatehouse Keep needs it. Those
+        // folders are removed. GET on Fast Builders then queues it, the package
         // installs under Mutators with its origin record, CHECK WITH THIS MOD
         // runs the fixture's fake checker, OPEN FOLDER and HOMEPAGE reach the
         // recorders, and UNINSTALL asks and removes the folder. Ridge stays
@@ -1793,6 +1898,153 @@ void Runtime::check_library_install() {
         const fs::path mutators_root =
             user_folder_ / std::string(install::oamut::mutators_folder_name);
         const fs::path fast_folder = mutators_root / std::string(kFast);
+        {
+            library::Listing gatehouse;
+            gatehouse.registry = std::string(kBuiltIn);
+            gatehouse.kind = library::Kind::mutator;
+            gatehouse.key = std::string(kGatehouse);
+            gatehouse.name = "Gatehouse";
+            gatehouse.version = "4.1";
+            gatehouse.release = 1;
+            gatehouse.size = 1024;
+            library::MutatorFacts gate_facts;
+            gate_facts.tags.push_back("gameplay");
+            gatehouse.mutator = std::move(gate_facts);
+            library::Listing keep;
+            keep.registry = std::string(kBuiltIn);
+            keep.kind = library::Kind::mutator;
+            keep.key = std::string(kGatehouseKeep);
+            keep.name = "Gatehouse Keep";
+            keep.version = "2.0";
+            keep.release = 1;
+            keep.size = 1024;
+            library::MutatorFacts keep_facts;
+            keep_facts.tags.push_back("gameplay");
+            keep_facts.needs.push_back({"gatehouse", ">= 4.0", "Gatehouse"});
+            keep.mutator = std::move(keep_facts);
+            fixture.inputs.listings.push_back(std::move(gatehouse));
+            fixture.inputs.listings.push_back(std::move(keep));
+            ++fixture.generation;
+            list_installed();
+            open_library(library::Tab::mutators);
+            frames();
+            require(top_is(library_screen_name), "the Library did not open for GET WITH");
+            show_entry("oa.library.row.check-builtin.gatehouse-keep");
+            const std::size_t queued_before = fixture.queued.size();
+            press_action("get-with");
+            {
+                const auto* asked = dynamic_cast<const QuestionScreen*>(oa_layer().top());
+                require(
+                    asked != nullptr && oa_layer().find(library_screen_name) != nullptr,
+                    "GET WITH did not ask over the Library"
+                );
+                const settings::Prompt& shown = asked->question();
+                require(shown.title == "Get Gatehouse Keep?", "GET WITH's title is wrong");
+                require(
+                    shown.paragraphs.size() == 1 &&
+                        shown.paragraphs[0].text ==
+                            "Gatehouse Keep needs Gatehouse 4.0 or later, which you don't have. "
+                            "Both download now, and Gatehouse goes above Gatehouse Keep in every "
+                            "list.",
+                    "GET WITH's paragraph is wrong"
+                );
+                require(
+                    shown.items.size() == 2 && shown.items[0].text == "Gatehouse 4.1" &&
+                        shown.items[0].aside == " · from Check Built-in" &&
+                        shown.items[1].text == "Gatehouse Keep 2.0" &&
+                        shown.items[1].aside == " · from Check Built-in",
+                    "GET WITH does not list both packages"
+                );
+                require(
+                    shown.buttons.size() == 2 && shown.buttons[0].id == "cancel" &&
+                        shown.buttons[1].id == "get-both" && shown.buttons[1].accent &&
+                        shown.marked == 0,
+                    "GET WITH is not CANCEL, marked, then GET BOTH"
+                );
+            }
+            require(
+                named("oa.prompt.get-both").has_value() && named("oa.prompt.cancel").has_value(),
+                "automation does not list oa.prompt.get-both"
+            );
+            click_named("oa.prompt.cancel");
+            frames();
+            require(
+                top_is(library_screen_name) && fixture.queued.size() == queued_before,
+                "CANCEL on GET WITH queued a package"
+            );
+            press_action("get-with");
+            click_named("oa.prompt.get-both");
+            frames();
+            require(
+                top_is(library_screen_name) && fixture.queued.size() == queued_before + 2 &&
+                    fixture.queued[queued_before].registry == kBuiltIn &&
+                    fixture.queued[queued_before].key == kGatehouse &&
+                    fixture.queued[queued_before].reason == content::DownloadReason::install &&
+                    fixture.queued[queued_before + 1].registry == kBuiltIn &&
+                    fixture.queued[queued_before + 1].key == kGatehouseKeep &&
+                    fixture.queued[queued_before + 1].reason == content::DownloadReason::install,
+                "GET BOTH did not queue Gatehouse then Gatehouse Keep"
+            );
+            std::cout << "library install check: GET BOTH queued gatehouse then gatehouse-keep\n";
+
+            const fs::path gate_folder = mutators_root / std::string(kGatehouse);
+            const fs::path keep_folder = mutators_root / std::string(kGatehouseKeep);
+            write_named_mutator(packages / "gatehouse.oamut", kGatehouse, "Gatehouse", "4.1", {});
+            post_catalogue(
+                packages / "gatehouse.oamut",
+                kBuiltIn,
+                kGatehouse,
+                "Gatehouse",
+                1,
+                library::Kind::mutator
+            );
+            installs_quietly("Gatehouse", kBuiltIn, kGatehouse);
+            write_named_mutator(
+                packages / "gatehouse-keep.oamut",
+                kGatehouseKeep,
+                "Gatehouse Keep",
+                "2.0",
+                "requires:\n  mutators: [\"gatehouse >= 4.0\"]\n"
+            );
+            post_catalogue(
+                packages / "gatehouse-keep.oamut",
+                kBuiltIn,
+                kGatehouseKeep,
+                "Gatehouse Keep",
+                1,
+                library::Kind::mutator
+            );
+            installs_quietly("Gatehouse Keep", kBuiltIn, kGatehouseKeep);
+            show_entry("oa.library.row.check-builtin.gatehouse");
+            press_action("uninstall");
+            {
+                const auto* asked = dynamic_cast<const QuestionScreen*>(oa_layer().top());
+                require(asked != nullptr, "UNINSTALL did not ask about Gatehouse");
+                const settings::Prompt& shown = asked->question();
+                require(
+                    shown.paragraphs.size() == 3 &&
+                        shown.paragraphs[0].text ==
+                            "Uninstall Gatehouse? Its folder, Mutators/gatehouse, is removed." &&
+                        shown.paragraphs[1].text ==
+                            "Gatehouse Keep needs it: it stays installed, and cannot be switched "
+                            "on until this is back." &&
+                        shown.paragraphs[2].text == "GET installs it again.",
+                    "uninstalling Gatehouse did not say Gatehouse Keep needs it"
+                );
+            }
+            click_named("oa.prompt.cancel");
+            frames();
+            require(fs::exists(gate_folder) && fs::exists(keep_folder), "CANCEL removed Gatehouse");
+            close_the_library();
+            std::error_code gate_error;
+            fs::remove_all(gate_folder, gate_error);
+            fs::remove_all(keep_folder, gate_error);
+            std::erase_if(fixture.inputs.listings, [](const library::Listing& listed) {
+                return listed.kind == library::Kind::mutator &&
+                       (listed.key == kGatehouse || listed.key == kGatehouseKeep);
+            });
+            list_installed();
+        }
         std::error_code fast_error;
         fs::remove_all(fast_folder, fast_error);
 

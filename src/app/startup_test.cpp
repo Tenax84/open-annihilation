@@ -409,6 +409,7 @@ const std::vector<FlagCase>& flag_cases() {
         {"--check-side-orders", &Options::check_side_orders, {}},
         {"--check-factory-orders", &Options::check_factory_orders, {}},
         {"--check-unit-speech", &Options::check_unit_speech, {}},
+        {"--check-mutator-layer", &Options::check_mutator_layer, {}},
         {"--check-side-data-per-match", &Options::check_side_data_per_match, {}},
         {"--check-gadget-art-per-match", &Options::check_gadget_art_per_match, {}},
         {"--check-download-builds", &Options::check_download_builds, {}},
@@ -468,6 +469,7 @@ const std::vector<ValueCase>& value_cases() {
         {"--content", "totala", {}},
         {"--archive", "totala1.hpi", {}},
         {"--mod", "mods/x/oamod.yaml", {}},
+        {"--mutator", "ridge-swift:factor=4", {}},
         {"--mod-dir", "mods/x", {}},
         {"--snapshot", "frame.ppm", {}},
         {"--preferences-file", "p.conf", {}},
@@ -979,6 +981,20 @@ void switch_words_keep_their_spaces() {
     );
 }
 
+// Two --mutator values stay in the order given, and a malformed value is
+// refused before the game starts.
+void mutator_options() {
+    const auto options =
+        parse({"--mutator", "ridge-swift", "--mutator", "packages/ridge-tough:health=2000"});
+    expect(
+        options.mutators.size() == 2 && options.mutators[0] == "ridge-swift" &&
+            options.mutators[1] == "packages/ridge-tough:health=2000",
+        "two --mutator values stay in order"
+    );
+    const std::string refused = rejection({"--mutator", "ridge-swift:factor="});
+    expect(refused.starts_with("--mutator: "), "a malformed --mutator names the option");
+}
+
 int main() {
     renderer_ladder_options();
     game_files_options();
@@ -986,6 +1002,7 @@ int main() {
     switch_words_keep_their_spaces();
     options_by_name();
     value_options();
+    mutator_options();
     const auto plain = parse({"--headless-check"});
     expect(plain.trace_digest.empty() && plain.trace_units.empty(), "no trace without the flag");
     expect(!plain.seed, "no fixed seed without the flag");

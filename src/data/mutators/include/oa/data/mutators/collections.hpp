@@ -15,14 +15,20 @@
 #include "oa/data/mutation_rules/documents.hpp"
 #include "oa/formats/soft_mutator.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 struct lua_State;
+
+namespace oa {
+class AssetStore;
+}
 
 namespace oa::data::mutators {
 
@@ -52,6 +58,8 @@ struct WriteGrant {
     bool units{};    ///< unit records and the download entries a removal drops
     bool weapons{};  ///< weapon records, including a weapon's damage block
     bool features{}; ///< feature records
+    bool sides{};    ///< side data and the build lists
+    bool tables{};   ///< other game-data tables
 };
 
 /// What a removal took out of the document set.
@@ -77,6 +85,33 @@ enum class HookNoteKind : uint8_t {
     hook_overwrote,               ///< a later hook replaced an earlier hook's value
     download_first_entry_changed, ///< removing the first download entry left a different unit first
     not_a_number,                 ///< a scale skipped a value that is not a number
+};
+
+/// One unit or weapon a hook cloned.
+///
+/// `sentence` is the journal line: "added unit NEW (copy of SRC)" or
+/// "added weapon NEW (copy of SRC) at id N". `weapon_id` is that id, and 0
+/// for a unit.
+struct CloneRecord {
+    std::string mutator;  ///< mutator whose hook cloned it
+    bool weapon{};        ///< true for a weapon section, false for a unit
+    std::string name;     ///< the new record's name, as the script wrote it
+    std::string source;   ///< the record it was copied from, as the script wrote it
+    int weapon_id{};      ///< free weapon id, from 1 to 255; 0 for a unit
+    std::string path;     ///< document path the copy was written to
+    std::string sentence; ///< the journal line for this clone
+};
+
+/// One binary file a clone serves under the new name.
+///
+/// `sentence` is "added path <new>, copy of <source>". The bytes are the
+/// source file as the store held it when the clone ran.
+struct ServedCopy {
+    std::string mutator;                               ///< mutator whose clone served it
+    std::string path;                                  ///< path the layer serves
+    std::string source_path;                           ///< path the bytes were read from
+    std::string sentence;                              ///< the journal line for this copy
+    std::shared_ptr<const std::vector<uint8_t>> bytes; ///< the served bytes
 };
 
 /// One note a hook produced, for the change journal.
@@ -156,6 +191,40 @@ class Collections {
     /// Ends the mutator's turn. Later writes are refused until the next begin.
     void end_mutator();
 
+    /// Names and paths the side and table bindings compute before they push.
+    ///
+    /// The object outlives the Lua callback. A callback fills it, returns,
+    /// and only then pushes, so a Lua error cannot skip a destructor.
+    struct SideScratch {
+        std::vector<std::string> names;
+        std::vector<std::string> raw_names;
+        std::string text;
+        std::string path;
+        std::string record;
+        std::string key;
+        std::string builder;
+        std::string side_path;
+        std::string list_path;
+        std::string side_error;
+        std::string list_error;
+        uint64_t visits = 0;
+        uint64_t text_units = 0;
+        uint64_t fields = 0;
+        uint64_t comparisons = 0;
+        bool scan = false;
+        bool found = false;
+        bool builder_unit = false;
+        bool present = false;
+        bool side_ready = false;
+        bool list_ready = false;
+        bool side_found = false;
+        bool list_found = false;
+        uint32_t count = 0;
+        uint32_t slot = 0;
+        std::size_t side_doc = 0;
+        std::size_t list_doc = 0;
+    };
+
     /// Pushes the units collection.
     ///
     /// @param state state to push into
@@ -198,9 +267,75 @@ class Collections {
     /// @return the notes
     [[nodiscard]] std::span<const HookNote> notes() const;
 
+    /// Remembers the store a clone reads while a hook runs.
+    ///
+    /// The store must outlive the hooks. Null clears it.
+    ///
+    /// @param store the layered store, or null
+    void bind_store(oa::AssetStore* store) { store_ = store; }
+
+    /// Returns the clones made so far, in the order the hooks made them.
+    ///
+    /// The span is invalidated by the next clone.
+    ///
+    /// @return the clones
+    [[nodiscard]] std::span<const CloneRecord> clones() const { return clones_; }
+
+    /// Returns the binary copies served so far, in the order they were read.
+    ///
+    /// The span is invalidated by the next copy.
+    ///
+    /// @return the copies
+    [[nodiscard]] std::span<const ServedCopy> served_copies() const { return served_; }
+
   private:
 
     friend struct CollectionsAccess;
+    friend struct CloneAccess;
+    /// The sides and tables collections journal through the same writes.
+    friend struct SideCollectionsAccess;
+
+    /// Keeps one field write, and an overwrite note when an earlier hook wrote it.
+    ///
+    /// @param write the write, naming this mutator
+    /// @param[out] reason the limit it crossed; unchanged on success
+    /// @return false when the mutator has journaled too much
+    bool accept_write(oa::data::mutation_rules::FieldWrite write, std::string& reason);
+
+    /// Keeps one hook note.
+    ///
+    /// @param note the note
+    /// @param[out] reason the limit it crossed; unchanged on success
+    /// @return false when the mutator has journaled too much
+    bool accept_note(HookNote note, std::string& reason);
+
+    /// Holds the next Lua error until `raise_held`.
+    ///
+    /// @param message the error
+    void hold_error(std::string message);
+
+    /// Raises the held error. Call it with no local objects still to destroy.
+    ///
+    /// @param state the state to raise in
+    /// @return does not return
+    int raise_held(lua_State* state);
+
+    /// The side bindings' working storage. It lives as long as the collections.
+    ///
+    /// @return the storage
+    SideScratch& side_scratch() noexcept;
+
+    /// Resolves one unit through the units index.
+    ///
+    /// Charges the index check and the matched section. Copies the canonical
+    /// name into `side_scratch().text` and the builder flag into
+    /// `side_scratch().builder_unit`. Call it with no local object still to
+    /// destroy: the charge can raise.
+    ///
+    /// @param state the state to charge, or null to build the index quietly
+    /// @param sought the unit name the script wrote
+    /// @return 1 when the unit is there, 0 when it is not, -1 on a held error
+    int lookup_unit(lua_State* state, std::string_view sought);
 
     oa::data::mutation_rules::DocumentSet* documents_;
     const oa::data::defs::DataLayout* layout_;
@@ -211,6 +346,12 @@ class Collections {
     std::vector<RecordRemoval> removals_;
     std::vector<HookNote> notes_;
     std::unique_ptr<CollectionsState> state_;
+    oa::AssetStore* store_{};         ///< store a clone reads; not owned
+    std::vector<CloneRecord> clones_; ///< clones made during the hooks
+    std::vector<ServedCopy> served_;  ///< binary copies those clones serve
+    /// Folded served path to its index in `served_`. A page lookup does not scan the list.
+    std::unordered_map<std::string, std::size_t> served_index_;
+    SideScratch side_scratch_{};
 };
 
 } // namespace oa::data::mutators

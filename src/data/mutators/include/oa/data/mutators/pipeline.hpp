@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 // SPDX-License-Identifier: GPL-3.0-only
 
-// One ordered run of mutators: plan, files, parse, one rules pass, hooks,
-// then only the documents that changed. A mutator that fails ends the pass,
-// and the run is repeated without it, so it leaves no file, rule or note.
+// One ordered run of mutators: plan, files, parse, then each mutator's
+// rules and hooks, then only the documents that changed. A mutator that
+// fails ends the pass, and the run is repeated without it, so it leaves
+// no file, rule or note.
 #pragma once
 
 #include "oa/data/defs/layout.hpp"
@@ -134,6 +135,18 @@ struct PipelineResult {
     [[nodiscard]] bool playable() const noexcept;
 };
 
+/// The first reason a loadout list cannot run, or an empty string when it can.
+///
+/// More than `max_mutators`, the same id twice, a requirement no earlier
+/// mutator meets, or two mutators that conflict. `run_pipeline` checks the
+/// same list again, so a launch file and a remembered set still meet it.
+///
+/// @param listed the mutators, top first
+/// @param versions each mutator's version text, in the same order
+/// @return the refusal, or an empty string
+[[nodiscard]] std::string
+list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::string>& versions);
+
 /// Runs the mutators in `input` against `store`.
 ///
 /// The list is checked first. More than `max_mutators`, an id twice, a
@@ -141,12 +154,13 @@ struct PipelineResult {
 /// conflict, refuses the list: every result is excluded, nothing is
 /// mounted and no script runs. Each remaining manifest is checked against
 /// the mod and the engine. The rest are planned, their files mounted, the
-/// documents parsed from that layer, their rules applied once, and their
-/// hooks run in list order. Each pass over the list is a transaction. A
+/// documents parsed from that layer. Each mutator in list order then
+/// applies its rules and then its hooks. A plan that returns map hooks is
+/// refused, so none run. Each pass over the list is a transaction. A
 /// failure in a plan or a rule target is the mutator's own, and every one
 /// is kept. Any later failure can depend on the mutators above it, so the
 /// pass keeps only the one nearest the top of the list, and stops at the
-/// first hook that fails: no later hook runs on what a failed mutator left.
+/// first hook that fails: no later mutator runs on what a failed mutator left.
 /// The mutator that failed, and every mutator that requires it, is then
 /// dropped and the pass repeated from the store, so the result is the run
 /// without them. Only a document the run changed is written back. A plan
