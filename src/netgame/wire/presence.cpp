@@ -880,6 +880,20 @@ bool read_mutator_part(Window window, PresenceMutatorPart* out) {
     return true;
 }
 
+/// Adds mutators that continue the list. Items already held are skipped.
+void append_continuing(
+    PresenceLoadoutAssembly& assembly, uint8_t first, const std::vector<PresenceMutator>& items
+) {
+    if (first > assembly.mutators.size())
+        return;
+    std::size_t cursor = assembly.mutators.size() - first;
+    while (cursor < items.size() && assembly.mutators.size() < assembly.total &&
+           assembly.mutators.size() < presence_mutators_max) {
+        assembly.mutators.push_back(items[cursor]);
+        ++cursor;
+    }
+}
+
 } // namespace
 
 WireError
@@ -1343,6 +1357,97 @@ WireError encode_presence_map_pack(
     assert(used == size);
     *written = used;
     return WireError::ok;
+}
+
+WireError encode_presence_mutator_part(
+    const PresenceMutators& loadout,
+    uint8_t first,
+    uint8_t* out,
+    std::size_t capacity,
+    std::size_t* written,
+    uint8_t* sent
+) noexcept {
+    if (out == nullptr || written == nullptr || sent == nullptr)
+        return WireError::bad_argument;
+    if (first >= loadout.mutators.size() || first >= presence_mutators_max)
+        return WireError::bad_argument;
+    const std::size_t end = loadout.mutators.size() < presence_mutators_max
+                                ? loadout.mutators.size()
+                                : static_cast<std::size_t>(presence_mutators_max);
+    for (std::size_t cursor = first; cursor < end; ++cursor)
+        if (!mutator_ok(loadout.mutators[cursor]))
+            return WireError::bad_argument;
+    const std::size_t prefix = digest_bytes + 1;
+    std::size_t value_bytes = prefix;
+    uint8_t count = 0;
+    for (std::size_t cursor = first; cursor < end; ++cursor) {
+        const auto item_bytes = mutator_value_bytes(loadout.mutators[cursor]);
+        if (value_bytes + item_bytes > capacity)
+            break;
+        value_bytes += item_bytes;
+        ++count;
+    }
+    if (count == 0)
+        return WireError::buffer_too_small;
+    std::size_t used = 0;
+    put_bytes(out, &used, loadout.digest.data(), digest_bytes);
+    put_u8(out, &used, first);
+    for (uint8_t cursor = 0; cursor < count; ++cursor)
+        write_mutator(out, &used, loadout.mutators[static_cast<std::size_t>(first) + cursor]);
+    assert(used == value_bytes);
+    *written = used;
+    *sent = count;
+    return WireError::ok;
+}
+
+std::optional<PresenceMutatorsState>
+presence_mutators_state(const uint8_t* record, std::size_t size) noexcept {
+    std::span<const uint8_t> value;
+    if (!find_presence_field(record, size, PresenceTag::mutators, &value) ||
+        value.size() < mutators_fixed_value_bytes)
+        return std::nullopt;
+    const uint8_t* cursor = value.data();
+    const uint8_t flags = cursor[0];
+    cursor += 1;
+    PresenceMutatorsState state;
+    state.built = (flags & mutators_built_flag) != 0;
+    state.lacking = (flags & mutators_lacking_flag) != 0;
+    state.failed = (flags & mutators_failed_flag) != 0;
+    std::memcpy(state.digest.data(), cursor, digest_bytes);
+    cursor += digest_bytes;
+    std::memcpy(state.layer_digest.data(), cursor, digest_bytes);
+    cursor += digest_bytes;
+    state.index = cursor[0];
+    state.total = cursor[1];
+    state.held = cursor[2];
+    state.states = load_le64(cursor + 3);
+    if (!mutators_prefix_ok(
+            state.built, state.layer_digest, state.index, state.total, state.held, state.states
+        ))
+        return std::nullopt;
+    return state;
+}
+
+bool presence_assembly_take(PresenceLoadoutAssembly& assembly, const PresenceRecord& host) {
+    const PresenceLoadoutAssembly previous = assembly;
+    if (!host.mutators) {
+        assembly = {};
+        return assembly != previous;
+    }
+    const PresenceMutators& incoming = *host.mutators;
+    if (assembly.digest != incoming.digest || assembly.total != incoming.total) {
+        assembly = {};
+        assembly.digest = incoming.digest;
+        assembly.total = incoming.total;
+    }
+    append_continuing(assembly, 0, incoming.mutators);
+    if (host.mutator_part && host.mutator_part->digest == assembly.digest)
+        append_continuing(assembly, host.mutator_part->first, host.mutator_part->mutators);
+    return assembly != previous;
+}
+
+bool presence_assembly_whole(const PresenceLoadoutAssembly& assembly) noexcept {
+    return assembly.total != 0 && assembly.mutators.size() == assembly.total;
 }
 
 WireError append_presence_field(
