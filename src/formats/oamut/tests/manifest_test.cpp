@@ -694,6 +694,7 @@ requires:
   mutators: ["long-shadows >= 1"]
 conflicts-with: ["deep-water"]
 layers: ["files", "units", "weapons", "features", "sides", "tables", "menus", "maps", "hacks"]
+clashes: add
 )"} + sample_options() +
                              R"(strings:
   de:
@@ -727,6 +728,7 @@ legacy:
     OA_CHECK(packed.description == "Hands stay steady.\nThe second line stays in the description.");
     OA_CHECK(packed.layers.size() == 9);
     OA_CHECK(packed.layers[0] == Layer::files && packed.layers[8] == Layer::hacks);
+    OA_CHECK(packed.clashes == ClashMode::add);
     OA_CHECK(mut::layer_name(Layer::hacks) == std::string_view{"hacks"});
     OA_CHECK(mut::parse_layer("sounds") == std::nullopt);
     OA_CHECK(packed.works_with.size() == 2 && packed.works_with[1].id == "ta-3.1c");
@@ -801,8 +803,10 @@ void test_clashes() {
     expect_one(
         edited(layers, "layers: [\"units\"]\nclashes: 1\n"),
         "clashes",
-        "1",
-        "clashes must be add or replace"
+        "clashes: 1",
+        "clashes must be add or replace",
+        0,
+        9
     );
 }
 
