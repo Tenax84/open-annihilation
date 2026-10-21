@@ -16,7 +16,8 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
 `oa/data/mutators/hacks.hpp`,
 `oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
-`oa/data/mutators/maps.hpp`, `oa/data/mutators/menus.hpp`,
+`oa/data/mutators/map_rules.hpp`, `oa/data/mutators/maps.hpp`,
+`oa/data/mutators/menus.hpp`,
 `oa/data/mutators/pipeline.hpp`, `oa/data/mutators/rules_lua.hpp`,
 `oa/data/mutators/verdicts.hpp` and `oa/data/mutators/weapon_ids.hpp`.
 
@@ -279,6 +280,12 @@ is the same program with `--data`: it reads every installed map and
 writes nothing, then points every map whose schemas name a profile at
 another profile. Each rewrite must be served, and each map that loads as
 a skirmish session must read its rewrite back through the session loader.
+
+`data-mutators-map-rules` (`tests/map_rules_test.cpp`) applies rule
+files that name `maps/*.ota` to one made-up map. It checks the split, the
+combination, the schema copy of a header `SurfaceMetal`, a skipped
+`MohoMetal`, a maps hook that reads the rules' result, a dry run with no
+map, a refused `.tnt` target and a missing `maps` layer.
 
 ## Limitations
 
@@ -1293,3 +1300,40 @@ name the lookup that checks it. A `where`, `:set` or `:scale` table holds
 at most 4096 keys. One mutator may journal at most 65536 map writes; a
 further write fails that mutator with "this mutator has changed too many
 fields", even when the script catches the error.
+
+## Rules that target maps
+
+A rule block whose folder is `maps` (ASCII case ignored, `\` read as `/`)
+and whose extension is `ota` is taken out of the rules phase. The rules
+phase never loads or serves a path under `maps/`. Any other extension in
+that folder refuses the plan: rules can change a map's OTA only. The
+mutator's manifest must declare the `maps` layer, or the plan is refused
+the same way as any other undeclared layer.
+
+Those blocks run at the start of the maps phase, before the first maps
+hook, and only on the chosen map's OTA. Needs read that file as it stands.
+Across mutators, assignments of one field average, meta values average and
+win over plain numbers, factors multiply after ordering by their exact
+value bits and then their rule text, and clamps widen to the lowest low
+and the highest high. Inside one mutator the last kind of change wins, an
+assignment resets that mutator's factors and clamps, and scales multiply
+in file order. A number is written with the TDF number spelling when it
+is finite and different from the current number. The header limits are
+the ones a maps hook uses. A whole-number header key may be left
+fractional when the result is finite and from 0 to 32,767. A key that is
+not on `[GlobalHeader]` is refused.
+
+A header `SurfaceMetal`, in any case, is not written into `[GlobalHeader]`.
+The rules note `copied to every schema's SurfaceMetal`, and a kept number
+is copied onto every `[Schema N]` through the schema check (a whole number
+from 0 to 255). A value outside that range is refused for each schema, and
+the OTA is not served. A removal, or text that is not a number, is not
+copied, and a note says so. A factor on a header that has no `SurfaceMetal`
+changes nothing. A header `MohoMetal` changes nothing and is noted with
+`nothing in OA reads MohoMetal; skipped`.
+
+Whatever the rules change is served, journalled and re-read the way a maps
+hook's OTA is, so a later maps hook sees it. Journal rows for a header key
+use `map:<key>`, and each schema copy uses `map:<key>/Schema N`. With no
+chosen map the rules change nothing and leave one note per mutator,
+`applies to the chosen map only`.

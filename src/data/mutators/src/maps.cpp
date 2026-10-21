@@ -669,6 +669,20 @@ tdf::Block* header_block(MapWork& work) noexcept {
     return tdf::editable_child(tdf::editable_root(work.document.get()), "GlobalHeader");
 }
 
+/// "Schema N", the spelling the session loader looks up. `number` is not negative.
+void schema_name(int number, char (&out)[32]) noexcept {
+    char digits[24];
+    const std::size_t digits_len = spell_whole(number, digits);
+    out[0] = 'S';
+    out[1] = 'c';
+    out[2] = 'h';
+    out[3] = 'e';
+    out[4] = 'm';
+    out[5] = 'a';
+    out[6] = ' ';
+    std::memcpy(out + 7, digits, digits_len + 1);
+}
+
 tdf::Block* schema_block(MapWork& work, int number) noexcept {
     // Schemas are children of GlobalHeader. The session loader looks up
     // "Schema N" from that block, and stops at the first missing number.
@@ -677,11 +691,9 @@ tdf::Block* schema_block(MapWork& work, int number) noexcept {
     tdf::Block* header = header_block(work);
     if (header == nullptr)
         return nullptr;
-    char name[32] = "Schema ";
-    char digits[24];
-    const std::size_t count = spell_whole(number, digits);
-    std::memcpy(name + 7, digits, count + 1);
-    return tdf::editable_child(header, std::string_view(name, 7 + count));
+    char name[32];
+    schema_name(number, name);
+    return tdf::editable_child(header, name);
 }
 
 int schema_count(MapWork& work) noexcept {
@@ -777,15 +789,21 @@ Emit stored_emit(MapWork& work, const char* text) noexcept {
 
 // Refusals.
 
+const char* header_limit_tail(KeyClass kind) noexcept {
+    if (kind == KeyClass::header_bit)
+        return " must be 0 or 1";
+    if (kind == KeyClass::header_real)
+        return " must be a number from 0 to 1000";
+    return " must be a whole number from 0 to 32767";
+}
+
+constexpr const char* k_schema_metal_limit =
+    "map.schemas.surfacemetal must be a whole number from 0 to 255";
+
 void hold_header_limit(MapWork& work, const KeyRow& row) noexcept {
     hold(work, "map.header.");
     hold_add(work, row.folded);
-    if (row.kind == KeyClass::header_bit)
-        hold_add(work, " must be 0 or 1");
-    else if (row.kind == KeyClass::header_real)
-        hold_add(work, " must be a number from 0 to 1000");
-    else
-        hold_add(work, " must be a whole number from 0 to 32767");
+    hold_add(work, header_limit_tail(row.kind));
 }
 
 void hold_type_problem(MapWork& work, const KeyRow& row) noexcept {
@@ -796,7 +814,7 @@ void hold_type_problem(MapWork& work, const KeyRow& row) noexcept {
         hold_add(work, row.folded);
         hold_add(work, " must be a whole number from 0 to 1000000");
     } else if (row.kind == KeyClass::schema_metal) {
-        hold(work, "map.schemas.surfacemetal must be a whole number from 0 to 255");
+        hold(work, k_schema_metal_limit);
     } else {
         hold_header_limit(work, row);
     }
@@ -2313,6 +2331,97 @@ static int apply_table_form(lua_State* state) {
 } // extern "C"
 
 } // namespace
+
+std::string map_header_refusal(std::string_view key, const std::optional<std::string>& text) {
+    const KeyRow* row = key_row(key);
+    if (row == nullptr || !header_class(row->kind)) {
+        std::string sentence = "the maps change \"";
+        sentence.append(key.data(), key.size());
+        sentence += "\" is not a header or schema setting";
+        return sentence;
+    }
+    if (row->kind == KeyClass::header_frozen) {
+        std::string sentence = "map.header.";
+        sentence += row->folded;
+        sentence += " cannot change";
+        return sentence;
+    }
+    std::string sentence = "map.header.";
+    sentence += row->folded;
+    sentence += header_limit_tail(row->kind);
+    if (!text.has_value()) {
+        std::string removed = "map.header.";
+        removed += row->folded;
+        removed += " cannot be removed";
+        return removed;
+    }
+    double number = 0;
+    if (!fully_numeric(text->c_str(), number))
+        return sentence;
+    if (row->kind == KeyClass::header_whole) {
+        // A rule may leave a fraction. The range is the one the header uses.
+        if (!std::isfinite(number) || number < 0.0 || number > 32767.0)
+            return sentence;
+        return {};
+    }
+    double accepted = 0;
+    if (!number_in_header(*row, number, accepted))
+        return sentence;
+    return {};
+}
+
+std::string map_schema_metal_refusal(const std::optional<std::string>& text) {
+    double number = 0;
+    double integral = 0;
+    if (!text.has_value() || !fully_numeric(text->c_str(), number) ||
+        !whole_number(number, integral) || integral < 0.0 || integral > 255.0)
+        return k_schema_metal_limit;
+    return {};
+}
+
+bool write_map_field(
+    tdf::Document* document, tdf::Block* block, const char* spelling, std::string_view text
+) {
+    if (document == nullptr || block == nullptr || spelling == nullptr)
+        return false;
+    return tdf::set_value(document, block, spelling, text) == tdf::EditStatus::ok;
+}
+
+int map_schema_count(const tdf::Document* document) {
+    if (document == nullptr || document->root == nullptr)
+        return 0;
+    const tdf::Block* header = tdf::find_child(document->root, "GlobalHeader");
+    if (header == nullptr)
+        return 0;
+    int found = 0;
+    for (int number = 0; number < kSchemaLimit; ++number) {
+        char name[32];
+        schema_name(number, name);
+        if (tdf::find_child(header, name) == nullptr)
+            break;
+        ++found;
+    }
+    return found;
+}
+
+tdf::Block* map_schema_block(tdf::Document* document, int number) {
+    if (document == nullptr || number < 0 || number >= kSchemaLimit)
+        return nullptr;
+    tdf::Block* header = tdf::editable_child(tdf::editable_root(document), "GlobalHeader");
+    if (header == nullptr)
+        return nullptr;
+    char name[32];
+    schema_name(number, name);
+    return tdf::editable_child(header, name);
+}
+
+std::string map_schema_label(int number) {
+    if (number < 0)
+        return {};
+    char name[32];
+    schema_name(number, name);
+    return std::string(name);
+}
 
 void install_map_match_forms(lua_State* state) {
     ensure_match_meta(state);

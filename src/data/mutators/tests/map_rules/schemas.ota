@@ -1,0 +1,15 @@
+[GlobalHeader]
+{
+missionname=Ridge Metal;
+minwindspeed=2000;
+maxwindspeed=3000;
+gravity=100;
+[Schema 0]
+{
+SurfaceMetal=4;
+}
+[Schema 1]
+{
+SurfaceMetal=6;
+}
+}
