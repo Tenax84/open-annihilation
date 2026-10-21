@@ -34,6 +34,9 @@
 #include "oa/data/campaign/campaign_assets.hpp"
 #include "oa/data/campaign/map_catalog.hpp"
 #include "oa/data/content_bundles.hpp"
+#include "oa/data/mutator_library/library.hpp"
+#include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/json.hpp"
 #include "oa/formats/ota.hpp"
 #include "oa/app/platform_hooks.hpp"
@@ -1572,6 +1575,72 @@ void take_launch_opened_at_start(Options& options) {
     return net.list_content || net.launch_planned;
 }
 
+/// Refuses a --mutator value the game cannot apply, before a window opens.
+///
+/// A malformed value was already refused while the command line was read.
+/// An id that is not installed, an option the manifest does not have, a
+/// value outside its choices, and a list the manifests refuse (one id
+/// twice, a prerequisite that is not above it, or two that conflict) end
+/// the run with status 2. With no player folder, an id is refused the
+/// same way and is not looked up.
+///
+/// @param options the parsed command line
+void refuse_unusable_mutators(const Options& options) {
+    if (options.mutators.empty())
+        return;
+    const std::optional<fs::path> player = launch_user_folder(options);
+    fs::path mutators_folder;
+    if (player)
+        mutators_folder = *player / std::string(oa::data::mutator_library::mutators_folder_name);
+    const std::string launch_source = netgame_context().options.launch_source;
+    std::vector<oa::data::mutators::PipelineMutator> listed;
+    std::vector<std::string> versions;
+    listed.reserve(options.mutators.size());
+    versions.reserve(options.mutators.size());
+    for (std::size_t index = 0; index < options.mutators.size(); ++index) {
+        const std::string& value = options.mutators[index];
+        const bool from_file =
+            index < options.mutator_fields.size() && !options.mutator_fields[index].empty();
+        const std::string prefix = from_file
+                                       ? launch_source + ": " + options.mutator_fields[index] + ": "
+                                       : std::string("--mutator: ");
+        std::string error;
+        const std::optional<oa::data::mutators::MutatorChoice> choice =
+            oa::data::mutators::parse_choice(value, &error);
+        if (!choice) {
+            if (from_file)
+                throw netgame::LaunchRefusal(prefix + error);
+            throw std::runtime_error(prefix + error);
+        }
+        if (!choice->by_path && !player) {
+            throw netgame::LaunchRefusal(
+                prefix + "no player folder can be worked out for \"" + choice->target + "\""
+            );
+        }
+        const std::string version = index < options.mutator_versions.size()
+                                        ? options.mutator_versions[index]
+                                        : std::string{};
+        oa::data::mutators::ResolvedMutator resolved;
+        if (!resolve_run_mutator(value, version, mutators_folder, &resolved, &error))
+            throw netgame::LaunchRefusal(prefix + error);
+        oa::data::mutators::PipelineMutator entry;
+        entry.package = resolved.folder;
+        entry.manifest = resolved.manifest;
+        entry.options = resolved.options;
+        versions.push_back(oa::formats::oamut::version_text(resolved.manifest.version));
+        listed.push_back(std::move(entry));
+    }
+    const std::string refusal = oa::data::mutators::list_refusal(listed, versions);
+    if (!refusal.empty()) {
+        const bool from_file =
+            !options.mutator_fields.empty() && !options.mutator_fields.front().empty();
+        throw netgame::LaunchRefusal(
+            (from_file ? launch_source + ": content.mutators: " : std::string("--mutator: ")) +
+            refusal
+        );
+    }
+}
+
 /// Runs the game once: finds the game folders and their profile, with the
 /// Game files screen where the platform brings game files in and none is
 /// usable, opens the window the first time, plays the intro movies the
@@ -1597,6 +1666,7 @@ int run_once(
 ) {
     options.game_dir_named = !options.game_dir.empty();
     resolve_launch_mod(options);
+    refuse_unusable_mutators(options);
     // Captured before game_dir is filled with the folder this start plays:
     // the second compose, after a copy made on this start, still runs.
     const bool mount_copy = mount_managed_copy(options);

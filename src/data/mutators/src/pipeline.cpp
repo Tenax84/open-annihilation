@@ -8,6 +8,7 @@
 // anyone who requires it, and the run starts again from the store.
 #include "oa/data/mutators/pipeline.hpp"
 
+#include "clone.hpp"
 #include "oa/base/sha256.hpp"
 #include "oa/data/defs/asset_files.hpp"
 #include "oa/data/defs/files.hpp"
@@ -42,6 +43,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "collections_sides.hpp"
 
 namespace oa::data::mutators {
 namespace rules = oa::data::mutation_rules;
@@ -195,6 +198,9 @@ struct HookBox {
     int function_ref{LUA_NOREF};
     HookWhich which{HookWhich::units};
     const ContextView* context{};
+    const oa::AssetStore* store{};
+    const defs::DataLayout* layout{};
+    const std::string* variant{};
 };
 
 /// The package files one sandbox may read, sorted byte by byte.
@@ -598,6 +604,8 @@ int push_hook(void* context, lua_State* state) {
     box->collections->set_context_collections(state, ctx);
     if (box->menus != nullptr)
         box->menus->set_context(state, ctx);
+    if (box->store != nullptr && box->layout != nullptr && box->variant != nullptr)
+        set_context_sides(state, ctx, *box->collections, *box->store, *box->layout, *box->variant);
     return 2;
 }
 
@@ -1074,7 +1082,15 @@ Collection collection_for_path(std::string_view path, const defs::DataLayout& la
         return Collection::menus;
     if (directory(defs::DataDirectory::download))
         return Collection::menus;
-    if (directory(defs::DataDirectory::gamedata)) {
+    // A language variant lives in "<gamedata>-<variant>/". The side loader
+    // reads sidedata from that folder when the file is there, and the build
+    // lists stay in the plain folder. Both are still game-data tables.
+    const std::string gamedata_name =
+        fold_copy(layout.directories[static_cast<std::size_t>(defs::DataDirectory::gamedata)]);
+    const bool gamedata_variant = first.size() > gamedata_name.size() &&
+                                  first.compare(0, gamedata_name.size(), gamedata_name) == 0 &&
+                                  first[gamedata_name.size()] == '-';
+    if (directory(defs::DataDirectory::gamedata) || gamedata_variant) {
         if (rest == "sidedata.tdf")
             return Collection::sides;
         return Collection::tables;
@@ -1363,6 +1379,15 @@ void parse_documents(
     consider_listed(documents, report, store, k_features_folder, ".tdf", true);
     consider_listed(documents, report, store, layout.directories[download], ".tdf", false);
     consider_variant_file(documents, report, store, layout, variant, "sidedata");
+    // Sides are read from the language variant when that file is present.
+    // Build lists are read from the plain gamedata/sidedata.tdf, including
+    // when a variant exists. Load the plain file as well so each write is
+    // served at the path its reader opens. The second add is a no-op when
+    // the variant file is absent, because that path is already the plain one.
+    {
+        const std::size_t gamedata = static_cast<std::size_t>(defs::DataDirectory::gamedata);
+        consider_document(documents, report, store, layout.directories[gamedata] + "/sidedata.tdf");
+    }
     consider_variant_file(documents, report, store, layout, variant, "moveinfo");
     const std::vector<sm::Target> targets = rules::targets_of(rule_sets);
     for (const sm::Target& target : targets) {
@@ -1491,6 +1516,9 @@ bool call_hook(
     int function_ref,
     HookWhich which,
     const ContextView& context,
+    const oa::AssetStore& store,
+    const defs::DataLayout& layout,
+    const std::string& variant,
     std::size_t slot,
     FirstFailure& first
 ) {
@@ -1500,6 +1528,9 @@ bool call_hook(
     box.function_ref = function_ref;
     box.which = which;
     box.context = &context;
+    box.store = &store;
+    box.layout = &layout;
+    box.variant = &variant;
     host::CallHooks hooks;
     hooks.context = &box;
     hooks.push = push_hook;
@@ -1599,51 +1630,6 @@ void exclude_blocked(
             }
         }
     }
-}
-
-/// The first list problem, or an empty string when the list may run.
-std::string
-list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::string>& versions) {
-    if (listed.size() > max_mutators) {
-        return "a loadout lists " + std::to_string(listed.size()) + " mutators, and " +
-               std::to_string(max_mutators) + " is the most";
-    }
-    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
-        for (std::size_t earlier = 0; earlier < slot; ++earlier) {
-            if (listed[slot].manifest.id == listed[earlier].manifest.id)
-                return listed[slot].manifest.id + " is listed twice";
-        }
-    }
-    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
-        for (const oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
-            bool met = false;
-            for (std::size_t earlier = 0; earlier < slot; ++earlier) {
-                if (oamut::condition_met(condition, listed[earlier].manifest.id, versions[earlier]))
-                    met = true;
-            }
-            if (!met) {
-                std::string message = listed[slot].manifest.id + " needs " + condition.id;
-                if (!condition.range_text.empty()) {
-                    message += " ";
-                    message += condition.range_text;
-                }
-                message += " above it";
-                return message;
-            }
-        }
-    }
-    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
-        for (const oamut::Condition& condition : listed[slot].manifest.conflicts_with) {
-            for (std::size_t other = 0; other < listed.size(); ++other) {
-                if (other == slot)
-                    continue;
-                if (oamut::condition_met(condition, listed[other].manifest.id, versions[other]))
-                    return listed[slot].manifest.id + " conflicts with " +
-                           listed[other].manifest.id;
-            }
-        }
-    }
-    return {};
 }
 
 /// Refuses the whole list. Nothing is mounted and no script runs.
@@ -1767,6 +1753,58 @@ void plan_mutator(
         fail_mutator(result, Phase::plan, fault.cause, std::move(fault.message));
         sandbox.reset();
     }
+}
+
+/// True when `spec` already has an entry for `path`.
+bool layer_has_path(const oa::MutatorLayerSpec& spec, std::string_view path) {
+    for (const oa::MutatorLayerEntry& entry : spec.entries) {
+        if (same_path(entry.path, path))
+            return true;
+    }
+    return false;
+}
+
+/// True when the store, the documents or the layer already hold `path`.
+bool served_path_exists(
+    const oa::AssetStore& store,
+    rules::DocumentSet& documents,
+    const oa::MutatorLayerSpec& spec,
+    std::string_view path
+) {
+    if (documents.find(path) != nullptr)
+        return true;
+    if (store.file_size(path) > 0)
+        return true;
+    return layer_has_path(spec, path);
+}
+
+/// A build page a unit clone may serve: `guis/<unit><digits>.gui` for a unit
+/// cloned this pass, and only when that path is not already present.
+bool fresh_clone_page(
+    std::string_view path,
+    const Collections& collections,
+    const defs::DataLayout& layout,
+    const oa::AssetStore& store,
+    rules::DocumentSet& documents,
+    const oa::MutatorLayerSpec& spec,
+    const PathVerdict& verdict
+) {
+    if (verdict.rule != PathRule::menus_only)
+        return false;
+    const std::string& gui_folder =
+        layout.directories[static_cast<std::size_t>(defs::DataDirectory::guis)];
+    bool matches = false;
+    for (const CloneRecord& record : collections.clones()) {
+        if (record.weapon)
+            continue;
+        if (clone_build_page(path, gui_folder, record.name)) {
+            matches = true;
+            break;
+        }
+    }
+    if (!matches)
+        return false;
+    return !served_path_exists(store, documents, spec, path);
 }
 
 /// The step state's id for one hook write, folded the way a rule step folds it.
@@ -2102,6 +2140,7 @@ bool run_pass(
     // left. A mutator below a failure the files layer found does not run
     // either.
     collections.emplace(documents, &layout);
+    collections->bind_store(&store);
     build_menus.emplace(documents, store, &layout);
     bool steps_done = true;
     for (std::size_t slot = 0; slot < count && slot < first.slot; ++slot) {
@@ -2128,6 +2167,8 @@ bool run_pass(
         grant.units = declares(input.mutators[slot].manifest, oamut::Layer::units);
         grant.weapons = declares(input.mutators[slot].manifest, oamut::Layer::weapons);
         grant.features = declares(input.mutators[slot].manifest, oamut::Layer::features);
+        grant.sides = declares(input.mutators[slot].manifest, oamut::Layer::sides);
+        grant.tables = declares(input.mutators[slot].manifest, oamut::Layer::tables);
         collections->begin_mutator(ids[slot], grant);
         build_menus->begin_mutator(
             ids[slot], declares(input.mutators[slot].manifest, oamut::Layer::menus)
@@ -2145,6 +2186,9 @@ bool run_pass(
                 plans[slot].units_hook,
                 HookWhich::units,
                 context,
+                store,
+                layout,
+                input.variant,
                 slot,
                 first
             );
@@ -2157,6 +2201,9 @@ bool run_pass(
                 plans[slot].weapons_hook,
                 HookWhich::weapons,
                 context,
+                store,
+                layout,
+                input.variant,
                 slot,
                 first
             );
@@ -2169,6 +2216,9 @@ bool run_pass(
                 plans[slot].menus_hook,
                 HookWhich::menus,
                 context,
+                store,
+                layout,
+                input.variant,
                 slot,
                 first
             );
@@ -2328,6 +2378,24 @@ bool run_pass(
         }
         journal.entries.push_back(std::move(entry));
     }
+    for (const CloneRecord& clone : collections->clones()) {
+        JournalEntry entry;
+        const std::optional<uint16_t> mutator = index_of(ids, clone.mutator);
+        if (mutator.has_value())
+            entry.mutators.push_back(*mutator);
+        entry.phase = Phase::hooks;
+        entry.change = Change::added;
+        entry.collection = clone.weapon ? Collection::weapons : Collection::units;
+        entry.record = clone.name;
+        entry.path = clone.path;
+        entry.new_text = clone.sentence;
+        if (mutator.has_value()) {
+            note_writer(
+                documents, writers, menus, clone.path, *mutator, Phase::hooks, entry.collection
+            );
+        }
+        journal.entries.push_back(std::move(entry));
+    }
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
         const std::optional<uint16_t> mutator = index_of(ids, entry.owner);
@@ -2408,6 +2476,69 @@ bool run_pass(
         }
         if (!replaced)
             spec.entries.push_back(std::move(entry));
+    }
+    // Each served path goes through check_mutable_path. A unit cloned this
+    // pass counts as a unit name, so anims/<new><digits>.gaf is allowed.
+    // guis/<new><digits>.gui stays menus-only and is served only when that
+    // path does not already exist. An existing path refuses the clone and
+    // names the path; the entry is not published.
+    PathContext copy_paths;
+    copy_paths.layout = &layout;
+    copy_paths.is_unit_name = [&stems, &collections](std::string_view name) {
+        const std::string folded = fold_copy(name);
+        if (std::binary_search(stems.begin(), stems.end(), folded))
+            return true;
+        if (!collections.has_value())
+            return false;
+        for (const CloneRecord& record : collections->clones()) {
+            if (!record.weapon && clone_names_unit(name, record.name))
+                return true;
+        }
+        return false;
+    };
+    for (const ServedCopy& copy : collections->served_copies()) {
+        const PathVerdict verdict = check_mutable_path(copy.path, copy_paths);
+        const bool exists = served_path_exists(store, documents, spec, copy.path);
+        const bool fresh_page =
+            fresh_clone_page(copy.path, *collections, layout, store, documents, spec, verdict);
+        if (exists || (!verdict.allowed() && !fresh_page)) {
+            std::string message = verdict.message;
+            if (exists) {
+                message = copy.path;
+                message.append(": the path already exists");
+            }
+            const std::optional<uint16_t> owner = index_of(ids, copy.mutator);
+            const uint16_t slot = owner.has_value() ? *owner : static_cast<uint16_t>(0);
+            first.offer(slot, Phase::hooks, Cause::protected_path, std::move(message));
+            continue;
+        }
+
+        JournalEntry added;
+        const std::optional<uint16_t> mutator = index_of(ids, copy.mutator);
+        if (mutator.has_value())
+            added.mutators.push_back(*mutator);
+        added.phase = Phase::hooks;
+        added.collection = Collection::files;
+        added.change = Change::added;
+        added.path = copy.path;
+        added.new_text = copy.sentence;
+        journal.entries.push_back(std::move(added));
+
+        oa::MutatorLayerEntry served;
+        served.path = copy.path;
+        served.owner = copy.mutator;
+        served.kind = oa::MutatorSourceKind::contents;
+        served.contents = copy.bytes;
+        bool replaced_copy = false;
+        for (std::size_t entry_index = 0; entry_index < spec.entries.size(); ++entry_index) {
+            if (!same_path(spec.entries[entry_index].path, served.path))
+                continue;
+            spec.entries[entry_index] = served;
+            replaced_copy = true;
+            break;
+        }
+        if (!replaced_copy)
+            spec.entries.push_back(std::move(served));
     }
     sandboxes.clear();
     build_menus.reset();
@@ -2555,6 +2686,50 @@ PipelineResult run_checked(oa::AssetStore& store, const PipelineInput& input) {
 }
 
 } // namespace
+
+std::string
+list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::string>& versions) {
+    if (listed.size() > max_mutators) {
+        return "a loadout lists " + std::to_string(listed.size()) + " mutators, and " +
+               std::to_string(max_mutators) + " is the most";
+    }
+    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
+        for (std::size_t earlier = 0; earlier < slot; ++earlier) {
+            if (listed[slot].manifest.id == listed[earlier].manifest.id)
+                return listed[slot].manifest.id + " is listed twice";
+        }
+    }
+    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
+        for (const oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
+            bool met = false;
+            for (std::size_t earlier = 0; earlier < slot; ++earlier) {
+                if (oamut::condition_met(condition, listed[earlier].manifest.id, versions[earlier]))
+                    met = true;
+            }
+            if (!met) {
+                std::string message = listed[slot].manifest.id + " needs " + condition.id;
+                if (!condition.range_text.empty()) {
+                    message += " ";
+                    message += condition.range_text;
+                }
+                message += " above it";
+                return message;
+            }
+        }
+    }
+    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
+        for (const oamut::Condition& condition : listed[slot].manifest.conflicts_with) {
+            for (std::size_t other = 0; other < listed.size(); ++other) {
+                if (other == slot)
+                    continue;
+                if (oamut::condition_met(condition, listed[other].manifest.id, versions[other]))
+                    return listed[slot].manifest.id + " conflicts with " +
+                           listed[other].manifest.id;
+            }
+        }
+    }
+    return {};
+}
 
 bool PipelineResult::playable() const noexcept {
     if (!refusal.empty())

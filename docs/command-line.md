@@ -13,7 +13,7 @@ desktop. `open-annihilation --help` lists the same options.
 - [Starting the program](#starting-the-program): where the program is, and
   how it reads its options and 3.1c's switches
 - [Every option](#every-option), by group: information; game data, folders
-  and files; mods; display and sound; network play; launch; status;
+  and files; mods; mutators; display and sound; network play; launch; status;
   recordings and video; checks; tools
 - [Ways to launch a game](#ways-to-launch-a-game), and
   [examples](#examples) to copy
@@ -176,6 +176,23 @@ line, and exits. It needs `--mod FILE`, `--mod-dir PATH` or `--game-dir PATH`.
 The profile comes first, so a program that reads the profile's JSON still
 finds it at the start of the output. The version line is the last line.
 
+### Mutators
+
+| Option | What it does |
+|---|---|
+| `--mutator PATH\|ID[:OPTION=VALUE,...]` | Applies one mutator to every match this run starts. Repeat it for several, in the order given, each acting on the game as the ones before it left it. `PATH` is a package folder, one that holds `oamut.yaml`. `ID` is a mutator installed in the Mutators folder. Options follow the first `:` that is followed by a name and `=`, as `name=value` pairs joined by `,`. A toggle is `true` or `false`, a choice one of its values, and a number a step inside its range. |
+
+`--mutator packages/ridge-swift:factor=4` plays the package at that path
+with `factor` set to 4. `--mutator ridge-swift --mutator ridge-tough`
+plays two installed mutators, ridge-swift first.
+
+A value that is not that form, including an id followed by `:` and no
+option, is refused with status 1. A mutator that is not installed, an
+option it does not have, a value outside its choices, or a list the
+manifests refuse (one id twice, a prerequisite that is not above it, or
+two that conflict) is refused with status 2, before the game starts. An
+id is refused the same way when no player folder can be worked out.
+
 ### Display and sound
 
 | Option | What it does |
@@ -329,6 +346,7 @@ Network play's own checks, the last rows, are in every build.
 | `--check-gadget-art-per-match` | Plays three skirmishes and checks a download button's picture appears only in the match whose mod folder holds it. |
 | `--check-factory-orders` | Gives a Kbot Lab a move and checks the unit it builds carries it out. |
 | `--check-unit-speech` | Selects and orders the commander and checks what it says. |
+| `--check-mutator-layer` | Plays skirmishes with the mutators `--mutator` named and checks the commanders, and that a mutator which does not apply leaves no layer. |
 | `--check-download-builds` | Builds a unit from a download page. |
 | `--check-stockpile-builds` | Queues and builds rounds for every unit that stockpiles, through a save and a load. |
 | `--check-unit-page-memory` | Checks each unit keeps its order page through reselection, a save and a load. |
@@ -744,7 +762,7 @@ word, and a key that is not one is refused with its full name
 | `map` | The map the host plays. |
 | `rules` | The host's rules: commander death, starting metal and energy, the unit limit, line of sight, mapping, start positions, cheats, watchers, the time limit, the lock on the options and the unit restrictions. A player who joins does not apply them: the host's rules are the ones that play. |
 | `computer-players` | The computer players this machine seats, a list. |
-| `content` | The base game, expansions and mod this run plays. |
+| `content` | The base game, expansions, mod and mutators this run plays. |
 | `status` | The status stream ([multiplayer/status.md](multiplayer/status.md)). |
 
 A setting written `on` or `off` may also be written `true` or `false`. A
@@ -778,6 +796,19 @@ installed mod`). A file that leaves `content` out plays what the Library
 has chosen.
 `--content`, `--base-game`, `--mod` and `--mod-dir` beside the file replace
 that choice.
+
+`content.mutators` is the mutators this run plays, in the order they apply,
+top to bottom, at most 32. Each item is an installed mutator's id, or a
+group of its `id`, the `version` it must be and the `options` it plays with.
+An option is `on`, `off`, `true`, `false`, a number or text. A mutator that
+is not installed is refused before a window opens, and the line names the
+file and the item (`host.oalaunch: content.mutators[2]: "wide-sight" is not
+an installed mutator`). A version the file names that is not the installed
+one is refused the same way (`host.oalaunch: content.mutators[1]: "wide-sight"
+1.2 is not installed; 1.3 is`), and so is an option the manifest does not
+have or a value outside it. `--mutator` beside the file replaces the list.
+The list applies in a `--headless-check` run too. A file without the field
+plays no mutators unless `--mutator` names some.
 
 `map` is the map's shown name, or its key (`name@package` for a pack map). A
 map that is not installed is refused before a window opens
@@ -842,6 +873,12 @@ content:
   base-game: totala
   expansions: [core-contingency]
   mod: ridge
+  mutators:
+    - wide-sight
+    - id: fast-builders
+      version: "1.0"
+      options:
+        factor: 2
 status:
   standard-output: on
   file: status.jsonl
@@ -853,7 +890,8 @@ limit of 250, true line of sight, a mapped start, random positions, cheats
 off, watchers on and a player limit of 4, with the Krogoth out and the Flash
 without a limit. The host is Core on team 1 in colour 2, beside an Arm
 computer player on team 2 in colour 5 and a Core one on team 1. The map is
-Acid Foursome. The same launch on the command line, the content and status
+Acid Foursome. The run plays wide-sight, then fast-builders at version 1.0
+with factor 2. The same launch on the command line, the content and status
 groups left out:
 
 ```sh
@@ -918,6 +956,7 @@ settings in src/app/netgame/launch_file.cpp, word for word. -->
 | `content.base-game` | `--content GAME[:EXPANSION,...]` | The base game this run plays, by its id. |
 | `content.expansions` | `--content GAME[:EXPANSION,...]` | The expansions this run plays, a list of ids. It needs a base game. |
 | `content.mod` | `--mod FILE \| --mod-dir PATH` | The mod this run plays: in the file a mod's id or a path, and on the command line its profile or its folder. |
+| `content.mutators` | `--mutator PATH\|ID[:OPTION=VALUE,...]` | The mutators this run plays, applied top to bottom, at most 32: each an installed mutator's id, or a group of its `id`, the `version` it must be and the `options` it plays with. Give the option once for each. |
 | `status.standard-output` | `--status-stdout` | Writes the status stream on standard output: `on` or `off`. |
 | `status.file` | `--status-file PATH` | Writes the status stream to this file. |
 | `status.quit-after-game` | `--quit-after-game[=after-score]` | Leaves when the game ends (`on`), stays (`off`), or leaves after the score (`after-score`). |
@@ -1024,7 +1063,11 @@ What an opened launch file does depends on when it arrives:
   with status 2 and a message that names the file and the field.
 - **While the game shows the main menu,** the game goes to that launch's
   battle room. From the single-player menu it goes back to the main menu
-  first.
+  first. A launch's mutators never keep it from opening, because they apply
+  per match rather than choosing the content the game has mounted. Its list
+  replaces the running game's list for its battle room's games. A mutator
+  that is not installed, or whose version or options do not match, is still
+  refused, and the file is not opened.
 - **During a match,** while a game is being set up (a skirmish, a campaign
   mission, the multiplayer screens), or on any other screen, the game opens
   nothing and says so: in the match's message log, or with a notice. A
@@ -1246,7 +1289,7 @@ the -c file in src/app/netgame/launch_file.cpp, word for word. -->
 |---|---|
 | 0 | The player left the game. `--version`, `--help`, `-r`, `--list-content --json` and a `--print-profile` of a usable profile end with 0 too, and so does a check that passed. With `--quit-after-game`, the game ended. |
 | 1 | An option or a value was refused, an error stopped the game, such as game data it cannot read, or a check failed. A `--print-profile` of a profile with errors ends with 1. |
-| 2 | A launch the game cannot use: a launch file it cannot read, or that is neither kind; a field or an option out of range, or one that needs another; a map, a base game, an expansion or a mod that is not installed. |
+| 2 | A launch the game cannot use: a launch file it cannot read, or that is neither kind; a field or an option out of range, or one that needs another; a map, a base game, an expansion, a mod or a mutator that is not installed, or a mutator option it lacks or a value outside that option's choices, or a mutator list the manifests refuse. |
 | 3 | The game ran out of memory, and said so in a box and in `ErrorLog.txt` beside the program. With `--quit-after-game`, the player left the game or lost the connection. |
 | 77 | A check that cannot run on this machine. |
 

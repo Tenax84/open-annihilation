@@ -28,6 +28,7 @@
 #include "oa/app/check_host.hpp"
 #include "oa/app/netgame/opened_launch.hpp"
 #include "oa/data/languages/interface_text.hpp"
+#include "oa/data/mutators/choice.hpp"
 #include "oa/netgame/frontend/multiplayer_states.hpp"
 #include "oa/netgame/messages/departures.hpp"
 #include "oa/session/demo.hpp"
@@ -482,7 +483,18 @@ void open_launched_battle_room() {
 ///
 /// @param runtime the running app
 /// @param play network play's state for it
-void follow_opened_launches(const Runtime& runtime, NetworkPlay& play) {
+/// Writes one launch mutator as `--mutator` writes it.
+///
+/// @param one the mutator
+/// @return its text
+std::string launch_mutator_text(const oa::app::netgame::LaunchMutator& one) {
+    oa::data::mutators::MutatorChoice choice;
+    choice.target = one.id;
+    choice.options = one.options;
+    return oa::data::mutators::format_choice(choice);
+}
+
+void follow_opened_launches(Runtime& runtime, NetworkPlay& play) {
     namespace net = oa::app::netgame;
     const NetOptions& options = net_options();
     const bool check_due =
@@ -551,7 +563,39 @@ void follow_opened_launches(const Runtime& runtime, NetworkPlay& play) {
             );
             return;
         }
-        put_launch_in_place(netgame_context(), std::move(plan));
+        if (plan.content.mutators_named) {
+            std::vector<std::string> texts;
+            std::vector<std::string> versions;
+            std::vector<std::string> fields;
+            texts.reserve(plan.content.mutators.size());
+            versions.reserve(plan.content.mutators.size());
+            fields.reserve(plan.content.mutators.size());
+            for (std::size_t index = 0; index < plan.content.mutators.size(); ++index) {
+                const net::LaunchMutator& one = plan.content.mutators[index];
+                texts.push_back(launch_mutator_text(one));
+                versions.push_back(one.version);
+                fields.push_back("content.mutators[" + std::to_string(index + 1) + "]");
+            }
+            // A missing mutator is told before the launch is put in place.
+            // The list is handed over once the launch is the battle room's.
+            const std::string problem =
+                runtime.launch_mutator_refusal(plan.source, texts, versions, fields);
+            if (!problem.empty())
+                throw net::LaunchRefusal(problem);
+            NetgameContext& netgame = netgame_context();
+            const NetOptions saved_options = netgame.options;
+            const oa::app::netgame::launch::LaunchSwitches saved_launch = netgame.launch;
+            put_launch_in_place(netgame, std::move(plan));
+            const std::string taken =
+                runtime.take_launch_mutators(opened->source, texts, versions, fields);
+            if (!taken.empty()) {
+                netgame.options = saved_options;
+                netgame.launch = saved_launch;
+                throw net::LaunchRefusal(taken);
+            }
+        } else {
+            put_launch_in_place(netgame_context(), std::move(plan));
+        }
     } catch (const net::LaunchRefusal& refusal) {
         tell_launch_not_opened(play, refusal.what(), false);
         return;

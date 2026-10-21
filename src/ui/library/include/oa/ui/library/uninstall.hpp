@@ -77,6 +77,19 @@ enum class UninstallProblem : uint8_t {
 [[nodiscard]] oa::ui::kit::Question
 uninstall_question(const Entry& entry, std::string_view folder, const TextHooks& text = {});
 
+/// The Uninstall question, and, when other installed mutators need this one,
+/// a paragraph before the last saying they stay installed and cannot be
+/// switched on until it is back. The buttons and the removal are unchanged.
+///
+/// @param library the Library, whose installed mutators are the dependants
+/// @param entry the entry, installed
+/// @param folder its folder as the player knows it, such as "Mutators/gatehouse"
+/// @param text how texts are looked up
+/// @return the question
+[[nodiscard]] oa::ui::kit::Question uninstall_question(
+    const Library& library, const Entry& entry, std::string_view folder, const TextHooks& text = {}
+);
+
 /// Makes the notice UNINSTALL shows instead of its question for a package
 /// in use, which removes nothing: for the mod being played, that SWITCH OFF
 /// comes first; for the language pack in use, that another language is
@@ -102,7 +115,10 @@ uninstall_notice(const Entry& entry, UninstallStep step, const TextHooks& text =
 );
 
 /// Writes the note under the selected entry's buttons: playing_note's,
-/// then, while the entry's UNINSTALL is off, why (uninstall_off_reason).
+/// then, while the entry's UNINSTALL is off, why (uninstall_off_reason),
+/// then, for a mutator whose GET brings prerequisites, that they download
+/// first and sit above it. A blocked plan adds its reason when the status
+/// line would not already show it.
 ///
 /// @param library the Library
 /// @return the note; empty when it has none

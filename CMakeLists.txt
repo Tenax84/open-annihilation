@@ -312,7 +312,7 @@ target_link_libraries(oa-app-game-options PUBLIC oa-app-headers)
 target_link_libraries(oa-app-game-options PUBLIC oa-ui-frontend-renderer oa-ui-frontend-state oa-sim-scenario
   oa-ui-screen-registry oa-app-command-line oa-platform-preferences oa-app-mod-profile
   PRIVATE oa-app-package-install oa-platform-job-pool oa-platform-display-modes oa-options
-  oa-data-content-bundles)
+  oa-data-content-bundles oa-data-mutators)
 # oa-game's game folder: --game-dir, the remembered folder, a folder found
 # where Steam, Heroic or Lutris put it, or the folder dialog's choice, the
 # installation checks, and the installer of the Total Annihilation demo
@@ -1084,6 +1084,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_registries.cpp
   src/app/runtime_package_kinds.cpp
   src/app/runtime_mutator_library.cpp
+  src/app/runtime_mutators.cpp
   src/app/runtime_pack_maps.cpp
   src/app/pack_map_source.cpp
   src/app/runtime_get_map.cpp
@@ -1144,7 +1145,8 @@ set(oa_game_self_check_sources src/app/runtime_checks.cpp src/app/runtime_order_
   src/app/runtime_match_panel_keys_check.cpp src/app/runtime_turret_draw_check.cpp
   src/app/runtime_megamap_check.cpp src/app/runtime_radar_orders_check.cpp
   src/app/runtime_inactive_loop_check.cpp src/app/runtime_factory_check.cpp
-  src/app/runtime_unit_speech_check.cpp src/app/runtime_side_data_check.cpp
+  src/app/runtime_unit_speech_check.cpp src/app/runtime_mutator_layer_check.cpp
+  src/app/runtime_side_data_check.cpp
   src/app/runtime_gadget_art_check.cpp
   src/app/runtime_build_page_check.cpp
   src/app/runtime_language_check.cpp src/app/runtime_language_switch_check.cpp
@@ -1183,7 +1185,8 @@ endif()
 # Game files screen's header name the engine's version, and the renderer
 # records are written under it.
 set_property(SOURCE src/app/runtime_director.cpp src/app/runtime_engine_settings.cpp
-  src/app/main.cpp src/app/game_files_screen.cpp src/app/runtime_game_files.cpp APPEND
+  src/app/main.cpp src/app/game_files_screen.cpp src/app/runtime_game_files.cpp
+  src/app/runtime_mutators.cpp APPEND
   PROPERTY COMPILE_DEFINITIONS "OA_ENGINE_VERSION=\"${PROJECT_VERSION}\"")
 set(oa_game_libraries oa-formats-hpi oa-formats-json oa-app-game-options oa-app-game-directory oa-app-mod-profile
   oa-app-user-folder
@@ -1204,9 +1207,11 @@ set(oa_game_libraries oa-formats-hpi oa-formats-json oa-app-game-options oa-app-
   oa-ui-touch-gestures oa-ui-touch-hud oa-app-game-files oa-ui-game-files oa-app-package-install
   oa-app-map-packs
   oa-data-mutator-library
+  oa-data-mutators
   oa-ui-pad-controls oa-ui-folder-chooser oa-platform-game-installs oa-platform-file-types
   oa-data-content-bundles
-  oa-ui-frontend-multiplayer oa-ui-library oa-ui-map-browser oa-ui-first-run
+  oa-ui-frontend-multiplayer oa-ui-library oa-ui-map-browser oa-ui-mutator-picker
+  oa-ui-first-run
   oa-data-saves)
 # The table that combines the extensions' tables of oa-game
 # (extension_list.hpp); the extensions themselves are registered with
@@ -1729,6 +1734,19 @@ if(OA_BUILD_PLATFORM)
         --preferences-file "${oa_simulation_hash_dir}/simulation-hash-mod.conf")
       set_tests_properties(native-simulation-hash native-simulation-hash-mod PROPERTIES
         TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT} WORKING_DIRECTORY "${oa_simulation_hash_dir}"
+        ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
+      # Mutators at match start: none, then ridge-tough's commanders at 4000
+      # with the layer mounted, then none again with the first health back,
+      # then ridge-commander-boom stopping the start and leaving no layer.
+      set(oa_mutator_layer_dir "${CMAKE_CURRENT_BINARY_DIR}/native-checks/mutator-layer")
+      file(MAKE_DIRECTORY "${oa_mutator_layer_dir}")
+      add_test(NAME native-mutator-layer COMMAND oa-game --game-dir "${OA_GAME_DIR}"
+        --skip-intro --mute --check-mutator-layer
+        --mutator "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-tough"
+        --mutator "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-commander-boom"
+        --preferences-file "${oa_mutator_layer_dir}/mutator-layer.conf")
+      set_tests_properties(native-mutator-layer PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+        WORKING_DIRECTORY "${oa_mutator_layer_dir}"
         ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
       # The player's own folder beside the check's preferences file: saved
       # games where earlier versions kept them, beside the preferences file
@@ -3245,6 +3263,16 @@ endforeach()
           --scratch-root "${CMAKE_CURRENT_BINARY_DIR}/native-checks")
         set_tests_properties(native-unreadable-unit-script PROPERTIES
           TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
+        # --mutator on a headless skirmish: no mutators, one package, a
+        # number option, two packages in each order, a missing id, an
+        # unknown option and a mutator whose script stops.
+        add_test(NAME native-mutators-command-line COMMAND ${Python3_EXECUTABLE}
+          "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_native_mutators.py"
+          --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+          --packages "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages"
+          --scratch-root "${CMAKE_CURRENT_BINARY_DIR}/native-checks")
+        set_tests_properties(native-mutators-command-line PROPERTIES
+          TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
         # A mod folder whose sides name commanders of their own, without the
         # commander flag, and bar colours of their own, with a third side that
         # draws CORE's panels: each side's HUD draws the panels its intgaf
@@ -3630,6 +3658,8 @@ add_subdirectory(src/ui/frontend-multiplayer)
 add_subdirectory(src/ui/map-previews)
 # The map browser: MORE MAPS… over the map lists opens it on the OA layer.
 add_subdirectory(src/ui/map-browser)
+# The mutator picker. This module is its model: order, prerequisites and options.
+add_subdirectory(src/ui/mutator-picker)
 add_subdirectory(src/netgame)
 # Catalogues are fetched with the HTTP client src/netgame adds, so this
 # library follows that directory. oa-game is linked earlier in this file,

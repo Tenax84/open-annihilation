@@ -197,6 +197,8 @@ std::string_view action_word(Action action) {
         return "turn-on";
     case Action::check_with_mod:
         return "check-with-mod";
+    case Action::get_with:
+        return "get-with";
     }
     return "action";
 }
@@ -2182,8 +2184,8 @@ void add_list(Building& building, const kit::Rect& pane, RowForm form) {
             look.badge = fitted_base_picture(building, look.badge, row_badge_square(rect));
         }
         if (look.chip && (entry.state == State::get || entry.state == State::update)) {
-            // The download arrow and the up-arrow are GET and UPDATE: a
-            // control of their own, tried before the row, named after it.
+            // The download arrow is named get and the up-arrow update. A press
+            // asks for what row_icon_action returns: GET, GET WITH or UPDATE.
             const kit::ControlId icon_id =
                 controls::first_row_icon + static_cast<kit::ControlId>(place);
             const Action action = entry.state == State::get ? Action::get : Action::update;
@@ -5966,7 +5968,7 @@ std::optional<Action> row_icon_action(const Library& library, const Entry& entry
     if (actions.empty() || !actions.front().enabled)
         return std::nullopt;
     const Action first = actions.front().action;
-    if (first != Action::get && first != Action::update)
+    if (first != Action::get && first != Action::update && first != Action::get_with)
         return std::nullopt;
     return first;
 }

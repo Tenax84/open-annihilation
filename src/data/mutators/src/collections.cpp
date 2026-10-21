@@ -12,6 +12,7 @@
 // mutator that passes the write or note limit fails.
 #include "oa/data/mutators/collections.hpp"
 
+#include "clone.hpp"
 #include "oa/data/field_schema.hpp"
 #include "oa/data/script_host/fixed.hpp"
 #include "oa/data/script_host/script_host.hpp"
@@ -471,6 +472,11 @@ void charge_visits(lua_State* state, uint64_t visits) {
 /// Elements charged for one field read or write of a record, for the lookup
 /// and the field check around it.
 constexpr uint64_t record_access_charge = 8;
+
+/// Adds `more` to a bill of units, saturating at UINT64_MAX. Never raises.
+void add_saturated(uint64_t& units, uint64_t more) noexcept {
+    units = more > UINT64_MAX - units ? UINT64_MAX : units + more;
+}
 
 /// Charges the bytes of one key or name. May raise. No C++ destructor is alive.
 void charge_text(lua_State* state, std::size_t bytes) {
@@ -2294,6 +2300,7 @@ static int record_call_set(lua_State* state);
 static int record_call_keys(lua_State* state);
 static int record_call_fixed(lua_State* state);
 static int collection_index(lua_State* state);
+static int collection_call_clone(lua_State* state);
 static int collection_newindex(lua_State* state);
 static int collection_len(lua_State* state);
 static int view_pairs(lua_State* state);
@@ -2444,6 +2451,10 @@ static int collection_index(lua_State* state) {
         lua_pushcfunction(state, collection_each);
         return 1;
     }
+    if (key == "clone" && collection->kind != Kind::features) {
+        lua_pushcfunction(state, collection_call_clone);
+        return 1;
+    }
     Collections& owner = *collection->owner;
     const Rec* found = nullptr;
     bool failed = false;
@@ -2465,6 +2476,56 @@ static int collection_index(lua_State* state) {
         return 1;
     }
     push_record(state, &owner, collection->kind, false, found->slot, found->name);
+    return 1;
+}
+
+static int collection_call_clone(lua_State* state) {
+    const ViewBox* collection = view_at(state, 1, kCollectionMeta);
+    if (collection == nullptr || collection->owner == nullptr)
+        return luaL_error(state, "expected a collection");
+    Collections& owner = *collection->owner;
+    // Index and charge the collection before any C++ object exists, so the
+    // clone's own lookups build nothing and charge nothing.
+    bool failed = false;
+    try {
+        ensure_index(owner, collection->kind, state);
+    } catch (const std::bad_alloc&) {
+        pending_of(owner) = "out of memory";
+        failed = true;
+    }
+    if (failed)
+        return raise_pending(state, owner);
+    uint64_t units = 0;
+    int result = -1;
+    {
+        // Nothing in this block may raise: the clone bills its work in `units`
+        // and a refusal waits in the pending error.
+        std::string error;
+        try {
+            result =
+                clone_collection(state, owner, collection->kind == Kind::weapons, error, units);
+        } catch (const std::bad_alloc&) {
+            pending_of(owner) = "out of memory";
+            failed = true;
+        }
+        if (!failed && result < 0)
+            pending_of(owner) = std::move(error);
+    }
+    // The block's objects are gone, so the charge may raise. A refused clone pays too.
+    host::charge_work(state, units);
+    if (failed || result < 0)
+        return raise_pending(state, owner);
+    // The new document is already in the set. Index the sections it added and
+    // charge them as an add. A ready index is not cleared, so this is not a rebuild.
+    try {
+        ensure_index(owner, collection->kind, state);
+    } catch (const std::bad_alloc&) {
+        pending_of(owner) = "out of memory";
+        failed = true;
+    }
+    if (failed)
+        return raise_pending(state, owner);
+    lua_pushboolean(state, 1);
     return 1;
 }
 
@@ -3010,6 +3071,29 @@ void push_view(lua_State* state, Collections* owner, Kind kind) {
 
 } // namespace
 
+bool clone_find(
+    Collections& collections, bool weapons, std::string_view name, CloneHit& hit, uint64_t& units
+) {
+    const Kind kind = weapons ? Kind::weapons : Kind::units;
+    // The caller indexed and charged the collection first, so a null state
+    // finds the record without building, charging or raising. The lookup
+    // still checks every document for growth, as `units.NAME` pays for.
+    const Rec* found = find_named(collections, kind, name, nullptr);
+    uint64_t visits = static_cast<uint64_t>(CollectionsAccess::documents(collections).size());
+    if (host::element_charge != 0 && visits > UINT64_MAX / host::element_charge)
+        visits = UINT64_MAX / host::element_charge;
+    add_saturated(units, visits * host::element_charge);
+    add_saturated(units, record_access_charge * host::element_charge);
+    add_saturated(units, host::units_for_bytes(name.size()));
+    if (found == nullptr)
+        return false;
+    hit.doc_index = found->doc_index;
+    hit.section = found->section;
+    hit.name = found->name;
+    hit.path = found->path;
+    return true;
+}
+
 bool need_from_lua(
     lua_State* state, int index, std::string_view field, sm::Need& need, std::string* error
 ) {
@@ -3103,6 +3187,41 @@ void Collections::begin_mutator(std::string mutator, WriteGrant grant) {
     mutator_ = std::move(mutator);
     grant_ = grant;
     active_ = true;
+    side_scratch_ = SideScratch{};
+}
+
+Collections::SideScratch& Collections::side_scratch() noexcept {
+    return side_scratch_;
+}
+
+int Collections::lookup_unit(lua_State* state, std::string_view sought) {
+    const CollectionsState::Rec* found = nullptr;
+    try {
+        found = find_named(*this, CollectionsState::Kind::units, sought, state);
+    } catch (const std::bad_alloc&) {
+        hold_error("out of memory");
+        return -1;
+    }
+    SideScratch& scratch = side_scratch_;
+    if (found == nullptr || found->section == nullptr) {
+        scratch.found = false;
+        scratch.builder_unit = false;
+        return 0;
+    }
+    const uint32_t properties = oa::formats::tdf::property_count(found->section);
+    if (state != nullptr) {
+        charge_visits(state, properties == 0 ? uint64_t{1} : properties);
+        charge_text(state, found->name.size());
+    }
+    scratch.found = true;
+    scratch.builder_unit = oa::formats::tdf::get_int(found->section, "builder", 0) != 0;
+    try {
+        scratch.text.assign(found->name);
+    } catch (const std::bad_alloc&) {
+        hold_error("out of memory");
+        return -1;
+    }
+    return 1;
 }
 
 void Collections::end_mutator() {
@@ -3143,6 +3262,61 @@ std::span<const RecordRemoval> Collections::removals() const {
 
 std::span<const HookNote> Collections::notes() const {
     return notes_;
+}
+
+bool Collections::accept_write(rules::FieldWrite write, std::string& reason) {
+    const std::string path = write.path;
+    const std::string record = write.record;
+    const std::string block = write.block;
+    const std::string key = write.key;
+    const std::vector<std::string> earlier = earlier_writers(*this, path, record, block, key);
+    const uint32_t notes = earlier.empty() ? 0u : 1u;
+    if (!room_for(*this, 1u, notes, reason))
+        return false;
+    writes_.push_back(std::move(write));
+    if (!earlier.empty()) {
+        HookNote note;
+        note.kind = HookNoteKind::hook_overwrote;
+        note.mutators = earlier;
+        note.mutators.push_back(mutator_);
+        note.path = path;
+        note.record = record;
+        note.key = key;
+        note.message = mutator_;
+        note.message.append(" replaced the value written by ");
+        note.message.append(earlier[0]);
+        for (std::size_t index = 1; index < earlier.size(); ++index) {
+            note.message.append(" and ");
+            note.message.append(earlier[index]);
+        }
+        notes_.push_back(std::move(note));
+    }
+    remember_writer(*this, path, record, block, key);
+    commit_tally(*this, 1u, notes);
+    return true;
+}
+
+bool Collections::accept_note(HookNote note, std::string& reason) {
+    if (!room_for(*this, 0u, 1u, reason))
+        return false;
+    notes_.push_back(std::move(note));
+    commit_tally(*this, 0u, 1u);
+    return true;
+}
+
+void Collections::hold_error(std::string message) {
+    std::string& pending = working(*this).pending_error;
+    if (pending.empty())
+        pending = std::move(message);
+}
+
+int Collections::raise_held(lua_State* state) {
+    std::string& text = working(*this).pending_error;
+    if (text.empty())
+        text = "the hook stopped";
+    lua_pushlstring(state, text.data(), text.size());
+    text.clear();
+    return lua_error(state);
 }
 
 } // namespace oa::data::mutators

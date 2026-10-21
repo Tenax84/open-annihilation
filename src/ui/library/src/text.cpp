@@ -423,6 +423,8 @@ std::string_view action_text(Action action, const TextHooks& text) {
         return shown(text, words::action_turn_on);
     case Action::check_with_mod:
         return shown(text, words::action_check_with_mod);
+    case Action::get_with:
+        return shown(text, words::action_get_with);
     }
     return {};
 }
