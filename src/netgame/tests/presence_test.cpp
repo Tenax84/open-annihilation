@@ -4,6 +4,7 @@
 // The presence record: its bytes, the fields a reader keeps, and the one
 // place a frame's split takes it.
 
+#include "oa/data/mutators/loadout.hpp"
 #include "oa/netgame/frame.hpp"
 #include "oa/netgame/presence.hpp"
 #include "oa/netgame/records.hpp"
@@ -1333,6 +1334,122 @@ void a_record_without_mutators_matches_the_pinned_bytes() {
 
 // The sim hash and a field search still find their bytes when mutators are
 // carried too.
+PresenceMutators short_loadout() {
+    PresenceMutators field;
+    field.digest = filled(0x51);
+    field.total = 3;
+    field.held = 3;
+    field.mutators = {
+        named_mutator("ridge-wind", 1),
+        named_mutator("ridge-keel", 2),
+        named_mutator("ridge-loom", 3),
+    };
+    return field;
+}
+
+// Every mask of a three-mutator list comes back as the same bits, and those
+// bits are the clash mode of each entry.
+void every_clash_mask_of_a_short_list_round_trips() {
+    start_case("every_clash_mask_of_a_short_list_round_trips");
+    for (uint32_t mask = 0; mask < 8; ++mask) {
+        PresenceRecord host;
+        host.mutators = short_loadout();
+        host.mutator_modes = mask;
+        uint8_t out[presence_record_max_bytes];
+        std::size_t written = 0;
+        CHECK(encode_presence(host, out, sizeof out, &written) == WireError::ok);
+        PresenceRecord decoded;
+        CHECK(decode_presence(out, written, &decoded) == WireError::ok);
+        CHECK(decoded == host);
+        PresenceClashMode modes[3]{};
+        CHECK(presence_clash_modes(mask, 3, modes) == WireError::ok);
+        for (uint8_t position = 0; position < 3; ++position) {
+            const bool adds = (mask & (uint32_t{1} << position)) != 0;
+            CHECK(modes[position] == (adds ? PresenceClashMode::add : PresenceClashMode::replace));
+        }
+    }
+    PresenceClashMode refused[3]{
+        PresenceClashMode::add, PresenceClashMode::add, PresenceClashMode::add
+    };
+    CHECK(presence_clash_modes(0x8, 3, refused) == WireError::bad_argument);
+    CHECK(refused[0] == PresenceClashMode::add);
+    CHECK(presence_clash_modes(0, 3, nullptr) == WireError::bad_argument);
+}
+
+// A record from a sender that has no 0x52 decodes as that record does today.
+// Building the loadout with Replace for every entry then disagrees with the
+// host's digest whenever any mode is Add.
+void a_record_without_modes_keeps_todays_loadout() {
+    start_case("a_record_without_modes_keeps_todays_loadout");
+    PresenceRecord today;
+    today.mutators = short_loadout();
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(today, out, sizeof out, &written) == WireError::ok);
+    PresenceRecord decoded;
+    CHECK(decode_presence(out, written, &decoded) == WireError::ok);
+    CHECK(decoded == today);
+    CHECK(!decoded.mutator_modes);
+
+    oa::data::mutators::Loadout host;
+    oa::data::mutators::LoadoutEntry wind;
+    wind.id = "ridge-wind";
+    wind.version = "1";
+    wind.clashes = oa::formats::oamut::ClashMode::add;
+    oa::data::mutators::LoadoutEntry keel;
+    keel.id = "ridge-keel";
+    keel.version = "1";
+    host.entries = {wind, keel};
+    oa::data::mutators::Loadout guest = host;
+    for (auto& entry : guest.entries)
+        entry.clashes = oa::formats::oamut::ClashMode::replace;
+    CHECK(oa::data::mutators::loadout_digest(guest) != oa::data::mutators::loadout_digest(host));
+}
+
+// A mask that names a position past the list is not a mode the reader can use.
+void a_clash_mask_past_the_list_is_refused() {
+    start_case("a_clash_mask_past_the_list_is_refused");
+    PresenceRecord host;
+    host.mutators = short_loadout();
+    host.mutator_modes = 0x8;
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(host, out, sizeof out, &written) == WireError::bad_argument);
+
+    Raw record;
+    Value field;
+    field.u8(0);
+    field.raw(filled(0x51).data(), 32);
+    field.raw(filled(0).data(), 32);
+    field.u8(presence_mutator_index_none);
+    field.u8(3);
+    field.u8(3);
+    put_states(field, 0);
+    put_mutator_item(field, "ridge-wind", "1");
+    put_mutator_item(field, "ridge-keel", "1");
+    put_mutator_item(field, "ridge-loom", "1");
+    record.field(static_cast<uint8_t>(PresenceTag::mutators), field.bytes);
+    Value mask;
+    mask.u32(0x8);
+    record.field(static_cast<uint8_t>(PresenceTag::mutator_modes), mask.bytes);
+    record.finish();
+    PresenceRecord decoded;
+    CHECK(decode_presence(record.bytes.data(), record.bytes.size(), &decoded) == WireError::ok);
+    CHECK(decoded.mutators && decoded.mutators->total == 3);
+    CHECK(decoded.mutators->mutators.size() == 3);
+    CHECK(!decoded.mutator_modes);
+
+    Value wide;
+    wide.u32(0);
+    wide.u8(0);
+    record = Raw{};
+    record.field(static_cast<uint8_t>(PresenceTag::mutators), field.bytes);
+    record.field(static_cast<uint8_t>(PresenceTag::mutator_modes), wide.bytes);
+    record.finish();
+    CHECK(decode_presence(record.bytes.data(), record.bytes.size(), &decoded) == WireError::ok);
+    CHECK(!decoded.mutator_modes);
+}
+
 void find_and_sim_hash_see_mutator_fields() {
     start_case("find_and_sim_hash_see_mutator_fields");
     PresenceRecord record;
@@ -1382,6 +1499,9 @@ int main() {
     a_mutator_field_that_breaks_its_rule_is_left_out();
     presence_mutators_state_reads_the_fixed_part();
     a_record_without_mutators_matches_the_pinned_bytes();
+    every_clash_mask_of_a_short_list_round_trips();
+    a_record_without_modes_keeps_todays_loadout();
+    a_clash_mask_past_the_list_is_refused();
     find_and_sim_hash_see_mutator_fields();
     if (failures != 0) {
         std::fprintf(stderr, "%d failure(s)\n", failures);

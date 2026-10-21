@@ -108,7 +108,7 @@ if(BUILD_TESTING)
 
   # The presence record OA machines exchange.
   add_executable(oa-netgame-presence-test tests/presence_test.cpp)
-  target_link_libraries(oa-netgame-presence-test PRIVATE oa-netgame)
+  target_link_libraries(oa-netgame-presence-test PRIVATE oa-netgame oa-data-mutators)
   add_test(NAME net-presence COMMAND oa-netgame-presence-test)
   set_tests_properties(net-presence PROPERTIES TIMEOUT 30)
 

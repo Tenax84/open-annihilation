@@ -49,6 +49,8 @@ constexpr uint8_t mutators_lacking_flag = 0x02;
 constexpr uint8_t mutators_failed_flag = 0x04;
 /// Flags, loadout digest, layer digest, index, total, held and the state word.
 constexpr std::size_t mutators_fixed_value_bytes = 1 + digest_bytes + digest_bytes + 1 + 1 + 1 + 8;
+/// The mutator-modes field is one little-endian mask.
+constexpr std::size_t mutator_modes_value_bytes = 4;
 static_assert(mutators_fixed_value_bytes == 76);
 
 enum class ByteKind { ascii, kebab, id, text };
@@ -702,6 +704,16 @@ bool mutators_prefix_ok(
     return states_in_rule(states, total);
 }
 
+/// Tells whether every bit of a clash mask names a mutator in the list.
+bool clash_mask_fits(uint32_t mask, uint8_t total) noexcept {
+    if (total < 1 || total > presence_mutators_max)
+        return false;
+    if (total == presence_mutators_max)
+        return true;
+    const uint32_t used = (uint32_t{1} << total) - 1u;
+    return (mask & ~used) == 0;
+}
+
 bool option_ok(const PresenceMutatorOption& option) noexcept {
     return string_in_rule(option.key, 1, mutator_option_key_max, ByteKind::ascii) &&
            string_in_rule(option.value, 0, mutator_option_value_max, ByteKind::text);
@@ -938,6 +950,9 @@ WireError encode_presence(
         return WireError::bad_argument;
     if (record.mutators && !mutators_ok(*record.mutators))
         return WireError::bad_argument;
+    if (record.mutator_modes &&
+        (!record.mutators || !clash_mask_fits(*record.mutator_modes, record.mutators->total)))
+        return WireError::bad_argument;
     if (record.mutator_part && !part_ok(*record.mutator_part))
         return WireError::bad_argument;
 
@@ -959,6 +974,8 @@ WireError encode_presence(
         fixed += presence_field_header_bytes + digest_bytes;
     if (record.mutators)
         fixed += presence_field_header_bytes + mutators_fixed_value_bytes;
+    if (record.mutator_modes)
+        fixed += presence_field_header_bytes + mutator_modes_value_bytes;
     if (record.map_pack)
         fixed += presence_field_header_bytes + map_pack_value_bytes(*record.map_pack);
     if (record.mutator_part)
@@ -1040,6 +1057,11 @@ WireError encode_presence(
         write_sim(local, &used, *record.sim_hash);
     if (record.mutators)
         write_mutators(local, &used, *record.mutators, mutator_keep);
+    if (record.mutator_modes) {
+        put_u8(local, &used, static_cast<uint8_t>(PresenceTag::mutator_modes));
+        put_u16(local, &used, static_cast<uint16_t>(mutator_modes_value_bytes));
+        put_u32(local, &used, *record.mutator_modes);
+    }
     if (record.map_pack)
         write_map_pack(local, &used, *record.map_pack);
     if (record.mutator_part)
@@ -1101,6 +1123,8 @@ WireError decode_presence(const uint8_t* record, std::size_t size, PresenceRecor
     bool saw_language = false;
     bool saw_mutators = false;
     bool saw_part = false;
+    bool saw_modes = false;
+    std::optional<uint32_t> pending_modes;
     std::size_t at = presence_record_header_bytes;
     while (at < size) {
         assert(at + presence_field_header_bytes <= size);
@@ -1202,8 +1226,18 @@ WireError decode_presence(const uint8_t* record, std::size_t size, PresenceRecor
             PresenceMutatorPart part;
             if (read_mutator_part(value, &part))
                 decoded.mutator_part = std::move(part);
+        } else if (tag == static_cast<uint8_t>(PresenceTag::mutator_modes)) {
+            if (saw_modes)
+                continue;
+            saw_modes = true;
+            uint32_t mask = 0;
+            if (value.size == mutator_modes_value_bytes && value.u32(&mask))
+                pending_modes = mask;
         }
     }
+    if (pending_modes && decoded.mutators &&
+        clash_mask_fits(*pending_modes, decoded.mutators->total))
+        decoded.mutator_modes = pending_modes;
     *out = std::move(decoded);
     return WireError::ok;
 }
@@ -1448,6 +1482,16 @@ bool presence_assembly_take(PresenceLoadoutAssembly& assembly, const PresenceRec
 
 bool presence_assembly_whole(const PresenceLoadoutAssembly& assembly) noexcept {
     return assembly.total != 0 && assembly.mutators.size() == assembly.total;
+}
+
+WireError presence_clash_modes(uint32_t mask, uint8_t count, PresenceClashMode* modes) noexcept {
+    if (modes == nullptr || !clash_mask_fits(mask, count))
+        return WireError::bad_argument;
+    for (uint8_t position = 0; position < count; ++position) {
+        const uint32_t bit = uint32_t{1} << position;
+        modes[position] = (mask & bit) != 0 ? PresenceClashMode::add : PresenceClashMode::replace;
+    }
+    return WireError::ok;
 }
 
 WireError append_presence_field(

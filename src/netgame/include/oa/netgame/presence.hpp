@@ -86,6 +86,14 @@
 //        u8 first, the position of its first mutator (0 to 31); then one
 //        or more mutators in the 0x50 form, the last at a position below
 //        32. Only a host sends it.
+//   0x52 mutator modes: one little-endian u32. Bit n is the clash mode of
+//        the mutator at position n in the host's list: set means Add, clear
+//        means Replace. Bits at or past total are 0. The host sends this
+//        whenever it sends 0x50, because each machine has its own default.
+//        A value that is not four bytes, or that sets a bit past the list,
+//        is left out. Absent: an older sender. The reader then treats every
+//        mode as Replace, and a loadout built that way has a different
+//        digest from the host's whenever any mode was Add.
 //
 // A loadout longer than one record overflows as a host head, a guest's
 // held and a host part. The host's 0x50 carries the loadout's state and
@@ -150,6 +158,7 @@ enum class PresenceTag : uint8_t {
     computer_edit = 0x42, ///< a host's change to another machine's computer player
     mutators = 0x50,      ///< the loadout's state and the mutators that fit
     mutator_part = 0x51,  ///< the host's loadout continued from a position
+    mutator_modes = 0x52, ///< one bit per mutator: set means Add, clear means Replace
 };
 
 /// 32 bytes: a SHA-256, or the sim hash.
@@ -400,6 +409,10 @@ struct PresenceRecord {
     std::optional<PresenceMutators> mutators;
     /// A continued run of the host's mutators. Absent when this record carries none.
     std::optional<PresenceMutatorPart> mutator_part;
+    /// Clash modes of the host's list, one bit a position. Set means Add,
+    /// clear means Replace. Absent when the sender did not say (an older
+    /// record): every mode then reads as Replace.
+    std::optional<uint32_t> mutator_modes;
 
     /// Compares two records.
     friend bool operator==(const PresenceRecord&, const PresenceRecord&) = default;
@@ -422,8 +435,8 @@ presence_record_length(const uint8_t* bytes, std::size_t available, uint16_t* le
 /// Writes a presence record.
 ///
 /// Fields that are present go out in the order engine, content, bundles,
-/// language, mod, mod origin, sim hash, mutators, map pack, mutator part,
-/// developer, game hacks, view hacks. A list field carries its full count
+/// language, mod, mod origin, sim hash, mutators, mutator modes, map pack,
+/// mutator part, developer, game hacks, view hacks. A list field carries its full count
 /// and as many entries, in order, as keep the record within min(capacity,
 /// 1024). Whole mutators are filled before developer overrides and hack
 /// ids. A mutator part is written whole. A string that does not fit its
@@ -446,8 +459,9 @@ presence_record_length(const uint8_t* bytes, std::size_t available, uint16_t* le
 /// the whole record and leaves `out` unchanged. An unknown tag is skipped.
 /// A known field whose value breaks its rule is left out: a content field
 /// whose value is not one byte, a bundles field whose value breaks its
-/// rule, and a mutators or mutator-part field outside its rule, among
-/// them. Bits of a flag byte other than the ones named above are ignored.
+/// rule, a mutators or mutator-part field outside its rule, and a mutator
+/// modes field that is not four bytes or that sets a bit past the list,
+/// among them. Bits of a flag byte other than the ones named above are ignored.
 /// A repeated tag keeps the first occurrence. It may allocate.
 ///
 /// @param record the record, type byte first
@@ -646,6 +660,27 @@ presence_assembly_take(PresenceLoadoutAssembly& assembly, const PresenceRecord& 
 /// @param assembly the loadout so far
 /// @return true when `total` is not 0 and every position has a mutator
 [[nodiscard]] bool presence_assembly_whole(const PresenceLoadoutAssembly& assembly) noexcept;
+
+/// How one mutator treats a unit or weapon that already has its name.
+enum class PresenceClashMode : uint8_t {
+    replace, ///< the mutator's record takes the place of the one already there
+    add,     ///< the mutator's record is added beside the one already there
+};
+
+/// Writes the clash mode of each mutator in a host's list.
+///
+/// Bit n of `mask` set writes Add at position n; a clear bit writes Replace.
+/// A reader that has the loadout and this mask builds each entry's mode from
+/// the byte written here. A mask that sets a bit at or past `count` is
+/// refused and `modes` is left unchanged.
+///
+/// @param mask the 0x52 value
+/// @param count how many mutators the list names, 1 to 32
+/// @param[out] modes one mode per position; `count` entries
+/// @return ok; bad_argument for a null pointer, a count outside 1 to 32, or
+///         a bit at or past `count`
+[[nodiscard]] WireError
+presence_clash_modes(uint32_t mask, uint8_t count, PresenceClashMode* modes) noexcept;
 
 /// Tells whether a peer may receive a presence record.
 ///
