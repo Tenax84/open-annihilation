@@ -1,0 +1,216 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+// The units, weapons and features a mutator hook reads and writes.
+//
+// A hook sees the pipeline's shared documents, one record at a time, and
+// every change is kept in the journal below. The object must outlive every
+// Lua state it is pushed into, and the document set must outlive the object:
+// a script holds handles, not copies, and each access looks the record up
+// again.
+#pragma once
+
+#include "oa/data/defs/layout.hpp"
+#include "oa/data/mutation_rules/apply.hpp"
+#include "oa/data/mutation_rules/documents.hpp"
+#include "oa/formats/soft_mutator.hpp"
+
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+struct lua_State;
+
+namespace oa::data::mutators {
+
+/// Reaches the records from Lua. The bindings are defined with the
+/// implementation; a caller does not use this type.
+struct CollectionsAccess;
+
+/// Working storage for one collections object. Defined with the implementation.
+struct CollectionsState;
+
+/// The most field writes one mutator may journal on one collections object.
+///
+/// A further write fails that mutator with
+/// "this mutator has changed too many fields" and is not stored.
+inline constexpr uint32_t mutator_write_limit = 65536;
+
+/// The most notes one mutator may add on one collections object.
+///
+/// A further note fails that mutator with "this mutator has made too many notes".
+inline constexpr uint32_t mutator_note_limit = 65536;
+
+/// Which of these collections a mutator may change.
+///
+/// A flag is set when the mutator's manifest declares that layer. Reading is
+/// allowed either way.
+struct WriteGrant {
+    bool units{};    ///< unit records and the download entries a removal drops
+    bool weapons{};  ///< weapon records, including a weapon's damage block
+    bool features{}; ///< feature records
+};
+
+/// What a removal took out of the document set.
+enum class RemovalKind : uint8_t {
+    unit,           ///< a unit document
+    weapon,         ///< one weapon section
+    feature,        ///< one feature section
+    download_entry, ///< one download section that named a removed unit
+    document,       ///< a document left with no section
+};
+
+/// One record or download entry a hook removed.
+struct RecordRemoval {
+    std::string mutator; ///< mutator whose hook removed it
+    RemovalKind kind{};  ///< which kind of removal
+    std::string name;    ///< record or section name
+    std::string path;    ///< document path
+};
+
+/// Why a hook left a note beside its writes.
+enum class HookNoteKind : uint8_t {
+    check_warned,                 ///< a typed write was outside the comfortable range and was kept
+    hook_overwrote,               ///< a later hook replaced an earlier hook's value
+    download_first_entry_changed, ///< removing the first download entry left a different unit first
+    not_a_number,                 ///< a scale skipped a value that is not a number
+};
+
+/// One note a hook produced, for the change journal.
+struct HookNote {
+    HookNoteKind kind{};               ///< which note
+    std::vector<std::string> mutators; ///< mutators involved, earlier ones first
+    std::string path;                  ///< document path
+    std::string record;                ///< record name
+    std::string key;                   ///< field name; empty when the note is not about one field
+    std::string message;               ///< what happened, in plain words
+};
+
+/// Publishes `range`, `is`, `has`, `absent` and `not_` in a state.
+///
+/// The state is one the script host opened. The forms build the needs
+/// `need_from_lua` reads, and their metatables cannot be read or replaced.
+///
+/// @param state state to publish into
+void install_selection_forms(lua_State* state);
+
+/// Reads one need from a Lua value.
+///
+/// A number `n` is `range(n, n)`. `true` is `range(1, 1)` and `false` is
+/// `not_(range(1, 1))`. A string is `is` of that string. `absent()` is
+/// `not_(has(""))`. `not_` of a `not_` is refused. Anything else is refused
+/// with a message that names `field` when `field` is not empty.
+///
+/// @param state state that holds the value
+/// @param index stack index of the value
+/// @param field field the need applies to; empty when the caller has none yet
+/// @param[out] need the need; unchanged when the call returns false
+/// @param[out] error the reason; may be null
+/// @return true when `need` was filled
+[[nodiscard]] bool need_from_lua(
+    lua_State* state,
+    int index,
+    std::string_view field,
+    oa::formats::soft_mutator::Need& need,
+    std::string* error
+);
+
+/// The units, weapons and features of one document set, as Lua collections.
+///
+/// The object must outlive every state `push_units`, `push_weapons`,
+/// `push_features` or `set_context_collections` was called with. The document
+/// set must outlive this object. A handle remembers the section it was given.
+/// The name is kept for messages. Removing that section, or its document,
+/// makes the handle fail. Removing a different section, or renaming the unit,
+/// leaves the handle on its own section.
+class Collections {
+  public:
+
+    /// Binds the collections to a document set.
+    ///
+    /// @param documents documents the hooks read and write; must outlive this object
+    /// @param layout layout that names the folders; null uses the layout in force at each call
+    Collections(
+        oa::data::mutation_rules::DocumentSet& documents,
+        const oa::data::defs::DataLayout* layout = nullptr
+    );
+    Collections(const Collections&) = delete;
+    Collections& operator=(const Collections&) = delete;
+    Collections(Collections&&) = delete;
+    Collections& operator=(Collections&&) = delete;
+    /// Drops the collections. Every state they were pushed into is already closed.
+    ~Collections();
+
+    /// Starts one mutator's turn.
+    ///
+    /// Writes and removals until `end_mutator` are journaled to `mutator` and
+    /// refused unless `grant` allows that collection.
+    ///
+    /// @param mutator mutator name, as the player list spells it
+    /// @param grant layers this mutator may write
+    void begin_mutator(std::string mutator, WriteGrant grant);
+
+    /// Ends the mutator's turn. Later writes are refused until the next begin.
+    void end_mutator();
+
+    /// Pushes the units collection.
+    ///
+    /// @param state state to push into
+    void push_units(lua_State* state);
+
+    /// Pushes the weapons collection.
+    ///
+    /// @param state state to push into
+    void push_weapons(lua_State* state);
+
+    /// Pushes the features collection.
+    ///
+    /// @param state state to push into
+    void push_features(lua_State* state);
+
+    /// Sets `units`, `weapons` and `features` on a context table.
+    ///
+    /// @param state state that holds the table
+    /// @param ctx_index stack index of the context table
+    void set_context_collections(lua_State* state, int ctx_index);
+
+    /// Returns the field writes so far, in the order the hooks made them.
+    ///
+    /// The span is invalidated by the next write.
+    ///
+    /// @return the writes
+    [[nodiscard]] std::span<const oa::data::mutation_rules::FieldWrite> writes() const;
+
+    /// Returns the removals so far, in the order the hooks made them.
+    ///
+    /// The span is invalidated by the next removal.
+    ///
+    /// @return the removals
+    [[nodiscard]] std::span<const RecordRemoval> removals() const;
+
+    /// Returns the notes so far, in the order the hooks made them.
+    ///
+    /// The span is invalidated by the next note.
+    ///
+    /// @return the notes
+    [[nodiscard]] std::span<const HookNote> notes() const;
+
+  private:
+
+    friend struct CollectionsAccess;
+
+    oa::data::mutation_rules::DocumentSet* documents_;
+    const oa::data::defs::DataLayout* layout_;
+    bool active_{};
+    std::string mutator_;
+    WriteGrant grant_{};
+    std::vector<oa::data::mutation_rules::FieldWrite> writes_;
+    std::vector<RecordRemoval> removals_;
+    std::vector<HookNote> notes_;
+    std::unique_ptr<CollectionsState> state_;
+};
+
+} // namespace oa::data::mutators
