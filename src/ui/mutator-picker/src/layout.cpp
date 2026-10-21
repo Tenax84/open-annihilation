@@ -521,14 +521,15 @@ void add_label(
 }
 
 /// Adds a control to Tab's order when it takes the focus. One clipped wholly
-/// out of its scroll area does not.
+/// out of its scroll area does not, except a details control: the keys keep
+/// it and scroll the details until it shows.
 ///
 /// @param[in,out] building the layout
 /// @param[in,out] control the control
 void tab_stop(Building& building, kit::Control& control) {
     if (control.clip.width > 0 && control.clip.height > 0) {
         const kit::Rect shown = kit::intersect(control.rect, control.clip);
-        if (shown.width <= 0 || shown.height <= 0)
+        if ((shown.width <= 0 || shown.height <= 0) && control.group != controls::details_group)
             control.focusable = false;
     }
     if (control.enabled && control.focusable)
@@ -2459,8 +2460,8 @@ void add_footer(Building& building, const Window& window, const Footer& foot, bo
     }
 }
 
-/// Declares Tab's order. A control that is missing, disabled or clipped away
-/// is left out.
+/// Declares Tab's order. A control that is missing or disabled is left out,
+/// as is one clipped away, except a details control.
 ///
 /// @param[in,out] building the layout
 /// @param page Compact's details page

@@ -4,7 +4,8 @@
 # The mutator picker's model and its screen: which mutators are on, in which
 # order, with which options and clash mode, and the kit window that draws
 # them. It reads no file, clock, preference or network.
-add_library(oa-ui-mutator-picker src/draw.cpp src/layout.cpp src/model.cpp src/text.cpp)
+add_library(oa-ui-mutator-picker src/draw.cpp src/input.cpp src/layout.cpp src/model.cpp
+  src/text.cpp)
 add_library(oa::ui::mutator_picker ALIAS oa-ui-mutator-picker)
 target_include_directories(oa-ui-mutator-picker PUBLIC include)
 target_compile_features(oa-ui-mutator-picker PUBLIC cxx_std_20)
@@ -20,6 +21,13 @@ if(BUILD_TESTING)
     oa-formats-oamut oa-test-support oa-options)
   add_test(NAME ui-mutator-picker-model COMMAND oa-ui-mutator-picker-model-test)
   set_tests_properties(ui-mutator-picker-model PROPERTIES TIMEOUT 60)
+
+  # The pointer, a finger, the keys, typed text, the wheel and the controller.
+  add_executable(oa-ui-mutator-picker-input-test tests/input_test.cpp)
+  target_link_libraries(oa-ui-mutator-picker-input-test PRIVATE oa-ui-mutator-picker oa-ui-kit
+    oa-test-support oa-options)
+  add_test(NAME ui-mutator-picker-input COMMAND oa-ui-mutator-picker-input-test)
+  set_tests_properties(ui-mutator-picker-input PROPERTIES TIMEOUT 60)
 
   # The screen at Compact, Regular and Large and at three windows: parts
   # inside the window, no two controls meeting, every row's grip and switch,
