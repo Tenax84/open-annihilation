@@ -1107,6 +1107,9 @@ void test_removal_and_marks(
     OA_CHECK(std::find_if(later.begin(), later.end(), [](const std::string& name) {
                  return fold_copy(name) == "rgmark";
              }) == later.end());
+    // The first place is a placeholder, so the note names no unit as marked.
+    check_note(removed, "a placeholder now holds the first place, so no unit gains a mark");
+    OA_CHECK(find_note(removed, "as the unit this file marks") == nullptr);
 }
 
 void test_layers(const fs::path& game, const fs::path& packages) {
@@ -1574,6 +1577,64 @@ void test_added_file(const fs::path& game, const fs::path& packages) {
     OA_CHECK(added);
 }
 
+/// A download file created and then emptied in one mutator is not journaled,
+/// and the next entry for that unit uses the same path.
+void test_created_then_emptied(const fs::path& game, const fs::path& packages) {
+    write_package(
+        packages,
+        "ridge-empty-file",
+        "\"menus\"",
+        hook_script(
+            "menus",
+            "collection:add(\"RGEMPTY\", \"RGPLANT\")\n"
+            "      collection:remove(\"RGEMPTY\", \"RGPLANT\")"
+        )
+    );
+    mutators::PipelineResult emptied = run_packages(game, packages, {"ridge-empty-file"});
+    if (!applied(emptied))
+        return;
+    for (const mutators::JournalEntry& entry : emptied.journal.entries) {
+        OA_CHECK(fold_copy(entry.path).find("rgplant.tdf") == std::string::npos);
+    }
+    OA_CHECK(find_served(emptied, "rgplant.tdf") == nullptr);
+
+    write_package(
+        packages,
+        "ridge-reuse-file",
+        "\"menus\"",
+        hook_script(
+            "menus",
+            "collection:add(\"RGEMPTY\", \"RGPLANT\")\n"
+            "      collection:remove(\"RGEMPTY\", \"RGPLANT\")\n"
+            "      collection:add(\"RGEMPTY\", \"RGPLANT\")"
+        )
+    );
+    mutators::PipelineResult reused = run_packages(game, packages, {"ridge-reuse-file"});
+    if (!applied(reused))
+        return;
+    const oa::MutatorLayerEntry* served = find_served(reused, "rgplant.tdf");
+    OA_CHECK(served != nullptr);
+    if (served == nullptr)
+        return;
+    OA_CHECK(served->kind != oa::MutatorSourceKind::hidden);
+    OA_CHECK(fold_copy(served->path).find("rgplant-2") == std::string::npos);
+    OA_CHECK(text_has(served_text(served), "UNITNAME=RGPLANT"));
+    bool hidden = false;
+    int added_files = 0;
+    for (const mutators::JournalEntry& entry : reused.journal.entries) {
+        if (fold_copy(entry.path).find("rgplant") == std::string::npos)
+            continue;
+        if (entry.change == mutators::Change::hidden)
+            hidden = true;
+        if (entry.change == mutators::Change::added &&
+            entry.collection == mutators::Collection::files)
+            ++added_files;
+        OA_CHECK(fold_copy(entry.path).find("rgplant-2") == std::string::npos);
+    }
+    OA_CHECK(!hidden);
+    OA_CHECK(added_files == 1);
+}
+
 /// Refused calls inside pcall leave nothing behind and do not stop the hook.
 void test_refusals(const fs::path& game, const fs::path& packages) {
     write_package(
@@ -1779,6 +1840,7 @@ int main(int argc, char** argv) {
     test_clones(game, packages);
     test_six_sections(game, packages, table);
     test_added_file(game, packages);
+    test_created_then_emptied(game, packages);
     test_refusals(game, packages);
     test_budget(game, packages);
     return oa::test::check_exit_status();
