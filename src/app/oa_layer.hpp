@@ -325,11 +325,36 @@ class LayerScreen {
     /// @return the revision
     [[nodiscard]] virtual uint64_t revision() const = 0;
 
+    /// Tells whether what the screen draws changes only when its revision
+    /// does, its animations and timed content among it, so that the front
+    /// end keeps the screen's drawing while its revision, its place, its
+    /// scale, its darkening and the fonts, language and text style it is
+    /// drawn in hold. A screen that cannot promise it is drawn again each
+    /// frame.
+    ///
+    /// @return false, the default; true for a screen that keeps to it
+    [[nodiscard]] virtual bool revision_covers_drawing() const { return false; }
+
+    /// Returns a number no other screen made in this run has, by which the
+    /// layer tells a screen's kept drawing from another's.
+    ///
+    /// @return the screen's number, 1 or more
+    [[nodiscard]] uint64_t identity() const noexcept { return identity_; }
+
     /// Tells the screen it leaves the layer, whatever took it off. A screen
     /// whose own model is still open closes it here, as its Cancel would.
     ///
     /// @param by_key a key's press closed it; that key is latched
     virtual void close(bool by_key) = 0;
+
+  private:
+
+    /// Returns the next screen's number.
+    ///
+    /// @return a number no screen made before has
+    [[nodiscard]] static uint64_t next_identity() noexcept;
+
+    uint64_t identity_{next_identity()}; ///< the screen's number
 };
 
 /// Maps a point to a screen's own points by its placement: for a screen
@@ -1068,7 +1093,52 @@ class OaLayer {
         /// that is not opaque, only the part that holds what it drew.
         oa::ui::display_layout::Rect window{};
         oa::ui::display_layout::Rect shown{}; ///< where it shows, in window pixels
-        LayerDrawing drawn{};                 ///< its drawing at the view's scale
+        /// Its drawing at the view's scale, darkened by the screens above it.
+        std::shared_ptr<const LayerDrawing> drawn{};
+        /// The number of its drawing (front_drawing_count_): two pieces with
+        /// the same number hold the same drawing.
+        uint64_t drawing{};
+    };
+
+    /// Everything but the screen itself that a front-end screen's drawing
+    /// is drawn from.
+    struct DrawingInputs {
+        /// Where it shows, in window pixels: left, top, width and height.
+        std::array<int32_t, 4> shown{};
+        int32_t points_width{};     ///< its width, in its points
+        int32_t points_height{};    ///< its height, in its points
+        int32_t placed_percent{};   ///< its placement's scale, in percent
+        int32_t scale_percent{};    ///< the scale it is drawn at, in percent
+        uint32_t darkenings{};      ///< the modal screens with a backdrop above it
+        bool opaque{};              ///< it covers its place
+        const void* fonts{};        ///< the game's fonts it is drawn in
+        const void* modern_fonts{}; ///< the modern fonts it is drawn in; null for none
+        const void* icon{};         ///< the icon's pixels
+        std::size_t icon_bytes{};   ///< the icon's bytes
+        uint32_t icon_width{};      ///< the icon's columns
+        uint32_t icon_height{};     ///< the icon's rows
+        const void* language{};     ///< the interface's language
+        uint64_t languages{};       ///< the languages' registry generation
+        bool modern_text{};         ///< game text is drawn in the modern fonts
+        bool outline{};             ///< modern text is outlined
+        bool shadow{};              ///< modern text casts a shadow
+        bool background{};          ///< modern text lies on a shaded box
+        int32_t text_size{};        ///< the modern text's size, in percent
+        bool utf8{};                ///< game text may hold UTF-8
+        /// Tells whether two sets of inputs are the same.
+        ///
+        /// @return true when every input is the same
+        bool operator==(const DrawingInputs&) const = default;
+    };
+
+    /// A front-end screen's drawing, kept while what it was drawn from holds.
+    struct KeptDrawing {
+        uint64_t screen{};                           ///< the screen's identity
+        uint64_t revision{};                         ///< its revision when it was drawn
+        DrawingInputs inputs{};                      ///< what else it was drawn from
+        std::shared_ptr<const LayerDrawing> drawn{}; ///< the drawing, darkened
+        oa::ui::display_layout::Rect drawn_part{};   ///< the part that holds what it drew
+        uint64_t drawing{};                          ///< the drawing's number
     };
 
     /// What the front end's part of the layer shows in the window.
@@ -1232,6 +1302,11 @@ class OaLayer {
     /// The front end's screens the texture holds, at their places; none
     /// while it holds the match's layer or nothing.
     std::optional<FrontLook> front_uploaded_{};
+    /// The drawings of the front end's screens that promise their revision
+    /// covers what they draw, from the last present; a screen that no
+    /// longer shows loses its own.
+    std::vector<KeptDrawing> front_drawings_{};
+    uint64_t front_drawing_count_{}; ///< counts the front end's drawings, numbering each
     oa::ui::display_layout::Rect
         front_bounds_{}; ///< the window pixels the front end's texture covers
     std::array<uint8_t, 256> uploaded_gamma_{}; ///< the gamma table the texture was uploaded at
@@ -1410,6 +1485,11 @@ class NoticeScreen final : public LayerScreen {
     /// @return the revision
     [[nodiscard]] uint64_t revision() const override { return revision_; }
 
+    /// Tells that every change to what the screen draws moves its revision.
+    ///
+    /// @return true
+    [[nodiscard]] bool revision_covers_drawing() const override { return true; }
+
     /// Has nothing of its own to close.
     void close(bool /*by_key*/) override {}
 
@@ -1543,17 +1623,22 @@ class WorkScreen final : public LayerScreen {
     /// @return the revision
     [[nodiscard]] uint64_t revision() const override { return revision_; }
 
+    /// Tells that every change to what the screen draws moves its revision.
+    ///
+    /// @return true
+    [[nodiscard]] bool revision_covers_drawing() const override { return true; }
+
     /// Has nothing of its own to close.
     void close(bool /*by_key*/) override {}
 
   private:
 
-    OaLayer& layer_;                  ///< the layer it shows on
-    Screen over_{};                   ///< the screen of the game it shows over
-    oa::ui::kit::WorkDialog dialog_;  ///< the dialog
-    Host host_;                       ///< what its host does
-    uint32_t began_ms_{};             ///< when it was made, on the platform's clock
-    uint64_t revision_{};             ///< counts the changes to its look
+    OaLayer& layer_;                 ///< the layer it shows on
+    Screen over_{};                  ///< the screen of the game it shows over
+    oa::ui::kit::WorkDialog dialog_; ///< the dialog
+    Host host_;                      ///< what its host does
+    uint32_t began_ms_{};            ///< when it was made, on the platform's clock
+    uint64_t revision_{};            ///< counts the changes to its look
 };
 
 /// A question of Open Annihilation's own (kit::Question) as a screen of the
@@ -1710,6 +1795,11 @@ class QuestionScreen final : public LayerScreen {
     /// @return the revision
     [[nodiscard]] uint64_t revision() const override { return revision_; }
 
+    /// Tells that every change to what the screen draws moves its revision.
+    ///
+    /// @return true
+    [[nodiscard]] bool revision_covers_drawing() const override { return true; }
+
     /// Tells the host the question leaves (Host::closed).
     void close(bool /*by_key*/) override;
 
@@ -1851,6 +1941,11 @@ class GalleryScreen final : public LayerScreen {
     ///
     /// @return the revision
     [[nodiscard]] uint64_t revision() const override { return revision_; }
+
+    /// Tells that every change to what the screen draws moves its revision.
+    ///
+    /// @return true
+    [[nodiscard]] bool revision_covers_drawing() const override { return true; }
 
     /// Has nothing of its own to close.
     void close(bool /*by_key*/) override {}

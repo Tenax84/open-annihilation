@@ -2158,10 +2158,22 @@ struct Runtime::LibraryScreen final : LayerScreen {
         return LayerAnswer::redraw;
     }
 
-    /// Returns the Library's revision, which counts its layouts.
+    /// Returns the Library's revision, which counts its layouts. While the
+    /// host's model has moved past the last layout, it is the revision the
+    /// layout draw makes then gives.
     ///
     /// @return the revision
-    [[nodiscard]] uint64_t revision() const override { return revision_; }
+    [[nodiscard]] uint64_t revision() const override {
+        if (runtime_.library_ && runtime_.library_->model_revision != seen_model_)
+            return revision_ + 1;
+        return revision_;
+    }
+
+    /// Tells that the Library draws its last layout alone, each of which
+    /// moves its revision.
+    ///
+    /// @return true
+    [[nodiscard]] bool revision_covers_drawing() const override { return true; }
 
     /// Forgets the pictures the Library waits for and any drag or open menu.
     /// A pending base game or expansion choice, and a mod the Active tab
