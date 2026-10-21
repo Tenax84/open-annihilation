@@ -405,49 +405,6 @@ join_parts(const TextHooks& text, const std::vector<std::string>& parts, std::st
     return filled(text, last, {{"left", joined}, {"right", parts.back()}});
 }
 
-/// Writes a mutator version range in the engine's comparison words.
-///
-/// An empty range, or one that does not parse, is returned as written.
-///
-/// @param range_text the range as the manifest writes it
-/// @param text how texts are looked up
-/// @return the words, such as "4.0 or later"; empty for an empty range
-std::string range_words(std::string_view range_text, const TextHooks& text) {
-    if (range_text.empty())
-        return {};
-    const std::optional<formats::oamut::VersionRange> range =
-        formats::oamut::parse_version_range(range_text);
-    if (!range)
-        return std::string(range_text);
-    std::string joined;
-    for (const auto& [comparison, version] : range->terms) {
-        if (!joined.empty()) {
-            joined += shown(text, words::list_separator);
-            joined.push_back(' ');
-        }
-        std::string_view pattern = words::engine_at_least;
-        switch (comparison) {
-        case formats::oamod::EngineComparison::at_least:
-            pattern = words::engine_at_least;
-            break;
-        case formats::oamod::EngineComparison::above:
-            pattern = words::engine_above;
-            break;
-        case formats::oamod::EngineComparison::at_most:
-            pattern = words::engine_at_most;
-            break;
-        case formats::oamod::EngineComparison::below:
-            pattern = words::engine_below;
-            break;
-        case formats::oamod::EngineComparison::exactly:
-            pattern = words::engine_exactly;
-            break;
-        }
-        joined += filled(text, pattern, {{"version", formats::oamut::version_text(version)}});
-    }
-    return joined;
-}
-
 /// Joins the words of every range that names one.
 ///
 /// @param text how texts are looked up
@@ -988,11 +945,19 @@ GetPlan get_plan(const Library& library, const Entry& entry) {
         if (listing == nullptr) {
             const std::string name =
                 display_name(names[id], nullptr, installed_of(library, id), id);
-            plan.blocked = filled(
-                library.text,
-                words::blocked_prerequisite,
-                {{"name", name}, {"range", ranges_words(library.text, asked)}}
-            );
+            const std::string asked_words = ranges_words(library.text, asked);
+            // A range-free prerequisite would leave a blank in
+            // "Needs {name} {range}, which no registry offers".
+            if (asked_words.empty()) {
+                plan.blocked =
+                    filled(library.text, words::blocked_prerequisite_any, {{"name", name}});
+            } else {
+                plan.blocked = filled(
+                    library.text,
+                    words::blocked_prerequisite,
+                    {{"name", name}, {"range", asked_words}}
+                );
+            }
             stopped = true;
             break;
         }

@@ -45,7 +45,7 @@ enum class Collection : uint8_t {
 enum class Change : uint8_t {
     set,           ///< a field was written
     removed_field, ///< a field was removed
-    added,         ///< a file was added
+    added,         ///< a file was added, or a record file added or replaced a record
     removed,       ///< a record was removed
     hidden,        ///< a path was hidden
 };
@@ -64,6 +64,12 @@ enum class Change : uint8_t {
 /// for each file of the mod a mask hides (phase `files`) and for each file a
 /// hook's removal empties (phase `hooks`). A mask that hides another
 /// mutator's file names both, the one whose file it hid first.
+///
+/// A record a mutator's file adds is `added`, with the record name and no
+/// `old_text`. A record a file replaces is `added` as well, and `old_text`
+/// names the record that was already there. When that record is one an
+/// earlier mutator brought, the report keeps one `value_replaced` note for
+/// the collection and that pair of mutators.
 struct JournalEntry {
     /// Mutators that made the change, as indices into the input list.
     std::vector<uint16_t> mutators;
@@ -115,12 +121,12 @@ enum class Severity : uint8_t {
 
 /// Which stacking situation a conflict is.
 enum class ConflictKind : uint8_t {
-    same_path_added,     ///< two mutators added one path; the later one won
-    added_path_hidden,   ///< a mask hid a file an earlier mutator added
-    add_folder_missing,  ///< an add folder is not in the package
-    same_field_hooked,   ///< a later hook wrote a field the last writer, or its locker, had set
-    value_replaced,      ///< a later mutator's rule replaced a value an earlier mutator wrote
-    field_locked,        ///< a later mutator's rule left a field an earlier mutator locked alone
+    same_path_added,    ///< two mutators added one path; the later one won
+    added_path_hidden,  ///< a mask hid a file an earlier mutator added
+    add_folder_missing, ///< an add folder is not in the package
+    same_field_hooked,  ///< a later hook wrote a field the last writer, or its locker, had set
+    value_replaced,     ///< a later mutator replaced a value, or a record, an earlier mutator wrote
+    field_locked,       ///< a later mutator's rule left a field an earlier mutator locked alone
     text_change_dropped, ///< a text change was dropped
     matched_nothing,     ///< a rule selected no record
     value_past_limit,    ///< a value was kept past its comfortable limit
@@ -193,7 +199,9 @@ struct ConflictReport {
 ///
 /// An overwrite names both mutators and stores the winner last. A download
 /// file whose first entry changed is a `text_change_dropped` note: the
-/// journal has no separate kind for it. `ids` is the input list, in order.
+/// journal has no separate kind for it. A weapon id the game already
+/// assigned, and that a hook tried to write, is `write_refused`. `ids` is
+/// the input list, in order.
 ///
 /// @param note the hook note
 /// @param ids mutator ids, in list order

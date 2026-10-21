@@ -11,7 +11,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -93,6 +95,8 @@ struct State {
     uint64_t next_order = 0;
     /// The next `Candidate::archive_sequence`.
     uint64_t next_archive = 0;
+    /// Record files of the mutators kept so far. A failed attempt drops its copy.
+    std::vector<RecordFile> records;
 };
 
 /// One name directory_iterator returned, before the listing is sorted.
@@ -476,6 +480,73 @@ Stored store_candidate(const Candidate& candidate, const std::string& id, uint64
     return stored;
 }
 
+/// Classifies a resource path. A nested path and every other folder are whole files.
+RecordFileKind
+classify_record(std::string_view resource, const oa::data::defs::DataLayout& layout) {
+    if (!unit_stem(resource, layout).empty())
+        return RecordFileKind::unit;
+    const std::vector<std::string> parts = split_path(resource);
+    if (parts.size() != 2)
+        return RecordFileKind::none;
+    const std::string suffix = ".tdf";
+    if (parts[1].size() < suffix.size())
+        return RecordFileKind::none;
+    const std::string_view extension =
+        std::string_view{parts[1]}.substr(parts[1].size() - suffix.size());
+    if (folded_path(extension) != folded_path(suffix))
+        return RecordFileKind::none;
+    const auto folder = [&](oa::data::defs::DataDirectory which) {
+        const std::string& name = layout.directories[static_cast<std::size_t>(which)];
+        return folded_path(parts[0]) == folded_path(name);
+    };
+    if (folder(oa::data::defs::DataDirectory::weapons))
+        return RecordFileKind::weapon;
+    if (folder(oa::data::defs::DataDirectory::download))
+        return RecordFileKind::download;
+    return RecordFileKind::none;
+}
+
+/// Reads one candidate's bytes. A loose file uses a stream. An archive uses its reader.
+bool read_candidate(
+    const Candidate& candidate,
+    const std::string& id,
+    std::shared_ptr<const std::vector<uint8_t>>& bytes,
+    std::string& reason
+) {
+    if (candidate.kind == oa::MutatorSourceKind::loose) {
+        std::ifstream input(candidate.host, std::ios::binary);
+        if (!input)
+            return fail(reason, refusal(id, "file", candidate.path, "the file could not be read"));
+        std::vector<uint8_t> buffer(
+            (std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>()
+        );
+        if (input.bad())
+            return fail(reason, refusal(id, "file", candidate.path, "the file could not be read"));
+        bytes = std::make_shared<const std::vector<uint8_t>>(std::move(buffer));
+        return true;
+    }
+    if (!candidate.archive)
+        return fail(reason, refusal(id, "file", candidate.path, "the archive is not open"));
+    oa::base::bytes::Decoded<std::vector<uint8_t>> decoded =
+        candidate.archive->read(candidate.archive_path);
+    if (!decoded.ok() || !decoded.value.has_value())
+        return fail(reason, refusal(id, "file", candidate.path, "the file could not be read"));
+    bytes = std::make_shared<const std::vector<uint8_t>>(std::move(*decoded.value));
+    return true;
+}
+
+/// Drops every snapshot of one folded path. A mask has hidden the path.
+void drop_records(State& state, const std::string& folded) {
+    std::vector<RecordFile> kept;
+    kept.reserve(state.records.size());
+    for (RecordFile& record : state.records) {
+        if (folded_path(record.path) == folded)
+            continue;
+        kept.push_back(std::move(record));
+    }
+    state.records.swap(kept);
+}
+
 /// Puts one folder's files into the table, in the vector's order.
 ///
 /// A path the mutator already holds is replaced with no note. A path an
@@ -487,12 +558,19 @@ Stored store_candidate(const Candidate& candidate, const std::string& id, uint64
 /// @param files the folder's files, already sorted by folded path
 /// @param id the mutator
 /// @param notes receives replacement notes, or null when only projecting
-void overlay(
+/// @param layout directory names used to recognise a record file
+/// @param records receives record-file bytes, or null when only projecting
+/// @param reason the refusal when a record file cannot be read
+/// @return false when a record file's bytes cannot be read
+bool overlay(
     std::map<std::string, Stored>& table,
     uint64_t& next_order,
     const std::vector<Candidate>& files,
     const std::string& id,
-    std::vector<FileNote>* notes
+    std::vector<FileNote>* notes,
+    const oa::data::defs::DataLayout& layout,
+    std::vector<RecordFile>* records,
+    std::string& reason
 ) {
     for (const Candidate& candidate : files) {
         const auto found = table.find(candidate.folded);
@@ -500,19 +578,41 @@ void overlay(
             const uint64_t order = next_order;
             ++next_order;
             table.emplace(candidate.folded, store_candidate(candidate, id, order));
+        } else {
+            if (notes != nullptr && found->second.owner != id) {
+                FileNote note;
+                note.kind = FileNoteKind::add_replaced;
+                note.path = candidate.path;
+                note.mutator = id;
+                note.other = found->second.owner;
+                notes->push_back(std::move(note));
+            }
+            const uint64_t order = found->second.order;
+            found->second = store_candidate(candidate, id, order);
+        }
+        if (records == nullptr || classify_record(candidate.path, layout) == RecordFileKind::none)
             continue;
+        std::shared_ptr<const std::vector<uint8_t>> bytes;
+        if (!read_candidate(candidate, id, bytes, reason))
+            return false;
+        RecordFile record;
+        record.mutator = id;
+        record.path = candidate.path;
+        record.bytes = std::move(bytes);
+        const std::string folded = candidate.folded;
+        bool replaced = false;
+        for (RecordFile& kept : *records) {
+            if (kept.mutator == id && folded_path(kept.path) == folded) {
+                kept.path = record.path;
+                kept.bytes = record.bytes;
+                replaced = true;
+                break;
+            }
         }
-        if (notes != nullptr && found->second.owner != id) {
-            FileNote note;
-            note.kind = FileNoteKind::add_replaced;
-            note.path = candidate.path;
-            note.mutator = id;
-            note.other = found->second.owner;
-            notes->push_back(std::move(note));
-        }
-        const uint64_t order = found->second.order;
-        found->second = store_candidate(candidate, id, order);
+        if (!replaced)
+            records->push_back(std::move(record));
     }
+    return true;
 }
 
 /// Counts the archives the table still reads.
@@ -959,6 +1059,7 @@ void apply_mask(State& state, const std::string& id, const std::string& pattern)
         note.mutator = id;
         note.other = stored.owner;
         state.notes.push_back(std::move(note));
+        drop_records(state, key);
         state.table.erase(key);
     }
     MutatorMask mask;
@@ -1036,10 +1137,24 @@ bool apply_mutator(
         folders.push_back(std::move(files));
     }
 
+    const oa::data::defs::DataLayout& layout =
+        paths.layout != nullptr ? *paths.layout : oa::data::defs::data_layout();
     std::map<std::string, Stored> projected = state.table;
     uint64_t projected_order = state.next_order;
-    for (const std::vector<Candidate>& files : folders)
-        overlay(projected, projected_order, files, mutator.id, nullptr);
+    std::string projection_reason;
+    for (const std::vector<Candidate>& files : folders) {
+        if (!overlay(
+                projected,
+                projected_order,
+                files,
+                mutator.id,
+                nullptr,
+                layout,
+                nullptr,
+                projection_reason
+            ))
+            return false;
+    }
     if (projected.size() > oa::formats::hpi::MutatorLayerEntryLimit) {
         return fail(
             reason,
@@ -1057,8 +1172,19 @@ bool apply_mutator(
     if (!paths_allowed(projected, paths, mutator.id, reason))
         return false;
 
-    for (const std::vector<Candidate>& files : folders)
-        overlay(state.table, state.next_order, files, mutator.id, &state.notes);
+    for (const std::vector<Candidate>& files : folders) {
+        if (!overlay(
+                state.table,
+                state.next_order,
+                files,
+                mutator.id,
+                &state.notes,
+                layout,
+                &state.records,
+                reason
+            ))
+            return false;
+    }
     return true;
 }
 
@@ -1127,9 +1253,14 @@ void fill_layer(const State& state, FilesLayer& result) {
         result.spec.label += id;
     }
     result.notes = state.notes;
+    result.records = state.records;
 }
 
 } // namespace
+
+RecordFileKind record_file_kind(std::string_view path, const oa::data::defs::DataLayout& layout) {
+    return classify_record(path, layout);
+}
 
 FilesLayer build_files_layer(std::span<const MutatorFiles> mutators, const PathContext& paths) {
     State state;

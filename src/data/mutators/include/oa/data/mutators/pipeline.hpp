@@ -52,6 +52,7 @@ enum class Cause : uint8_t {
     engine_version,      ///< the engine is outside the mutator's requirement
     prerequisite_failed, ///< a mutator it requires did not apply
     engine_error,        ///< the engine stopped while running the mutator
+    weapon_ids,          ///< a weapon this mutator brought could not be given an id
 };
 
 /// One mutator's outcome.
@@ -158,18 +159,30 @@ list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::
 /// conflict, refuses the list: every result is excluded, nothing is
 /// mounted and no script runs. Each remaining manifest is checked against
 /// the mod and the engine. The rest are planned, their files mounted, the
-/// documents parsed from that layer. Each mutator in list order then
-/// applies its rules and then its hooks. When `input.map` names a map, each
-/// mutator's maps entry then runs, in list order, as a transaction of its
-/// own. A changed OTA is served at that map's path. No map, and the maps
-/// phase does nothing. Each pass over the list is a transaction. A
-/// failure in a plan or a rule target is the mutator's own, and every one
-/// is kept. Any later failure can depend on the mutators above it, so the
-/// pass keeps only the one nearest the top of the list, and stops at the
-/// first hook that fails: no later mutator runs on what a failed mutator left.
-/// The mutator that failed, and every mutator that requires it, is then
-/// dropped and the pass repeated from the store, so the result is the run
-/// without them. Only a document the run changed is written back. A plan
+/// documents parsed from that layer. Record files are not mounted as whole
+/// files: each mutator in list order applies the units, weapons and download
+/// entries in its own copies, then its rules and then its hooks. When
+/// `input.map` names a map, each mutator's maps entry then runs, in list
+/// order, as a transaction of its own. A changed OTA is served at that map's
+/// path. No map, and the maps phase does nothing. Each pass over the list is
+/// a transaction. A failure in a plan or a rule target is the mutator's
+/// own, and every one is kept. Any later failure can depend on the mutators
+/// above it, so the pass keeps only the one nearest the top of the list, and
+/// stops at the first hook that fails: no later mutator runs on what a
+/// failed mutator left. The mutator that failed, and every mutator that
+/// requires it, is then dropped and the pass repeated from the store, so
+/// the result is the run without them. Only a document the run changed is
+/// written back. After the last units or weapons hook, and before the maps
+/// entries, every weapon a mutator brought, by a record file or by
+/// `weapons:clone`, is given an id. The game's and the mod's weapons keep
+/// theirs. Numbering takes each mutator in list order: its requested ids
+/// from 1 to 255 when those ids are still free, then free ids for its
+/// other weapons. A later request for an id already held takes another
+/// free id. A write of `id` on a weapon the game already numbered is left
+/// undone and noted. Slot 0 is never given out. When no id remains, the
+/// mutator whose weapon could not be numbered fails in the integrity phase
+/// and the run is repeated without it. The written weapon files carry the
+/// final ids. A plan
 /// key this engine does not support yet is refused, not ignored.
 ///
 /// The call does not throw. A Lua error stays inside the run. The result
