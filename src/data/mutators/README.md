@@ -328,13 +328,28 @@ as a JSON number too, so it reads back as a number option with that
 number; the manifest tells the two apart, and this text does not repeat
 the manifest.
 
+Records compare equal exactly when their canonical texts are equal, so a
+record read back with `parse_loadout` equals the one written. Two options
+are equal when their ids are equal and their values are the same JSON
+value: toggles by `toggle`, string choices by their text, and anything
+holding a number (a number option or a numeric choice) by the number's
+canonical text. So a default written `1.0` in the manifest equals the `1`
+read back, and a numeric choice equals the number option it reads back as.
+An entry's options compare as members of one object, whatever order they
+are listed in.
+
 `loadout_digest` is the SHA-256 of the canonical text.
 
 `folder_digest` hashes each regular file under the folder, sorted by its
-`/`-separated relative path compared bytewise. Each file is that path, a
-NUL, its size as eight little-endian bytes, and the SHA-256 of its bytes.
-A symbolic link, or a file that cannot be read, refuses the digest and the
-error names the path. An empty folder hashes the empty message.
+relative path compared bytewise. The path is the UTF-8 spelling, with `/`
+between its parts, of the names as the file system stores them, on every
+system; there is no Unicode normalisation, so a name stored composed and
+the same name stored decomposed give different digests. Each file is that
+path, a NUL, its size as eight little-endian bytes, and the SHA-256 of its
+bytes. A symbolic link, anything that is not a regular file or a folder (a
+pipe, a socket or a device), or a file that cannot be read refuses the
+digest, and the error names the path in UTF-8. An empty folder hashes the
+empty message.
 
 `layer_digest` hashes `oa-mutator-layer-1` and a line feed, then each path
 the layer answers for, sorted by its lower-case `/` form. The message
@@ -350,18 +365,24 @@ unchanged when no mutator digest is given. Otherwise it hashes
 `oa-sim-hash-mutators-1` and a line feed, the simulation hash and the
 mutator digest.
 
-`options_text` joins `name=value` pairs with `,`, names in byte order. A
-toggle is `true` or `false`, a number is its canonical text, and a choice
-is the text the manifest writes. No options write nothing. This is the
-text that follows `id:` on `--mutator`.
+`option_text` writes one option's value on its own: a toggle is `true`
+or `false`, anything holding a number is the number's canonical text (the
+digits the canonical loadout writes), and a string choice is its text.
+`options_text` joins `name=value` pairs with `,`, names in byte order,
+each value `option_text` of the option. No options write nothing. This is
+the text that follows `id:` on `--mutator`.
 
 The match start fills this record from the mutators that play and folds
-the mutator digest into the simulation hash. V06 does that. Nothing in
-this header runs during a match.
+the mutator digest into the simulation hash. Nothing in this header runs
+during a match.
 
 `data-mutators-loadout` pins the canonical text, the four digests against
 values computed outside the engine, the refusals, the folder and layer
-digests, the unchanged simulation hash and the options text.
+digests, the unchanged simulation hash and the options text. It reads
+records back equal (a `1.0` number default, a numeric choice and a string
+choice among them), compares records by their text, digests a folder
+holding a name outside ASCII, and refuses a pipe where the system has
+pipes.
 
 ## Rules in Lua
 

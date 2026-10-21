@@ -22,6 +22,10 @@
 #include <utility>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -436,8 +440,179 @@ void defaults() {
     expect(made.value.text == "2.25", "a fractional step's default text is canonical");
 }
 
-/// Checks options_text for each type, a fraction and no options.
-void option_text() {
+/// Wraps one option in a one-entry loadout.
+///
+/// @param option the option
+/// @return the loadout
+mutators::Loadout one_option(const mutators::LoadoutOption& option) {
+    mutators::LoadoutEntry entry;
+    entry.id = "ridge-rate";
+    entry.version = "1";
+    entry.options.push_back(option);
+    mutators::Loadout loadout;
+    loadout.entries.push_back(std::move(entry));
+    return loadout;
+}
+
+/// Checks that a loadout's canonical text reads back to an equal record.
+///
+/// @param loadout the loadout
+/// @param what the case, for the failure message
+void reads_back_equal(const mutators::Loadout& loadout, const std::string& what) {
+    const std::string text = mutators::canonical_loadout(loadout);
+    std::string error;
+    const std::optional<mutators::Loadout> read = mutators::parse_loadout(text, &error);
+    expect(read.has_value(), what + " reads back: " + error);
+    if (!read)
+        return;
+    expect(*read == loadout, what + " reads back equal");
+    expect(loadout == *read, what + " is equal both ways round");
+    expect(!(*read != loadout), what + " is not unequal");
+    expect(
+        mutators::loadout_digest(*read) == mutators::loadout_digest(loadout),
+        what + " keeps its digest"
+    );
+}
+
+/// Checks that record equality is the canonical text's equality.
+void equality() {
+    oamut::Option rate;
+    rate.id = "rate";
+    rate.type = oamut::OptionType::number;
+    rate.minimum = number_of("0");
+    rate.maximum = number_of("10");
+    rate.step = number_of("0.25");
+    rate.number_default = number_of("1.0");
+    const mutators::LoadoutOption one_point_zero = mutators::default_option(rate);
+    expect(
+        !one_point_zero.value.number_value.integer, "a 1.0 default is not written as an integer"
+    );
+    const mutators::Loadout from_decimal = one_option(one_point_zero);
+    expect(
+        mutators::canonical_loadout(from_decimal).find("\"rate\":1}") != std::string::npos,
+        "a 1.0 default is written as 1"
+    );
+    reads_back_equal(from_decimal, "a 1.0 number default");
+
+    oamut::Option gear;
+    gear.id = "gear";
+    gear.type = oamut::OptionType::choice;
+    oamut::ChoiceValue two;
+    two.number = true;
+    two.number_value = number_of("2");
+    two.text = "2";
+    oamut::ChoiceValue three = two;
+    three.number_value = number_of("3");
+    three.text = "3";
+    gear.values = {two, three};
+    gear.default_index = 1;
+    const mutators::LoadoutOption numeric_choice = mutators::default_option(gear);
+    reads_back_equal(one_option(numeric_choice), "a numeric choice");
+    expect(
+        numeric_choice == number_option("gear", "3"),
+        "a numeric choice equals a number option of the same number"
+    );
+
+    oamut::Option temper;
+    temper.id = "temper";
+    temper.type = oamut::OptionType::choice;
+    oamut::ChoiceValue slow;
+    slow.text = "slow";
+    oamut::ChoiceValue hot;
+    hot.text = "hot";
+    temper.values = {slow, hot};
+    temper.default_index = 1;
+    reads_back_equal(one_option(mutators::default_option(temper)), "a string choice");
+    reads_back_equal(sample_loadout(), "the two-entry loadout");
+
+    // Stored fields the canonical text does not write: the integer mark and
+    // a number's own text.
+    mutators::LoadoutOption stale = number_option("rate", "1");
+    stale.value.number_value.integer = false;
+    stale.value.text = "1.0";
+    expect(stale == number_option("rate", "1"), "1 and 1.0 are one number");
+    expect(one_option(stale) == from_decimal, "two records with one text are equal");
+
+    mutators::Loadout listed = sample_loadout();
+    std::swap(listed.entries[0].options[0], listed.entries[0].options[2]);
+    expect(
+        mutators::canonical_loadout(listed) == mutators::canonical_loadout(sample_loadout()),
+        "the option order leaves the text alone"
+    );
+    expect(listed == sample_loadout(), "the option order leaves the record equal");
+
+    // Records whose texts differ stay unequal.
+    expect(
+        !(number_option("rate", "1.25") == number_option("rate", "1")),
+        "another number is another option"
+    );
+    expect(
+        !(number_option("pace", "1") == number_option("rate", "1")), "another id is another option"
+    );
+    expect(
+        !(toggle_option("boost", true) == toggle_option("boost", false)), "a toggle's value counts"
+    );
+    expect(
+        !(choice_option("temper", "hot") == choice_option("temper", "slow")),
+        "a choice's text counts"
+    );
+    expect(
+        !(choice_option("gear", "3") == number_option("gear", "3")),
+        "a string choice never equals a number"
+    );
+    expect(
+        !(choice_option("boost", "true") == toggle_option("boost", true)),
+        "a string choice never equals a toggle"
+    );
+    mutators::Loadout swapped = sample_loadout();
+    std::swap(swapped.entries[0], swapped.entries[1]);
+    expect(!(swapped == sample_loadout()), "the entry order counts");
+    mutators::Loadout folder_changed = sample_loadout();
+    folder_changed.entries[1].folder = false;
+    expect(!(folder_changed == sample_loadout()), "the folder mark counts");
+
+    // Equality and the canonical text agree for every pair.
+    std::vector<mutators::Loadout> records;
+    records.push_back(from_decimal);
+    records.push_back(one_option(stale));
+    records.push_back(one_option(number_option("rate", "1.25")));
+    records.push_back(one_option(choice_option("rate", "1")));
+    records.push_back(one_option(numeric_choice));
+    records.push_back(one_option(number_option("gear", "3")));
+    records.push_back(one_option(toggle_option("rate", true)));
+    records.push_back(sample_loadout());
+    records.push_back(listed);
+    records.push_back(swapped);
+    records.push_back(mutators::Loadout{});
+    for (const mutators::Loadout& left : records) {
+        for (const mutators::Loadout& right : records) {
+            const bool same_text =
+                mutators::canonical_loadout(left) == mutators::canonical_loadout(right);
+            expect((left == right) == same_text, "equality follows the canonical text");
+        }
+    }
+}
+
+/// Checks option_text and options_text for each type, a fraction and no options.
+void option_texts() {
+    expect(mutators::option_text(toggle_option("armed", true)) == "true", "a toggle on is true");
+    expect(
+        mutators::option_text(toggle_option("armed", false)) == "false", "a toggle off is false"
+    );
+    expect(mutators::option_text(number_option("pace", "1.5")) == "1.5", "a number is its text");
+    mutators::LoadoutOption whole = number_option("rate", "1.0");
+    whole.value.text = "1.0";
+    expect(mutators::option_text(whole) == "1", "a number is its canonical text");
+    mutators::LoadoutOption stale_choice;
+    stale_choice.id = "gear";
+    stale_choice.type = oamut::OptionType::choice;
+    stale_choice.value.number = true;
+    stale_choice.value.number_value = number_of("2");
+    stale_choice.value.text = "2.0";
+    expect(mutators::option_text(stale_choice) == "2", "a numeric choice is its canonical number");
+    expect(mutators::option_text(choice_option("temper", "hot")) == "hot", "a choice is its text");
+    expect(mutators::option_text(choice_option("temper", "")).empty(), "an empty choice is empty");
+
     mutators::LoadoutEntry armed;
     armed.options.push_back(toggle_option("armed", true));
     expect(mutators::options_text(armed) == "armed=true", "a toggle on is true");
@@ -471,6 +646,19 @@ void option_text() {
         mutators::options_text(mixed) == "boost=false,pace=1.5,temper=hot",
         "names are joined in byte order"
     );
+    const mutators::Loadout sample = sample_loadout();
+    std::string joined;
+    for (const mutators::LoadoutOption& option : sample.entries[0].options) {
+        if (!joined.empty())
+            joined += ',';
+        joined += option.id + "=" + mutators::option_text(option);
+    }
+    expect(
+        mutators::options_text(sample.entries[0]) == joined, "options_text joins each option_text"
+    );
+    mutators::LoadoutEntry geared;
+    geared.options.push_back(stale_choice);
+    expect(mutators::options_text(geared) == "gear=2", "options_text writes the canonical number");
 
     expect(mutators::options_text(mutators::LoadoutEntry{}).empty(), "no options write nothing");
 
@@ -493,13 +681,14 @@ void option_text() {
         read.has_value() && read->entries[0].options[0].type == oamut::OptionType::number,
         "a JSON number reads back as a number option"
     );
+    expect(read.has_value() && *read == gear, "a numeric choice reads back equal");
 }
 
 /// The directory this run owns.
 struct Scratch {
     fs::path root;
 
-    Scratch() : root(oa::test::make_scratch_directory("V10-loadout")) {}
+    Scratch() : root(oa::test::make_scratch_directory("data-mutators-loadout")) {}
 
     ~Scratch() {
         std::error_code error;
@@ -510,6 +699,15 @@ struct Scratch {
     Scratch& operator=(const Scratch&) = delete;
 };
 
+/// Returns a path's UTF-8 spelling, for a message.
+///
+/// @param path the path
+/// @return its UTF-8 spelling
+std::string utf8_of(const fs::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
 /// Writes a file, creating its parent directories.
 ///
 /// @param path the host path
@@ -519,7 +717,7 @@ void write_text(const fs::path& path, std::string_view text) {
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
     stream.write(text.data(), static_cast<std::streamsize>(text.size()));
     if (!stream)
-        throw std::runtime_error("cannot write " + path.string());
+        throw std::runtime_error("cannot write " + utf8_of(path));
 }
 
 /// Fills a folder with the two files the folder digest is pinned to.
@@ -613,6 +811,81 @@ void folder(const Scratch& scratch) {
     fs::permissions(closed / "secret.txt", fs::perms::owner_write, permission_error);
 }
 
+/// Checks the folder digest of a name outside ASCII, which is hashed as UTF-8.
+///
+/// Skipped where the file system does not keep the name as written, as one
+/// that normalises names does.
+///
+/// @param scratch the scratch directory
+void unicode_folder(const Scratch& scratch) {
+    const fs::path unicode = scratch.root / "unicode";
+    const fs::path nested = unicode / fs::path(std::u8string(u8"\u00e9t\u00e9"));
+    const fs::path file = nested / fs::path(std::u8string(u8"caf\u00e9.txt"));
+    bool kept = false;
+    try {
+        write_text(unicode / "a.txt", "alpha");
+        write_text(file, "coffee");
+        for (const fs::directory_entry& entry : fs::directory_iterator(nested)) {
+            if (entry.path().filename().u8string() == std::u8string(u8"caf\u00e9.txt"))
+                kept = true;
+        }
+    } catch (const std::exception& failure) {
+        std::fprintf(stderr, "loadout: %s\n", failure.what());
+    }
+    if (!kept) {
+        std::fprintf(stderr, "loadout: skipped the non-ASCII name case\n");
+        return;
+    }
+    // python3 - <<'PY'
+    // import hashlib
+    // files = [("a.txt", b"alpha"), ("\u00e9t\u00e9/caf\u00e9.txt", b"coffee")]
+    // message = bytearray()
+    // for path, data in sorted(files, key=lambda item: item[0].encode()):
+    //     message += path.encode() + b"\0" + len(data).to_bytes(8, "little")
+    //     message += hashlib.sha256(data).digest()
+    // print(hashlib.sha256(message).hexdigest())
+    // PY
+    const sha::Digest pin =
+        digest_of_hex("d877ba29ee048796ed10c2746264ec3bb77b8ae2587543c7cfc646ffaa6535b5");
+    std::string error;
+    const std::optional<sha::Digest> digest = mutators::folder_digest(unicode, &error);
+    if (digest && *digest != pin)
+        std::fprintf(stderr, "unicode folder digest %s\n", hex_of(*digest).c_str());
+    expect(
+        digest.has_value() && *digest == pin,
+        "a non-ASCII name is hashed as its UTF-8 bytes: " + error
+    );
+}
+
+/// Checks that a pipe is refused as not a regular file, where pipes exist.
+///
+/// @param scratch the scratch directory
+void pipe_folder(const Scratch& scratch) {
+#if defined(_WIN32)
+    (void)scratch;
+    std::fprintf(stderr, "loadout: skipped the pipe case\n");
+#else
+    const fs::path piped = scratch.root / "piped";
+    write_text(piped / "a.txt", "alpha");
+    const fs::path fifo = piped / "pipe";
+    if (::mkfifo(fifo.c_str(), 0600) != 0) {
+        std::fprintf(stderr, "loadout: skipped the pipe case\n");
+        return;
+    }
+    std::string error;
+    expect(!mutators::folder_digest(piped, &error).has_value(), "a pipe is refused");
+    expect(
+        error == "pipe is not a regular file", "a pipe is named as not a regular file: " + error
+    );
+    std::string root_error;
+    expect(!mutators::folder_digest(fifo, &root_error).has_value(), "a pipe is not a folder");
+    expect(
+        root_error.find("is not a folder") != std::string::npos,
+        "a pipe given as the folder is named as not a folder: " + root_error
+    );
+#endif
+}
+
 } // namespace
 
 int main() {
@@ -620,10 +893,13 @@ int main() {
     digests();
     refusals();
     defaults();
-    option_text();
+    equality();
+    option_texts();
     {
         const Scratch scratch;
         folder(scratch);
+        unicode_folder(scratch);
+        pipe_folder(scratch);
     }
     const int status = oa::test::check_exit_status();
     if (status == 0)

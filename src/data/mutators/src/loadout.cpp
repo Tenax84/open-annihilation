@@ -72,6 +72,25 @@ std::string hex_text(const base::sha256::Digest& digest) {
     return std::string(digits.begin(), digits.end());
 }
 
+/// The JSON kind an option's value is written as.
+enum class OptionKind : uint8_t {
+    boolean, ///< a toggle
+    string,  ///< a string choice
+    number,  ///< a number option or a numeric choice
+};
+
+/// Returns the JSON kind an option's value is written as.
+///
+/// @param option the option
+/// @return boolean for a toggle, string for a string choice, number otherwise
+OptionKind option_kind(const LoadoutOption& option) noexcept {
+    if (option.type == oa::formats::oamut::OptionType::toggle)
+        return OptionKind::boolean;
+    if (option.type == oa::formats::oamut::OptionType::choice && !option.value.number)
+        return OptionKind::string;
+    return OptionKind::number;
+}
+
 /// Returns an option's canonical JSON value.
 ///
 /// A toggle is a boolean. A string choice is a string. A number, and a
@@ -80,10 +99,14 @@ std::string hex_text(const base::sha256::Digest& digest) {
 /// @param option the option
 /// @return the value
 profile::Value option_json(const LoadoutOption& option) {
-    if (option.type == oa::formats::oamut::OptionType::toggle)
+    switch (option_kind(option)) {
+    case OptionKind::boolean:
         return profile::make_boolean(option.toggle);
-    if (option.type == oa::formats::oamut::OptionType::choice && !option.value.number)
+    case OptionKind::string:
         return profile::make_string(option.value.text);
+    case OptionKind::number:
+        break;
+    }
     return profile::make_number(option.value.number_value);
 }
 
@@ -298,30 +321,28 @@ std::string fold_path(std::string_view text) {
     return folded;
 }
 
-/// Returns a path's form relative to a folder, with '/' between parts.
+/// Returns a path's UTF-8 spelling with '/' between its parts.
+///
+/// The narrow spelling is in the ANSI code page on Windows, which cannot
+/// hold every name and differs from the spelling elsewhere.
+///
+/// @param path the path
+/// @return its UTF-8 spelling
+std::string utf8_text(const fs::path& path) {
+    const auto text = path.generic_u8string();
+    return {text.begin(), text.end()};
+}
+
+/// Returns a path's form relative to a folder, in UTF-8 with '/' between parts.
 ///
 /// @param folder the folder
 /// @param file a file inside it, or the folder itself
 /// @return the relative path, or the folder's own text when there is none
 std::string relative_text(const fs::path& folder, const fs::path& file) {
-    const std::string text = file.lexically_relative(folder).generic_string();
+    const std::string text = utf8_text(file.lexically_relative(folder));
     if (text.empty() || text == ".")
-        return folder.generic_string();
+        return utf8_text(folder);
     return text;
-}
-
-/// Tells whether a directory entry is a link.
-///
-/// A junction is its own file type on the compiler that has one, and neither
-/// a directory nor a regular file, so it is recognised by what it is not.
-///
-/// @param status the entry's symlink status
-/// @return true for a link
-bool is_link(const fs::file_status& status) {
-    if (fs::is_symlink(status))
-        return true;
-    return status.type() != fs::file_type::none && status.type() != fs::file_type::not_found &&
-           !fs::is_directory(status) && !fs::is_regular_file(status);
 }
 
 /// Tells whether a path is a reparse point.
@@ -340,6 +361,35 @@ bool reparse_point(const fs::path& path) {
     (void)path;
     return false;
 #endif
+}
+
+/// What one path of a folder walk is.
+enum class FolderItem : uint8_t {
+    missing, ///< nothing is there, or its type cannot be told
+    link,    ///< a symbolic link, a junction or another reparse point
+    folder,  ///< a folder that is not a link
+    file,    ///< a regular file that is not a link
+    other,   ///< a pipe, a socket, a device or anything else
+};
+
+/// Tells what one path of a folder walk is.
+///
+/// A junction is a reparse point, so the attribute finds it whatever type
+/// the library gives it.
+///
+/// @param status the path's symlink status
+/// @param path the host path
+/// @return what the path is
+FolderItem folder_item(const fs::file_status& status, const fs::path& path) {
+    if (status.type() == fs::file_type::none || status.type() == fs::file_type::not_found)
+        return FolderItem::missing;
+    if (fs::is_symlink(status) || reparse_point(path))
+        return FolderItem::link;
+    if (fs::is_directory(status))
+        return FolderItem::folder;
+    if (fs::is_regular_file(status))
+        return FolderItem::file;
+    return FolderItem::other;
 }
 
 /// Reads a regular file's size and digest.
@@ -386,19 +436,33 @@ struct FolderFile {
     base::sha256::Digest digest{};
 };
 
-/// The text one option contributes after `=`.
-///
-/// @param option the option
-/// @return true, false, the number's canonical text, or the choice's text
-std::string option_value_text(const LoadoutOption& option) {
-    if (option.type == oa::formats::oamut::OptionType::toggle)
-        return option.toggle ? "true" : "false";
-    if (option.type == oa::formats::oamut::OptionType::number)
-        return oamod::canonical_number_text(option.value.number_value);
-    return option.value.text;
+} // namespace
+
+bool LoadoutOption::operator==(const LoadoutOption& other) const {
+    if (id != other.id)
+        return false;
+    const OptionKind kind = option_kind(*this);
+    if (kind != option_kind(other))
+        return false;
+    switch (kind) {
+    case OptionKind::boolean:
+        return toggle == other.toggle;
+    case OptionKind::string:
+        return value.text == other.value.text;
+    case OptionKind::number:
+        break;
+    }
+    return oamod::canonical_number_text(value.number_value) ==
+           oamod::canonical_number_text(other.value.number_value);
 }
 
-} // namespace
+bool LoadoutEntry::operator==(const LoadoutEntry& other) const {
+    return profile::canonical_json(entry_json(*this)) == profile::canonical_json(entry_json(other));
+}
+
+bool Loadout::operator==(const Loadout& other) const {
+    return canonical_loadout(*this) == canonical_loadout(other);
+}
 
 LoadoutOption default_option(const oa::formats::oamut::Option& option) {
     LoadoutOption made;
@@ -508,22 +572,23 @@ base::sha256::Digest loadout_digest(const Loadout& loadout) {
 std::optional<base::sha256::Digest> folder_digest(const fs::path& folder, std::string* error) {
     std::error_code failure;
     const fs::file_status root = fs::symlink_status(folder, failure);
-    if (failure || root.type() == fs::file_type::not_found || root.type() == fs::file_type::none) {
-        set_error(error, folder.generic_string() + " cannot be read");
+    const FolderItem root_item = failure ? FolderItem::missing : folder_item(root, folder);
+    if (root_item == FolderItem::missing) {
+        set_error(error, utf8_text(folder) + " cannot be read");
         return std::nullopt;
     }
-    if (is_link(root) || reparse_point(folder)) {
-        set_error(error, folder.generic_string() + " is a symbolic link");
+    if (root_item == FolderItem::link) {
+        set_error(error, utf8_text(folder) + " is a symbolic link");
         return std::nullopt;
     }
-    if (!fs::is_directory(root)) {
-        set_error(error, folder.generic_string() + " is not a folder");
+    if (root_item != FolderItem::folder) {
+        set_error(error, utf8_text(folder) + " is not a folder");
         return std::nullopt;
     }
 
     fs::recursive_directory_iterator cursor(folder, fs::directory_options::none, failure);
     if (failure) {
-        set_error(error, folder.generic_string() + " cannot be read");
+        set_error(error, utf8_text(folder) + " cannot be read");
         return std::nullopt;
     }
     const fs::recursive_directory_iterator end;
@@ -532,15 +597,20 @@ std::optional<base::sha256::Digest> folder_digest(const fs::path& folder, std::s
         const fs::path current = cursor->path();
         const std::string relative = relative_text(folder, current);
         const fs::file_status status = cursor->symlink_status(failure);
-        if (failure) {
+        const FolderItem item = failure ? FolderItem::missing : folder_item(status, current);
+        switch (item) {
+        case FolderItem::missing:
             set_error(error, relative + " cannot be read");
             return std::nullopt;
-        }
-        if (is_link(status) || reparse_point(current)) {
+        case FolderItem::link:
             set_error(error, relative + " is a symbolic link");
             return std::nullopt;
-        }
-        if (fs::is_regular_file(status)) {
+        case FolderItem::other:
+            set_error(error, relative + " is not a regular file");
+            return std::nullopt;
+        case FolderItem::folder:
+            break;
+        case FolderItem::file: {
             FolderFile file;
             file.path = relative;
             if (!digest_file(current, file.size, file.digest)) {
@@ -548,9 +618,8 @@ std::optional<base::sha256::Digest> folder_digest(const fs::path& folder, std::s
                 return std::nullopt;
             }
             files.push_back(std::move(file));
-        } else if (!fs::is_directory(status)) {
-            set_error(error, relative + " cannot be read");
-            return std::nullopt;
+            break;
+        }
         }
         cursor.increment(failure);
         if (failure) {
@@ -648,6 +717,18 @@ base::sha256::Digest fold_sim_hash(
     return base::sha256::finish(hasher);
 }
 
+std::string option_text(const LoadoutOption& option) {
+    switch (option_kind(option)) {
+    case OptionKind::boolean:
+        return option.toggle ? "true" : "false";
+    case OptionKind::string:
+        return option.value.text;
+    case OptionKind::number:
+        break;
+    }
+    return oamod::canonical_number_text(option.value.number_value);
+}
+
 std::string options_text(const LoadoutEntry& entry) {
     std::vector<const LoadoutOption*> ordered;
     ordered.reserve(entry.options.size());
@@ -664,7 +745,7 @@ std::string options_text(const LoadoutEntry& entry) {
             text += ',';
         text += option->id;
         text += '=';
-        text += option_value_text(*option);
+        text += option_text(*option);
     }
     return text;
 }

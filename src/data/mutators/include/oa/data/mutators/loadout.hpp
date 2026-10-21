@@ -36,23 +36,20 @@ struct LoadoutOption {
     /// A choice's value, or a number option's value. Unused for a toggle.
     oa::formats::oamut::ChoiceValue value{};
 
-    /// Returns whether both options name the same id, type and value.
+    /// Returns whether both options are the same member of the canonical text.
     ///
-    /// A number's sign, digits, exponent and integer mark are compared as
-    /// stored, so 1 and 1.0 stay different records.
+    /// Equality is the canonical JSON value, not the stored fields: the ids
+    /// are equal, and the values are the same JSON kind with the same value.
+    /// Toggles compare `toggle`, string choices compare `value.text`, and
+    /// anything holding a number (a number option or a numeric choice)
+    /// compares the number's canonical text. So 1 and 1.0 are equal, a
+    /// numeric choice equals a number option of the same number, and a
+    /// number's stored `text` and integer mark are not compared. A string
+    /// choice never equals a number, whatever its text.
     ///
     /// @param other the option to compare
-    /// @return true when every field is equal
-    [[nodiscard]] bool operator==(const LoadoutOption& other) const {
-        const oa::formats::oamut::ChoiceValue& left = value;
-        const oa::formats::oamut::ChoiceValue& right = other.value;
-        return id == other.id && type == other.type && toggle == other.toggle &&
-               left.number == right.number && left.text == right.text &&
-               left.number_value.negative == right.number_value.negative &&
-               left.number_value.significand == right.number_value.significand &&
-               left.number_value.exponent == right.number_value.exponent &&
-               left.number_value.integer == right.number_value.integer;
-    }
+    /// @return true when both write the same id and canonical value
+    [[nodiscard]] bool operator==(const LoadoutOption& other) const;
 };
 
 /// Returns a loadout option holding one manifest option's default.
@@ -82,11 +79,17 @@ struct LoadoutEntry {
     /// Every option, in id byte order.
     std::vector<LoadoutOption> options{};
 
-    /// Returns whether both entries name the same mutator and options.
+    /// Returns whether both entries write the same canonical JSON object.
+    ///
+    /// The id, version, package digest and folder mark are equal, and the
+    /// options are the same members of the canonical text, compared as
+    /// LoadoutOption compares them, whatever order they are listed in.
+    /// Two entries are equal exactly when the canonical text writes them
+    /// alike.
     ///
     /// @param other the entry to compare
-    /// @return true when every field is equal
-    [[nodiscard]] bool operator==(const LoadoutEntry& other) const = default;
+    /// @return true when both have the same canonical object
+    [[nodiscard]] bool operator==(const LoadoutEntry& other) const;
 };
 
 /// The mutators a game names, in the order they play.
@@ -94,11 +97,16 @@ struct Loadout {
     /// The mutators, in list order. At most loadout_most_entries.
     std::vector<LoadoutEntry> entries{};
 
-    /// Returns whether both loadouts name the same mutators in the same order.
+    /// Returns whether both loadouts have the same canonical text.
+    ///
+    /// The entries are compared in list order, each as LoadoutEntry compares
+    /// them. Two loadouts are equal exactly when `canonical_loadout` writes
+    /// the same bytes for both, so a record read back with `parse_loadout`
+    /// equals the one written.
     ///
     /// @param other the loadout to compare
-    /// @return true when every entry is equal
-    [[nodiscard]] bool operator==(const Loadout& other) const = default;
+    /// @return true when both have the same canonical text
+    [[nodiscard]] bool operator==(const Loadout& other) const;
 };
 
 /// The most mutators one loadout names.
@@ -128,7 +136,8 @@ inline constexpr std::size_t loadout_text_most_bytes = 64 * 1024;
 /// value. An option's JSON kind tells its type: true or false is a toggle, a
 /// number is a number option (a numeric choice is written as a number too, so
 /// it reads back as a number option with that number), and a string is a
-/// choice. Writing the result again must give the same bytes.
+/// choice. Writing the result again must give the same bytes, and the result
+/// compares equal to any loadout with this canonical text.
 ///
 /// @param text the text
 /// @param[out] error what was refused, naming the part; may be null
@@ -143,15 +152,19 @@ inline constexpr std::size_t loadout_text_most_bytes = 64 * 1024;
 
 /// Returns the digest of every regular file in a folder.
 ///
-/// The files are sorted by their `/`-separated relative path, compared
-/// bytewise. Each file contributes that path, a NUL, its size as eight
-/// little-endian bytes, and the SHA-256 of its bytes. A symbolic link,
-/// including one the folder path itself is, or a file that cannot be read,
-/// refuses the digest. The folder is only read.
+/// The files are sorted by their relative path, compared bytewise. That
+/// path is the UTF-8 spelling, with `/` between its parts, of the names as
+/// the file system stores them, with no Unicode normalisation, so a name
+/// stored composed and one stored decomposed give different digests. Each
+/// file contributes that path, a NUL, its size as eight little-endian bytes,
+/// and the SHA-256 of its bytes. A symbolic link, including one the folder
+/// path itself is, anything that is neither a regular file nor a folder (a
+/// pipe, a socket or a device), or a file that cannot be read refuses the
+/// digest. The folder is only read.
 ///
 /// @param folder the folder
-/// @param[out] error the path and what was wrong; may be null
-/// @return the digest, or nothing when a link or an unreadable file was found
+/// @param[out] error the path, in UTF-8, and what was wrong; may be null
+/// @return the digest, or nothing when one of those was found
 [[nodiscard]] std::optional<base::sha256::Digest>
 folder_digest(const std::filesystem::path& folder, std::string* error);
 
@@ -197,11 +210,22 @@ mutator_digest(const Loadout& loadout, const base::sha256::Digest& layer);
     const base::sha256::Digest& sim_hash, const std::optional<base::sha256::Digest>& mutators
 );
 
+/// Writes one option's value as the options text spells it.
+///
+/// A toggle is `true` or `false`. Anything holding a number (a number
+/// option or a numeric choice) is the number's canonical text, the same
+/// digits the canonical loadout writes, whatever `value.text` holds. A
+/// string choice is its text, unescaped. The option's id is not part of it.
+///
+/// @param option the option
+/// @return the value text, the part after `=` in `options_text`
+[[nodiscard]] std::string option_text(const LoadoutOption& option);
+
 /// Writes an entry's options as `name=value` pairs joined by `,`.
 ///
-/// Names are in byte order. A toggle is `true` or `false`, a number is its
-/// canonical text, and a choice is the text the manifest writes. No options
-/// write nothing. This is the text that follows `id:` on `--mutator`.
+/// Names are in byte order. Each value is `option_text` of the option. No
+/// options write nothing. This is the text that follows `id:` on
+/// `--mutator`.
 ///
 /// @param entry the entry
 /// @return the text, or empty when the entry has no options
