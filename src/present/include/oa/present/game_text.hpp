@@ -389,6 +389,19 @@ build_text_layers(const TextMask& mask, const TextStyle& style, int32_t thicknes
     std::string_view text, TextFace face, int32_t scale, int32_t size, bool allow_background = true
 );
 
+/// Gives how far the pen moves past a line drawn in the modern fonts with
+/// the borders the settings choose, without building the line's layers.
+///
+/// @param text UTF-8 text
+/// @param face the game font it stands in for
+/// @param scale screen pixels to a game pixel, 1 or more
+/// @param size the text size, in percent of the face's own, held to the
+///        sizes offered
+/// @return the advance modern_text gives the same line; none when the
+///         modern fonts cannot draw it
+[[nodiscard]] std::optional<int32_t>
+modern_text_advance(std::string_view text, TextFace face, int32_t scale, int32_t size);
+
 /// Drops the layers modern_text keeps of the lines it drew last, so that
 /// each line is built anew when it is next drawn. Installing hooks drops
 /// them too.

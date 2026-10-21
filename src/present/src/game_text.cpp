@@ -647,6 +647,22 @@ std::optional<TextLayers> modern_text(
     return finished_layers(mask, modern_style(allow_background), text_border(scale, size));
 }
 
+std::optional<int32_t>
+modern_text_advance(std::string_view text, TextFace face, int32_t scale, int32_t size) {
+    if (installed_hooks.draw == nullptr || text.empty())
+        return std::nullopt;
+    scale = std::max(scale, 1);
+    size = held_text_size(size);
+    const auto mask = installed_hooks.draw(installed_hooks.context, text, face, scale, size);
+    if (!mask)
+        return std::nullopt;
+    // As build_text_layers moves the pen: one thickness further past a line
+    // with either border.
+    const TextStyle style = modern_style(false);
+    const int32_t thickness = std::max(text_border(scale, size), 1);
+    return mask->advance + (style.outline || style.shadow ? thickness : 0);
+}
+
 namespace {
 
 /// One character of a line the modern fonts drew: its bytes and where the
