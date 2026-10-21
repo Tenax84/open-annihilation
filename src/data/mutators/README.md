@@ -693,8 +693,11 @@ first entry changed, and a scale that skipped a value that is not a
 number, and the build menus' notes: a moved entry, a button with no
 picture, and an entry the AI's list cannot hold.
 One mutator may journal at most 65536 field writes and 65536
-notes on one collections object. Passing either limit fails that mutator.
-The messages are "this mutator has changed too many fields" and "this
+notes. The write tally is one number for that mutator: the units,
+weapons, features, sides, tables and menus hooks share it with the maps
+phase. Passing the write limit fails that mutator even when the script
+catches the error and returns normally. Passing the note limit fails the
+call. The messages are "this mutator has changed too many fields" and "this
 mutator has made too many notes".
 
 `data-mutators-collections` builds a small Ridge document set and runs
@@ -1290,6 +1293,7 @@ key and of the value. A `:set`, a `:scale` or a list item costs that for
 each schema and key it writes, a walk or a `where` one unit for each
 element it visits plus the bytes it compares, and a profile or a placed
 name the lookup that checks it. A `where`, `:set` or `:scale` table holds
-at most 4096 keys. One mutator may journal at most 65536 map writes; a
-further write fails that mutator with "this mutator has changed too many
-fields", even when the script catches the error.
+at most 4096 keys. Map writes count on the same tally as that mutator's
+other hooks, at most 65536 field writes in all. A further write fails that
+mutator with "this mutator has changed too many fields", even when the
+script catches the error.

@@ -1562,6 +1562,64 @@ end
     OA_CHECK(loaded >= 1);
 }
 
+/// One tally for the mutator. A caught write past the limit fails it, and
+/// unit writes and map writes add up. A count under the limit is kept.
+void test_shared_write_limit(
+    oa::AssetStore& store, const fs::path& scratch, const mutators::ChosenMap& valley
+) {
+    const char* caught_units = R"(function mutate(ctx)
+  return { units = function(units, ctx)
+    local commander = units.RGCOM
+    for i = 1, 70000 do
+      pcall(function() commander.maxdamage = (i % 2) + 1 end)
+    end
+  end }
+end
+)";
+    const mutators::PipelineResult caught =
+        run_one(store, scratch, "ridge-caught-units", "[\"units\"]", caught_units, valley);
+    expect_refused(caught, "this mutator has changed too many fields");
+
+    const char* both = R"(function mutate(ctx)
+  return {
+    units = function(units, ctx)
+      local commander = units.RGCOM
+      for i = 1, 40000 do
+        commander.maxdamage = (i % 2) + 1
+      end
+    end,
+    maps = function(map, ctx)
+      for i = 1, 30000 do
+        pcall(function() map.header.gravity = i % 2 end)
+      end
+    end
+  }
+end
+)";
+    const mutators::PipelineResult crossed =
+        run_one(store, scratch, "ridge-units-and-maps", "[\"units\", \"maps\"]", both, valley);
+    expect_refused(crossed, "this mutator has changed too many fields");
+
+    const char* within = R"(function mutate(ctx)
+  return { units = function(units, ctx)
+    local commander = units.RGCOM
+    for i = 1, 60000 do
+      commander.maxdamage = (i % 2) + 1
+    end
+  end }
+end
+)";
+    const mutators::PipelineResult kept =
+        run_one(store, scratch, "ridge-within-limit", "[\"units\"]", within, valley);
+    OA_CHECK(kept.playable());
+    std::size_t rows = 0;
+    for (const mutators::JournalEntry& entry : kept.journal.entries) {
+        if (entry.field == "maxdamage")
+            ++rows;
+    }
+    OA_CHECK(rows == 60000);
+}
+
 void synthetic_tests() {
     const Scratch scratch("D07-maps");
     write_store(scratch.path / "store");
@@ -1575,6 +1633,7 @@ void synthetic_tests() {
     test_table(store, scratch.path);
     test_refusal_loops(store, scratch.path, valley);
     test_budgets(store, scratch.path, valley);
+    test_shared_write_limit(store, scratch.path, valley);
     test_hook_changed_names(store, scratch.path, valley);
     test_order_and_failure(store, scratch.path, valley);
     test_output(store, scratch.path, valley);

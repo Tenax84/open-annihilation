@@ -990,8 +990,8 @@ bool check_profiles(MapWork& work) {
     return true;
 }
 
-// Writes. Each one is journalled. A mutator may journal at most
-// `mutator_write_limit` rows, as on the collections.
+// Writes. Each one is journalled. The count is the mutator's tally on the
+// collections, shared with the units, weapons and other hooks.
 
 std::string map_record(const ChosenMap& chosen) {
     return "map:" + chosen.key;
@@ -1017,11 +1017,16 @@ void make_room(std::vector<JournalEntry>& entries) {
 }
 
 bool room_for_write(MapWork& work) noexcept {
-    if (!work.over_limit && work.entries.size() < mutator_write_limit)
+    if (!work.over_limit && work.collections != nullptr && work.collections->allow_field_write())
         return true;
     work.over_limit = true;
     hold(work, "this mutator has changed too many fields");
     return false;
+}
+
+void count_write(MapWork& work) noexcept {
+    if (work.collections != nullptr)
+        work.collections->count_field_write();
 }
 
 /// Sets one key and journals it. The row is built before the edit, so an
@@ -1059,6 +1064,7 @@ bool store_text(
         return false;
     }
     work.entries.push_back(std::move(entry));
+    count_write(work);
     return true;
 }
 
@@ -1247,6 +1253,7 @@ bool remove_placed(MapWork& work, int schema, bool features, int item) {
         return false;
     }
     work.entries.push_back(std::move(entry));
+    count_write(work);
     return true;
 }
 
