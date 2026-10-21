@@ -402,7 +402,7 @@ Network play's own checks, the last rows, are in every build.
 | `--check-map-pack-lists` | Installs a map pack while both map lists exist. |
 | `--check-mod-map-settings` | Checks a mod's settings for a map pack's map, with `--mod-dir`. |
 | `--check-map-browser` | Checks the map browser at four window sizes. |
-| `--check-mutator-picker` | Checks the mutator picker at four window sizes, including a cancelled download, a check after an install, USE THESE fetching one, and the runtime's own feed. |
+| `--check-mutator-picker` | Checks the mutator picker at four window sizes, including a cancelled download, a check after an install, USE THESE fetching one, a download already under way, and the runtime's own feed. |
 | `--check-mod-warning` | Checks the warning for a mod whose files are missing. |
 | `--check-mod-install` | Installs, rolls back and replaces made-up mod packages. |
 | `--check-language-install` | Installs a language pack from a dropped file. |

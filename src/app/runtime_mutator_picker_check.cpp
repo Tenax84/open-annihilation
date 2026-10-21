@@ -10,13 +10,14 @@
 // handing nothing, the verdict chip from the checking words to the
 // incompatible ones, and the search taking the controller's Y. At 1280x720
 // it also switches an installed mutator on (one check) and has USE THESE
-// fetch Gatehouse Keep. At 2560x1440 the runtime's own feed shows a mutator
-// written into the check's Mutators folder, in English and in German. Each
-// size's opening frame is written as mutator-picker-<w>x<h>.png in the
-// working folder. The feed's check records a call and does not move the
-// generation: the opening frame can still read the checking words.
-// Publishing the canned verdicts moves the generation, and the next list
-// carries them.
+// fetch Gatehouse Keep. At 2560x1440 switching on a mutator whose download
+// is already under way keeps it on, and the runtime's own feed shows a
+// mutator written into the check's Mutators folder, in English and in
+// German. Each size's opening frame is written as
+// mutator-picker-<w>x<h>.png in the working folder. The feed's check records
+// a call and does not move the generation: the opening frame can still read
+// the checking words. Publishing the canned verdicts moves the generation,
+// and the next list carries them.
 
 #include "oa_layer.hpp"
 #include "oa_layer_check.hpp"
@@ -110,6 +111,9 @@ struct Fixture {
     uint64_t next_id{1};
     /// Beacon joins the list only for the step that switches it on.
     bool include_beacon{false};
+    /// Packages a download the picker did not queue is fetching: their rows
+    /// read 40%, and queueing one again is refused, as the queue refuses it.
+    std::vector<std::string> fetching{};
 };
 
 /// The one fixture. The feed's functions and the check's methods share it.
@@ -228,6 +232,17 @@ bool marked_installed(std::string_view id) {
     return false;
 }
 
+/// Tells whether a download the picker did not queue is fetching a package.
+///
+/// @param key the package key
+/// @return true when one is
+bool fetching_elsewhere(std::string_view key) {
+    for (const std::string& held : fixture().fetching)
+        if (held == key)
+            return true;
+    return false;
+}
+
 /// One option's value on a recorded check.
 ///
 /// @param record the check
@@ -263,6 +278,7 @@ void reset_fixture() {
     held.published = false;
     held.check_enabled = true;
     held.include_beacon = false;
+    held.fetching.clear();
     ++held.generation;
 }
 
@@ -396,8 +412,20 @@ picker::Inputs fixture_inputs(void* /*context*/, picker::Setup /*setup*/) {
     inputs.mutators.push_back(ridge_walls(hooks));
     if (fixture().include_beacon)
         inputs.mutators.push_back(beacon());
-    for (picker::Mutator& mutator : inputs.mutators)
+    for (picker::Mutator& mutator : inputs.mutators) {
         apply_verdict(mutator);
+        if (mutator.installed || !fetching_elsewhere(mutator.id))
+            continue;
+        library::QueueItem item;
+        item.registry = std::string(kRegistry);
+        item.kind = library::Kind::mutator;
+        item.key = mutator.id;
+        item.name = mutator.name;
+        item.phase = library::QueueItem::Phase::downloading;
+        item.done_bytes = 40;
+        item.total_bytes = 100;
+        mutator.queued = std::move(item);
+    }
     return inputs;
 }
 
@@ -410,14 +438,21 @@ uint64_t fixture_generation(void* /*context*/) {
 }
 
 /// Records a package and queues nothing. The generation stays, so the row's
-/// waiting line is the picker's own until a later list arrives.
+/// waiting line is the picker's own until a later list arrives. A package
+/// already fetching is refused with the queue's words and not recorded.
 ///
 /// @param registry the registry id
 /// @param key the package key
+/// @param[out] why why it was refused; may be null
 /// @return a queue id
 std::optional<uint64_t> fixture_enqueue(
-    void* /*context*/, std::string_view registry, std::string_view key, std::string* /*why*/
+    void* /*context*/, std::string_view registry, std::string_view key, std::string* why
 ) {
+    if (fetching_elsewhere(key)) {
+        if (why != nullptr)
+            *why = "that package is already being downloaded";
+        return std::nullopt;
+    }
     fixture().enqueues.push_back(RecordedEnqueue{std::string(registry), std::string(key)});
     return fixture().next_id++;
 }
@@ -1043,6 +1078,33 @@ void Runtime::check_mutator_picker() {
         click_named("oa.mutators.cancel");
         require(picker_screen() == nullptr, "the picker stayed open" + on);
     }
+
+    // A download the picker did not queue, such as the Library's: switching
+    // its mutator on is not a refusal, and the row and footer follow it.
+    reset_fixture();
+    fixture().fetching.emplace_back("grounded");
+    install_mutator_picker_check_feed();
+    const std::string elsewhere = " while Grounded downloads elsewhere";
+    open_empty(elsewhere);
+    click_named("oa.mutators.row.grounded.switch.on");
+    require(fixture().enqueues.empty(), "something was queued" + elsewhere);
+    require(
+        !list_has("already being downloaded"), "switching Grounded on read as refused" + elsewhere
+    );
+    const AutomationControl elsewhere_use =
+        require_named("oa.mutators.use", "USE THESE is not shown" + elsewhere);
+    require(!elsewhere_use.enabled, "USE THESE is enabled" + elsewhere);
+    const AutomationControl elsewhere_summary =
+        require_named("oa.mutators.summary", "the summary is not shown" + elsewhere);
+    require(
+        elsewhere_summary.text.find("Getting Grounded · 40%") != std::string::npos,
+        "Grounded is not on at 40%" + elsewhere
+    );
+    std::cout << "mutator picker check: switching Grounded on kept it on at 40%" << elsewhere
+              << "\n";
+    click_named("oa.mutators.cancel");
+    require(picker_screen() == nullptr, "CANCEL left the picker open" + elsewhere);
+    reset_fixture();
 
     const fs::path lantern_folder =
         user_folder() / std::string(oa::data::mutator_library::mutators_folder_name) / "lantern";

@@ -907,16 +907,17 @@ match starts.
   at 640x480, 1280x720, 1920x1080 and 2560x1440 opens the picker over the
   main menu on a feed of made-up mutators. It requires the size class, the
   mended On order, every row's grip and switch, one download with the
-  waiting words, that download's cancel, one more check when it installs
-  and when an installed mutator is switched on, the turn-off question, a
-  drag, the set USE THESE hands back, USE THESE fetching an On mutator that
-  is not installed, CANCEL handing nothing, and the verdict chip. At
-  2560x1440 it restores the runtime's own feed on a mutator written into
-  the check's folder, in English and in German. It writes each size's
-  opening frame as `mutator-picker-<w>x<h>.png`. `--check-text-fit` paints
-  the same screen, its details, the waiting line, the question and the
-  read-only footer in every language. A FIXTURES_SETUP test
-  (`mutator-picker-clean`) clears its folders before each run.
+  waiting words, that download's cancel, one more check when it installs and
+  when an installed mutator is switched on, the turn-off question, a drag,
+  the set USE THESE hands back, USE THESE fetching an On mutator that is not
+  installed, CANCEL handing nothing, and the verdict chip. At 2560x1440 it
+  switches on a mutator whose download is already under way, and restores
+  the runtime's own feed on a mutator written into the check's folder, in
+  English and in German. It writes each size's opening frame as
+  `mutator-picker-<w>x<h>.png`. `--check-text-fit` paints the same screen,
+  its details, the waiting line, the question and the read-only footer in
+  every language. A FIXTURES_SETUP test (`mutator-picker-clean`) clears its
+  folders before each run.
 
 ## Files
 
