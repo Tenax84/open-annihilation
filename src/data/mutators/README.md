@@ -13,7 +13,7 @@ sentence chosen from the rule, which is not this module's to write.
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
 `oa/data/mutators/choice.hpp`, `oa/data/mutators/collections.hpp`,
-`oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/files_layer.hpp`, `oa/data/mutators/hacks.hpp`,
 `oa/data/mutators/journal.hpp`, `oa/data/mutators/loadout.hpp`,
 `oa/data/mutators/menus.hpp`, `oa/data/mutators/pipeline.hpp`,
 `oa/data/mutators/rules_lua.hpp`, `oa/data/mutators/verdicts.hpp` and
@@ -27,6 +27,11 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 - `build_files_layer` turns an ordered list of files plans into one
   `MutatorLayerSpec`. See [Files layer](#files-layer).
 - `Menus` is the build menus a hook reads and writes. See [Menus](#menus).
+- `read_hacks` reads a plan's `hacks` table, `merge_hacks` keeps the later
+  value for each path, and `developer_conflicts` notes where those hacks
+  overlap Developer Mode or a mod that leaves the entry off. `hack_faults`
+  names the mutators a refused resolution of those hacks fails: each one
+  an error names, or every one when no error names any.
 - `run_pipeline` runs an ordered list of mutators against an asset store
   and returns each mutator's outcome, the layer it left mounted, the
   `Journal` of the changes kept and the `ConflictReport`. See
@@ -62,6 +67,9 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 - `parse_choice` reads one `--mutator` value, `format_choice` writes it
   back, and `resolve_choice` finds the package and types its options. See
   [Choice text](#choice-text).
+- `loadout_of` builds a loadout from a resolved list, `applied_loadout`
+  keeps the mutators a run applied, and `resolve_loadout` finds the
+  installed packages a loadout names. See [Loadouts](#loadouts).
 
 ## Choice text
 
@@ -80,19 +88,30 @@ are written over them. A missing mutator, an option the manifest does not
 have and a value of the wrong kind or outside the option's choices are
 refused in words that quote the player's text.
 
+`package` is the package file's SHA-256 from the origin record when that
+record names 64 hexadecimal digits, and `folder` stays clear. When the
+record names no SHA-256, `package` is `folder_digest` of the installed
+folder and `folder` is set. A recorded value that is not 64 hexadecimal
+digits is refused. A path sets `folder` and keeps `folder_digest` of that
+folder.
+
 ## State
 
 None kept. `parse_choice` asks whether a target that holds `:` names an
 existing folder or file, and keeps nothing. `format_choice` reads nothing.
 `resolve_choice`
 reads one package's `oamut.yaml`, or the installed listing of the Mutators
-folder it is given, and keeps nothing after it returns. The two checks are
-pure: they do not read files, the asset store or the preferences. A null
-`PathContext::layout` means `data_layout()`. An empty `is_unit_name` knows
-no unit. `build_files_layer` reads the package
+folder it is given. For a path, and for an id whose origin record names no
+SHA-256, it also reads every file of that folder (`folder_digest`). It
+keeps nothing after it returns. `resolve_loadout` reads the installed
+listing, each package's manifest and, for a folder entry, every file of
+the installed folder. `loadout_of` and `applied_loadout` read nothing.
+The two checks are pure: they do not read files, the asset store or the
+preferences. A null `PathContext::layout` means `data_layout()`. An empty
+`is_unit_name` knows no unit. `build_files_layer` reads the package
 folders it is given while it builds the layer, and it keeps nothing after
-it returns. `folder_digest` reads one folder and does not write. The other
-loadout functions read nothing. `run_pipeline` keeps nothing between calls:
+it returns. `folder_digest` reads one folder and does not write.
+`run_pipeline` keeps nothing between calls:
 it reads the packages and the store it is given, and mounts its layer there.
 
 ## Invariants
@@ -159,7 +178,10 @@ hook, its rules or its files would have reached the mutators below it, and
 with the mutators that require it. It also covers plans whose tables have
 metatables, the allowances and the string cap, files added, masked and
 hidden with their journal entries, a document that does not parse, a
-player's option, the list checks and two identical runs. It also runs two
+player's option, the list checks and two identical runs. A hack the
+check refuses, with a units hook beside it, fails in the plan phase and
+leaves no hook change and no journal entry.
+It also runs two
 mutators that share `weapons/extra.tdf`, a unit file that replaces a unit,
 a weapon body that must not move a base id, download sections from two
 mutators, a rule that sees the unit its own file added, and a weapon table
@@ -181,6 +203,9 @@ requests are what overflow, that later mutator is the one refused.
 
 `data-mutators-journal` (`tests/journal_test.cpp`) checks the entry order,
 `entries_of`, each note conversion and the sentences `describe` writes.
+`data-mutators-hacks` (`tests/hacks_test.cpp`) checks reading a hacks table,
+the value's normal form, merging two mutators, the Developer Mode notes,
+and the values the resolver plays.
 `data-mutators-menus` (`tests/menus_test.cpp`, timeout 30 seconds) checks
 adding, moving, greying, hiding and removing build buttons, the conflict
 notes, and the downloadable mark through `load_download_menu` and
@@ -752,9 +777,33 @@ digits the canonical loadout writes), and a string choice is its text.
 each value `option_text` of the option. No options write nothing. This is
 the text that follows `id:` on `--mutator`.
 
-The match start fills this record from the mutators that play and folds
-the mutator digest into the simulation hash. Nothing in this header runs
-during a match.
+`loadout_of` builds this record from a resolved list. Every mutator is
+listed, in the list's order, and each option is that mutator's typed
+value with its default already filled, stored in id byte order. The
+package digest and the folder mark are the ones `resolve_choice` recorded:
+an installed id keeps the SHA-256 from its origin record, or, when that
+record names none, `folder_digest` of the installed folder with `folder`
+set. A package folder named by path keeps `folder_digest` and sets
+`folder`. A folder digest that is refused refuses the choice. A recorded
+SHA-256 that is not 64 hexadecimal digits refuses the choice. `loadout_of`
+reads no file.
+
+`applied_loadout` keeps the entries a pipeline result applied, in the
+loadout's order. `resolve_loadout` finds each entry among the installed
+mutators by id, with the same version text. A package entry must have the
+origin record's SHA-256. A folder entry is accepted when that id's
+installed folder has the same folder digest, and refused, naming it as a
+package folder, otherwise. The options are typed as `resolve_choice` types
+`options_text`. A missing package, another version and another SHA-256
+are refused, and the error names the entry.
+
+A playable match that applied at least one mutator keeps that applied
+loadout and `mutator_digest`. The layer digest reads each served path's
+bytes from the asset store while the layer is mounted. Both are forgotten
+when the match releases its mutators, including when the match ends. The
+simulation hash the run reports is the profile's sim hash folded with that
+digest while it is held, and the profile's hash alone otherwise. Nothing
+in this header runs during a match.
 
 `data-mutators-loadout` pins the canonical text, the four digests against
 values computed outside the engine, the refusals, the folder and layer
@@ -762,7 +811,14 @@ digests, the unchanged simulation hash and the options text. It reads
 records back equal (a `1.0` number default, a numeric choice and a string
 choice among them), compares records by their text, digests a folder
 holding a name outside ASCII, and refuses a pipe where the system has
-pipes.
+pipes. It also checks `loadout_of`, `applied_loadout` (applied entries
+kept, and failed, excluded and incompatible entries dropped) and
+`options_text` read back through `parse_choice` and `resolve_choice`. A
+path and an installed folder with no origin record resolve with `folder`
+set and that folder's digest. `resolve_loadout` finds those packages, and
+refuses a missing id, another version, another SHA-256, a folder digest
+that is not the installed folder's, and an origin SHA-256 that is not 64
+hexadecimal digits.
 
 ## Rules in Lua
 
@@ -927,8 +983,18 @@ real-time limit in force, and by raw access only, so no metamethod of the
 script runs. The plan, its `files` table, the `mask` and `add` lists and the
 `rules` list must be plain tables. One with a metatable refuses the plan,
 because its raw contents need not be what the script meant. A plan key the
-engine does not support yet (`sides`, `tables`, `maps` and `hacks`)
-refuses the plan instead of being ignored.
+engine does not support yet (`sides`, `tables` and `maps`) refuses the plan
+instead of being ignored. A `hacks` table sets match parameters of
+entries the registry marks `mutator: true`. Today those are
+`limits.units-per-player.default`, `console.game-speed-range.min` and
+`console.game-speed-range.max`. The manifest must list the `hacks` layer.
+Each value is kept in the registry's normal form. A hack the registry does
+not open, a value it refuses, a table it cannot read, or a `hacks` table
+whose manifest lacks the layer fails that mutator in the plan phase, as
+`Cause::hack_refused`, and the game starts without it.
+`PipelineInput::check_hacks` runs after the plans are read and before
+files, rules and hooks, so a hack the profile refuses fails the same way
+and the pass runs again without that mutator. Nothing of it is mounted.
 
 A pass is a transaction. A plan, or a rule aimed at a folder no mutator may
 change, depends on nothing but the mutator itself, so every such failure is

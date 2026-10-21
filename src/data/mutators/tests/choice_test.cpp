@@ -332,7 +332,7 @@ void test_resolve(const Scratch& scratch) {
 
     const mutators::ResolvedMutator installed = resolved_text("ridge-swift", mutators);
     OA_CHECK(installed.manifest.id == "ridge-swift");
-    OA_CHECK(installed.folder == mutators / "ridge-swift");
+    OA_CHECK(installed.package_folder == mutators / "ridge-swift");
     OA_CHECK(installed.options.size() == installed.manifest.options.size());
     for (std::size_t index = 0; index < installed.options.size(); ++index)
         OA_CHECK(installed.options[index].id == installed.manifest.options[index].id);

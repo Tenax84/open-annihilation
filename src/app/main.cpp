@@ -1624,7 +1624,7 @@ void refuse_unusable_mutators(const Options& options) {
         if (!resolve_run_mutator(value, version, mutators_folder, &resolved, &error))
             throw netgame::LaunchRefusal(prefix + error);
         oa::data::mutators::PipelineMutator entry;
-        entry.package = resolved.folder;
+        entry.package = resolved.package_folder;
         entry.manifest = resolved.manifest;
         entry.options = resolved.options;
         versions.push_back(oa::formats::oamut::version_text(resolved.manifest.version));

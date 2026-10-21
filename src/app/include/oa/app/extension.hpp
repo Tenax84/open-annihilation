@@ -204,7 +204,9 @@
 /// and does not read the wall clock, and while the fixed clock is on it is
 /// that clock. simulation_hash reads the simulation hash the run plays
 /// under: the profile in play, with every Developer Mode override that
-/// changes the simulation, or the plain baseline when the game plays 3.1c. A
+/// changes the simulation, or the plain baseline when the game plays 3.1c,
+/// folded with the running match's mutator digest when that match applied
+/// mutators. With no mutators applied it is that profile hash alone. A
 /// running match keeps the hash it started with. Version 15 adds the OA UI
 /// kit to the contract: register_settings_pages; kit screens in
 /// ScreenRegistry and open_kit_screen, show_notice and ask_prompt in
@@ -215,8 +217,11 @@
 /// them raises the version, while the kit is provisional too (it changes as
 /// the engine's screens need). ScreenServices::read_string also reads a whole
 /// preference key, as a Settings page's row binds one, when its section is
-/// null.
-#define OA_EXTENSION_API_VERSION 15
+/// null. Version 16 adds run_mutators, which reads how many mutators the run
+/// plays, their ids in order, and the simulation hash the run would have
+/// without them. It is not a hook: the engine does not call it, and no
+/// extension fills it.
+#define OA_EXTENSION_API_VERSION 16
 
 namespace oa {
 struct Game;
@@ -1582,10 +1587,13 @@ void set_extension_window_source(Runtime& runtime, void* context, ExtensionWindo
 ///
 /// It is the profile in play: the mod's sim hash with every Developer Mode
 /// override that changes the simulation, or the plain 3.1c baseline when
-/// the game plays 3.1c. Saves and network games are matched on it. A
-/// running match keeps the profile it started with, so an override that
-/// changes the simulation shows here once that match ends; with no match
-/// running it shows at once. A display-only override leaves it unchanged.
+/// the game plays 3.1c, folded with the running match's mutator digest when
+/// that match applied mutators. With no mutators applied it is that profile
+/// hash alone. Choosing mutators, before the match builds them, leaves the
+/// hash unchanged. Saves and network games are matched on it. A running
+/// match keeps the profile it started with, so an override that changes the
+/// simulation shows here once that match ends; with no match running it
+/// shows at once. A display-only override leaves it unchanged.
 ///
 /// It is not a hook: the engine does not call it, and no extension fills it.
 /// A call may come from any hook.
@@ -1593,5 +1601,31 @@ void set_extension_window_source(Runtime& runtime, void* context, ExtensionWindo
 /// @param runtime the running app
 /// @return the hash
 [[nodiscard]] std::string simulation_hash(const Runtime& runtime);
+
+/// The mutators whose digest simulation_hash folds in at this moment.
+///
+/// `count` is how many play, and `ids` names them in the order they play.
+/// `simulation_hash_without` is the simulation hash the run would have
+/// without them: 64 lower-case hexadecimal digits. When `count` is 0 it
+/// equals simulation_hash. A running match keeps the mutators it started
+/// with until it ends, as simulation_hash keeps that match's hash.
+struct RunMutators {
+    uint32_t count{};
+    std::vector<std::string> ids{};
+    std::string simulation_hash_without{};
+};
+
+/// Returns the mutators whose digest simulation_hash folds in now.
+///
+/// Choosing mutators, before the match builds them, leaves the count at 0
+/// and the hash the one simulation_hash reports. Both calls read the same
+/// profile and the same mutator digest, so they agree at this moment.
+///
+/// It is not a hook: the engine does not call it, and no extension fills it.
+/// A call may come from any hook.
+///
+/// @param runtime the running app
+/// @return the mutators and the hash without them
+[[nodiscard]] RunMutators run_mutators(const Runtime& runtime);
 
 } // namespace oa::app

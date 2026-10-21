@@ -163,6 +163,8 @@ struct Listing;
 } // namespace oa::data::mutator_library
 
 namespace oa::data::mutators {
+struct Loadout;
+struct PipelineInput;
 struct PipelineResult;
 struct ResolvedMutator;
 } // namespace oa::data::mutators
@@ -2060,6 +2062,24 @@ class Runtime final : public menu::Host,
     /// @param runtime the running app
     /// @return the hash, 64 lower-case hexadecimal digits
     friend std::string simulation_hash(const Runtime& runtime);
+    /// Returns the simulation hash the run plays under, as a digest
+    /// (simulation_hash in extension.hpp).
+    ///
+    /// The digest is the one `simulation_hash` used to report as text, folded
+    /// with `match_mutator_digest` when a match has applied mutators. With no
+    /// mutator digest it is that hash unchanged.
+    ///
+    /// @param runtime the running app
+    /// @return the hash
+    friend oa::base::sha256::Digest played_sim_hash(const Runtime& runtime);
+    /// The profile hash played_sim_hash folds the mutator digest into.
+    ///
+    /// run_mutators reports this digest as text in simulation_hash_without.
+    /// With no mutator digest it is the hash simulation_hash reports.
+    ///
+    /// @param runtime the running app
+    /// @return the profile hash, before mutators
+    friend oa::base::sha256::Digest profile_sim_hash(const Runtime& runtime);
     /// Reads what this machine is playing (presence_facts in
     /// presence_facts.hpp): Developer Mode, the simulation hash, whether the
     /// rules differ from 3.1c, the mod and which standard hacks are on.
@@ -4294,6 +4314,26 @@ class Runtime final : public menu::Host,
     /// @return the result, or null when this match applied none
     [[nodiscard]] const oa::data::mutators::PipelineResult* match_mutators() const noexcept;
 
+    /// Returns the loadout the running match applied.
+    ///
+    /// The pointer is into the match's mutator state. It is null when this
+    /// match applied no mutator, and it is cleared when the match releases
+    /// its mutators.
+    ///
+    /// @return the loadout, or null when this match applied none
+    [[nodiscard]] const oa::data::mutators::Loadout* match_loadout() const noexcept;
+
+    /// Returns the mutator digest of the running match.
+    ///
+    /// The digest covers the applied loadout and every path the layer adds,
+    /// hides or rewrites, with the bytes the layer serves. It is set only
+    /// after a playable build that applied at least one mutator, and it is
+    /// cleared when the match releases its mutators. A list that is chosen
+    /// and not yet built has none.
+    ///
+    /// @return the digest, or nothing when this match applied none
+    [[nodiscard]] std::optional<oa::base::sha256::Digest> match_mutator_digest() const noexcept;
+
     /// The refusal a launch's mutator list would get, or empty when it can play.
     ///
     /// The run's list is left as it is. The line names `source` and the field.
@@ -4343,11 +4383,38 @@ class Runtime final : public menu::Host,
     /// and before the match reads its game data.
     ///
     /// An empty choice does nothing: no pipeline, no layer and no log line.
-    /// A mutator that does not apply, or a list the pipeline refuses,
-    /// releases the layer and throws std::runtime_error naming it.
+    /// A list the pipeline refuses, or a mutator that does not apply for a
+    /// reason other than its hacks, releases the layer and throws
+    /// std::runtime_error naming it. A hack the registry or the profile
+    /// refuses fails that mutator in the plan phase, and a mutator excluded
+    /// only because it requires one is dropped with it. The match still starts.
     ///
     /// @param bootstrap the match being started
     void apply_match_mutators(const MatchBootstrap& bootstrap);
+
+    /// Fills the pipeline's hack check from this run's profile.
+    ///
+    /// Developer Mode's overrides are the baseline. A hack that does not
+    /// resolve fails its mutator before any file, rule or hook is applied.
+    ///
+    /// @param input the pipeline input for this match
+    void bind_planned_hack_check(oa::data::mutators::PipelineInput& input);
+
+    /// Lays the applied mutators' hacks over the profile this match plays.
+    ///
+    /// The pipeline has already accepted these hacks. This copies that
+    /// resolution into the one profile the match plays, logs the values and
+    /// records the notes. With no records it does nothing. The same values
+    /// refused again refuse the start. Release puts the player's profile back.
+    void play_mutator_hacks();
+
+    /// The unit limit a mutator's hack set for this match.
+    ///
+    /// Set when limits.units-per-player.default came from a match choice.
+    /// Empty when this match's hacks did not set it.
+    ///
+    /// @return that limit, in units per player
+    [[nodiscard]] std::optional<uint16_t> mutator_units_per_player() const noexcept;
 
     /// Resolves the command line's `--mutator` values and chooses them.
     ///
@@ -4356,11 +4423,14 @@ class Runtime final : public menu::Host,
     /// status 1.
     void take_command_line_mutators();
 
-    /// Unmounts the match's mutator layer and forgets its result.
+    /// Unmounts the match's mutator layer and forgets its result, its loadout
+    /// and its mutator digest.
     ///
-    /// Logs one line when a layer was unmounted or a result was held.
-    /// A quiet no-op when neither is true. When a mounted layer cannot be
-    /// dropped, the result is kept so a later call can try again.
+    /// When this match copied hacks into the played profile, the player's
+    /// profile is put back first. Logs one line when a layer was unmounted
+    /// or a result was held. A quiet no-op when neither is true and no hacks
+    /// were played. When a mounted layer cannot be dropped, the result, the
+    /// loadout and the digest are kept so a later call can try again.
     void release_match_mutators() noexcept;
 
     /// The name an installed pack gives a map, for a campaign load.

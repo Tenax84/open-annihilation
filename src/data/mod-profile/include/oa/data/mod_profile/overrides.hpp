@@ -4,7 +4,8 @@
 // A player's overrides of a profile's standard hacks (Developer Mode): each
 // hack turned on or off whatever the profile says, with the parameters it
 // sets while on. The settings keep them apart from the profile, which is
-// never written; the resolver lays them over the profile as its last layer
+// never written; the resolver lays them over the profile after its own steps
+// and the player's settings, and before the host's match choices
 // (ResolveOptions::overrides). Also the state of every standard hack a
 // resolved profile holds, which the settings dialog shows, and the text the
 // settings keep the overrides as.

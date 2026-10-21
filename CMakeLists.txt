@@ -1085,6 +1085,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_package_kinds.cpp
   src/app/runtime_mutator_library.cpp
   src/app/runtime_mutators.cpp
+  src/app/runtime_mutators_hacks.cpp
   src/app/runtime_pack_maps.cpp
   src/app/pack_map_source.cpp
   src/app/runtime_get_map.cpp
@@ -1710,9 +1711,12 @@ if(OA_BUILD_PLATFORM)
         ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software"
         FIXTURES_REQUIRED kit-gallery-clean)
       # The simulation hash an extension reads: the plain baseline with no
-      # mod, a mod profile's when that profile changes the simulation, a
-      # different hash after a Developer Mode override of a rule in the same
-      # start, and the first hash again once the settings are put back.
+      # mod, a mod profile's when that profile changes the simulation, the
+      # same hash through a skirmish with no mutators, then that hash folded
+      # with the command line mutator's digest for one skirmish, the first
+      # hash again once that match ends, a different hash after a Developer
+      # Mode override of a rule in the same start, and the first hash again
+      # once the settings are put back.
       set(oa_simulation_hash_dir "${CMAKE_CURRENT_BINARY_DIR}/native-checks/simulation-hash")
       file(MAKE_DIRECTORY "${oa_simulation_hash_dir}")
       file(WRITE "${oa_simulation_hash_dir}/changed.oamod.yaml"
@@ -1727,10 +1731,12 @@ if(OA_BUILD_PLATFORM)
         "  units.id-reuse-delay: 90\n")
       add_test(NAME native-simulation-hash COMMAND oa-game --game-dir "${OA_GAME_DIR}"
         --skip-intro --mute --check-simulation-hash
+        --mutator "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-tough"
         --preferences-file "${oa_simulation_hash_dir}/simulation-hash.conf")
       add_test(NAME native-simulation-hash-mod COMMAND oa-game --game-dir "${OA_GAME_DIR}"
         --skip-intro --mute --check-simulation-hash
         --mod "${oa_simulation_hash_dir}/changed.oamod.yaml"
+        --mutator "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-tough"
         --preferences-file "${oa_simulation_hash_dir}/simulation-hash-mod.conf")
       set_tests_properties(native-simulation-hash native-simulation-hash-mod PROPERTIES
         TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT} WORKING_DIRECTORY "${oa_simulation_hash_dir}"

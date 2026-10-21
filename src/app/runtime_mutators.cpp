@@ -6,12 +6,14 @@
 
 #include "oa/app/runtime.hpp"
 
+#include "mutator_state.hpp"
 #include "oa/base/sha256.hpp"
 #include "oa/data/content_bundles/content_choice.hpp"
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/mod_profile/overrides.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 
@@ -225,6 +227,77 @@ void log_applied(
     }
 }
 
+/// What `hack_refusal_only` has found for one slot.
+enum class Judged : uint8_t {
+    unknown, ///< not asked yet
+    judging, ///< being judged, further up the same chain of requirements
+    yes,     ///< its failure is that mutator's alone
+    no,      ///< its failure stops the start
+};
+
+/// True when this mutator failed because its hacks were refused, or was
+/// excluded only because a mutator it requires failed that way, directly
+/// or through another exclusion.
+///
+/// Each slot's answer is kept in `judged`, so a mutator that several others
+/// require gives every one of them the same answer. A slot met again while
+/// it is being judged would be a loop of requirements, which the list check
+/// refuses before the pipeline runs; it counts as no.
+bool hack_refusal_only(
+    std::size_t slot,
+    const std::vector<mutators::MutatorResult>& results,
+    const std::vector<mutators::ResolvedMutator>& listed,
+    std::vector<Judged>& judged
+) {
+    if (slot >= results.size() || slot >= judged.size())
+        return false;
+    if (judged[slot] != Judged::unknown)
+        return judged[slot] == Judged::yes;
+    const mutators::MutatorResult& one = results[slot];
+    if (one.outcome == mutators::Outcome::failed) {
+        const bool alone = one.cause == mutators::Cause::hack_refused;
+        judged[slot] = alone ? Judged::yes : Judged::no;
+        return alone;
+    }
+    if (one.outcome != mutators::Outcome::excluded ||
+        one.cause != mutators::Cause::prerequisite_failed || slot >= listed.size()) {
+        judged[slot] = Judged::no;
+        return false;
+    }
+    judged[slot] = Judged::judging;
+    bool unmet = false;
+    for (const oa::formats::oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
+        bool satisfied = false;
+        std::vector<std::size_t> failed;
+        for (std::size_t other = 0; other < results.size() && other < listed.size(); ++other) {
+            if (other == slot)
+                continue;
+            const std::string version =
+                oa::formats::oamut::version_text(listed[other].manifest.version);
+            if (!oa::formats::oamut::condition_met(condition, results[other].id, version))
+                continue;
+            if (results[other].outcome == mutators::Outcome::applied) {
+                satisfied = true;
+                break;
+            }
+            failed.push_back(other);
+        }
+        if (satisfied)
+            continue;
+        if (failed.empty())
+            continue;
+        unmet = true;
+        for (const std::size_t other : failed) {
+            if (!hack_refusal_only(other, results, listed, judged)) {
+                judged[slot] = Judged::no;
+                return false;
+            }
+        }
+    }
+    judged[slot] = unmet ? Judged::yes : Judged::no;
+    return unmet;
+}
+
 } // namespace
 
 bool resolve_run_mutator(
@@ -264,11 +337,6 @@ bool resolve_run_mutator(
     return true;
 }
 
-struct Runtime::MutatorState {
-    std::vector<mutators::ResolvedMutator> chosen{};
-    std::optional<mutators::PipelineResult> result{};
-};
-
 void Runtime::destroy_mutator_state(MutatorState* state) noexcept {
     delete state;
 }
@@ -300,6 +368,18 @@ const mutators::PipelineResult* Runtime::match_mutators() const noexcept {
     if (mutator_state_ == nullptr || !mutator_state_->result.has_value())
         return nullptr;
     return &*mutator_state_->result;
+}
+
+const mutators::Loadout* Runtime::match_loadout() const noexcept {
+    if (mutator_state_ == nullptr || !mutator_state_->loadout.has_value())
+        return nullptr;
+    return &*mutator_state_->loadout;
+}
+
+std::optional<oa::base::sha256::Digest> Runtime::match_mutator_digest() const noexcept {
+    if (mutator_state_ == nullptr)
+        return std::nullopt;
+    return mutator_state_->digest;
 }
 
 void Runtime::take_command_line_mutators() {
@@ -349,7 +429,7 @@ std::string Runtime::launch_mutator_refusal(
         if (!resolve_run_mutator(texts[index], version, folder, &resolved, &error))
             return std::string(source) + ": " + field + ": " + error;
         mutators::PipelineMutator entry;
-        entry.package = resolved.folder;
+        entry.package = resolved.package_folder;
         entry.manifest = resolved.manifest;
         entry.options = resolved.options;
         installed.push_back(oa::formats::oamut::version_text(resolved.manifest.version));
@@ -401,7 +481,7 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     input.mutators.reserve(listed.size());
     for (const mutators::ResolvedMutator& one : listed) {
         mutators::PipelineMutator item;
-        item.package = one.folder;
+        item.package = one.package_folder;
         item.manifest = one.manifest;
         item.options = one.options;
         input.mutators.push_back(std::move(item));
@@ -420,6 +500,7 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     input.layout = &oa::data::defs::data_layout();
     input.variant = side_files_language_;
     input.seed = mutator_seed(*this, listed);
+    bind_planned_hack_check(input);
 
     mutators::PipelineResult result = mutators::run_pipeline(assets_, input);
     if (mutator_state_ == nullptr) {
@@ -427,16 +508,57 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         throw std::runtime_error("the mutators did not apply");
     }
     mutator_state_->result = std::move(result);
+    play_mutator_hacks();
     log_applied(listed, *mutator_state_->result);
-    if (mutator_state_->result->playable())
+    bool blocking = !mutator_state_->result->refusal.empty();
+    if (!blocking) {
+        std::vector<Judged> judged(mutator_state_->result->mutators.size(), Judged::unknown);
+        for (std::size_t slot = 0; slot < mutator_state_->result->mutators.size(); ++slot) {
+            if (mutator_state_->result->mutators[slot].outcome == mutators::Outcome::applied)
+                continue;
+            // A refused hack, and a mutator excluded only because it requires
+            // one, fails that mutator alone. Anything else still refuses the
+            // start, as a plan or a rule failure does.
+            if (!hack_refusal_only(slot, mutator_state_->result->mutators, listed, judged)) {
+                blocking = true;
+                break;
+            }
+        }
+    }
+    if (blocking) {
+        // A hack that was copied into the played profile is undone with the
+        // profile the match would have played without mutators.
+        play_latest_profile();
+        const std::string reason = failure_text(listed, *mutator_state_->result);
+        release_match_mutators();
+        throw std::runtime_error(reason);
+    }
+    // Taken after the hacks were played, so a mutator their check failed is
+    // not in the loadout.
+    const mutators::Loadout applied =
+        mutators::applied_loadout(mutators::loadout_of(listed), *mutator_state_->result);
+    if (applied.entries.empty())
         return;
-    const std::string reason = failure_text(listed, *mutator_state_->result);
-    release_match_mutators();
-    throw std::runtime_error(reason);
+    try {
+        const oa::base::sha256::Digest layer =
+            mutators::layer_digest(mutator_state_->result->layer, [this](std::string_view path) {
+                return assets_.read(path).bytes;
+            });
+        mutator_state_->digest = mutators::mutator_digest(applied, layer);
+        mutator_state_->loadout = applied;
+    } catch (...) {
+        release_match_mutators();
+        throw;
+    }
 }
 
 void Runtime::release_match_mutators() noexcept {
     try {
+        if (mutator_state_ != nullptr && mutator_state_->hacks_played) {
+            play_latest_profile();
+            mutator_state_->hacks_played = false;
+            mutator_state_->units_per_player.reset();
+        }
         const bool held = mutator_state_ != nullptr && mutator_state_->result.has_value();
         bool unmounted = false;
         if (assets_.mutator_layer_mounted()) {
@@ -446,8 +568,11 @@ void Runtime::release_match_mutators() noexcept {
         }
         if (!unmounted && !held)
             return;
-        if (mutator_state_ != nullptr)
+        if (mutator_state_ != nullptr) {
             mutator_state_->result.reset();
+            mutator_state_->loadout.reset();
+            mutator_state_->digest.reset();
+        }
         std::cerr << "open-annihilation: mutators: released\n";
     } catch (...) {
     }

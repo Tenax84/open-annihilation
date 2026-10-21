@@ -8,6 +8,7 @@
 #pragma once
 
 #include "oa/data/defs/layout.hpp"
+#include "oa/data/mutators/hacks.hpp"
 #include "oa/data/mutators/journal.hpp"
 #include "oa/data/mutators/loadout.hpp"
 #include "oa/data/script_host/script_host.hpp"
@@ -17,6 +18,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -50,6 +53,7 @@ enum class Cause : uint8_t {
     engine_version,      ///< the engine is outside the mutator's requirement
     prerequisite_failed, ///< a mutator it requires did not apply
     engine_error,        ///< the engine stopped while running the mutator
+    hack_refused,        ///< a hack was refused: its table, the registry or the profile
     weapon_ids,          ///< a weapon this mutator brought could not be given an id
 };
 
@@ -69,6 +73,9 @@ struct MutatorResult {
     Cause cause{};
     /// What happened, in plain words. Empty when there is nothing to add.
     std::string message;
+    /// The hacks the plan set, for a mutator that applied. Empty when it
+    /// did not, or when it failed: a failure clears them.
+    std::vector<MutatorHack> hacks;
 };
 
 /// The mod `ctx.mod` shows the scripts.
@@ -109,6 +116,10 @@ struct PipelineInput {
     uint64_t seed{};
     /// Instruction and memory allowances. The default is the mutator profile's.
     oa::data::script_host::Budget budget{};
+    /// Called after every plan is read and before files, rules and hooks.
+    /// Empty skips the check. Each error fails that mutator in the plan
+    /// phase, and the pass runs again without it.
+    std::function<std::vector<HackCheckError>(std::span<const MutatorHack>)> check_hacks{};
 };
 
 /// What one run produced.
@@ -154,12 +165,14 @@ list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::
 /// requirement an earlier mutator does not meet, or two mutators that
 /// conflict, refuses the list: every result is excluded, nothing is
 /// mounted and no script runs. Each remaining manifest is checked against
-/// the mod and the engine. The rest are planned, their files mounted, the
-/// documents parsed from that layer. Record files are not mounted as whole
-/// files: each mutator in list order applies the units, weapons and download
-/// entries in its own copies, then its rules and then its hooks, units then
-/// weapons then menus. A plan that returns map hooks is
-/// refused, so none run. Each pass over the list is a transaction. A
+/// the mod and the engine. The rest are planned. `check_hacks`, when set,
+/// then judges the planned hacks, before any file, rule or hook. A hack it
+/// refuses fails that mutator in the plan phase and the pass runs again
+/// without it. The files are mounted and the documents parsed from that
+/// layer. Record files are not mounted as whole files: each mutator in list
+/// order applies the units, weapons and download entries in its own copies,
+/// then its rules and then its hooks, units then weapons then menus. A
+/// plan that returns map hooks is refused, so none run. Each pass over the list is a transaction. A
 /// failure in a plan or a rule target is the mutator's own, and every one
 /// is kept. Any later failure can depend on the mutators above it, so the
 /// pass keeps only the one nearest the top of the list, and stops at the
