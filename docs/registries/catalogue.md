@@ -160,6 +160,12 @@ The layer names are `files`, `units`, `weapons`, `features`, `sides`,
 `tables`, `menus`, `maps` and `hacks`.
 
 An option names `id` (an option id), `label` (1 to 64 bytes) and `type`.
+An option id is a Lua name of 1 to 32 bytes: a letter, then letters, digits
+and `_`. Lua 5.4's reserved words are not ids (`and`, `break`, `do`, `else`,
+`elseif`, `end`, `false`, `for`, `function`, `goto`, `if`, `in`, `local`,
+`nil`, `not`, `or`, `repeat`, `return`, `then`, `true`, `until`, `while`),
+matched in that case. `For`, `format`, `ends` and `for_` are ids. A reserved
+word leaves the package out, as any other refused mutator member does.
 `type` is `toggle`, `choice` or `number`. A choice names `values`, 2 to 16
 numbers or 2 to 16 identifiers, all of one kind, and may name `labels`, one
 string of 1 to 64 bytes for each value. An identifier is 1 to 32 bytes of

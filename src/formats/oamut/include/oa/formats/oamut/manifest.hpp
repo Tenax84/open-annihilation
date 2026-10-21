@@ -72,6 +72,24 @@ inline constexpr std::size_t most_choice_value_bytes = 32;
 /// @return true when the length is in range and every byte is one of those
 [[nodiscard]] bool choice_value_text(std::string_view text) noexcept;
 
+/// Tells whether text is one of Lua 5.4's reserved words.
+///
+/// The match is the word itself, in that case. `format`, `ends`, `For` and
+/// `for_` are not reserved.
+///
+/// @param text the id
+/// @return true for one of the 22 words
+[[nodiscard]] bool lua_reserved_word(std::string_view text) noexcept;
+
+/// Tells whether text is an option id a script can read as `ctx.options.<id>`.
+///
+/// A Lua name of 1 to 32 bytes: a letter, then letters, digits and `_`.
+/// One of Lua 5.4's reserved words is not a name.
+///
+/// @param text the id
+/// @return true when a script can name it that way
+[[nodiscard]] bool option_id(std::string_view text) noexcept;
+
 /// The most steps a number option's range may hold.
 inline constexpr std::size_t most_number_steps = 1000;
 
