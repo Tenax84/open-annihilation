@@ -38,6 +38,18 @@ constexpr std::size_t hack_id_max = 64;
 constexpr std::size_t pack_key_max = 64;
 constexpr std::size_t pack_name_max = 64;
 constexpr std::size_t pack_version_max = 32;
+constexpr std::size_t mutator_id_max = 64;
+constexpr std::size_t mutator_version_max = 32;
+constexpr std::size_t mutator_option_key_max = 32;
+constexpr std::size_t mutator_option_value_max = 32;
+/// Bit 0 of the mutators flags: the layer was built. Bit 1: a package is
+/// lacking. Bit 2: a mutator failed. Bits 3 to 7 are sent as 0 and ignored.
+constexpr uint8_t mutators_built_flag = 0x01;
+constexpr uint8_t mutators_lacking_flag = 0x02;
+constexpr uint8_t mutators_failed_flag = 0x04;
+/// Flags, loadout digest, layer digest, index, total, held and the state word.
+constexpr std::size_t mutators_fixed_value_bytes = 1 + digest_bytes + digest_bytes + 1 + 1 + 1 + 8;
+static_assert(mutators_fixed_value_bytes == 76);
 
 enum class ByteKind { ascii, kebab, id, text };
 
@@ -135,6 +147,14 @@ bool string_in_rule(
     return false;
 }
 
+/// Reads a little-endian u64. The caller has eight bytes.
+uint64_t load_le64(const uint8_t* bytes) noexcept {
+    uint64_t value = 0;
+    for (unsigned shift = 0; shift < 64; shift += 8)
+        value |= static_cast<uint64_t>(bytes[shift / 8]) << shift;
+    return value;
+}
+
 /// A window over bytes that never reads past its end.
 struct Window {
     const uint8_t* data{};
@@ -171,6 +191,14 @@ struct Window {
         if (!take(4, &bytes))
             return false;
         *out = load_u32(bytes);
+        return true;
+    }
+
+    bool u64(uint64_t* out) noexcept {
+        const uint8_t* bytes = nullptr;
+        if (!take(8, &bytes))
+            return false;
+        *out = load_le64(bytes);
         return true;
     }
 };
@@ -211,6 +239,11 @@ void put_u16(uint8_t* out, std::size_t* used, uint16_t value) noexcept {
 void put_u32(uint8_t* out, std::size_t* used, uint32_t value) noexcept {
     store_u32(out + *used, value);
     *used += 4;
+}
+
+void put_u64(uint8_t* out, std::size_t* used, uint64_t value) noexcept {
+    for (unsigned shift = 0; shift < 64; shift += 8)
+        put_u8(out, used, static_cast<uint8_t>(value >> shift));
 }
 
 void put_string(uint8_t* out, std::size_t* used, std::string_view text) noexcept {
@@ -639,6 +672,214 @@ bool read_map_pack(Window window, PresenceMapPack* out) {
     return true;
 }
 
+/// Tells whether every state bit at or past total is clear.
+bool states_in_rule(uint64_t states, uint8_t total) noexcept {
+    if (total >= presence_mutators_max)
+        return true;
+    const auto shift = static_cast<unsigned>(2u * total);
+    const uint64_t used = (uint64_t{1} << shift) - 1;
+    return (states & ~used) == 0;
+}
+
+/// Tells whether the fixed part of a mutators field is inside its rule.
+bool mutators_prefix_ok(
+    bool built,
+    const PresenceDigest& layer,
+    uint8_t index,
+    uint8_t total,
+    uint8_t held,
+    uint64_t states
+) noexcept {
+    if (total < 1 || total > presence_mutators_max || held > total)
+        return false;
+    if (index != presence_mutator_index_none && index >= total)
+        return false;
+    if (!built) {
+        for (const uint8_t byte : layer)
+            if (byte != 0)
+                return false;
+    }
+    return states_in_rule(states, total);
+}
+
+bool option_ok(const PresenceMutatorOption& option) noexcept {
+    return string_in_rule(option.key, 1, mutator_option_key_max, ByteKind::ascii) &&
+           string_in_rule(option.value, 0, mutator_option_value_max, ByteKind::text);
+}
+
+bool mutator_ok(const PresenceMutator& item) noexcept {
+    if (!string_in_rule(item.id, 1, mutator_id_max, ByteKind::kebab) ||
+        !string_in_rule(item.version, 0, mutator_version_max, ByteKind::text) ||
+        item.options.size() > presence_mutator_options_max)
+        return false;
+    for (const auto& option : item.options)
+        if (!option_ok(option))
+            return false;
+    return true;
+}
+
+bool mutators_ok(const PresenceMutators& field) noexcept {
+    if (!mutators_prefix_ok(
+            field.built, field.layer_digest, field.index, field.total, field.held, field.states
+        ) ||
+        field.mutators.size() > field.total)
+        return false;
+    for (const auto& item : field.mutators)
+        if (!mutator_ok(item))
+            return false;
+    return true;
+}
+
+bool part_ok(const PresenceMutatorPart& part) noexcept {
+    if (part.first >= presence_mutators_max || part.mutators.empty() ||
+        part.mutators.size() > presence_mutators_max - part.first)
+        return false;
+    for (const auto& item : part.mutators)
+        if (!mutator_ok(item))
+            return false;
+    return true;
+}
+
+std::size_t option_value_bytes(const PresenceMutatorOption& option) noexcept {
+    return string_bytes(option.key) + string_bytes(option.value);
+}
+
+std::size_t mutator_value_bytes(const PresenceMutator& item) noexcept {
+    std::size_t size =
+        string_bytes(item.id) + string_bytes(item.version) + presence_mutator_prefix_bytes + 1;
+    for (const auto& option : item.options)
+        size += option_value_bytes(option);
+    return size;
+}
+
+std::size_t mutator_part_value_bytes(const PresenceMutatorPart& part) noexcept {
+    std::size_t size = digest_bytes + 1;
+    for (const auto& item : part.mutators)
+        size += mutator_value_bytes(item);
+    return size;
+}
+
+void write_mutator(uint8_t* out, std::size_t* used, const PresenceMutator& item) noexcept {
+    put_string(out, used, item.id);
+    put_string(out, used, item.version);
+    put_bytes(out, used, item.sha256_prefix.data(), presence_mutator_prefix_bytes);
+    put_u8(out, used, static_cast<uint8_t>(item.options.size()));
+    for (const auto& option : item.options) {
+        put_string(out, used, option.key);
+        put_string(out, used, option.value);
+    }
+}
+
+void write_mutators_prefix(
+    uint8_t* out, std::size_t* used, const PresenceMutators& field
+) noexcept {
+    unsigned flags = 0;
+    if (field.built)
+        flags |= mutators_built_flag;
+    if (field.lacking)
+        flags |= mutators_lacking_flag;
+    if (field.failed)
+        flags |= mutators_failed_flag;
+    put_u8(out, used, static_cast<uint8_t>(flags));
+    put_bytes(out, used, field.digest.data(), digest_bytes);
+    put_bytes(out, used, field.layer_digest.data(), digest_bytes);
+    put_u8(out, used, field.index);
+    put_u8(out, used, field.total);
+    put_u8(out, used, field.held);
+    put_u64(out, used, field.states);
+}
+
+void write_mutators(
+    uint8_t* out, std::size_t* used, const PresenceMutators& field, std::size_t keep
+) noexcept {
+    std::size_t value = mutators_fixed_value_bytes;
+    for (std::size_t cursor = 0; cursor < keep; ++cursor)
+        value += mutator_value_bytes(field.mutators[cursor]);
+    put_u8(out, used, static_cast<uint8_t>(PresenceTag::mutators));
+    put_u16(out, used, static_cast<uint16_t>(value));
+    write_mutators_prefix(out, used, field);
+    for (std::size_t cursor = 0; cursor < keep; ++cursor)
+        write_mutator(out, used, field.mutators[cursor]);
+}
+
+void write_mutator_part(uint8_t* out, std::size_t* used, const PresenceMutatorPart& part) noexcept {
+    put_u8(out, used, static_cast<uint8_t>(PresenceTag::mutator_part));
+    put_u16(out, used, static_cast<uint16_t>(mutator_part_value_bytes(part)));
+    put_bytes(out, used, part.digest.data(), digest_bytes);
+    put_u8(out, used, part.first);
+    for (const auto& item : part.mutators)
+        write_mutator(out, used, item);
+}
+
+bool read_mutator(Window* window, PresenceMutator* out) {
+    PresenceMutator item;
+    const uint8_t* prefix = nullptr;
+    uint8_t option_count = 0;
+    if (!read_string(window, 1, mutator_id_max, ByteKind::kebab, &item.id) ||
+        !read_string(window, 0, mutator_version_max, ByteKind::text, &item.version) ||
+        !window->take(presence_mutator_prefix_bytes, &prefix) || !window->u8(&option_count) ||
+        option_count > presence_mutator_options_max)
+        return false;
+    std::memcpy(item.sha256_prefix.data(), prefix, presence_mutator_prefix_bytes);
+    for (uint8_t option_index = 0; option_index < option_count; ++option_index) {
+        PresenceMutatorOption option;
+        if (!read_string(window, 1, mutator_option_key_max, ByteKind::ascii, &option.key) ||
+            !read_string(window, 0, mutator_option_value_max, ByteKind::text, &option.value))
+            return false;
+        item.options.push_back(std::move(option));
+    }
+    *out = std::move(item);
+    return true;
+}
+
+bool read_mutators(Window window, PresenceMutators* out) {
+    PresenceMutators field;
+    uint8_t flags = 0;
+    const uint8_t* digest = nullptr;
+    const uint8_t* layer = nullptr;
+    if (!window.u8(&flags) || !window.take(digest_bytes, &digest) ||
+        !window.take(digest_bytes, &layer) || !window.u8(&field.index) ||
+        !window.u8(&field.total) || !window.u8(&field.held) || !window.u64(&field.states))
+        return false;
+    field.built = (flags & mutators_built_flag) != 0;
+    field.lacking = (flags & mutators_lacking_flag) != 0;
+    field.failed = (flags & mutators_failed_flag) != 0;
+    std::memcpy(field.digest.data(), digest, digest_bytes);
+    std::memcpy(field.layer_digest.data(), layer, digest_bytes);
+    if (!mutators_prefix_ok(
+            field.built, field.layer_digest, field.index, field.total, field.held, field.states
+        ))
+        return false;
+    while (window.size != 0) {
+        PresenceMutator item;
+        if (!read_mutator(&window, &item))
+            return false;
+        field.mutators.push_back(std::move(item));
+    }
+    if (field.mutators.size() > field.total)
+        return false;
+    *out = std::move(field);
+    return true;
+}
+
+bool read_mutator_part(Window window, PresenceMutatorPart* out) {
+    PresenceMutatorPart part;
+    const uint8_t* digest = nullptr;
+    if (!window.take(digest_bytes, &digest) || !window.u8(&part.first))
+        return false;
+    std::memcpy(part.digest.data(), digest, digest_bytes);
+    while (window.size != 0) {
+        PresenceMutator item;
+        if (!read_mutator(&window, &item))
+            return false;
+        part.mutators.push_back(std::move(item));
+    }
+    if (!part_ok(part))
+        return false;
+    *out = std::move(part);
+    return true;
+}
+
 } // namespace
 
 WireError
@@ -681,6 +922,10 @@ WireError encode_presence(
         return WireError::bad_argument;
     if (record.language && !language_ok(*record.language))
         return WireError::bad_argument;
+    if (record.mutators && !mutators_ok(*record.mutators))
+        return WireError::bad_argument;
+    if (record.mutator_part && !part_ok(*record.mutator_part))
+        return WireError::bad_argument;
 
     const auto limit = capacity < presence_record_max_bytes ? capacity : presence_record_max_bytes;
     std::size_t fixed = presence_record_header_bytes;
@@ -698,8 +943,12 @@ WireError encode_presence(
         fixed += presence_field_header_bytes + origin_value_bytes(*record.mod_origin);
     if (record.sim_hash)
         fixed += presence_field_header_bytes + digest_bytes;
+    if (record.mutators)
+        fixed += presence_field_header_bytes + mutators_fixed_value_bytes;
     if (record.map_pack)
         fixed += presence_field_header_bytes + map_pack_value_bytes(*record.map_pack);
+    if (record.mutator_part)
+        fixed += presence_field_header_bytes + mutator_part_value_bytes(*record.mutator_part);
     // A list's count is fixed. Only the ids after it are cut, and only
     // after every later list's count has its room.
     constexpr std::size_t hack_prefix = presence_field_header_bytes + 2;
@@ -713,10 +962,21 @@ WireError encode_presence(
     if (fixed > limit)
         return WireError::buffer_too_small;
 
+    std::size_t mutator_keep = 0;
     std::size_t dev_keep = 0;
     std::size_t game_keep = 0;
     std::size_t view_keep = 0;
     std::size_t room = limit - fixed;
+    // Whole mutators take room before developer overrides and hack ids.
+    if (record.mutators) {
+        for (const auto& item : record.mutators->mutators) {
+            const auto item_bytes = mutator_value_bytes(item);
+            if (item_bytes > room)
+                break;
+            room -= item_bytes;
+            ++mutator_keep;
+        }
+    }
     auto cut_overrides = [&]() noexcept {
         dev_keep = 0;
         if (!record.developer)
@@ -764,8 +1024,12 @@ WireError encode_presence(
         write_origin(local, &used, *record.mod_origin);
     if (record.sim_hash)
         write_sim(local, &used, *record.sim_hash);
+    if (record.mutators)
+        write_mutators(local, &used, *record.mutators, mutator_keep);
     if (record.map_pack)
         write_map_pack(local, &used, *record.map_pack);
+    if (record.mutator_part)
+        write_mutator_part(local, &used, *record.mutator_part);
     if (record.developer) {
         std::size_t value = 1 + 2;
         for (std::size_t i = 0; i < dev_keep; ++i)
@@ -821,6 +1085,8 @@ WireError decode_presence(const uint8_t* record, std::size_t size, PresenceRecor
     bool saw_content = false;
     bool saw_bundles = false;
     bool saw_language = false;
+    bool saw_mutators = false;
+    bool saw_part = false;
     std::size_t at = presence_record_header_bytes;
     while (at < size) {
         assert(at + presence_field_header_bytes <= size);
@@ -908,6 +1174,20 @@ WireError decode_presence(const uint8_t* record, std::size_t size, PresenceRecor
             std::string language;
             if (read_language(value, &language))
                 decoded.language = std::move(language);
+        } else if (tag == static_cast<uint8_t>(PresenceTag::mutators)) {
+            if (saw_mutators)
+                continue;
+            saw_mutators = true;
+            PresenceMutators loaded;
+            if (read_mutators(value, &loaded))
+                decoded.mutators = std::move(loaded);
+        } else if (tag == static_cast<uint8_t>(PresenceTag::mutator_part)) {
+            if (saw_part)
+                continue;
+            saw_part = true;
+            PresenceMutatorPart part;
+            if (read_mutator_part(value, &part))
+                decoded.mutator_part = std::move(part);
         }
     }
     *out = std::move(decoded);
