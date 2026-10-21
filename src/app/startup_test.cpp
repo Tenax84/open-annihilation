@@ -402,6 +402,7 @@ const std::vector<FlagCase>& flag_cases() {
         {"--check-library-install", &Options::check_library_install, {}},
         {"--check-library-map-previews", &Options::check_library_map_previews, {}},
         {"--check-library-content", &Options::check_library_content, {}},
+        {"--check-library-update-question", &Options::check_library_update_question, {}},
         {"--check-renderer-ladder", &Options::check_renderer_ladder, {}},
         {"--check-briefing-narration", &Options::check_briefing_narration, {}},
         {"--check-match-layers", &Options::check_match_layers, {}},

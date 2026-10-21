@@ -2465,6 +2465,13 @@ struct Runtime::LibraryScreen final : LayerScreen {
         bool moved = false;
         if (runtime_.library_) {
             LibraryHost& host = *runtime_.library_;
+            // A refresh that closes the model's details closes the page too,
+            // so the list the player then sees is the list Escape closes.
+            if (!host.model.details_open && host.state.details_page) {
+                host.state.details_page = false;
+                host.state.menu = library::MenuKind::none;
+                moved = true;
+            }
             const auto now = static_cast<uint32_t>(SDL_GetTicks());
             uint32_t elapsed = 0;
             if (refresh_clock_started_)

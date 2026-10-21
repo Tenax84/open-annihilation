@@ -745,6 +745,10 @@ struct Options {
     // skirmish list. The run names --game-dir only so the copy can be made;
     // the check itself plays the player's copy.
     bool check_library_content = false;
+    // At 640x480, installs made-up Ridge from an added registry, offers a
+    // rules-changing update, and for 50 rounds answers UPDATE and requires
+    // the Library still on top with its tabs. NOT NOW leaves the details page.
+    bool check_library_update_question = false;
     // The soft restarts the process has made before this run: 0 for the
     // first; each switch of the mod from the settings adds one.
     uint32_t restarts = 0;

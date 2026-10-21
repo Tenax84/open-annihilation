@@ -2214,6 +2214,32 @@ if(OA_BUILD_PLATFORM)
         WORKING_DIRECTORY "${oa_library_content_dir}"
         ENVIRONMENT "${oa_library_content_env}"
         FIXTURES_REQUIRED library-content-clean)
+      # Ridge, from an added registry, installed while the Library shows, then
+      # an update whose rules change. At 640x480 the row's details page has no
+      # tabs. NOT NOW leaves that page. UPDATE, fifty times, leaves the Library
+      # on top with its tabs on the next frames, and it is still there once the
+      # update is no longer offered. The player's folder stays in the build
+      # tree and is cleared before each run, which is when the settings are read.
+      set(oa_library_update_question_dir
+        "${CMAKE_CURRENT_BINARY_DIR}/native-checks/library-update-question")
+      file(MAKE_DIRECTORY "${oa_library_update_question_dir}")
+      add_test(NAME library-update-question-clean COMMAND ${CMAKE_COMMAND} -E rm -rf
+        "${oa_library_update_question_dir}/Open Annihilation"
+        "${oa_library_update_question_dir}/files"
+        "${oa_library_update_question_dir}/data"
+        "${oa_library_update_question_dir}/library-update-question.conf")
+      set_tests_properties(library-update-question-clean PROPERTIES
+        FIXTURES_SETUP library-update-question-clean)
+      add_test(NAME native-library-update-question COMMAND oa-game --game-dir "${OA_GAME_DIR}"
+        --skip-intro --mute --check-library-update-question
+        --preferences-file "${oa_library_update_question_dir}/library-update-question.conf"
+        --user-folder "${oa_library_update_question_dir}/Open Annihilation"
+        --data-dir "${oa_library_update_question_dir}/data")
+      set_tests_properties(native-library-update-question PROPERTIES
+        TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+        WORKING_DIRECTORY "${oa_library_update_question_dir}"
+        ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software"
+        FIXTURES_REQUIRED library-update-question-clean)
       # Made-up mod packages posted as the download queue posts them, from a
       # built-in registry and two added ones, installed while the Library
       # shows: the built-in one's with no question, the added ones' asking
