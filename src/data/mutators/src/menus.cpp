@@ -2356,6 +2356,8 @@ void Menus::begin_mutator(bool menus_layer) {
 
 bool Menus::end_mutator(std::string& error) {
     MenusState& m = *state_;
+    // A menus object the script kept writes nothing in a later phase.
+    m.menus_layer = false;
     begin_call(m);
     const bool ok = guarded(m, work_end);
     // The repair is the engine's own step: no script is charged for it.

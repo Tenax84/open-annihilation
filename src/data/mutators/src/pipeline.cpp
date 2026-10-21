@@ -4671,8 +4671,8 @@ bool run_pass(
             context.mod_game = input.mod.game;
             context.engine_version = input.engine_version;
             context.options = &options[slot];
-            // The same turn as the collections, so both phases share one tally.
-            collections->begin_mutator(ids[slot], grant_for(input.mutators[slot].manifest));
+            // Selects this mutator's tally; no record write is granted here.
+            collections->begin_mutator(ids[slot], WriteGrant{});
             MapsTurn turn = apply_maps(
                 *sandboxes[slot],
                 plans[slot].maps_function,

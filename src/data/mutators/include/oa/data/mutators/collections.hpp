@@ -50,7 +50,8 @@ inline constexpr uint32_t mutator_write_limit = 65536;
 
 /// The most notes one mutator may add on one collections object.
 ///
-/// A further note fails that mutator with "this mutator has made too many notes".
+/// A further note is refused with "this mutator has made too many notes"; a
+/// script that catches the error goes on.
 inline constexpr uint32_t mutator_note_limit = 65536;
 
 /// Which of these collections a mutator may change.
@@ -218,8 +219,8 @@ class Collections {
 
     /// True when this turn may journal one more field write.
     ///
-    /// A refusal marks the mutator failed. The maps phase asks here, so its
-    /// rows share the collections' tally.
+    /// A refusal marks the mutator failed. A clone's fields and the maps
+    /// phase ask here, so their rows share the collections' tally.
     [[nodiscard]] bool allow_field_write() noexcept;
 
     /// Counts one field write this turn has journaled.

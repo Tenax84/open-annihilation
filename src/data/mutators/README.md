@@ -386,7 +386,10 @@ but its ids are not counted as taken, so a mutator weapon could share an
 id with one of them.
 
 A maps hook cannot add a placed unit or a placed feature, and it cannot
-move a start position or change how many there are. `type`, `missionname`,
+move a start position or change how many there are. It writes only the
+map: a write through a units, weapons, features, sides, tables or menus
+collection the script kept from an earlier hook is refused as if the
+mutator did not declare that layer. `type`, `missionname`,
 `planet` and `numplayers` stay as the map file wrote them. `glob` is `*`
 and `?` only, with no character classes and no full regular expressions.
 `pattern` is a Lua pattern. A placed unit's `xpos` and `zpos` are whole
@@ -700,7 +703,8 @@ picture, and an entry the AI's list cannot hold.
 One mutator may journal at most 65536 field writes and 65536
 notes. The write tally is one number for that mutator: the units,
 weapons, features, sides, tables and menus hooks share it with the maps
-phase. Passing the write limit fails that mutator even when the script
+phase. Each field a clone's table sets counts on it; the copy itself does
+not. Passing the write limit fails that mutator even when the script
 catches the error and returns normally. Passing the note limit fails the
 call. The messages are "this mutator has changed too many fields" and "this
 mutator has made too many notes".

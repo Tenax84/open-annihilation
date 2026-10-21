@@ -240,24 +240,6 @@ bool ensure_grant(const Collections& self, bool weapons, std::string& error) {
     return false;
 }
 
-uint32_t count_mine_writes(const Collections& self) {
-    const std::string& who = CloneAccess::mutator(self);
-    uint32_t count = 0;
-    for (const rules::FieldWrite& write : self.writes()) {
-        bool mine = false;
-        for (const std::string& name : write.mutators) {
-            if (name == who)
-                mine = true;
-        }
-        if (!mine)
-            continue;
-        if (count == mutator_write_limit)
-            return count;
-        ++count;
-    }
-    return count;
-}
-
 uint32_t count_mine_notes(const Collections& self) {
     const std::string& who = CloneAccess::mutator(self);
     uint32_t count = 0;
@@ -276,15 +258,13 @@ uint32_t count_mine_notes(const Collections& self) {
     return count;
 }
 
-bool room_for(
-    const Collections& self, uint32_t more_writes, uint32_t more_notes, std::string& error
-) {
-    const uint32_t writes = count_mine_writes(self);
-    const uint32_t notes = count_mine_notes(self);
-    if (more_writes > 0 && writes > mutator_write_limit - more_writes) {
+/// Refuses a field write past the mutator's shared tally, or a note past its note limit.
+bool room_for(Collections& self, uint32_t more_writes, uint32_t more_notes, std::string& error) {
+    if (more_writes > 0 && !self.allow_field_write()) {
         error = "this mutator has changed too many fields";
         return false;
     }
+    const uint32_t notes = count_mine_notes(self);
     if (more_notes > 0 && notes > mutator_note_limit - more_notes) {
         error = "this mutator has made too many notes";
         return false;
@@ -471,6 +451,7 @@ bool apply_field(
         write.key = before.key;
         write.old_text = before.text;
         CloneAccess::writes(self).push_back(std::move(write));
+        self.count_field_write();
         return true;
     }
 
@@ -527,6 +508,7 @@ bool apply_field(
     write.old_text = before.present ? before.text : std::nullopt;
     write.new_text = after.present ? after.text : std::optional<std::string>(text);
     CloneAccess::writes(self).push_back(std::move(write));
+    self.count_field_write();
     if (check.verdict == fields::Verdict::warn) {
         HookNote note;
         note.kind = HookNoteKind::check_warned;
