@@ -412,30 +412,7 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     if (assets_.mutator_layer_mounted())
         release_match_mutators();
 
-    mutators::PipelineInput input;
-    input.mutators.reserve(listed.size());
-    for (const mutators::ResolvedMutator& one : listed) {
-        mutators::PipelineMutator item;
-        item.package = one.package_folder;
-        item.manifest = one.manifest;
-        item.options = one.options;
-        input.mutators.push_back(std::move(item));
-    }
-    if (const oa::data::mod_profile::ModProfile* profile = mod_profile()) {
-        input.mod.id = profile->id;
-        input.mod.version = profile->version;
-    } else {
-        input.mod.id = std::string(oa::data::mod_profile::base_game_id);
-    }
-    const PresenceAnnouncement announcement = presence_announcement();
-    input.mod.game = announcement.base_game.empty()
-                         ? std::string(oa::data::content_bundles::default_base_game_id)
-                         : announcement.base_game;
-    input.engine_version = OA_ENGINE_VERSION;
-    input.layout = &oa::data::defs::data_layout();
-    input.variant = side_files_language_;
-    input.seed = mutator_seed(*this, listed);
-
+    const mutators::PipelineInput input = mutator_pipeline_input(listed);
     mutators::PipelineResult result = mutators::run_pipeline(assets_, input);
     if (mutator_state_ == nullptr) {
         release_match_mutators();
@@ -463,6 +440,41 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         release_match_mutators();
         throw;
     }
+}
+
+mutators::PipelineInput Runtime::mutator_pipeline_input(
+    const std::vector<mutators::ResolvedMutator>& chosen
+) const {
+    mutators::PipelineInput input;
+    input.mutators.reserve(chosen.size());
+    for (const mutators::ResolvedMutator& one : chosen) {
+        mutators::PipelineMutator item;
+        item.package = one.package_folder;
+        item.manifest = one.manifest;
+        item.options = one.options;
+        input.mutators.push_back(std::move(item));
+    }
+    if (const oa::data::mod_profile::ModProfile* profile = mod_profile()) {
+        input.mod.id = profile->id;
+        input.mod.version = profile->version;
+    } else {
+        input.mod.id = std::string(oa::data::mod_profile::base_game_id);
+    }
+    const PresenceAnnouncement announcement = presence_announcement();
+    input.mod.game = announcement.base_game.empty()
+                         ? std::string(oa::data::content_bundles::default_base_game_id)
+                         : announcement.base_game;
+    input.engine_version = OA_ENGINE_VERSION;
+    input.layout = &oa::data::defs::data_layout();
+    input.variant = side_files_language_;
+    input.seed = mutator_seed(*this, chosen);
+    return input;
+}
+
+std::string Runtime::mutator_failure_text(
+    const std::vector<mutators::ResolvedMutator>& chosen, const mutators::PipelineResult& result
+) {
+    return failure_text(chosen, result);
 }
 
 void Runtime::release_match_mutators() noexcept {

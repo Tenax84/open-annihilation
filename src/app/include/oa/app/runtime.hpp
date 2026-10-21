@@ -25,6 +25,7 @@
 #include "oa/audio/sdl_audio.hpp"
 #include "oa/base/game_loop.hpp"
 #include "oa/base/sha256.hpp"
+#include "oa/netgame/presence.hpp"
 #include "oa/data/defs/locale.hpp"
 #include "oa/data/defs/rule_keys.hpp"
 #include "oa/data/defs/sides.hpp"
@@ -164,6 +165,7 @@ struct Listing;
 
 namespace oa::data::mutators {
 struct Loadout;
+struct PipelineInput;
 struct PipelineResult;
 struct ResolvedMutator;
 } // namespace oa::data::mutators
@@ -4300,6 +4302,48 @@ class Runtime final : public menu::Host,
     [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator>
     chosen_match_mutators() const noexcept;
 
+    /// Replaces the mutators the battle room builds.
+    ///
+    /// The list is top first. An empty list builds nothing. The next follow
+    /// builds it, including a list that failed before. A match already
+    /// running keeps the layer it mounted.
+    ///
+    /// @param chosen the mutators, top first
+    void set_room_mutators(std::vector<oa::data::mutators::ResolvedMutator> chosen);
+
+    /// Returns the mutators the battle room is building.
+    ///
+    /// On the host this starts as chosen_match_mutators and then follows
+    /// set_room_mutators. On a guest it is the host's list once that list
+    /// resolved here. Empty when this room plays none.
+    ///
+    /// @return the list, top first
+    [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator> room_mutators() const noexcept;
+
+    /// Builds the battle room's mutator layer when its list changes.
+    ///
+    /// The host's list is its own. A guest's is the host's once every
+    /// mutator of that list has arrived, resolved from this machine's
+    /// Mutators folder. The build runs on the calling thread, once per
+    /// change of the wanted digest, with no map. Leaving the multiplayer
+    /// screens while no match runs releases the layer.
+    void follow_room_mutators();
+
+    /// Returns the mutators field this machine sends, or nothing when it plays none.
+    ///
+    /// The host's names every mutator. A guest's carries the host's digest
+    /// and no mutators.
+    ///
+    /// @return the field, or nothing when the room plays no mutators
+    [[nodiscard]] std::optional<oa::netgame::PresenceMutators> room_mutators_presence() const;
+
+    /// Unmounts the battle room's mutator layer.
+    ///
+    /// The match's layer is left where it is. The chosen list is kept, so
+    /// the next follow can build it again. A mounted layer that cannot be
+    /// dropped stays mounted.
+    void release_room_mutators() noexcept;
+
     /// Returns the running match's mutator result.
     ///
     /// @return the result, or null when this match applied none
@@ -4395,6 +4439,91 @@ class Runtime final : public menu::Host,
     /// dropped, the result, the loadout and the digest are kept so a later
     /// call can try again.
     void release_match_mutators() noexcept;
+
+    /// The battle room's mutator list and the layer it mounted.
+    struct RoomMutatorState;
+
+    /// Frees the battle room's mutator state.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_room_mutator_state(RoomMutatorState* state) noexcept;
+
+    /// The pipeline input V02 uses for one resolved list, with no map.
+    ///
+    /// @param chosen the mutators, top first
+    /// @return the input
+    [[nodiscard]] oa::data::mutators::PipelineInput mutator_pipeline_input(
+        const std::vector<oa::data::mutators::ResolvedMutator>& chosen
+    ) const;
+
+    /// Why a pipeline result cannot be played, in V01's words.
+    ///
+    /// @param chosen the mutators, in the order they were run
+    /// @param result the pipeline's result
+    /// @return the reason
+    [[nodiscard]] static std::string mutator_failure_text(
+        const std::vector<oa::data::mutators::ResolvedMutator>& chosen,
+        const oa::data::mutators::PipelineResult& result
+    );
+
+    /// The battle room's mutator state, made on first use.
+    ///
+    /// @return the state
+    RoomMutatorState& ensure_room_mutators();
+
+    /// Unmounts the battle room's layer. A layer it did not mount stays.
+    ///
+    /// @return false when that layer is still mounted
+    bool drop_room_layer() noexcept;
+
+    /// Releases an empty room's layer and reloads the unit headers, once.
+    void release_empty_room();
+
+    /// Builds one wanted list, or records the failure so it is not tried again.
+    ///
+    /// @param resolved the mutators, top first
+    /// @param wanted the loadout digest
+    /// @return false when the room's layer could not be unmounted
+    bool build_room_layer(
+        const std::vector<oa::data::mutators::ResolvedMutator>& resolved,
+        const oa::base::sha256::Digest& wanted
+    );
+
+    /// Resolves a guest's whole copy of the host's list.
+    ///
+    /// @param assembly the host's list
+    /// @param[out] resolved the packages that resolved
+    /// @param[out] codes one have-code per position
+    /// @param[out] wanted the digest, when every position has and it matches
+    /// @return true when every position has and the digest is the host's
+    bool resolve_guest_loadout(
+        const oa::netgame::PresenceLoadoutAssembly& assembly,
+        std::vector<oa::data::mutators::ResolvedMutator>& resolved,
+        std::vector<uint8_t>& codes,
+        oa::base::sha256::Digest& wanted
+    );
+
+    /// Remembers the host's mutators field.
+    ///
+    /// @param digest the loadout digest
+    void publish_host_mutators(const oa::base::sha256::Digest& digest);
+
+    /// Remembers a guest's mutators field, with no mutators in it.
+    ///
+    /// @param digest the host's loadout digest
+    /// @param total how many mutators the loadout names
+    /// @param held how many of them have arrived
+    /// @param codes one code per position; empty marks every position unknown
+    /// @param lacking true when a position is not has
+    /// @param lacking_at the first such position
+    void publish_guest_mutators(
+        const oa::base::sha256::Digest& digest,
+        uint8_t total,
+        uint8_t held,
+        const std::vector<uint8_t>& codes,
+        bool lacking,
+        uint8_t lacking_at
+    );
 
     /// The name an installed pack gives a map, for a campaign load.
     friend const char* pack_index_title(void* context, const char* map_name);
@@ -16929,6 +17058,10 @@ class Runtime final : public menu::Host,
     // null until a choice is stored.
     std::unique_ptr<MutatorState, void (*)(MutatorState*) noexcept> mutator_state_{
         nullptr, destroy_mutator_state
+    };
+    // The battle room's mutator list and its layer; null until a room is followed.
+    std::unique_ptr<RoomMutatorState, void (*)(RoomMutatorState*) noexcept> room_mutator_state_{
+        nullptr, destroy_room_mutator_state
     };
     // The mounted pack map, the game's names, the fits and the refusals;
     // null until a pack map is first named.

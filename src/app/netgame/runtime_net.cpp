@@ -32,6 +32,7 @@
 #include "oa/netgame/unicode_chat.hpp"
 #include "oa/app/netgame/extension_api.hpp"
 #include "oa/base/sha256.hpp"
+#include "oa/data/mutators/choice.hpp"
 #include "oa/data/mutators/loadout.hpp"
 #include "oa/base/text.hpp"
 #include "oa/data/languages/interface_text.hpp"
@@ -551,6 +552,7 @@ inline constexpr uint32_t view_hack = 0x080;    ///< a view hack's id breaks its
 inline constexpr uint32_t override_id = 0x100;  ///< an override's hack id breaks its rule
 inline constexpr uint32_t no_reserve = 0x200;   ///< the record leaves no room for a map pack
 inline constexpr uint32_t bundles = 0x400;      ///< the base game or an expansion breaks its rule
+inline constexpr uint32_t mutators = 0x800;     ///< the mutator list breaks its rule
 } // namespace presence_problem
 
 /// The content and language a presence record adds to the facts.
@@ -611,19 +613,68 @@ bool presence_keeps_rules(const oa::netgame::PresenceRecord& record) {
            oa::netgame::WireError::bad_argument;
 }
 
+/// The bytes follow_presence compares so a mutator change refreshes the record.
+///
+/// @param mutators the mutators field, or nothing when this machine plays none
+/// @return the key
+std::string mutator_presence_key(const std::optional<oa::netgame::PresenceMutators>& mutators) {
+    if (!mutators)
+        return {};
+    std::string key;
+    key.push_back(mutators->built ? '1' : '0');
+    key.push_back(mutators->lacking ? '1' : '0');
+    key.push_back(mutators->failed ? '1' : '0');
+    key.push_back('\n');
+    const auto digest = oa::base::sha256::to_hex(mutators->digest);
+    key.append(digest.data(), digest.size());
+    key.push_back('\n');
+    const auto layer = oa::base::sha256::to_hex(mutators->layer_digest);
+    key.append(layer.data(), layer.size());
+    key.push_back('\n');
+    key += std::to_string(mutators->index);
+    key.push_back('\n');
+    key += std::to_string(static_cast<unsigned>(mutators->total));
+    key.push_back('\n');
+    key += std::to_string(static_cast<unsigned>(mutators->held));
+    key.push_back('\n');
+    key += std::to_string(mutators->states);
+    key.push_back('\n');
+    for (const oa::netgame::PresenceMutator& item : mutators->mutators) {
+        key += item.id;
+        key.push_back('\n');
+        key += item.version;
+        key.push_back('\n');
+        key.append(reinterpret_cast<const char*>(item.sha256_prefix.data()), item.sha256_prefix.size());
+        key.push_back('\n');
+        for (const oa::netgame::PresenceMutatorOption& option : item.options) {
+            key += option.key;
+            key.push_back('=');
+            key += option.value;
+            key.push_back('\n');
+        }
+    }
+    return key;
+}
+
 /// Writes this machine's presence record from its facts, without a map pack.
 ///
 /// A fact that breaks the record's rules is left out: a platform or
 /// architecture name, or a mod's version, is sent empty; an engine, a mod,
-/// an origin, a hack or an override is left out. Each kind is reported on
-/// the error stream the first time.
+/// an origin, a hack, an override or the mutator list is left out. Each
+/// kind is reported on the error stream the first time. The mutator list
+/// keeps the room left for the host's map pack: the record is still written
+/// within presence_record_max_bytes less presence_map_pack_field_max_bytes.
 ///
 /// @param facts what this machine is playing
 /// @param[in,out] reported the presence_problem bits already reported
 /// @param played the base game, expansions and language
+/// @param mutators the mutators field, or nothing when this machine plays none
 /// @return the record; empty only when nothing could be written
 std::vector<uint8_t> write_presence_record(
-    const PresenceFacts& facts, uint32_t& reported, const PresencePlayed& played
+    const PresenceFacts& facts,
+    uint32_t& reported,
+    const PresencePlayed& played,
+    const std::optional<oa::netgame::PresenceMutators>& mutators
 ) {
     namespace ng = oa::netgame;
     const auto report = [&](uint32_t problem, const char* what) {
@@ -715,6 +766,15 @@ std::vector<uint8_t> write_presence_record(
             report(presence_problem::mod_origin, "where the mod was published");
     }
     record.sim_hash = facts.sim_hash;
+
+    if (mutators) {
+        probe = {};
+        probe.mutators = *mutators;
+        if (presence_keeps_rules(probe))
+            record.mutators = std::move(probe.mutators);
+        else
+            report(presence_problem::mutators, "the mutator list");
+    }
 
     const auto hacks =
         [&](const std::vector<std::string>& ids, uint32_t problem, const char* what) {
@@ -814,9 +874,11 @@ std::string local_time_text(const char* pattern) {
 /// Fills the integrity check's answers about this machine: a digest of the
 /// program line, and one of the profile's sim hash with the map, so two
 /// machines agree exactly when they run the same program on the same rules and
-/// map. While this match holds a mutator digest, that digest is folded into
-/// the profile hash (or hashed on its own when there is no profile). A
-/// managed copy appends the canonical bytes of its base game and
+/// map. While this match holds a mutator digest, the game-data digest starts
+/// from played_sim_hash, which folds that digest into the profile hash (or
+/// into the baseline a game without a profile plays). Without a mutator
+/// digest the bytes stay the profile hash and the map, as they did before
+/// mutators. A managed copy appends the canonical bytes of its base game and
 /// rule-changing expansions (presence_content_identity). With no bundles
 /// field and no mutator digest the digest stays the sim hash and the map.
 ///
@@ -832,14 +894,11 @@ void fill_integrity_identity(
     );
     std::memcpy(identity.program, program_digest.data(), sizeof identity.program);
     oa::base::sha256::Hasher data{};
-    if (const auto* profile = runtime.mod_profile()) {
-        const oa::base::sha256::Digest played_hash =
-            oa::data::mutators::fold_sim_hash(profile->sim_hash, runtime.match_mutator_digest());
+    if (runtime.match_mutator_digest()) {
+        const oa::base::sha256::Digest played_hash = played_sim_hash(runtime);
         oa::base::sha256::update(data, played_hash);
-    } else if (
-        const std::optional<oa::base::sha256::Digest> held = runtime.match_mutator_digest()
-    ) {
-        oa::base::sha256::update(data, *held);
+    } else if (const auto* profile = runtime.mod_profile()) {
+        oa::base::sha256::update(data, profile->sim_hash);
     }
     oa::base::sha256::update(data, {reinterpret_cast<const uint8_t*>(map.data()), map.size()});
     const auto played = played_content(runtime);
@@ -1111,6 +1170,13 @@ struct NetworkPlay::NetHost {
             if (oa::netgame::encode_record(verdict, bytes.data(), bytes.size(), &written) ==
                 oa::netgame::WireError::ok)
                 state.unit_verdicts.push_back(bytes);
+        }
+        // The room's layer comes off before the match mounts its own, map included.
+        runtime.release_room_mutators();
+        {
+            const auto room = runtime.room_mutators();
+            std::vector<oa::data::mutators::ResolvedMutator> room_chosen(room.begin(), room.end());
+            runtime.choose_match_mutators(std::move(room_chosen));
         }
         runtime.bootstrap_match(
             {.units_per_player = limit,
@@ -2213,6 +2279,10 @@ void NetworkPlay::follow_unicode_chat() {
 }
 
 void NetworkPlay::follow_presence() {
+    runtime_.follow_room_mutators();
+    const auto mutators = runtime_.room_mutators_presence();
+    // The full list, even when the bytes below are cut to the same record.
+    mp::multiplayer_bind_mutator_loadout(mutators ? &*mutators : nullptr);
     if (presence_taken_ && !mp::multiplayer_showing())
         return;
     const bool first = !presence_taken_;
@@ -2220,11 +2290,14 @@ void NetworkPlay::follow_presence() {
     auto facts = presence_facts(runtime_);
     const auto played = played_content(runtime_);
     const auto key = played_content_key(played);
-    if (!first && facts == presence_facts_ && key == presence_content_key_)
+    const auto mutator_key = mutator_presence_key(mutators);
+    if (!first && facts == presence_facts_ && key == presence_content_key_ &&
+        mutator_key == presence_mutator_key_)
         return;
     presence_facts_ = std::move(facts);
     presence_content_key_ = key;
-    auto record = write_presence_record(presence_facts_, presence_reported_, played);
+    presence_mutator_key_ = mutator_key;
+    auto record = write_presence_record(presence_facts_, presence_reported_, played, mutators);
     if (!first && record == bound_presence_record_)
         return;
     bound_presence_record_ = std::move(record);

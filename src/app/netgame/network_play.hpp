@@ -113,14 +113,17 @@ class NetworkPlay {
     /// The facts (presence_facts) are read while the multiplayer screens
     /// show, and on the first call. The record carries this build's version,
     /// the platform and architecture, the mod and where it was published, the
-    /// sim hash, the game and view hacks with their counts, and Developer
-    /// Mode with its overrides; the host's map pack is the battle room's to
-    /// add. It is written within presence_record_max_bytes less
-    /// presence_map_pack_field_max_bytes, so that the host's pack always
-    /// fits beside it, unless its fixed fields alone need more. A fact that
-    /// breaks the record's rules is left out, with one line on the error
-    /// stream the first time. The battle room is told only when the record's
-    /// bytes change. No setup block carries any of it.
+    /// sim hash, the mutators the battle room is playing, the game and view
+    /// hacks with their counts, and Developer Mode with its overrides; the
+    /// host's map pack is the battle room's to add. It is written within
+    /// presence_record_max_bytes less presence_map_pack_field_max_bytes, so
+    /// that the host's pack always fits beside it, unless its fixed fields
+    /// alone need more. A fact that breaks the record's rules is left out,
+    /// with one line on the error stream the first time. The battle room is
+    /// told when the record's bytes change. The full mutator list is bound
+    /// even when those bytes are cut to the same record, so a part can still
+    /// be drawn from it. The room's layer is followed first, including on
+    /// the way out of the multiplayer screens. No setup block carries any of it.
     void follow_presence();
 
     /// Runs one frame of the network match; nothing without an active match.
@@ -526,6 +529,9 @@ class NetworkPlay {
     // from. They are not part of PresenceFacts. Read through Runtime's
     // public methods only.
     std::string presence_content_key_;
+    // The mutator field the bound record was written from, so a change of
+    // the list refreshes the record when the other facts do not.
+    std::string presence_mutator_key_;
 };
 
 } // namespace oa::app
