@@ -30,6 +30,14 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   [Pipeline](#pipeline).
 - `Journal::entries_of` returns one mutator's changes, and `describe` writes
   one conflict as a single English line.
+- A hook's `ctx.sides` is the side table and the build lists. `ctx.sides[1]`
+  is the first side, `ctx.sides.ARM` finds a side by name, ignoring case,
+  and `ctx.sides:each` walks the sides in that order. `canbuild`,
+  `set_canbuild`, `add_canbuild` and `remove_canbuild` are methods of the
+  collection.
+- A hook's `ctx.tables` opens the other per-match game-data tables.
+  `ctx.tables["los"]` and `ctx.tables["gamedata/los.tdf"]` are the same
+  table. `sections` lists section names in file order.
 
 ## State
 
@@ -61,6 +69,16 @@ it reads the packages and the store it is given, and mounts its layer there.
   that unit. `guis/` is refused as a whole: build pages and screens
   change only through a mutator's menus. `maps/` changes only through a
   mutator's maps hook. `sounds/` is read once per run.
+- Side fields are read from the language variant of `sidedata.tdf` when
+  that file is present, because that is the file the side loader reads.
+  Build lists are read from the plain `gamedata/sidedata.tdf`, because
+  that loader passes no variant. A change is written back to the file its
+  reader opens.
+- A build list is written back as `canbuild1` through `canbuildN` with no
+  gap. A list the builder did not have is created under the one
+  `[CANBUILD]` section.
+- A protected game-data file is refused with the allow-list's own message.
+  `sidedata` is not opened here: the error is `use ctx.sides`.
 
 ## Tests
 
@@ -81,6 +99,13 @@ player's option, the list checks and two identical runs.
 `data-mutators-journal` (`tests/journal_test.cpp`) checks the entry order,
 `entries_of`, each note conversion and the sentences `describe` writes.
 
+`data-mutators-sides` (`tests/collections_sides_test.cpp`) runs made-up
+Ridge packages through `run_pipeline` and checks side fields, build lists,
+the language variant against the plain file, the other game-data tables,
+a failed mutator and the layer grants. `data-mutators-sides-data` is the
+same program with `--data`: it reads every side and every build list of
+the installed game and serves no game-data file.
+
 ## Limitations
 
 The checks do not look at a mutator's files and do not apply a verdict.
@@ -89,6 +114,11 @@ a named unit's build picture and its download-button art are files a
 mutator may add under `anims/`, and only as those files. `sounds/` stays
 refused until a later ticket shows the game
 reads it again for every match, or changes the game so that it does.
+
+A mutator cannot add or remove a side. Rectangle sub-sections of a side
+are neither shown nor changed. A build list keeps at most 1024 names. When
+the written list is longer than 30, the journal notes that the AI keeps
+only the profile's `limits.build-list-entries` count (30 by default).
 
 ## Moving a path to the allowed side
 

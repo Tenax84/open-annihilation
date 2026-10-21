@@ -52,6 +52,8 @@ struct WriteGrant {
     bool units{};    ///< unit records and the download entries a removal drops
     bool weapons{};  ///< weapon records, including a weapon's damage block
     bool features{}; ///< feature records
+    bool sides{};    ///< side data and the build lists
+    bool tables{};   ///< other game-data tables
 };
 
 /// What a removal took out of the document set.
@@ -201,6 +203,33 @@ class Collections {
   private:
 
     friend struct CollectionsAccess;
+    /// The sides and tables collections journal through the same writes.
+    friend struct SideCollectionsAccess;
+
+    /// Keeps one field write, and an overwrite note when an earlier hook wrote it.
+    ///
+    /// @param write the write, naming this mutator
+    /// @param[out] reason the limit it crossed; unchanged on success
+    /// @return false when the mutator has journaled too much
+    bool accept_write(oa::data::mutation_rules::FieldWrite write, std::string& reason);
+
+    /// Keeps one hook note.
+    ///
+    /// @param note the note
+    /// @param[out] reason the limit it crossed; unchanged on success
+    /// @return false when the mutator has journaled too much
+    bool accept_note(HookNote note, std::string& reason);
+
+    /// Holds the next Lua error until `raise_held`.
+    ///
+    /// @param message the error
+    void hold_error(std::string message);
+
+    /// Raises the held error. Call it with no local objects still to destroy.
+    ///
+    /// @param state the state to raise in
+    /// @return does not return
+    int raise_held(lua_State* state);
 
     oa::data::mutation_rules::DocumentSet* documents_;
     const oa::data::defs::DataLayout* layout_;
