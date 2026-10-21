@@ -11029,7 +11029,7 @@
 [Your last campaign set, ready to use. CANCEL plays without mutators.]
 	{
 	de=Dein letztes Kampagnen-Set, bereit zum Spielen. ABBRECHEN spielt ohne Mutatoren.;
-	fr=Votre dernière sélection de campagne, prête à jouer. ANNULER joue sans mutateurs.;
+	fr=Ta dernière sélection de campagne, prête à jouer. ANNULER joue sans mutateurs.;
 	es=Tu última selección de campaña, lista para jugar. CANCELAR juega sin mutadores.;
 	it=La tua ultima selezione di campagna, pronta da giocare. ANNULLA gioca senza mutatori.;
 	}
@@ -11037,7 +11037,7 @@
 [Your last multiplayer set, ready to use. CANCEL plays without mutators.]
 	{
 	de=Dein letztes Mehrspieler-Set, bereit zum Spielen. ABBRECHEN spielt ohne Mutatoren.;
-	fr=Votre dernière sélection multijoueur, prête à jouer. ANNULER joue sans mutateurs.;
+	fr=Ta dernière sélection multijoueur, prête à jouer. ANNULER joue sans mutateurs.;
 	es=Tu última selección multijugador, lista para jugar. CANCELAR juega sin mutadores.;
 	it=La tua ultima selezione multigiocatore, pronta da giocare. ANNULLA gioca senza mutatori.;
 	}
@@ -11045,9 +11045,9 @@
 [Your last skirmish set, ready to use. CANCEL plays without mutators.]
 	{
 	de=Dein letztes Gefecht-Set, bereit zum Spielen. ABBRECHEN spielt ohne Mutatoren.;
-	fr=Votre dernière sélection d'escarmouche, prête à jouer. ANNULER joue sans mutateurs.;
+	fr=Ta dernière sélection d'escarmouche, prête à jouer. ANNULER joue sans mutateurs.;
 	es=Tu última selección de escaramuza, lista para jugar. CANCELAR juega sin mutadores.;
-	it=La tua ultima selezione schermaglia, pronta da giocare. ANNULLA gioca senza mutatori.;
+	it=La tua ultima selezione di schermaglia, pronta da giocare. ANNULLA gioca senza mutatori.;
 	}
 
 [Your own copy]
