@@ -13,10 +13,14 @@
 #include "oa/base/sha256.hpp"
 #include "oa/data/defs/asset_files.hpp"
 #include "oa/data/defs/files.hpp"
+#include "oa/data/defs/unit_catalog.hpp"
 #include "oa/data/field_schema.hpp"
+#include "oa/data/mod_profile/overrides.hpp"
 #include "oa/data/mutators/allow_list.hpp"
+#include "oa/data/mutators/clashes.hpp"
 #include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/maps.hpp"
+#include "oa/data/mutators/menus.hpp"
 #include "oa/data/mutators/rules_lua.hpp"
 #include "oa/data/mutators/weapon_ids.hpp"
 #include "oa/data/mutation_rules/documents.hpp"
@@ -35,6 +39,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -79,7 +84,7 @@ static_assert(
 );
 
 /// How a supported plan key is read. D04, D06, D07 and D08 add rows here.
-enum class KeyJob : uint8_t { files, hacks, maps, rules, units_hook, weapons_hook };
+enum class KeyJob : uint8_t { files, hacks, maps, rules, units_hook, weapons_hook, menus_hook };
 
 struct PlanKeyRow {
     const char* name{};
@@ -91,6 +96,7 @@ constexpr PlanKeyRow k_plan_keys[] = {
     {"files", KeyJob::files, oamut::Layer::files},
     {"hacks", KeyJob::hacks, oamut::Layer::hacks},
     {"maps", KeyJob::maps, oamut::Layer::maps},
+    {"menus", KeyJob::menus_hook, oamut::Layer::menus},
     {"rules", KeyJob::rules, oamut::Layer::tables},
     {"units", KeyJob::units_hook, oamut::Layer::units},
     {"weapons", KeyJob::weapons_hook, oamut::Layer::weapons},
@@ -126,6 +132,7 @@ struct Plan {
     int maps_ref{LUA_NOREF};
     int units_hook{LUA_NOREF};
     int weapons_hook{LUA_NOREF};
+    int menus_hook{LUA_NOREF};
 };
 
 /// Why reading a plan stopped, when it did.
@@ -182,6 +189,9 @@ struct PlanShape {
     bool has_weapons{false};
     PartFault weapons_fault{PartFault::none};
     int weapons_hook{LUA_NOREF};
+    bool has_menus{false};
+    PartFault menus_fault{PartFault::none};
+    int menus_hook{LUA_NOREF};
 };
 
 /// Pointers a Lua callback may use. The callback holds none of its own.
@@ -199,11 +209,15 @@ struct MutateBox {
     int missing{0};
 };
 
+/// Which collection a hook receives as its first argument.
+enum class HookWhich : uint8_t { units, weapons, menus };
+
 /// What one hook call needs. The callback holds none of its own objects.
 struct HookBox {
     Collections* collections{};
+    Menus* menus{};
     int function_ref{LUA_NOREF};
-    int units{0};
+    HookWhich which{HookWhich::units};
     const ContextView* context{};
     const oa::AssetStore* store{};
     const defs::DataLayout* layout{};
@@ -602,13 +616,17 @@ void install_forms(void*, lua_State* state) {
 int push_hook(void* context, lua_State* state) {
     auto* box = static_cast<HookBox*>(context);
     lua_rawgeti(state, LUA_REGISTRYINDEX, box->function_ref);
-    if (box->units != 0)
+    if (box->which == HookWhich::units)
         box->collections->push_units(state);
-    else
+    else if (box->which == HookWhich::weapons)
         box->collections->push_weapons(state);
+    else
+        box->menus->push(state);
     push_context(state, box->context);
     const int ctx = lua_gettop(state);
     box->collections->set_context_collections(state, ctx);
+    if (box->menus != nullptr)
+        box->menus->set_context(state, ctx);
     if (box->store != nullptr && box->layout != nullptr && box->variant != nullptr)
         set_context_sides(state, ctx, *box->collections, *box->store, *box->layout, *box->variant);
     return 2;
@@ -838,9 +856,13 @@ void read_plan_shape(lua_State* state, int index, PlanShape* shape) {
             read_hook_shape(
                 state, value, &shape->has_units, &shape->units_fault, &shape->units_hook
             );
-        } else {
+        } else if (row->job == KeyJob::weapons_hook) {
             read_hook_shape(
                 state, value, &shape->has_weapons, &shape->weapons_fault, &shape->weapons_hook
+            );
+        } else if (row->job == KeyJob::menus_hook) {
+            read_hook_shape(
+                state, value, &shape->has_menus, &shape->menus_fault, &shape->menus_hook
             );
         }
         lua_settop(state, key);
@@ -1072,8 +1094,8 @@ PlanFault read_hook_part(
 
 /// Turns the plan the phase read into a `Plan`, or refuses it.
 ///
-/// The checks run in the order the keys sort in: files, hacks, maps, rules,
-/// units, then weapons, and the first refusal is the one reported.
+/// The checks run in the order the keys sort in: files, hacks, maps, menus,
+/// rules, units, then weapons, and the first refusal is the one reported.
 PlanFault read_returned_plan(
     lua_State* state,
     const PlanShape& shape,
@@ -1109,6 +1131,18 @@ PlanFault read_returned_plan(
     }
     if (shape.has_maps) {
         fault = read_maps_part(state, shape, manifest, plan);
+        if (fault.failed)
+            return fault;
+    }
+    if (shape.has_menus) {
+        fault = read_hook_part(
+            shape.menus_fault,
+            shape.menus_hook,
+            "menus",
+            oamut::Layer::menus,
+            manifest,
+            plan.menus_hook
+        );
         if (fault.failed)
             return fault;
     }
@@ -1656,8 +1690,9 @@ struct FirstFailure {
 bool call_hook(
     host::Sandbox& sandbox,
     Collections& collections,
+    Menus& menus,
     int function_ref,
-    bool units,
+    HookWhich which,
     const ContextView& context,
     const oa::AssetStore& store,
     const defs::DataLayout& layout,
@@ -1667,8 +1702,9 @@ bool call_hook(
 ) {
     HookBox box;
     box.collections = &collections;
+    box.menus = &menus;
     box.function_ref = function_ref;
-    box.units = units ? 1 : 0;
+    box.which = which;
     box.context = &context;
     box.store = &store;
     box.layout = &layout;
@@ -1812,6 +1848,7 @@ void plan_mutator(
     options_for_open.sources.context = &listing;
     options_for_open.sources.read = source_read;
     options_for_open.random_seed = mutator_seed(input.seed, result.id);
+    options_for_open.time_limit = input.time_limit;
     host::ScriptError error;
     std::optional<host::Sandbox> opened;
     try {
@@ -1924,7 +1961,9 @@ bool served_path_exists(
 }
 
 /// A build page a unit clone may serve: `guis/<unit><digits>.gui` for a unit
-/// cloned this pass, and only when that path is not already present.
+/// cloned this pass, and only when that path is not already present, or
+/// when `may_exist` says a Replace clone serves it in place of the replaced
+/// unit's own page.
 bool fresh_clone_page(
     std::string_view path,
     const Collections& collections,
@@ -1932,7 +1971,8 @@ bool fresh_clone_page(
     const oa::AssetStore& store,
     rules::DocumentSet& documents,
     const oa::MutatorLayerSpec& spec,
-    const PathVerdict& verdict
+    const PathVerdict& verdict,
+    bool may_exist
 ) {
     if (verdict.rule != PathRule::menus_only)
         return false;
@@ -1947,9 +1987,17 @@ bool fresh_clone_page(
             break;
         }
     }
+    if (!matches) {
+        for (const Collections::UnitFileShift& shift : collections.unit_file_shifts()) {
+            if (clone_build_page(path, gui_folder, shift.stored)) {
+                matches = true;
+                break;
+            }
+        }
+    }
     if (!matches)
         return false;
-    return !served_path_exists(store, documents, spec, path);
+    return may_exist || !served_path_exists(store, documents, spec, path);
 }
 
 /// The step state's id for one hook write, folded the way a rule step folds it.
@@ -2121,8 +2169,16 @@ void record_hook_turn(
     }
 }
 
-/// One record a mutator's file added or replaced, so the journal and the
-/// write-back can name the mutator that brought it.
+/// What a mutator's file did with one record.
+enum class RecordFate : uint8_t {
+    added,    ///< the name was new, and the record was written
+    replaced, ///< the record replaced the one already there
+    shared,   ///< the record matched the one already there, and was not written
+    renamed,  ///< the record took a private name, and the existing one stayed
+};
+
+/// One record a mutator's file added, replaced, shared or renamed, so the
+/// journal and the write-back can name the mutator that brought it.
 struct RecordTouch {
     /// Document path the record lives in.
     std::string path;
@@ -2130,10 +2186,12 @@ struct RecordTouch {
     uint16_t mutator{};
     /// Units, weapons or menus.
     Collection collection{};
-    /// True when the record was not already in the mod. A replacement is false.
-    bool added{};
-    /// Unit name, weapon section or download section.
+    /// Whether the record was added, replaced, shared or renamed.
+    RecordFate fate{RecordFate::added};
+    /// Unit name, weapon section or download section, as it is stored.
     std::string record;
+    /// The name the mutator wrote, when `fate` is `renamed`.
+    std::string asked;
 };
 
 /// Warns that a record file did not parse, once per path.
@@ -2394,24 +2452,381 @@ rules::LoadedDocument* ensure_document(
 }
 
 /// Remembers a record so the journal and the write-back name its mutator.
+///
+/// @param touches the pass's records
+/// @param path the document path
+/// @param mutator the mutator's index
+/// @param collection units, weapons or menus
+/// @param fate what the file did with the record
+/// @param record the name as stored
+/// @param asked the name the mutator wrote, when the record was renamed
 void touch_record(
     std::vector<RecordTouch>& touches,
     std::string path,
     uint16_t mutator,
     Collection collection,
-    bool added,
-    std::string record
+    RecordFate fate,
+    std::string record,
+    std::string asked = {}
 ) {
     RecordTouch touch;
     touch.path = std::move(path);
     touch.mutator = mutator;
     touch.collection = collection;
-    touch.added = added;
+    touch.fate = fate;
     touch.record = std::move(record);
+    touch.asked = std::move(asked);
     touches.push_back(std::move(touch));
 }
 
+/// Writes one field, or records why it could not.
+bool write_field(
+    tdf::Document* document,
+    tdf::Block* block,
+    std::string_view key,
+    std::string_view value,
+    std::string& error
+) {
+    const tdf::EditStatus status = tdf::set_value(document, block, key, value);
+    if (status == tdf::EditStatus::ok)
+        return true;
+    error = tdf::edit_status_message(status);
+    return false;
+}
+
+/// The first UNITINFO child, or null when the block has none.
+tdf::Block* first_unit_info(tdf::Block* root) {
+    if (root == nullptr)
+        return nullptr;
+    const uint32_t sections = tdf::child_count(root);
+    for (uint32_t section_index = 0; section_index < sections; ++section_index) {
+        tdf::Block* block = tdf::editable_child(root, section_index);
+        if (block == nullptr || block->name == nullptr)
+            continue;
+        if (tdf::compare_nocase(block->name, "UNITINFO") != 0)
+            continue;
+        return block;
+    }
+    return nullptr;
+}
+
+/// The model a unit uses: Objectname, else UnitName, else the record name.
+std::string unit_model_of(const tdf::Block* section, std::string_view record_name) {
+    const char* object_name = section != nullptr ? tdf::find_value(section, "Objectname") : nullptr;
+    if (object_name != nullptr && object_name[0] != '\0')
+        return object_name;
+    const char* unit_name = section != nullptr ? tdf::find_value(section, "UnitName") : nullptr;
+    if (unit_name != nullptr && unit_name[0] != '\0')
+        return unit_name;
+    return std::string{record_name};
+}
+
+/// Sets UnitName on the first UNITINFO so a renamed file is not a second copy
+/// of the name it was given.
+bool set_stored_unit_name(
+    rules::LoadedDocument& loaded, std::string_view unit_name, std::string& error
+) {
+    tdf::Block* info = first_unit_info(tdf::editable_root(loaded.document.get()));
+    if (info == nullptr) {
+        error = loaded.path + ": the unit has no UNITINFO";
+        return false;
+    }
+    return write_field(loaded.document.get(), info, "UnitName", unit_name, error);
+}
+
+/// A path for a unit file. The incoming folder and extension stay when they
+/// name the layout's unit directory, so `units/RGBOT.fbi` stores a renamed
+/// unit as `units/RGBOT_2.fbi`.
+std::string unit_store_path(
+    std::string_view resource, std::string_view unit_name, const defs::DataLayout& layout
+) {
+    const std::string slashed_resource = slashed(resource);
+    const std::size_t units = static_cast<std::size_t>(defs::DataDirectory::units);
+    const auto slash = slashed_resource.find_last_of('/');
+    const std::string_view folder = slash == std::string::npos
+                                        ? std::string_view{}
+                                        : std::string_view{slashed_resource}.substr(0, slash);
+    const std::string_view file = slash == std::string::npos
+                                      ? std::string_view{slashed_resource}
+                                      : std::string_view{slashed_resource}.substr(slash + 1);
+    const auto dot = file.find_last_of('.');
+    const std::string_view extension =
+        dot == std::string_view::npos ? std::string_view{} : file.substr(dot + 1);
+    std::string path;
+    if (same_text(folder, layout.directories[units]) &&
+        same_text(extension, layout.unit_extension)) {
+        path.assign(folder);
+        path.push_back('/');
+        path.append(unit_name);
+        path.push_back('.');
+        path.append(extension);
+        return path;
+    }
+    path = layout.directories[units];
+    path.push_back('/');
+    path.append(unit_name);
+    path.push_back('.');
+    path.append(layout.unit_extension);
+    return path;
+}
+
+/// Parses `text` into `path` and stores the unit under `unit_name`.
+bool place_renamed_unit(
+    rules::DocumentSet& documents,
+    Collections& collections,
+    const std::string& path,
+    std::string_view text,
+    std::string_view unit_name,
+    std::string& error
+) {
+    if (rules::LoadedDocument* holding = documents.find(path)) {
+        if (!holding->removed) {
+            error = path + ": already holds a unit";
+            return false;
+        }
+        if (!revive_document(*holding, text, collections, error))
+            return false;
+        return set_stored_unit_name(*holding, unit_name, error);
+    }
+    if (!documents.add(path, text, &error))
+        return false;
+    rules::LoadedDocument* created = documents.find(path);
+    if (created == nullptr) {
+        error = path + ": the unit could not be added";
+        return false;
+    }
+    created->added = true;
+    return set_stored_unit_name(*created, unit_name, error);
+}
+
+/// Points weapon fields on this block, and its children, at private names
+/// this mutator assigned.
+bool rewire_weapon_fields(
+    tdf::Document* document, tdf::Block* block, Collections& collections, std::string& error
+) {
+    if (block == nullptr)
+        return true;
+    const uint32_t props = tdf::property_count(block);
+    std::vector<std::pair<std::string, std::string>> fields;
+    fields.reserve(props);
+    for (uint32_t prop_index = 0; prop_index < props; ++prop_index) {
+        const char* key = tdf::property_key_at(block, static_cast<int32_t>(prop_index));
+        if (key == nullptr || !weapon_reference_key(key))
+            continue;
+        const char* value = tdf::find_value(block, key);
+        if (value == nullptr)
+            continue;
+        const std::string mapped = collections.private_name_of(true, value);
+        if (mapped.empty())
+            continue;
+        fields.emplace_back(key, mapped);
+    }
+    for (const std::pair<std::string, std::string>& field : fields) {
+        if (!write_field(document, block, field.first, field.second, error))
+            return false;
+    }
+    const uint32_t children = tdf::child_count(block);
+    for (uint32_t child_index = 0; child_index < children; ++child_index) {
+        if (!rewire_weapon_fields(
+                document, tdf::editable_child(block, child_index), collections, error
+            ))
+            return false;
+    }
+    return true;
+}
+
+/// One field of a block, or an empty string when the key is absent.
+std::string block_field(const tdf::Block* block, const char* key) {
+    const char* value = block != nullptr ? tdf::find_value(block, key) : nullptr;
+    if (value == nullptr)
+        return {};
+    return std::string{value};
+}
+
+/// A download entry found by its builder and unit.
+struct MenuAt {
+    /// Document path. Empty when no entry matches.
+    std::string path;
+    /// Section name. Empty when no entry matches.
+    std::string name;
+    /// The section. Null when no entry matches.
+    tdf::Block* section{};
+};
+
+/// The first download entry whose builder and unit match, ignoring ASCII case.
+///
+/// An entry with an empty builder or an empty unit is not a button. A
+/// document a hook removed is not searched.
+MenuAt find_menu_button(
+    rules::DocumentSet& documents,
+    const defs::DataLayout& layout,
+    std::string_view builder,
+    std::string_view unit
+) {
+    MenuAt found;
+    if (builder.empty() || unit.empty())
+        return found;
+    const std::size_t download = static_cast<std::size_t>(defs::DataDirectory::download);
+    const std::vector<std::size_t> docs =
+        documents.documents_in(layout.directories[download], ".tdf", false);
+    for (const std::size_t doc_index : docs) {
+        rules::LoadedDocument& loaded = documents.at(doc_index);
+        tdf::Block* root = tdf::editable_root(loaded.document.get());
+        if (root == nullptr)
+            continue;
+        const uint32_t sections = tdf::child_count(root);
+        for (uint32_t section_index = 0; section_index < sections; ++section_index) {
+            tdf::Block* block = tdf::editable_child(root, section_index);
+            if (block == nullptr || block->name == nullptr || block->name[0] == '\0')
+                continue;
+            if (!same_text(block_field(block, "UNITMENU"), builder) ||
+                !same_text(block_field(block, "UNITNAME"), unit))
+                continue;
+            found.path = loaded.path;
+            found.name = block->name;
+            found.section = block;
+            return found;
+        }
+    }
+    return found;
+}
+
+/// True when some download file's first section marks `unit` downloadable.
+bool unit_is_downloadable(
+    rules::DocumentSet& documents, const defs::DataLayout& layout, std::string_view unit
+) {
+    if (unit.empty())
+        return false;
+    const std::size_t download = static_cast<std::size_t>(defs::DataDirectory::download);
+    const std::vector<std::size_t> docs =
+        documents.documents_in(layout.directories[download], ".tdf", false);
+    for (const std::size_t doc_index : docs) {
+        const tdf::Block* root = tdf::editable_root(documents.at(doc_index).document.get());
+        const tdf::Block* first = root != nullptr ? tdf::child_at(root, 0) : nullptr;
+        if (first == nullptr)
+            continue;
+        if (!same_text(block_field(first, "UNITNAME"), unit))
+            continue;
+        if (block_field(first, "UNITMENU").empty())
+            continue;
+        return true;
+    }
+    return false;
+}
+
+/// `download/<unit>.tdf`, or `download/<unit>-<k>.tdf` with the first free k from 2.
+std::string fresh_download_path(
+    rules::DocumentSet& documents, const defs::DataLayout& layout, std::string_view unit
+) {
+    std::string base = layout.directories[static_cast<std::size_t>(defs::DataDirectory::download)];
+    base.push_back('/');
+    base.append(unit);
+    for (int suffix = 1; suffix < 10000; ++suffix) {
+        std::string candidate = base;
+        if (suffix > 1) {
+            candidate.push_back('-');
+            candidate.append(std::to_string(suffix));
+        }
+        candidate.append(".tdf");
+        const rules::LoadedDocument* holding = documents.find(candidate);
+        if (holding != nullptr && !holding->removed)
+            continue;
+        return candidate;
+    }
+    return {};
+}
+
+/// A placeholder section. An empty UNITMENU marks nobody downloadable.
+bool write_menu_placeholder(rules::LoadedDocument& loaded, tdf::Block* root, std::string& error) {
+    std::string stored = "PLACEHOLDER";
+    if (tdf::editable_child(root, stored) != nullptr) {
+        const auto taken = [&](std::string_view candidate) {
+            if (!record_name_ok(candidate))
+                return true;
+            return tdf::editable_child(root, std::string{candidate}) != nullptr;
+        };
+        const std::optional<std::string> renamed = private_record_name(stored, taken);
+        if (!renamed.has_value()) {
+            error = stored + ": no free name";
+            return false;
+        }
+        stored = *renamed;
+    }
+    tdf::EditStatus status = tdf::EditStatus::ok;
+    tdf::Block* made = tdf::add_child(loaded.document.get(), root, stored, &status);
+    if (made == nullptr) {
+        error = status == tdf::EditStatus::ok ? "the download entry could not be added"
+                                              : tdf::edit_status_message(status);
+        return false;
+    }
+    return write_field(loaded.document.get(), made, "UNITMENU", "", error) &&
+           write_field(loaded.document.get(), made, "MENU", "0", error) &&
+           write_field(loaded.document.get(), made, "BUTTON", "0", error) &&
+           write_field(loaded.document.get(), made, "UNITNAME", "", error);
+}
+
+/// The download file a new button is appended to.
+///
+/// The loader reads five sections of a file. A file already at that cap
+/// spills. A spill file this run opened for the same unit is reused while
+/// it still has room. A new spill file starts with a placeholder when the
+/// unit is not already downloadable, so the loader marks nobody.
+rules::LoadedDocument* menu_destination(
+    rules::DocumentSet& documents,
+    const defs::DataLayout& layout,
+    const std::string& path,
+    std::string_view unit,
+    Collections& collections,
+    std::string& error
+) {
+    rules::LoadedDocument* loaded = ensure_document(documents, path, collections, error);
+    if (loaded == nullptr)
+        return nullptr;
+    tdf::Block* root = tdf::editable_root(loaded->document.get());
+    if (root == nullptr) {
+        error = path + ": the download file has no root";
+        return nullptr;
+    }
+    if (tdf::child_count(root) < defs::download_menu_entries)
+        return loaded;
+    for (const Collections::MenuSpill& spill : collections.menu_spills()) {
+        if (!same_text(spill.unit, unit))
+            continue;
+        rules::LoadedDocument* earlier = documents.find(spill.path);
+        if (earlier == nullptr || earlier->removed)
+            continue;
+        tdf::Block* spill_root = tdf::editable_root(earlier->document.get());
+        if (spill_root == nullptr)
+            continue;
+        if (tdf::child_count(spill_root) < defs::download_menu_entries)
+            return earlier;
+    }
+    const std::string spill_unit = unit.empty() ? std::string{"entry"} : std::string{unit};
+    const std::string spill_path = fresh_download_path(documents, layout, spill_unit);
+    if (spill_path.empty()) {
+        error = spill_unit + ": no free download file";
+        return nullptr;
+    }
+    const bool marked = unit_is_downloadable(documents, layout, unit);
+    rules::LoadedDocument* created = ensure_document(documents, spill_path, collections, error);
+    if (created == nullptr)
+        return nullptr;
+    tdf::Block* created_root = tdf::editable_root(created->document.get());
+    if (created_root == nullptr) {
+        error = spill_path + ": the download file has no root";
+        return nullptr;
+    }
+    if (!marked && !write_menu_placeholder(*created, created_root, error))
+        return nullptr;
+    collections.note_menu_spill(spill_unit, created->path);
+    return created;
+}
+
 /// Reads one unit FBI into the document set. No UNITINFO is left unread.
+///
+/// Replace writes over the unit of the same name. Add shares a record that
+/// matches and stores a different one under a private name, leaving the
+/// existing unit where it was. The display name is not changed.
 bool apply_unit_file(
     rules::DocumentSet& documents,
     ConflictReport& report,
@@ -2444,8 +2859,81 @@ bool apply_unit_file(
         note_unread(report, slashed(record.path));
         return true;
     }
+    const bool adding = collections.clash_mode() == oamut::ClashMode::add;
     const UnitAt existing = find_unit(documents, layout, name);
+    const RecordFieldMap map_weapons = [&](std::string_view key, std::string_view value) {
+        if (!weapon_reference_key(key))
+            return std::string{value};
+        const std::string mapped = collections.private_name_of(true, value);
+        if (mapped.empty())
+            return std::string{value};
+        return mapped;
+    };
     if (existing.section != nullptr) {
+        if (adding && records_identical(existing.section, info, false, &map_weapons)) {
+            touch_record(
+                touches, existing.path, mutator, Collection::units, RecordFate::shared, name
+            );
+            return true;
+        }
+        if (adding) {
+            const auto taken = [&](std::string_view candidate) {
+                if (!record_name_ok(candidate))
+                    return true;
+                if (find_unit(documents, layout, candidate).section != nullptr)
+                    return true;
+                const std::string candidate_path = unit_store_path(record.path, candidate, layout);
+                const rules::LoadedDocument* holding = documents.find(candidate_path);
+                return holding != nullptr && !holding->removed;
+            };
+            const std::optional<std::string> renamed = private_record_name(name, taken);
+            if (!renamed.has_value()) {
+                error = name + ": no free name";
+                return false;
+            }
+            const std::string path = unit_store_path(record.path, *renamed, layout);
+            if (!place_renamed_unit(documents, collections, path, text, *renamed, error))
+                return false;
+            const rules::LoadedDocument* placed = documents.find(path);
+            const std::string stored_path = placed != nullptr ? placed->path : path;
+            const char* object_name = tdf::find_value(info, "Objectname");
+            const bool omitted = object_name == nullptr || object_name[0] == '\0';
+            const std::string model = unit_model_of(info, name);
+            const bool move_model = same_text(model, name);
+            if (move_model || omitted) {
+                rules::LoadedDocument* placed_doc = documents.find(stored_path);
+                tdf::Block* placed_info =
+                    placed_doc != nullptr
+                        ? first_unit_info(tdf::editable_root(placed_doc->document.get()))
+                        : nullptr;
+                const std::string written = move_model ? *renamed : model;
+                if (placed_doc == nullptr || placed_info == nullptr ||
+                    !write_field(
+                        placed_doc->document.get(), placed_info, "Objectname", written, error
+                    )) {
+                    if (error.empty())
+                        error = stored_path + ": the unit disappeared";
+                    return false;
+                }
+            }
+            Collections::UnitFileShift shift;
+            shift.mutator = mutator;
+            shift.asked = name;
+            shift.stored = *renamed;
+            shift.move_model = move_model;
+            collections.note_unit_file_shift(std::move(shift));
+            collections.note_rename(false, name, *renamed);
+            touch_record(
+                touches,
+                stored_path,
+                mutator,
+                Collection::units,
+                RecordFate::renamed,
+                *renamed,
+                name
+            );
+            return true;
+        }
         rules::LoadedDocument* loaded = documents.find(existing.path);
         if (loaded == nullptr) {
             error = existing.path + ": the unit disappeared";
@@ -2453,7 +2941,7 @@ bool apply_unit_file(
         }
         if (!replace_block(loaded->document.get(), existing.section, info, error))
             return false;
-        touch_record(touches, loaded->path, mutator, Collection::units, false, name);
+        touch_record(touches, loaded->path, mutator, Collection::units, RecordFate::replaced, name);
         return true;
     }
     std::string path = slashed(record.path);
@@ -2471,7 +2959,7 @@ bool apply_unit_file(
         }
         if (!revive_document(*holding, text, collections, error))
             return false;
-        touch_record(touches, holding->path, mutator, Collection::units, true, name);
+        touch_record(touches, holding->path, mutator, Collection::units, RecordFate::added, name);
         return true;
     }
     if (!documents.add(path, text, &error))
@@ -2482,13 +2970,66 @@ bool apply_unit_file(
         return false;
     }
     created->added = true;
-    touch_record(touches, created->path, mutator, Collection::units, true, name);
+    touch_record(touches, created->path, mutator, Collection::units, RecordFate::added, name);
     return true;
 }
 
-/// Reads each weapon section. A name the mod already has is replaced in
-/// place and keeps the mod's id. A name a mutator already brought is replaced
-/// and the later mutator owns the request. A new name is appended.
+/// Appends one weapon section to the mutator's weapon file and remembers it.
+bool append_weapon_section(
+    rules::DocumentSet& documents,
+    Collections& collections,
+    const std::string& path,
+    std::string_view section_name,
+    const tdf::Block* block,
+    uint16_t mutator,
+    std::vector<BroughtWeapon>& brought,
+    std::vector<RecordTouch>& touches,
+    RecordFate fate,
+    std::string asked,
+    std::string& error
+) {
+    rules::LoadedDocument* loaded = ensure_document(documents, path, collections, error);
+    if (loaded == nullptr)
+        return false;
+    tdf::Block* dest_root = tdf::editable_root(loaded->document.get());
+    tdf::EditStatus status = tdf::EditStatus::ok;
+    tdf::Block* made =
+        dest_root != nullptr
+            ? tdf::add_child(loaded->document.get(), dest_root, section_name, &status)
+            : nullptr;
+    if (made == nullptr) {
+        error = status == tdf::EditStatus::ok ? "the weapon could not be added"
+                                              : tdf::edit_status_message(status);
+        return false;
+    }
+    if (!transfer_properties(loaded->document.get(), made, block, error) ||
+        !transfer_children(loaded->document.get(), made, block, error))
+        return false;
+    BroughtWeapon weapon;
+    weapon.name = std::string{section_name};
+    weapon.mutator = mutator;
+    weapon.path = loaded->path;
+    brought.push_back(std::move(weapon));
+    touch_record(
+        touches,
+        loaded->path,
+        mutator,
+        Collection::weapons,
+        fate,
+        std::string{section_name},
+        std::move(asked)
+    );
+    return true;
+}
+
+/// Reads each weapon section.
+///
+/// Replace writes over the section of the same name. A section the mod
+/// already had keeps the mod's id. A section a mutator already brought is
+/// replaced and the later mutator owns the request. Add shares a section
+/// that matches and stores a different one under a private name on this
+/// mutator's file. A new name is appended. The whole file is added only when
+/// none of its names already exist.
 bool apply_weapon_file(
     rules::DocumentSet& documents,
     const defs::DataLayout& layout,
@@ -2517,6 +3058,7 @@ bool apply_weapon_file(
             clash = true;
     }
     const std::string path = slashed(record.path);
+    const bool adding = collections.clash_mode() == oamut::ClashMode::add;
     if (!clash) {
         if (!documents.add(path, text, &error))
             return false;
@@ -2532,7 +3074,9 @@ bool apply_weapon_file(
             weapon.mutator = mutator;
             weapon.path = created->path;
             brought.push_back(std::move(weapon));
-            touch_record(touches, created->path, mutator, Collection::weapons, true, name);
+            touch_record(
+                touches, created->path, mutator, Collection::weapons, RecordFate::added, name
+            );
         }
         return true;
     }
@@ -2542,6 +3086,41 @@ bool apply_weapon_file(
         if (block == nullptr || block->name == nullptr || block->name[0] == '\0')
             continue;
         const std::string name = block->name;
+        const WeaponAt present = find_weapon(documents, layout, name);
+        if (present.section != nullptr && adding) {
+            if (records_identical(present.section, block, true)) {
+                touch_record(
+                    touches, present.path, mutator, Collection::weapons, RecordFate::shared, name
+                );
+                continue;
+            }
+            const auto taken = [&](std::string_view candidate) {
+                if (!record_name_ok(candidate))
+                    return true;
+                return find_weapon(documents, layout, candidate).section != nullptr;
+            };
+            const std::optional<std::string> renamed = private_record_name(name, taken);
+            if (!renamed.has_value()) {
+                error = name + ": no free name";
+                return false;
+            }
+            collections.note_rename(true, name, *renamed);
+            if (!append_weapon_section(
+                    documents,
+                    collections,
+                    path,
+                    *renamed,
+                    block,
+                    mutator,
+                    brought,
+                    touches,
+                    RecordFate::renamed,
+                    name,
+                    error
+                ))
+                return false;
+            continue;
+        }
         const std::size_t owned = brought_index(brought, name);
         if (owned < brought.size()) {
             rules::LoadedDocument* loaded = documents.find(brought[owned].path);
@@ -2558,7 +3137,9 @@ bool apply_weapon_file(
             brought[owned].mutator = mutator;
             brought[owned].path = loaded->path;
             brought[owned].name = name;
-            touch_record(touches, loaded->path, mutator, Collection::weapons, false, name);
+            touch_record(
+                touches, loaded->path, mutator, Collection::weapons, RecordFate::replaced, name
+            );
             continue;
         }
         const WeaponAt existing = find_weapon(documents, layout, name);
@@ -2590,42 +3171,42 @@ bool apply_weapon_file(
                 error = "the weapon id could not be restored";
                 return false;
             }
-            touch_record(touches, loaded->path, mutator, Collection::weapons, false, name);
+            touch_record(
+                touches, loaded->path, mutator, Collection::weapons, RecordFate::replaced, name
+            );
             continue;
         }
-        rules::LoadedDocument* loaded = ensure_document(documents, path, collections, error);
-        if (loaded == nullptr)
+        if (!append_weapon_section(
+                documents,
+                collections,
+                path,
+                name,
+                block,
+                mutator,
+                brought,
+                touches,
+                RecordFate::added,
+                {},
+                error
+            ))
             return false;
-        tdf::Block* dest_root = tdf::editable_root(loaded->document.get());
-        tdf::EditStatus status = tdf::EditStatus::ok;
-        tdf::Block* made = dest_root != nullptr
-                               ? tdf::add_child(loaded->document.get(), dest_root, name, &status)
-                               : nullptr;
-        if (made == nullptr) {
-            error = status == tdf::EditStatus::ok ? "the weapon could not be added"
-                                                  : tdf::edit_status_message(status);
-            return false;
-        }
-        if (!transfer_properties(loaded->document.get(), made, block, error) ||
-            !transfer_children(loaded->document.get(), made, block, error))
-            return false;
-        BroughtWeapon weapon;
-        weapon.name = name;
-        weapon.mutator = mutator;
-        weapon.path = loaded->path;
-        brought.push_back(std::move(weapon));
-        touch_record(touches, loaded->path, mutator, Collection::weapons, true, name);
     }
     return true;
 }
 
-/// Reads each download section into that file. A section name replaces only
-/// the same name in the same path.
+/// Reads each download section. An entry is its builder and its unit, not its
+/// section name. The same button is replaced in place and keeps the section
+/// name already stored. A unit or builder this mutator renamed is written
+/// under the private name before the button is matched, so it does not
+/// replace the original unit's button or land on the original builder. A
+/// new button whose section name is already used in that destination file
+/// takes a private section name. A button past the file's fifth section
+/// spills to another download file.
 bool apply_download_file(
     rules::DocumentSet& documents,
     ConflictReport& report,
+    const defs::DataLayout& layout,
     const RecordFile& record,
-    std::string_view text,
     const tdf::Block* root,
     uint16_t mutator,
     std::vector<RecordTouch>& touches,
@@ -2635,57 +3216,86 @@ bool apply_download_file(
     (void)report;
     const std::string path = slashed(record.path);
     const uint32_t sections = tdf::child_count(root);
-    if (documents.find(path) == nullptr) {
-        if (!documents.add(path, text, &error))
-            return false;
-        rules::LoadedDocument* created = documents.find(path);
-        if (created == nullptr) {
-            error = path + ": the download file could not be added";
-            return false;
-        }
-        created->added = true;
-        for (uint32_t index = 0; index < sections; ++index) {
-            const tdf::Block* block = tdf::child_at(root, index);
-            if (block == nullptr || block->name == nullptr || block->name[0] == '\0')
-                continue;
-            touch_record(touches, created->path, mutator, Collection::menus, true, block->name);
-        }
-        return true;
-    }
-    rules::LoadedDocument* loaded = documents.find(path);
-    if (loaded == nullptr) {
-        error = path + ": the download file disappeared";
-        return false;
-    }
-    if (loaded->removed && !revive_document(*loaded, "\n", collections, error))
-        return false;
-    tdf::Block* dest_root = tdf::editable_root(loaded->document.get());
-    if (dest_root == nullptr) {
-        error = path + ": the download file has no root";
-        return false;
-    }
-    for (uint32_t index = 0; index < sections; ++index) {
-        const tdf::Block* block = tdf::child_at(root, index);
+    for (uint32_t section_index = 0; section_index < sections; ++section_index) {
+        const tdf::Block* block = tdf::child_at(root, section_index);
         if (block == nullptr || block->name == nullptr || block->name[0] == '\0')
             continue;
-        const std::string name = block->name;
-        tdf::Block* existing = tdf::editable_child(dest_root, name);
-        if (existing != nullptr) {
-            if (!replace_block(loaded->document.get(), existing, block, error))
+        std::string builder = block_field(block, "UNITMENU");
+        const std::string mapped_builder = collections.private_name_of(false, builder);
+        if (!mapped_builder.empty())
+            builder = mapped_builder;
+        std::string unit = block_field(block, "UNITNAME");
+        const std::string mapped = collections.private_name_of(false, unit);
+        if (!mapped.empty())
+            unit = mapped;
+        const MenuAt button = find_menu_button(documents, layout, builder, unit);
+        if (button.section != nullptr) {
+            rules::LoadedDocument* loaded = documents.find(button.path);
+            if (loaded == nullptr) {
+                error = button.path + ": the download file disappeared";
                 return false;
-            touch_record(touches, loaded->path, mutator, Collection::menus, false, name);
+            }
+            if (!replace_block(loaded->document.get(), button.section, block, error))
+                return false;
+            if (!mapped_builder.empty() &&
+                !write_field(
+                    loaded->document.get(), button.section, "UNITMENU", mapped_builder, error
+                ))
+                return false;
+            if (!mapped.empty() &&
+                !write_field(loaded->document.get(), button.section, "UNITNAME", mapped, error))
+                return false;
+            touch_record(
+                touches, loaded->path, mutator, Collection::menus, RecordFate::replaced, button.name
+            );
             continue;
         }
+        rules::LoadedDocument* loaded =
+            menu_destination(documents, layout, path, unit, collections, error);
+        if (loaded == nullptr)
+            return false;
+        tdf::Block* dest_root = tdf::editable_root(loaded->document.get());
+        if (dest_root == nullptr) {
+            error = loaded->path + ": the download file has no root";
+            return false;
+        }
+        std::string stored = block->name;
+        std::string asked;
+        RecordFate fate = RecordFate::added;
+        if (tdf::editable_child(dest_root, stored) != nullptr) {
+            const auto taken = [&](std::string_view candidate) {
+                if (!record_name_ok(candidate))
+                    return true;
+                return tdf::editable_child(dest_root, candidate) != nullptr;
+            };
+            const std::optional<std::string> renamed = private_record_name(stored, taken);
+            if (!renamed.has_value()) {
+                error = stored + ": no free name";
+                return false;
+            }
+            asked = stored;
+            stored = *renamed;
+            fate = RecordFate::renamed;
+        }
         tdf::EditStatus status = tdf::EditStatus::ok;
-        tdf::Block* made = tdf::add_child(loaded->document.get(), dest_root, name, &status);
+        tdf::Block* made = tdf::add_child(loaded->document.get(), dest_root, stored, &status);
         if (made == nullptr) {
-            error = tdf::edit_status_message(status);
+            error = status == tdf::EditStatus::ok ? "the download entry could not be added"
+                                                  : tdf::edit_status_message(status);
             return false;
         }
         if (!transfer_properties(loaded->document.get(), made, block, error) ||
             !transfer_children(loaded->document.get(), made, block, error))
             return false;
-        touch_record(touches, loaded->path, mutator, Collection::menus, true, name);
+        if (!mapped_builder.empty() &&
+            !write_field(loaded->document.get(), made, "UNITMENU", mapped_builder, error))
+            return false;
+        if (!mapped.empty() &&
+            !write_field(loaded->document.get(), made, "UNITNAME", mapped, error))
+            return false;
+        touch_record(
+            touches, loaded->path, mutator, Collection::menus, fate, stored, std::move(asked)
+        );
     }
     return true;
 }
@@ -2729,12 +3339,74 @@ bool apply_record_file(
         );
     if (kind == RecordFileKind::download)
         return apply_download_file(
-            documents, report, record, text, root, mutator, touches, collections, error
+            documents, report, layout, record, root, mutator, touches, collections, error
         );
     return true;
 }
 
-/// Applies one mutator's record snapshots. Other mutators' files wait.
+/// Applies the record files of one kind that belong to this mutator.
+bool apply_kind(
+    rules::DocumentSet& documents,
+    ConflictReport& report,
+    const defs::DataLayout& layout,
+    const std::vector<RecordFile>& records,
+    std::string_view mutator_id,
+    uint16_t mutator,
+    RecordFileKind kind,
+    std::vector<BroughtWeapon>& brought,
+    std::vector<RecordTouch>& touches,
+    Collections& collections,
+    std::string& error
+) {
+    for (const RecordFile& record : records) {
+        if (record.mutator != mutator_id)
+            continue;
+        if (record_file_kind(record.path, layout) != kind)
+            continue;
+        if (!apply_record_file(
+                documents, report, layout, record, mutator, brought, touches, collections, error
+            ))
+            return false;
+    }
+    return true;
+}
+
+/// Points weapon fields on units this mutator brought at weapons it renamed.
+///
+/// A shared unit is the record already there, so its fields stay.
+bool rewire_brought_units(
+    rules::DocumentSet& documents,
+    const defs::DataLayout& layout,
+    uint16_t mutator,
+    const std::vector<RecordTouch>& touches,
+    Collections& collections,
+    std::string& error
+) {
+    for (const RecordTouch& touch : touches) {
+        if (touch.mutator != mutator || touch.collection != Collection::units)
+            continue;
+        if (touch.fate == RecordFate::shared)
+            continue;
+        const UnitAt unit = find_unit(documents, layout, touch.record);
+        if (unit.section == nullptr) {
+            error = touch.path + ": " + touch.record + " disappeared";
+            return false;
+        }
+        rules::LoadedDocument* loaded = documents.find(unit.path);
+        if (loaded == nullptr) {
+            error = unit.path + ": the unit disappeared";
+            return false;
+        }
+        if (!rewire_weapon_fields(loaded->document.get(), unit.section, collections, error))
+            return false;
+    }
+    return true;
+}
+
+/// Applies one mutator's record snapshots. Weapons land before units, so a
+/// renamed weapon is known when that mutator's units are rewired. Download
+/// entries are last, so a renamed unit's button uses the private name.
+/// Other mutators' files wait.
 bool apply_mutator_records(
     rules::DocumentSet& documents,
     ConflictReport& report,
@@ -2747,15 +3419,54 @@ bool apply_mutator_records(
     Collections& collections,
     std::string& error
 ) {
-    for (const RecordFile& record : records) {
-        if (record.mutator != mutator_id)
-            continue;
-        if (!apply_record_file(
-                documents, report, layout, record, mutator, brought, touches, collections, error
-            ))
-            return false;
-    }
-    return true;
+    const std::size_t before = touches.size();
+    if (!apply_kind(
+            documents,
+            report,
+            layout,
+            records,
+            mutator_id,
+            mutator,
+            RecordFileKind::weapon,
+            brought,
+            touches,
+            collections,
+            error
+        ))
+        return false;
+    if (!apply_kind(
+            documents,
+            report,
+            layout,
+            records,
+            mutator_id,
+            mutator,
+            RecordFileKind::unit,
+            brought,
+            touches,
+            collections,
+            error
+        ))
+        return false;
+    std::vector<RecordTouch> own_units;
+    own_units.reserve(touches.size() - before);
+    for (std::size_t touch_index = before; touch_index < touches.size(); ++touch_index)
+        own_units.push_back(touches[touch_index]);
+    if (!rewire_brought_units(documents, layout, mutator, own_units, collections, error))
+        return false;
+    return apply_kind(
+        documents,
+        report,
+        layout,
+        records,
+        mutator_id,
+        mutator,
+        RecordFileKind::download,
+        brought,
+        touches,
+        collections,
+        error
+    );
 }
 
 /// One record the pass has already seen, so a later file can name who brought it.
@@ -2802,25 +3513,117 @@ struct RecordPair {
     }
 };
 
-/// Journals every record a file added or replaced.
+/// True when the run plays a mod rather than the base game.
+///
+/// The base game is named by its own id, or by a mod id equal to its game id.
+bool plays_mod(const ModIdentity& mod) {
+    return !mod.id.empty() && mod.id != oa::data::mod_profile::base_game_id &&
+           !same_text(mod.id, mod.game);
+}
+
+/// Where a record that no mutator brought came from: "the mod" when the run
+/// plays a mod and the mod's folder serves the record's file, else "the game".
+///
+/// A mod is the first of the store's folders when the store layers several,
+/// and the whole store when it has one. A file from an archive is the mod's
+/// when the archive sits in the mod's folder.
+///
+/// @param store the store, with the pass's layer mounted
+/// @param mod the mod the run plays
+/// @param path the record's document path
+/// @return "the mod" or "the game"
+std::string base_owner(const oa::AssetStore& store, const ModIdentity& mod, std::string_view path) {
+    const std::string game{"the game"};
+    if (!plays_mod(mod))
+        return game;
+    const std::span<const std::filesystem::path> roots = store.loose_roots();
+    if (roots.size() <= 1)
+        return "the mod";
+    try {
+        const oa::Provider provider = store.provider(path);
+        if (provider.kind != oa::ProviderKind::loose && provider.kind != oa::ProviderKind::archive)
+            return game;
+        const std::filesystem::path relative =
+            provider.path.lexically_normal().lexically_relative(roots.front().lexically_normal());
+        if (!relative.empty() && *relative.begin() != "..")
+            return "the mod";
+    } catch (const std::exception&) {
+    }
+    return game;
+}
+
+/// The mutators that cloned each unit or weapon, in the order they cloned it.
+///
+/// The key is the record's folded name, and true for a weapon.
+using CloneOwners =
+    std::map<std::pair<bool, std::string>, std::vector<std::pair<uint16_t, std::size_t>>>;
+
+/// Indexes the pass's clones by record, with their mutator and their place in the list.
+CloneOwners clone_owners(std::span<const CloneRecord> clones, const std::vector<std::string>& ids) {
+    CloneOwners owners;
+    for (std::size_t index = 0; index < clones.size(); ++index) {
+        const std::optional<uint16_t> mutator = index_of(ids, clones[index].mutator);
+        if (!mutator.has_value())
+            continue;
+        owners[{clones[index].weapon, fold_copy(clones[index].name)}].emplace_back(*mutator, index);
+    }
+    return owners;
+}
+
+/// The latest clone of a record made before another change, or nothing.
+///
+/// @param owners the pass's clones by record
+/// @param weapon true for a weapon, false for a unit
+/// @param name the record
+/// @param before_mutator only clones by a mutator above this one count
+/// @param before_clone only clones earlier in the list than this count
+/// @return the mutator that made it
+std::optional<uint16_t> earlier_clone(
+    const CloneOwners& owners,
+    bool weapon,
+    std::string_view name,
+    std::size_t before_mutator,
+    std::size_t before_clone
+) {
+    const auto found = owners.find({weapon, fold_copy(name)});
+    if (found == owners.end())
+        return std::nullopt;
+    std::optional<uint16_t> latest;
+    for (const std::pair<uint16_t, std::size_t>& clone : found->second) {
+        if (clone.first < before_mutator && clone.second < before_clone)
+            latest = clone.first;
+    }
+    return latest;
+}
+
+/// Journals every record a file added, replaced, shared or renamed.
 ///
 /// A replacement keeps the record name in `old_text`. When the record is one
-/// an earlier mutator brought, one `value_replaced` note is kept for that
-/// collection and that pair of mutators.
+/// an earlier mutator brought, by a file or by a clone, one `value_replaced`
+/// note is kept for that collection and that pair of mutators. A record no
+/// mutator brought is noted as the game's or the mod's. A share records the
+/// record and does not take it from whoever brought it, and it names no
+/// writer because the document was not changed. A rename records the private
+/// name and leaves the original record with the mutator that already owned it.
 void journal_record_touches(
     Journal& journal,
     ConflictReport& report,
     const std::vector<RecordTouch>& touches,
     const rules::DocumentSet& documents,
     std::vector<std::vector<Writer>>& writers,
-    std::vector<uint8_t>& menus
+    std::vector<uint8_t>& menus,
+    const CloneOwners& clones,
+    const oa::AssetStore& store,
+    const ModIdentity& mod
 ) {
     std::map<SeenRecord, uint16_t> owners;
     std::set<RecordPair> noted;
     for (const RecordTouch& touch : touches) {
-        note_writer(
-            documents, writers, menus, touch.path, touch.mutator, Phase::files, touch.collection
-        );
+        if (touch.fate != RecordFate::shared) {
+            note_writer(
+                documents, writers, menus, touch.path, touch.mutator, Phase::files, touch.collection
+            );
+        }
         JournalEntry entry;
         entry.mutators.push_back(touch.mutator);
         entry.phase = Phase::files;
@@ -2828,8 +3631,15 @@ void journal_record_touches(
         entry.change = Change::added;
         entry.record = touch.record;
         entry.path = touch.path;
-        if (!touch.added)
+        if (touch.fate == RecordFate::replaced)
             entry.old_text = touch.record;
+        else if (touch.fate == RecordFate::shared) {
+            entry.old_text = touch.record;
+            entry.new_text = "shared";
+        } else if (touch.fate == RecordFate::renamed) {
+            entry.old_text = touch.asked;
+            entry.new_text = touch.record;
+        }
         journal.entries.push_back(std::move(entry));
 
         SeenRecord identity;
@@ -2838,10 +3648,50 @@ void journal_record_touches(
         if (touch.collection == Collection::menus)
             identity.path = fold_copy(touch.path);
         const auto found = owners.find(identity);
-        if (!touch.added && found != owners.end() && found->second != touch.mutator) {
+        // A record an earlier mutator's hook cloned is that mutator's, unless
+        // a later mutator's file replaced it since. Records come before hooks
+        // in a mutator's turn, so a clone by the same mutator counts as later.
+        std::optional<uint16_t> owner;
+        if (found != owners.end())
+            owner = found->second;
+        if (touch.collection != Collection::menus) {
+            const std::optional<uint16_t> cloned = earlier_clone(
+                clones,
+                touch.collection == Collection::weapons,
+                touch.record,
+                touch.mutator,
+                std::numeric_limits<std::size_t>::max()
+            );
+            if (cloned.has_value() && (!owner.has_value() || *cloned >= *owner))
+                owner = cloned;
+        }
+        if (touch.fate == RecordFate::shared) {
+            Conflict conflict;
+            conflict.severity = Severity::note;
+            conflict.kind = ConflictKind::record_shared;
+            if (owner.has_value() && *owner != touch.mutator)
+                conflict.mutators.push_back(*owner);
+            conflict.mutators.push_back(touch.mutator);
+            conflict.record = touch.record;
+            conflict.path = touch.path;
+            report.conflicts.push_back(std::move(conflict));
+            continue;
+        }
+        if (touch.fate == RecordFate::renamed) {
+            Conflict conflict;
+            conflict.severity = Severity::note;
+            conflict.kind = ConflictKind::record_renamed;
+            conflict.mutators.push_back(touch.mutator);
+            conflict.record = touch.asked;
+            conflict.detail = touch.record;
+            conflict.path = touch.path;
+            report.conflicts.push_back(std::move(conflict));
+        } else if (
+            touch.fate == RecordFate::replaced && owner.has_value() && *owner != touch.mutator
+        ) {
             RecordPair pair;
             pair.collection = touch.collection;
-            pair.earlier = found->second;
+            pair.earlier = *owner;
             pair.later = touch.mutator;
             if (noted.insert(pair).second) {
                 Conflict conflict;
@@ -2853,6 +3703,15 @@ void journal_record_touches(
                 conflict.path = touch.path;
                 report.conflicts.push_back(std::move(conflict));
             }
+        } else if (touch.fate == RecordFate::replaced && !owner.has_value()) {
+            Conflict conflict;
+            conflict.severity = Severity::note;
+            conflict.kind = ConflictKind::value_replaced;
+            conflict.mutators.push_back(touch.mutator);
+            conflict.record = touch.record;
+            conflict.path = touch.path;
+            conflict.detail = base_owner(store, mod, touch.path);
+            report.conflicts.push_back(std::move(conflict));
         }
         owners.insert_or_assign(std::move(identity), touch.mutator);
     }
@@ -2871,6 +3730,522 @@ void drop_record_entries(oa::MutatorLayerSpec& spec, const defs::DataLayout& lay
         kept.push_back(std::move(entry));
     }
     spec.entries.swap(kept);
+}
+
+/// Points a mutator's own rule selectors at records it renamed.
+///
+/// A named unit or weapon block, and `unitname = is("NAME")` on a unit
+/// target, use the private name. The copy is this mutator's rules only.
+void remap_rule_names(
+    rules::MutatorRules& rules, const Collections& collections, const defs::DataLayout& layout
+) {
+    const std::string& units =
+        layout.directories[static_cast<std::size_t>(defs::DataDirectory::units)];
+    const std::string& weapons =
+        layout.directories[static_cast<std::size_t>(defs::DataDirectory::weapons)];
+    for (rules::RuleSource& source : rules.sources) {
+        for (sm::Block& block : source.rules.blocks) {
+            const bool unit_target = same_text(block.target.folder, units);
+            const bool weapon_target = same_text(block.target.folder, weapons);
+            if (block.selector == sm::Selector::name) {
+                const std::string* mapped = nullptr;
+                if (unit_target)
+                    mapped = collections.renamed_to(false, block.name);
+                else if (weapon_target)
+                    mapped = collections.renamed_to(true, block.name);
+                if (mapped != nullptr)
+                    block.name = *mapped;
+            }
+            if (!unit_target)
+                continue;
+            for (sm::Need& need : block.needs) {
+                if (need.kind != sm::NeedKind::equals)
+                    continue;
+                if (!same_text(need.field, "unitname"))
+                    continue;
+                const std::string* mapped = collections.renamed_to(false, need.text);
+                if (mapped != nullptr)
+                    need.text = *mapped;
+            }
+        }
+    }
+}
+
+/// True when `remainder` is a known suffix of a file keyed by a unit name.
+bool unit_file_remainder(
+    std::string_view folder,
+    std::string_view remainder,
+    const defs::DataLayout& layout,
+    bool move_model
+) {
+    const std::string& pictures =
+        layout.directories[static_cast<std::size_t>(defs::DataDirectory::unitpics)];
+    const std::string& pages =
+        layout.directories[static_cast<std::size_t>(defs::DataDirectory::guis)];
+    if (same_text(folder, "scripts") && same_text(remainder, ".cob"))
+        return true;
+    if (same_text(folder, pictures) && same_text(remainder, ".pcx"))
+        return true;
+    if (move_model && same_text(folder, "objects3d") && same_text(remainder, ".3do"))
+        return true;
+    if (same_text(folder, "anims") && same_text(remainder, "_gadget.gaf"))
+        return true;
+    const auto digits_then = [](std::string_view text, std::string_view extension) {
+        if (text.size() <= extension.size() ||
+            !same_text(text.substr(text.size() - extension.size()), extension))
+            return false;
+        const std::string_view digits = text.substr(0, text.size() - extension.size());
+        if (digits.empty())
+            return false;
+        for (const char character : digits) {
+            if (character < '0' || character > '9')
+                return false;
+        }
+        return true;
+    };
+    if (same_text(folder, "anims") && digits_then(remainder, ".gaf"))
+        return true;
+    return same_text(folder, pages) && digits_then(remainder, ".gui");
+}
+
+/// The private path for a file keyed by `asked`, or empty when it is not one.
+std::string private_unit_path(
+    std::string_view path,
+    std::string_view asked,
+    std::string_view stored,
+    const defs::DataLayout& layout,
+    bool move_model
+) {
+    const std::string slashed_path = slashed(path);
+    const std::size_t slash = slashed_path.find_last_of('/');
+    if (slash == std::string::npos || asked.empty())
+        return {};
+    const std::string_view folder{slashed_path.data(), slash};
+    const std::string_view file{slashed_path.data() + slash + 1, slashed_path.size() - slash - 1};
+    if (file.size() < asked.size() || !same_text(file.substr(0, asked.size()), asked))
+        return {};
+    const std::string_view remainder = file.substr(asked.size());
+    if (!unit_file_remainder(folder, remainder, layout, move_model))
+        return {};
+    std::string dest;
+    dest.reserve(folder.size() + 1 + stored.size() + remainder.size());
+    dest.assign(folder);
+    dest.push_back('/');
+    dest.append(stored);
+    dest.append(remainder);
+    return dest;
+}
+
+/// One file that held a path in the mutator layer.
+///
+/// The files that held one path are listed in the order the mutators
+/// brought them: each file a later mutator displaced, then the file the
+/// spec serves.
+struct PathHolder {
+    /// The path, folded, as the layer keys it.
+    std::string key;
+    /// The path, in the spelling that was read.
+    std::string path;
+    /// The mutator that brought the file.
+    uint16_t mutator{};
+    /// The displaced file, or null for the file the spec serves.
+    const DisplacedFile* displaced{};
+    /// Index in the spec of the file it serves; unused for a displaced file.
+    std::size_t entry{};
+    /// The renaming mutator's own file, served under the private name instead.
+    bool moved{};
+};
+
+/// A path folded the way the layer compares paths.
+std::string path_key(std::string_view path) {
+    std::string key;
+    key.reserve(path.size());
+    for (const char byte : path)
+        key.push_back(fold_path_byte(byte));
+    return key;
+}
+
+/// One copy a renamed unit takes under its private name.
+struct UnitFileCopy {
+    /// The mutator that renamed the unit.
+    uint16_t mutator{};
+    /// The path keyed by the asked name.
+    std::string source;
+    /// The path keyed by the private name.
+    std::string dest;
+    /// The bytes to serve; null when there are none.
+    std::shared_ptr<const std::vector<uint8_t>> bytes;
+    /// The bytes are the game's or the mod's, read beneath the mutator layer.
+    bool beneath{};
+};
+
+/// The bytes a holder's file serves.
+std::shared_ptr<const std::vector<uint8_t>> holder_bytes(
+    const PathHolder& holder, const oa::MutatorLayerSpec& spec, const oa::AssetStore& store
+) {
+    if (holder.displaced != nullptr)
+        return displaced_bytes(*holder.displaced);
+    const oa::MutatorLayerEntry& entry = spec.entries[holder.entry];
+    if (entry.contents != nullptr && !entry.contents->empty())
+        return entry.contents;
+    std::optional<std::vector<uint8_t>> loaded = store.load_file_contents(entry.path);
+    if (!loaded.has_value() || loaded->empty())
+        return nullptr;
+    return std::make_shared<const std::vector<uint8_t>>(std::move(*loaded));
+}
+
+/// The layer entry that serves a displaced file again.
+///
+/// A loose file is read from its host path. A file from an archive is
+/// served from its bytes, since the layer may no longer hold that archive.
+std::optional<oa::MutatorLayerEntry> restored_entry(const DisplacedFile& file) {
+    oa::MutatorLayerEntry entry;
+    entry.path = file.path;
+    entry.owner = file.owner;
+    if (file.kind == oa::MutatorSourceKind::loose) {
+        entry.kind = oa::MutatorSourceKind::loose;
+        entry.host = file.host;
+        return entry;
+    }
+    entry.kind = oa::MutatorSourceKind::contents;
+    entry.contents = displaced_bytes(file);
+    if (entry.contents == nullptr)
+        return std::nullopt;
+    return entry;
+}
+
+/// Reads the game's and the mod's bytes of the paths beneath the mutator layer.
+///
+/// Each copy marked `beneath` is read with the layer swapped for one that
+/// holds only the masks of the renaming mutator and those above it, as the
+/// path stood at that mutator's turn. The layer `spec` is mounted again
+/// afterwards. A copy whose read cannot be made keeps no bytes.
+///
+/// @param store the store, with `spec` mounted
+/// @param spec the layer the pass mounted
+/// @param ids mutator ids, in list order
+/// @param[in,out] copies the planned copies
+/// @param[out] error why the layer could not be mounted again
+/// @return false when the layer could not be mounted again
+bool read_beneath(
+    oa::AssetStore& store,
+    const oa::MutatorLayerSpec& spec,
+    const std::vector<std::string>& ids,
+    std::vector<UnitFileCopy>& copies,
+    std::string& error
+) {
+    const bool mounted = store.mutator_layer_mounted();
+    bool swapped = false;
+    std::vector<uint16_t> done;
+    for (const UnitFileCopy& lead : copies) {
+        if (!lead.beneath || std::find(done.begin(), done.end(), lead.mutator) != done.end())
+            continue;
+        done.push_back(lead.mutator);
+        if (mounted) {
+            oa::MutatorLayerSpec beneath;
+            beneath.label = spec.label.empty() ? std::string{"mutators"} : spec.label;
+            for (const oa::MutatorMask& mask : spec.masks) {
+                const std::optional<uint16_t> owner = index_of(ids, mask.owner);
+                if (owner.has_value() && *owner <= lead.mutator)
+                    beneath.masks.push_back(mask);
+            }
+            bool ready = true;
+            if (beneath.masks.empty())
+                store.unmount_mutator_layer();
+            else
+                ready = store.replace_mutator_layer(std::move(beneath));
+            if (!ready)
+                continue;
+            swapped = true;
+        }
+        for (UnitFileCopy& copy : copies) {
+            if (!copy.beneath || copy.mutator != lead.mutator)
+                continue;
+            std::optional<std::vector<uint8_t>> loaded = store.load_file_contents(copy.source);
+            if (loaded.has_value() && !loaded->empty())
+                copy.bytes = std::make_shared<const std::vector<uint8_t>>(std::move(*loaded));
+        }
+    }
+    if (swapped && !store.replace_mutator_layer(spec, &error)) {
+        if (error.empty())
+            error = "the mutator layer could not be mounted again";
+        return false;
+    }
+    return true;
+}
+
+/// Rewrites the notes that a mutator won `key`, after files moved off it.
+///
+/// A note that names a moved file's mutator goes. A file that displaced a
+/// moved one is noted as winning the path over the file before the moved
+/// one, when there is such a file, in the place of the first note that went.
+///
+/// @param[in,out] notes the files layer's notes
+/// @param ids mutator ids, in list order
+/// @param holders every file that held a path
+/// @param held the indices in `holders` of the files that held `key`, in order
+/// @param key the folded path
+void renote_path(
+    std::vector<FileNote>& notes,
+    const std::vector<std::string>& ids,
+    const std::vector<PathHolder>& holders,
+    const std::vector<std::size_t>& held,
+    const std::string& key
+) {
+    std::vector<FileNote> fresh;
+    std::vector<std::string> moved;
+    const PathHolder* before = nullptr;
+    bool gap = false;
+    for (const std::size_t index : held) {
+        const PathHolder& holder = holders[index];
+        if (holder.moved) {
+            moved.push_back(ids[holder.mutator]);
+            gap = true;
+            continue;
+        }
+        if (before != nullptr && gap && before->mutator != holder.mutator) {
+            FileNote note;
+            note.kind = FileNoteKind::add_replaced;
+            note.path = holder.path;
+            note.mutator = ids[holder.mutator];
+            note.other = ids[before->mutator];
+            fresh.push_back(std::move(note));
+        }
+        before = &holder;
+        gap = false;
+    }
+    const auto names_moved = [&moved](const FileNote& note) {
+        return std::find(moved.begin(), moved.end(), note.mutator) != moved.end() ||
+               std::find(moved.begin(), moved.end(), note.other) != moved.end();
+    };
+    std::vector<FileNote> kept;
+    kept.reserve(notes.size() + fresh.size());
+    bool placed = false;
+    for (FileNote& note : notes) {
+        if (note.kind != FileNoteKind::add_replaced || path_key(note.path) != key ||
+            !names_moved(note)) {
+            kept.push_back(std::move(note));
+            continue;
+        }
+        if (placed)
+            continue;
+        placed = true;
+        for (FileNote& one : fresh)
+            kept.push_back(std::move(one));
+    }
+    notes.swap(kept);
+}
+
+/// Serves a renamed unit's name-keyed files under the private name.
+///
+/// A file the renaming mutator brought for the unit is served under the
+/// private name. When that file still holds the asked path, it leaves it,
+/// and the file it displaced there from a mutator above it is served
+/// again. A file the mutator did not bring is copied as the path stood at
+/// its turn: the latest file a mutator above it brought, else the game's
+/// or the mod's, read beneath the layer. A later mutator's file at the
+/// asked path is the original unit's, and stays there. The notes that a
+/// mutator won such a path are rewritten to name the files that still
+/// hold it.
+///
+/// @param[in,out] spec the layer the pass mounted, changed in place
+/// @param store the store, with `spec` mounted
+/// @param collections the pass's collections, which hold the renames and receive the copies
+/// @param layout directory names
+/// @param ids mutator ids, in list order
+/// @param displaced the files a later mutator displaced, from the files layer
+/// @param[in,out] notes the files layer's notes
+/// @param[out] error why the layer could not be mounted again
+/// @return false when the layer could not be mounted again
+bool redirect_renamed_unit_files(
+    oa::MutatorLayerSpec& spec,
+    oa::AssetStore& store,
+    Collections& collections,
+    const defs::DataLayout& layout,
+    const std::vector<std::string>& ids,
+    std::span<const DisplacedFile> displaced,
+    std::vector<FileNote>& notes,
+    std::string& error
+) {
+    const std::span<const Collections::UnitFileShift> shifts = collections.unit_file_shifts();
+    if (shifts.empty())
+        return true;
+    std::vector<PathHolder> holders;
+    holders.reserve(displaced.size() + spec.entries.size());
+    for (const DisplacedFile& file : displaced) {
+        const std::optional<uint16_t> owner = index_of(ids, file.owner);
+        if (!owner.has_value())
+            continue;
+        PathHolder holder;
+        holder.key = path_key(file.path);
+        holder.path = file.path;
+        holder.mutator = *owner;
+        holder.displaced = &file;
+        holders.push_back(std::move(holder));
+    }
+    for (std::size_t index = 0; index < spec.entries.size(); ++index) {
+        const oa::MutatorLayerEntry& entry = spec.entries[index];
+        const std::optional<uint16_t> owner = index_of(ids, entry.owner);
+        if (entry.kind == oa::MutatorSourceKind::hidden || !owner.has_value())
+            continue;
+        PathHolder holder;
+        holder.key = path_key(entry.path);
+        holder.path = entry.path;
+        holder.mutator = *owner;
+        holder.entry = index;
+        holders.push_back(std::move(holder));
+    }
+    // Displaced files come first, in the order they were displaced, so each
+    // path's list runs from the first file to the one the spec serves.
+    std::map<std::string, std::vector<std::size_t>> held;
+    for (std::size_t index = 0; index < holders.size(); ++index)
+        held[holders[index].key].push_back(index);
+
+    std::vector<UnitFileCopy> copies;
+    std::vector<std::string> moved_keys;
+    for (const Collections::UnitFileShift& shift : shifts) {
+        if (shift.mutator >= ids.size())
+            continue;
+        std::vector<std::string> handled;
+        const auto already = [&](std::string_view path) {
+            const std::string key = path_key(path);
+            return std::find(handled.begin(), handled.end(), key) != handled.end();
+        };
+        const auto plan = [&](const std::string& source,
+                              std::shared_ptr<const std::vector<uint8_t>> bytes,
+                              bool beneath) {
+            const std::string dest =
+                private_unit_path(source, shift.asked, shift.stored, layout, shift.move_model);
+            if (dest.empty())
+                return;
+            UnitFileCopy copy;
+            copy.mutator = shift.mutator;
+            copy.source = source;
+            copy.dest = dest;
+            copy.bytes = std::move(bytes);
+            copy.beneath = beneath;
+            copies.push_back(std::move(copy));
+            handled.push_back(path_key(source));
+        };
+        for (PathHolder& holder : holders) {
+            if (holder.mutator != shift.mutator || holder.moved || already(holder.path))
+                continue;
+            if (private_unit_path(holder.path, shift.asked, shift.stored, layout, shift.move_model)
+                    .empty())
+                continue;
+            plan(holder.path, holder_bytes(holder, spec, store), false);
+            holder.moved = true;
+            moved_keys.push_back(holder.key);
+        }
+        const auto consider = [&](const std::string& source) {
+            if (already(source))
+                return;
+            const auto found = held.find(path_key(source));
+            const PathHolder* earlier = nullptr;
+            bool layer_serves = false;
+            if (found != held.end()) {
+                for (const std::size_t index : found->second) {
+                    const PathHolder& holder = holders[index];
+                    if (holder.displaced == nullptr)
+                        layer_serves = true;
+                    if (!holder.moved && holder.mutator < shift.mutator)
+                        earlier = &holder;
+                }
+            }
+            if (earlier != nullptr) {
+                plan(source, holder_bytes(*earlier, spec, store), false);
+                return;
+            }
+            // The store shows another mutator's file, or hides the path for a
+            // mutator after this one: the game's bytes lie beneath the layer.
+            for (const oa::MutatorMask& mask : spec.masks) {
+                const std::optional<uint16_t> owner = index_of(ids, mask.owner);
+                if (owner.has_value() && *owner > shift.mutator &&
+                    oa::mutator_mask_matches(mask.pattern, source))
+                    layer_serves = true;
+            }
+            if (layer_serves) {
+                plan(source, nullptr, true);
+                return;
+            }
+            std::optional<std::vector<uint8_t>> loaded = store.load_file_contents(source);
+            if (!loaded.has_value() || loaded->empty())
+                return;
+            plan(source, std::make_shared<const std::vector<uint8_t>>(std::move(*loaded)), false);
+        };
+        const std::string& pictures =
+            layout.directories[static_cast<std::size_t>(defs::DataDirectory::unitpics)];
+        const std::string& pages =
+            layout.directories[static_cast<std::size_t>(defs::DataDirectory::guis)];
+        consider("scripts/" + shift.asked + ".COB");
+        consider(pictures + "/" + shift.asked + ".PCX");
+        if (shift.move_model)
+            consider("objects3d/" + shift.asked + ".3DO");
+        consider("anims/" + shift.asked + "_gadget.GAF");
+        const auto probe_page = [&](const std::string& page) {
+            const std::string gui = pages + "/" + shift.asked + page + ".GUI";
+            const std::string anim = "anims/" + shift.asked + page + ".GAF";
+            const bool present = store.file_size(gui) > 0 || store.file_size(anim) > 0;
+            consider(gui);
+            consider(anim);
+            return present;
+        };
+        probe_page("0");
+        for (uint32_t page = 1; page <= 32; ++page) {
+            if (!probe_page(std::to_string(page)))
+                break;
+        }
+    }
+    if (!read_beneath(store, spec, ids, copies, error))
+        return false;
+    for (UnitFileCopy& copy : copies) {
+        if (copy.bytes == nullptr || copy.bytes->empty())
+            continue;
+        ServedCopy served;
+        served.mutator = ids[copy.mutator];
+        served.path = copy.dest;
+        served.source_path = copy.source;
+        served.sentence = "added path ";
+        served.sentence.append(copy.dest);
+        served.sentence.append(", copy of ");
+        served.sentence.append(copy.source);
+        served.bytes = std::move(copy.bytes);
+        collections.add_served_copy(std::move(served));
+    }
+    if (moved_keys.empty())
+        return true;
+
+    // A moved file that the spec served gives the path back to the latest
+    // file it displaced from a mutator above it, when there is one.
+    std::vector<std::optional<oa::MutatorLayerEntry>> replacement(spec.entries.size());
+    std::vector<uint8_t> dropped(spec.entries.size(), 0);
+    for (const PathHolder& holder : holders) {
+        if (!holder.moved || holder.displaced != nullptr)
+            continue;
+        dropped[holder.entry] = 1;
+        const PathHolder* earlier = nullptr;
+        for (const std::size_t index : held[holder.key]) {
+            const PathHolder& other = holders[index];
+            if (other.displaced != nullptr && !other.moved && other.mutator < holder.mutator)
+                earlier = &other;
+        }
+        if (earlier != nullptr)
+            replacement[holder.entry] = restored_entry(*earlier->displaced);
+    }
+    std::vector<oa::MutatorLayerEntry> kept;
+    kept.reserve(spec.entries.size());
+    for (std::size_t index = 0; index < spec.entries.size(); ++index) {
+        if (dropped[index] == 0)
+            kept.push_back(std::move(spec.entries[index]));
+        else if (replacement[index].has_value())
+            kept.push_back(std::move(*replacement[index]));
+    }
+    spec.entries.swap(kept);
+    std::sort(moved_keys.begin(), moved_keys.end());
+    moved_keys.erase(std::unique(moved_keys.begin(), moved_keys.end()), moved_keys.end());
+    for (const std::string& key : moved_keys)
+        renote_path(notes, ids, holders, held[key], key);
+    return true;
 }
 
 /// Fails every mutator still in the pass with an engine error.
@@ -2904,11 +4279,13 @@ bool run_pass(
     MountGuard& guard
 ) {
     const std::size_t count = input.mutators.size();
-    // Destroyed in reverse order: every sandbox closes before the collections
-    // that were pushed into it, the collections go before the documents, and
-    // the listings the sandboxes read from go last.
+    // Destroyed in reverse order: every sandbox closes before the menus and
+    // the collections that were pushed into it. The menus go before the
+    // collections, the collections go before the documents, and the listings
+    // the sandboxes read from are released with the sandboxes.
     rules::DocumentSet documents;
     std::optional<Collections> collections;
+    std::optional<Menus> build_menus;
     std::vector<Listing> listings(count);
     std::vector<std::vector<LoadoutOption>> options(count);
     std::vector<std::optional<host::Sandbox>> sandboxes(count);
@@ -3057,21 +4434,27 @@ bool run_pass(
     std::set<ReplacedField> hook_replaced;
 
     // Each mutator applies the records in its own files, then its rules,
-    // then its units hook and its weapons hook, on the documents the
-    // mutators above it left. The maps entries run after every one of
-    // those, once the pass's other hooks have succeeded and its weapons are
-    // numbered. The first hook that fails ends the pass: no later mutator's
-    // records, rules or hooks run on what it left. A mutator below a failure
-    // the files layer found does not run either.
+    // then its units hook, its weapons hook and its menus hook, on the
+    // documents the mutators above it left. The maps entries run after every
+    // one of those, once the pass's other hooks have succeeded and its
+    // weapons are numbered. The first hook that fails ends the pass: no later
+    // mutator's records, rules or hooks run on what it left. A mutator below
+    // a failure the files layer found does not run either.
     collections.emplace(documents, &layout);
     collections->bind_store(&store);
     collections->keep_weapon_ids(kept_weapons);
+    build_menus.emplace(*collections, store, &layout);
     std::vector<BroughtWeapon> brought;
     std::vector<RecordTouch> touches;
     bool steps_done = true;
     for (std::size_t slot = 0; slot < count && slot < first.slot; ++slot) {
         if (active[slot] == 0)
             continue;
+        collections->clear_renames();
+        collections->set_clash_mode(effective_clash(
+            input.mutators[slot].clashes, input.mutators[slot].manifest.clashes, input.clash_default
+        ));
+        collections->set_clash_active(true);
         std::string record_error;
         if (!apply_mutator_records(
                 documents,
@@ -3090,17 +4473,48 @@ bool run_pass(
             break;
         }
         if (plans[slot].has_rules) {
+            // Only a mutator that renamed a record needs its own copy of the
+            // rules, with its selectors pointed at the private names.
+            const rules::MutatorRules* step_rules = &plans[slot].rules;
+            rules::MutatorRules mapped;
+            if (collections->rename_count() > 0) {
+                mapped = plans[slot].rules;
+                remap_rule_names(mapped, *collections, layout);
+                step_rules = &mapped;
+            }
             rules::ApplyResult step =
-                rules::apply_step(plans[slot].rules, documents, apply_state, apply_options);
+                rules::apply_step(*step_rules, documents, apply_state, apply_options);
+            const std::size_t wrote_from = rule_writes.size();
             for (rules::FieldWrite& write : step.writes)
                 rule_writes.push_back(std::move(write));
             for (const rules::RuleNote& note : step.notes)
                 append_rule_note(report, note, ids, replaced_fields);
+            std::span<rules::FieldWrite> fresh;
+            if (wrote_from < rule_writes.size()) {
+                fresh = std::span<rules::FieldWrite>(
+                    rule_writes.data() + wrote_from, rule_writes.size() - wrote_from
+                );
+            }
+            std::string retarget_error;
+            if (!collections->retarget_renamed_references(fresh, ids[slot], retarget_error)) {
+                first.offer(
+                    slot, Phase::rules, Cause::engine_error, ids[slot] + ": " + retarget_error
+                );
+                steps_done = false;
+                break;
+            }
         }
-        if (plans[slot].units_hook == LUA_NOREF && plans[slot].weapons_hook == LUA_NOREF)
+        // A mutator's renames end with its turn: a later mutator's names, and
+        // the maps phase's, mean the records of those names.
+        if (plans[slot].units_hook == LUA_NOREF && plans[slot].weapons_hook == LUA_NOREF &&
+            plans[slot].menus_hook == LUA_NOREF) {
+            collections->clear_renames();
             continue;
-        if (!sandboxes[slot].has_value())
+        }
+        if (!sandboxes[slot].has_value()) {
+            collections->clear_renames();
             continue;
+        }
         const std::size_t notes_before = collections->notes().size();
         const std::size_t writes_before = collections->writes().size();
         WriteGrant grant;
@@ -3110,6 +4524,7 @@ bool run_pass(
         grant.sides = declares(input.mutators[slot].manifest, oamut::Layer::sides);
         grant.tables = declares(input.mutators[slot].manifest, oamut::Layer::tables);
         collections->begin_mutator(ids[slot], grant);
+        build_menus->begin_mutator(declares(input.mutators[slot].manifest, oamut::Layer::menus));
         ContextView context;
         context.mod = &input.mod;
         context.engine = &input.engine_version;
@@ -3119,8 +4534,9 @@ bool run_pass(
             hook_ok = call_hook(
                 *sandboxes[slot],
                 *collections,
+                *build_menus,
                 plans[slot].units_hook,
-                true,
+                HookWhich::units,
                 context,
                 store,
                 layout,
@@ -3133,8 +4549,24 @@ bool run_pass(
             hook_ok = call_hook(
                 *sandboxes[slot],
                 *collections,
+                *build_menus,
                 plans[slot].weapons_hook,
-                false,
+                HookWhich::weapons,
+                context,
+                store,
+                layout,
+                input.variant,
+                slot,
+                first
+            );
+        }
+        if (hook_ok && plans[slot].menus_hook != LUA_NOREF) {
+            hook_ok = call_hook(
+                *sandboxes[slot],
+                *collections,
+                *build_menus,
+                plans[slot].menus_hook,
+                HookWhich::menus,
                 context,
                 store,
                 layout,
@@ -3147,13 +4579,27 @@ bool run_pass(
             steps_done = false;
             break;
         }
+        std::string retarget_error;
+        if (!collections->retarget_renamed_references(ids[slot], retarget_error)) {
+            first.offer(slot, Phase::hooks, Cause::engine_error, ids[slot] + ": " + retarget_error);
+            steps_done = false;
+            break;
+        }
+        std::string menu_error;
+        if (!build_menus->end_mutator(menu_error)) {
+            first.offer(slot, Phase::hooks, Cause::engine_error, std::move(menu_error));
+            steps_done = false;
+            break;
+        }
         collections->end_mutator();
+        collections->clear_renames();
         record_hook_turn(
             *collections, apply_state, report, ids, slot, notes_before, writes_before, hook_replaced
         );
     }
     if (!steps_done) {
         sandboxes.clear();
+        build_menus.reset();
         collections.reset();
         guard.release();
         fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
@@ -3162,7 +4608,8 @@ bool run_pass(
 
     if (collections.has_value()) {
         for (const CloneRecord& clone : collections->clones()) {
-            if (!clone.weapon || brought_index(brought, clone.name) < brought.size())
+            if (!clone.weapon || clone.replaced ||
+                brought_index(brought, clone.name) < brought.size())
                 continue;
             const std::optional<uint16_t> owner = index_of(ids, clone.mutator);
             if (!owner.has_value())
@@ -3240,6 +4687,7 @@ bool run_pass(
         }
         if (!maps_done) {
             sandboxes.clear();
+            build_menus.reset();
             collections.reset();
             guard.release();
             fail_mutator(results[first.slot], first.phase, first.cause, std::move(first.message));
@@ -3308,7 +4756,9 @@ bool run_pass(
         }
         journal.entries.push_back(std::move(entry));
     }
-    for (const CloneRecord& clone : collections->clones()) {
+    const CloneOwners cloned = clone_owners(collections->clones(), ids);
+    for (std::size_t clone_index = 0; clone_index < collections->clones().size(); ++clone_index) {
+        const CloneRecord& clone = collections->clones()[clone_index];
         JournalEntry entry;
         const std::optional<uint16_t> mutator = index_of(ids, clone.mutator);
         if (mutator.has_value())
@@ -3318,7 +4768,11 @@ bool run_pass(
         entry.collection = clone.weapon ? Collection::weapons : Collection::units;
         entry.record = clone.name;
         entry.path = clone.path;
-        if (clone.weapon) {
+        if (clone.replaced)
+            entry.old_text = clone.name;
+        else if (!clone.asked.empty())
+            entry.old_text = clone.asked;
+        if (clone.weapon && !clone.replaced) {
             int assigned = clone.weapon_id;
             const std::size_t owned = brought_index(brought, clone.name);
             if (owned < brought.size() && brought[owned].assigned_id > 0)
@@ -3333,18 +4787,84 @@ bool run_pass(
         } else {
             entry.new_text = clone.sentence;
         }
+        const Collection stored_collection = entry.collection;
         if (mutator.has_value()) {
             note_writer(
-                documents, writers, menus, clone.path, *mutator, Phase::hooks, entry.collection
+                documents, writers, menus, clone.path, *mutator, Phase::hooks, stored_collection
             );
         }
         journal.entries.push_back(std::move(entry));
+        if (!mutator.has_value())
+            continue;
+        if (!clone.asked.empty() && !clone.replaced) {
+            Conflict renamed;
+            renamed.severity = Severity::note;
+            renamed.kind = ConflictKind::record_renamed;
+            renamed.mutators.push_back(*mutator);
+            renamed.record = clone.asked;
+            renamed.detail = clone.name;
+            renamed.path = clone.path;
+            report.conflicts.push_back(std::move(renamed));
+        }
+        if (!clone.replaced)
+            continue;
+        // The record was the latest of: a file of this mutator or one above
+        // it, which came before its hooks, and an earlier clone.
+        std::optional<uint16_t> earlier;
+        for (const RecordTouch& touch : touches) {
+            if (touch.fate == RecordFate::shared || touch.collection != stored_collection)
+                continue;
+            if (touch.mutator > *mutator || !same_text(touch.record, clone.name))
+                continue;
+            earlier = touch.mutator;
+        }
+        const std::optional<uint16_t> earlier_cloned = earlier_clone(
+            cloned, clone.weapon, clone.name, static_cast<std::size_t>(*mutator) + 1, clone_index
+        );
+        if (earlier_cloned.has_value() && (!earlier.has_value() || *earlier_cloned >= *earlier))
+            earlier = earlier_cloned;
+        if (earlier.has_value() && *earlier == *mutator)
+            continue;
+        Conflict replaced;
+        replaced.severity = Severity::note;
+        replaced.kind = ConflictKind::value_replaced;
+        if (earlier.has_value())
+            replaced.mutators.push_back(*earlier);
+        replaced.mutators.push_back(*mutator);
+        replaced.record = clone.name;
+        replaced.path = clone.path;
+        if (!earlier.has_value())
+            replaced.detail = base_owner(store, input.mod, clone.path);
+        report.conflicts.push_back(std::move(replaced));
     }
-    journal_record_touches(journal, report, touches, documents, writers, menus);
+    // A download file the build menus created is a file the requesting mutator added.
+    for (const MenuFile& file : build_menus->added_files()) {
+        const std::optional<uint16_t> mutator = index_of(ids, file.mutator);
+        if (mutator.has_value())
+            journal.entries.push_back(file_entry(*mutator, file.path, Change::added, Phase::hooks));
+    }
+    journal_record_touches(
+        journal, report, touches, documents, writers, menus, cloned, store, input.mod
+    );
     for (JournalEntry& entry : map_journal)
         journal.entries.push_back(std::move(entry));
     for (Conflict& conflict : map_notes)
         report.conflicts.push_back(std::move(conflict));
+
+    std::vector<FileNote> file_notes = built.notes;
+    if (collections.has_value()) {
+        std::string redirect_error;
+        if (!redirect_renamed_unit_files(
+                spec, store, *collections, layout, ids, built.displaced, file_notes, redirect_error
+            )) {
+            sandboxes.clear();
+            build_menus.reset();
+            collections.reset();
+            guard.release();
+            fail_every(results, active, Phase::files, redirect_error);
+            return false;
+        }
+    }
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
         const std::optional<uint16_t> mutator = index_of(ids, entry.owner);
@@ -3356,7 +4876,7 @@ bool run_pass(
     }
     for (JournalEntry& entry : masked)
         journal.entries.push_back(std::move(entry));
-    for (const FileNote& note : built.notes) {
+    for (const FileNote& note : file_notes) {
         if (note.kind == FileNoteKind::add_replaced &&
             record_file_kind(note.path, layout) != RecordFileKind::none)
             continue;
@@ -3446,13 +4966,19 @@ bool run_pass(
             if (!record.weapon && clone_names_unit(name, record.name))
                 return true;
         }
+        for (const Collections::UnitFileShift& shift : collections->unit_file_shifts()) {
+            if (clone_names_unit(name, shift.stored))
+                return true;
+        }
         return false;
     };
     for (const ServedCopy& copy : collections->served_copies()) {
         const PathVerdict verdict = check_mutable_path(copy.path, copy_paths);
-        const bool exists = served_path_exists(store, documents, spec, copy.path);
-        const bool fresh_page =
-            fresh_clone_page(copy.path, *collections, layout, store, documents, spec, verdict);
+        // A Replace clone's copy takes the place of the replaced unit's own file.
+        const bool exists = !copy.replaces && served_path_exists(store, documents, spec, copy.path);
+        const bool fresh_page = fresh_clone_page(
+            copy.path, *collections, layout, store, documents, spec, verdict, copy.replaces
+        );
         if (exists || (!verdict.allowed() && !fresh_page)) {
             std::string message = verdict.message;
             if (exists) {
@@ -3485,6 +5011,15 @@ bool run_pass(
         for (std::size_t entry_index = 0; entry_index < spec.entries.size(); ++entry_index) {
             if (!same_path(spec.entries[entry_index].path, served.path))
                 continue;
+            const std::string& held_by = spec.entries[entry_index].owner;
+            if (!same_text(held_by, served.owner) && index_of(ids, held_by).has_value()) {
+                FileNote note;
+                note.kind = FileNoteKind::add_replaced;
+                note.path = served.path;
+                note.mutator = served.owner;
+                note.other = held_by;
+                report.conflicts.push_back(conflict_from_file(note, ids));
+            }
             spec.entries[entry_index] = served;
             replaced_copy = true;
             break;
@@ -3493,6 +5028,7 @@ bool run_pass(
             spec.entries.push_back(std::move(served));
     }
     sandboxes.clear();
+    build_menus.reset();
     collections.reset();
     if (served_ota != nullptr && input.map.has_value()) {
         oa::MutatorLayerEntry served;

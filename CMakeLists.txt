@@ -371,6 +371,13 @@ add_library(oa-app-renderer-state src/app/renderer_state.cpp)
 add_library(oa::app::renderer_state ALIAS oa-app-renderer-state)
 target_link_libraries(oa-app-renderer-state PUBLIC oa-app-renderer-records
   PRIVATE oa-platform-preferences oa-options)
+# The last mutator set of each setup, and the crash record kept beside the
+# preferences file while a match with mutators runs. A set is the canonical
+# loadout text (mutators_memory.hpp). The game reads it at start.
+add_library(oa-app-mutators-memory src/app/mutators_memory.cpp)
+add_library(oa::app::mutators_memory ALIAS oa-app-mutators-memory)
+target_link_libraries(oa-app-mutators-memory PUBLIC oa-app-headers oa-platform-preferences
+  oa-data-mutators PRIVATE oa-options)
 # A mod profile's display rules as the records and decisions of the modules
 # that carry them out (view_rules.hpp).
 add_library(oa-app-view-rules src/app/view_rules.cpp)
@@ -829,6 +836,14 @@ if(BUILD_TESTING)
   target_link_libraries(oa-app-renderer-state-test PRIVATE oa-app-renderer-state oa-platform-preferences
     oa-test-support oa-options)
   add_test(NAME app-renderer-state COMMAND oa-app-renderer-state-test)
+  # The last mutator set of each setup and the crash record: a set read back
+  # as the canonical loadout, text that is no set, and the sentinel file in
+  # scratch folders.
+  add_executable(oa-app-mutators-memory-test src/app/mutators_memory_test.cpp)
+  target_link_libraries(oa-app-mutators-memory-test PRIVATE oa-app-mutators-memory
+    oa-test-support oa-options)
+  add_test(NAME app-mutators-memory COMMAND oa-app-mutators-memory-test)
+  set_tests_properties(app-mutators-memory PROPERTIES TIMEOUT 30)
   # The draw states the match renderer keeps per unit slot and per 3D feature.
   add_executable(oa-match-model-draws-test src/app/match_model_draws_test.cpp)
   target_link_libraries(oa-match-model-draws-test PRIVATE oa-app-headers oa-present-model oa-sim-feature-runtime
@@ -1068,6 +1083,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_skirmish_host.cpp
   src/app/runtime_skirmish_start.cpp src/app/runtime_map_units.cpp src/app/runtime_world_draw.cpp src/app/world_draws.cpp src/app/runtime_benchmark.cpp src/app/runtime_music.cpp
   src/app/runtime_saveload.cpp src/app/runtime_saves.cpp src/app/runtime_recordings.cpp
+  src/app/runtime_recorded_mutators.cpp
   src/app/runtime_sides.cpp src/app/asset_files.cpp
   src/app/runtime_platform.cpp
   src/app/runtime_endgame.cpp src/app/runtime_radar.cpp
@@ -1087,6 +1103,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_mutators.cpp
   src/app/runtime_mutators_hacks.cpp
   src/app/runtime_mutators_maps.cpp
+  src/app/runtime_mutators_memory.cpp
   src/app/runtime_pack_maps.cpp
   src/app/pack_map_source.cpp
   src/app/runtime_get_map.cpp
@@ -1149,6 +1166,7 @@ set(oa_game_self_check_sources src/app/runtime_checks.cpp src/app/runtime_order_
   src/app/runtime_megamap_check.cpp src/app/runtime_radar_orders_check.cpp
   src/app/runtime_inactive_loop_check.cpp src/app/runtime_factory_check.cpp
   src/app/runtime_unit_speech_check.cpp src/app/runtime_mutator_layer_check.cpp
+  src/app/runtime_recorded_mutators_check.cpp
   src/app/runtime_side_data_check.cpp
   src/app/runtime_gadget_art_check.cpp
   src/app/runtime_build_page_check.cpp
@@ -1211,6 +1229,7 @@ set(oa_game_libraries oa-formats-hpi oa-formats-json oa-app-game-options oa-app-
   oa-app-map-packs
   oa-data-mutator-library
   oa-data-mutators
+  oa-app-mutators-memory
   oa-ui-pad-controls oa-ui-folder-chooser oa-platform-game-installs oa-platform-file-types
   oa-data-content-bundles
   oa-ui-frontend-multiplayer oa-ui-library oa-ui-map-browser oa-ui-mutator-picker
@@ -1755,6 +1774,38 @@ if(OA_BUILD_PLATFORM)
         --preferences-file "${oa_mutator_layer_dir}/mutator-layer.conf")
       set_tests_properties(native-mutator-layer PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
         WORKING_DIRECTORY "${oa_mutator_layer_dir}"
+        ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
+      # A recorded loadout: refusals, one match of ridge-art-a, an empty
+      # recording, a list chosen while a match is running, and a start that
+      # throws. Both packages are installed; ridge-commander-boom is a folder.
+      set(oa_replay_loadout_dir "${CMAKE_CURRENT_BINARY_DIR}/native-checks/replay-loadout")
+      set(oa_replay_loadout_user "${oa_replay_loadout_dir}/user")
+      file(MAKE_DIRECTORY "${oa_replay_loadout_user}/Mutators")
+      file(COPY "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-tough"
+        DESTINATION "${oa_replay_loadout_user}/Mutators")
+      file(COPY "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-art-a"
+        DESTINATION "${oa_replay_loadout_user}/Mutators")
+      file(COPY "${CMAKE_SOURCE_DIR}/tests/data/mutators/packages/ridge-commander-boom"
+        DESTINATION "${oa_replay_loadout_dir}")
+      file(WRITE "${oa_replay_loadout_user}/Mutators/ridge-art-a/.oa-origin.yaml"
+        "# Written by Open Annihilation when it installed this folder; not part of the package.\n"
+        "oa-origin: 1\n"
+        "origin: file\n"
+        "sha256: \"a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90\"\n"
+        "installed: \"2026-10-21\"\n")
+      file(WRITE "${oa_replay_loadout_user}/Mutators/ridge-tough/.oa-origin.yaml"
+        "# Written by Open Annihilation when it installed this folder; not part of the package.\n"
+        "oa-origin: 1\n"
+        "origin: file\n"
+        "sha256: \"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0\"\n"
+        "installed: \"2026-10-21\"\n")
+      add_test(NAME native-replay-loadout COMMAND oa-game --game-dir "${OA_GAME_DIR}"
+        --skip-intro --mute --check-replay-loadout
+        --user-folder "${oa_replay_loadout_user}"
+        --mutator ridge-tough --mutator ridge-art-a
+        --preferences-file "${oa_replay_loadout_dir}/replay-loadout.conf")
+      set_tests_properties(native-replay-loadout PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+        WORKING_DIRECTORY "${oa_replay_loadout_dir}"
         ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software")
       # The player's own folder beside the check's preferences file: saved
       # games where earlier versions kept them, beside the preferences file
@@ -3273,7 +3324,11 @@ endforeach()
           TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
         # --mutator on a headless skirmish: no mutators, one package, a
         # number option, two packages in each order, a missing id, an
-        # unknown option and a mutator whose script stops.
+        # unknown option and a mutator whose script stops. Also
+        # --no-mutators, a match that leaves no crash record and no
+        # remembered set, a planted crash record, a campaign start the
+        # mutators refuse, and the clash mode the preferences' default
+        # gives a mutator whose manifest names none.
         add_test(NAME native-mutators-command-line COMMAND ${Python3_EXECUTABLE}
           "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_native_mutators.py"
           --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"

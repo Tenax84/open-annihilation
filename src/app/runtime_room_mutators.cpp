@@ -503,8 +503,9 @@ bool Runtime::build_room_layer(
             fail(mutator_failure_text(resolved, result), position);
             return true;
         }
+        // The match start's clash default, so the digest is the one it makes.
         const mutators::Loadout applied =
-            mutators::applied_loadout(mutators::loadout_of(resolved), result);
+            mutators::applied_loadout(mutators::loadout_of(resolved, input.clash_default), result);
         const oa::base::sha256::Digest layer =
             mutators::layer_digest(result.layer, [this](std::string_view path) {
                 return assets_.read(path).bytes;

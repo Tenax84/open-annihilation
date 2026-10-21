@@ -67,7 +67,8 @@ struct LoadoutOption {
 ///
 /// `package` is the package file's SHA-256, or, when `folder` is set, the
 /// digest of the package folder. `options` is every option of the manifest,
-/// defaults filled, in id byte order.
+/// defaults filled, in id byte order. `clashes` is the mode in force for
+/// that mutator: the player's choice, else the manifest, else the preference.
 struct LoadoutEntry {
     /// The mutator's id.
     std::string id{};
@@ -79,6 +80,8 @@ struct LoadoutEntry {
     bool folder{};
     /// Every option, in id byte order.
     std::vector<LoadoutOption> options{};
+    /// The clash mode in force. Replace when the caller leaves it unset.
+    oa::formats::oamut::ClashMode clashes{oa::formats::oamut::ClashMode::replace};
 
     /// Returns whether both entries write the same canonical JSON object.
     ///
@@ -119,8 +122,9 @@ inline constexpr std::size_t loadout_text_most_bytes = 64 * 1024;
 /// Writes a loadout as its one canonical text.
 ///
 /// The text is the canonical JSON of `{"mutators":[...],"oaloadout":1}`.
-/// Each entry is `folder`, `id`, `options`, `sha256` and `version`, in list
-/// order. `sha256` is 64 lower-case hex digits. Options are members of one
+/// Each entry is `clashes`, `folder`, `id`, `options`, `sha256` and
+/// `version`, in list order. `clashes` is `add` or `replace`. `sha256` is
+/// 64 lower-case hex digits. Options are members of one
 /// object: a toggle is a boolean, a number is a number, and a choice is a
 /// number or a string as the manifest types it. The object order does not
 /// follow the order the options were given in, and no option is left out.
@@ -240,11 +244,17 @@ struct PipelineResult;
 /// Every mutator is listed, in the list's order. Each option is that
 /// mutator's typed value, defaults already filled, stored in id byte order.
 /// The package digest and the folder mark are copied from the resolved
-/// mutator. No file is read.
+/// mutator. `clashes` is the mode in force: the player's choice, else the
+/// manifest's `clashes`, else `clash_default`. No file is read.
 ///
 /// @param chosen the mutators, top first
+/// @param clash_default the preference, used when the player and the manifest
+///        both leave the mode unset
 /// @return the loadout
-[[nodiscard]] Loadout loadout_of(std::span<const ResolvedMutator> chosen);
+[[nodiscard]] Loadout loadout_of(
+    std::span<const ResolvedMutator> chosen,
+    oa::formats::oamut::ClashMode clash_default = oa::formats::oamut::ClashMode::replace
+);
 
 /// Keeps the mutators a pipeline run applied.
 ///
@@ -264,9 +274,10 @@ struct PipelineResult;
 /// must be the origin record's. A folder entry is accepted when the
 /// installed folder of that id has the same folder digest, and refused,
 /// naming it as a package folder, when it does not. The options are typed
-/// as `resolve_choice` types them from `options_text`. A missing package,
-/// another version and another SHA-256 are refused, and the error names
-/// the entry.
+/// as `resolve_choice` types them from `options_text`. The entry's
+/// `clashes` is copied onto the resolved mutator, so it wins over the
+/// reader's preference. A missing package, another version and another
+/// SHA-256 are refused, and the error names the entry.
 ///
 /// @param loadout the loadout
 /// @param mutators_folder the player's Mutators folder

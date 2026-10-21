@@ -66,6 +66,16 @@ inline std::optional<std::size_t> on_index(const Picker& picker, std::string_vie
     return std::nullopt;
 }
 
+/// A mutator switched on with its default options and clash mode.
+///
+/// A number's default is the canonical spelling the On list keeps, so a
+/// fallback of `4.0` is kept as `4`.
+///
+/// @param picker the picker
+/// @param mutator the mutator
+/// @return its On record
+[[nodiscard]] Chosen with_defaults(const Picker& picker, const Mutator& mutator);
+
 /// Returns the On ids, top to bottom.
 ///
 /// @param picker the picker
@@ -214,6 +224,24 @@ inline void drop_came_with(Picker& picker, std::string_view id) {
         if (record.prerequisite != id && record.dependant != id)
             kept.push_back(record);
     picker.came_with = std::move(kept);
+}
+
+/// The clash mode a mutator uses when none has been chosen yet.
+///
+/// Empty when it brings no units or weapons. Otherwise the manifest's mode,
+/// or the inputs' default when the manifest names none. The same rule
+/// `open` uses once a chosen mode is set aside.
+///
+/// @param mutator the mutator
+/// @param inputs the host's inputs
+/// @return the mode, or empty when the mutator brings nothing
+[[nodiscard]] inline std::optional<Clash>
+default_clash(const Mutator& mutator, const Inputs& inputs) {
+    if (!mutator.brings)
+        return std::nullopt;
+    if (mutator.clashes)
+        return mutator.clashes;
+    return inputs.clash_default;
 }
 
 /// Tells whether `id` is one of `ids`.

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -97,6 +98,8 @@ struct State {
     uint64_t next_archive = 0;
     /// Record files of the mutators kept so far. A failed attempt drops its copy.
     std::vector<RecordFile> records;
+    /// Files a later mutator displaced, in order. A failed attempt drops its copy.
+    std::vector<DisplacedFile> displaced;
 };
 
 /// One name directory_iterator returned, before the listing is sorted.
@@ -535,7 +538,7 @@ bool read_candidate(
     return true;
 }
 
-/// Drops every snapshot of one folded path. A mask has hidden the path.
+/// Drops every snapshot and displaced file of one folded path. A mask has hidden the path.
 void drop_records(State& state, const std::string& folded) {
     std::vector<RecordFile> kept;
     kept.reserve(state.records.size());
@@ -545,13 +548,33 @@ void drop_records(State& state, const std::string& folded) {
         kept.push_back(std::move(record));
     }
     state.records.swap(kept);
+    std::vector<DisplacedFile> still;
+    still.reserve(state.displaced.size());
+    for (DisplacedFile& file : state.displaced) {
+        if (folded_path(file.path) == folded)
+            continue;
+        still.push_back(std::move(file));
+    }
+    state.displaced.swap(still);
+}
+
+/// The file a stored entry reads, kept as displaced by a later mutator.
+DisplacedFile displaced_from(const Stored& stored) {
+    DisplacedFile file;
+    file.path = stored.path;
+    file.owner = stored.owner;
+    file.kind = stored.kind;
+    file.host = stored.host;
+    file.archive = stored.archive;
+    file.archive_path = stored.archive_path;
+    return file;
 }
 
 /// Puts one folder's files into the table, in the vector's order.
 ///
 /// A path the mutator already holds is replaced with no note. A path an
 /// earlier mutator holds is replaced with an add_replaced note when `notes`
-/// is not null.
+/// is not null, and the earlier file is kept in `displaced`.
 ///
 /// @param table the working table
 /// @param next_order the next order number for a path that is new
@@ -560,6 +583,7 @@ void drop_records(State& state, const std::string& folded) {
 /// @param notes receives replacement notes, or null when only projecting
 /// @param layout directory names used to recognise a record file
 /// @param records receives record-file bytes, or null when only projecting
+/// @param displaced receives the earlier mutators' files, or null when only projecting
 /// @param reason the refusal when a record file cannot be read
 /// @return false when a record file's bytes cannot be read
 bool overlay(
@@ -570,6 +594,7 @@ bool overlay(
     std::vector<FileNote>* notes,
     const oa::data::defs::DataLayout& layout,
     std::vector<RecordFile>* records,
+    std::vector<DisplacedFile>* displaced,
     std::string& reason
 ) {
     for (const Candidate& candidate : files) {
@@ -587,6 +612,8 @@ bool overlay(
                 note.other = found->second.owner;
                 notes->push_back(std::move(note));
             }
+            if (displaced != nullptr && found->second.owner != id)
+                displaced->push_back(displaced_from(found->second));
             const uint64_t order = found->second.order;
             found->second = store_candidate(candidate, id, order);
         }
@@ -1151,6 +1178,7 @@ bool apply_mutator(
                 nullptr,
                 layout,
                 nullptr,
+                nullptr,
                 projection_reason
             ))
             return false;
@@ -1181,6 +1209,7 @@ bool apply_mutator(
                 &state.notes,
                 layout,
                 &state.records,
+                &state.displaced,
                 reason
             ))
             return false;
@@ -1254,12 +1283,33 @@ void fill_layer(const State& state, FilesLayer& result) {
     }
     result.notes = state.notes;
     result.records = state.records;
+    result.displaced = state.displaced;
 }
 
 } // namespace
 
 RecordFileKind record_file_kind(std::string_view path, const oa::data::defs::DataLayout& layout) {
     return classify_record(path, layout);
+}
+
+std::shared_ptr<const std::vector<uint8_t>> displaced_bytes(const DisplacedFile& file) {
+    Candidate candidate;
+    candidate.path = file.path;
+    candidate.kind = file.kind;
+    candidate.host = file.host;
+    candidate.archive = file.archive;
+    candidate.archive_path = file.archive_path;
+    std::shared_ptr<const std::vector<uint8_t>> bytes;
+    std::string reason;
+    try {
+        if (!read_candidate(candidate, file.owner, bytes, reason))
+            return nullptr;
+    } catch (const std::exception&) {
+        return nullptr;
+    }
+    if (bytes == nullptr || bytes->empty())
+        return nullptr;
+    return bytes;
 }
 
 FilesLayer build_files_layer(std::span<const MutatorFiles> mutators, const PathContext& paths) {

@@ -257,26 +257,9 @@ normalize(const Mutator& mutator, const std::vector<std::pair<std::string, std::
 /// @return the mode, or empty when the mutator brings nothing
 std::optional<Clash>
 kept_clash(const Mutator& mutator, const Inputs& inputs, std::optional<Clash> given) {
-    if (!mutator.brings)
-        return std::nullopt;
-    if (given)
+    if (given && mutator.brings)
         return given;
-    if (mutator.clashes)
-        return mutator.clashes;
-    return inputs.clash_default;
-}
-
-/// A mutator switched on with its default options and clash mode.
-///
-/// @param picker the picker
-/// @param mutator the mutator
-/// @return its On record
-Chosen with_defaults(const Picker& picker, const Mutator& mutator) {
-    Chosen chosen;
-    chosen.id = mutator.id;
-    chosen.options = normalize(mutator, {});
-    chosen.clash = kept_clash(mutator, picker.inputs, std::nullopt);
-    return chosen;
+    return detail::default_clash(mutator, inputs);
 }
 
 /// The ids in a closure that need each other.
@@ -373,6 +356,14 @@ std::string conflict_line(const Picker& picker, const Mutator& other) {
 } // namespace
 
 namespace detail {
+
+Chosen with_defaults(const Picker& picker, const Mutator& mutator) {
+    Chosen chosen;
+    chosen.id = mutator.id;
+    chosen.options = normalize(mutator, {});
+    chosen.clash = kept_clash(mutator, picker.inputs, std::nullopt);
+    return chosen;
+}
 
 std::string blocked_line(
     const Picker& picker,
@@ -637,7 +628,7 @@ void settle(Picker& picker) {
             if (later) {
                 picker.on.push_back(std::move(*later));
             } else {
-                picker.on.push_back(with_defaults(picker, *one));
+                picker.on.push_back(detail::with_defaults(picker, *one));
                 CameWith record;
                 record.prerequisite = item;
                 record.dependant = id;
@@ -750,7 +741,7 @@ SwitchResult switch_on(Picker& picker, std::string_view id, std::optional<std::s
 
     const std::size_t at = insertion_at(picker, graph, closure, id, place);
     picker.on.insert(
-        picker.on.begin() + static_cast<std::ptrdiff_t>(at), with_defaults(picker, *mutator)
+        picker.on.begin() + static_cast<std::ptrdiff_t>(at), detail::with_defaults(picker, *mutator)
     );
     outcome.changed = true;
     for (const std::string& item : closure.order) {
@@ -759,7 +750,7 @@ SwitchResult switch_on(Picker& picker, std::string_view id, std::optional<std::s
         const Mutator* one = detail::find_mutator(picker, item);
         if (one == nullptr)
             continue;
-        insert_above_dependant(picker, graph, with_defaults(picker, *one));
+        insert_above_dependant(picker, graph, detail::with_defaults(picker, *one));
         CameWith record;
         record.prerequisite = item;
         record.dependant = std::string(id);

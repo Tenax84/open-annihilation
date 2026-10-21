@@ -362,6 +362,7 @@ const std::vector<FlagCase>& flag_cases() {
     static const std::vector<FlagCase> cases{
         {"--choose-game-dir", &Options::choose_game_dir, {}},
         {"--base-game", &Options::base_game, {}},
+        {"--no-mutators", &Options::no_mutators, {}},
         {"--print-profile", &Options::print_profile, {"--game-dir", "ta"}},
         {"--accept-unimplemented-hacks",
          &Options::accept_unimplemented_hacks,
@@ -410,6 +411,7 @@ const std::vector<FlagCase>& flag_cases() {
         {"--check-factory-orders", &Options::check_factory_orders, {}},
         {"--check-unit-speech", &Options::check_unit_speech, {}},
         {"--check-mutator-layer", &Options::check_mutator_layer, {}},
+        {"--check-replay-loadout", &Options::check_replay_loadout, {}},
         {"--check-side-data-per-match", &Options::check_side_data_per_match, {}},
         {"--check-gadget-art-per-match", &Options::check_gadget_art_per_match, {}},
         {"--check-download-builds", &Options::check_download_builds, {}},

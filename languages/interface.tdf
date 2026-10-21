@@ -1114,6 +1114,14 @@
 	it=Base lascia che la scheda grafica lo scali in modo uniforme.;
 	}
 
+[Battle room]
+	{
+	de=Gefechtsraum;
+	fr=Salle de bataille;
+	es=Sala de batalla;
+	it=Sala di battaglia;
+	}
+
 [Battle Tactics]
 	{
 	de=Battle Tactics;
@@ -6010,6 +6018,22 @@
 	it=Non ci sono pacchetti di mappe installati.;
 	}
 
+[No mutator matches these filters]
+	{
+	de=Kein Mutator passt zu diesen Filtern;
+	fr=Aucun mutateur ne correspond à ces filtres;
+	es=Ningún mutador coincide con estos filtros;
+	it=Nessun mutatore corrisponde a questi filtri;
+	}
+
+[No mutators here yet. The Library on the main menu gets them.]
+	{
+	de=Hier sind noch keine Mutatoren. Die Bibliothek im Hauptmenü holt sie.;
+	fr=Pas encore de mutateurs ici. La Bibliothèque du menu principal les récupère.;
+	es=Aquí todavía no hay mutadores. La Biblioteca del menú principal los trae.;
+	it=Qui non ci sono ancora mutatori. La Biblioteca del menu principale li scarica.;
+	}
+
 [No names match.]
 	{
 	de=Kein Name passt.;
@@ -6386,6 +6410,14 @@
 	it=SPENTO;
 	}
 
+[OFF · NOT APPLIED]
+	{
+	de=AUS · NICHT ANGEWANDT;
+	fr=INACTIFS · NON APPLIQUÉS;
+	es=INACTIVOS · NO SE APLICAN;
+	it=INATTIVI · NON APPLICATI;
+	}
+
 [OK]
 	{
 	de=OK;
@@ -6408,6 +6440,14 @@
 	fr=À L'ÉCRAN;
 	es=EN PANTALLA;
 	it=SULLO SCHERMO;
+	}
+
+[ON · APPLIED TOP TO BOTTOM]
+	{
+	de=AKTIV · VON OBEN NACH UNTEN ANGEWANDT;
+	fr=ACTIFS · APPLIQUÉS DE HAUT EN BAS;
+	es=ACTIVOS · SE APLICAN DE ARRIBA ABAJO;
+	it=ATTIVI · APPLICATI DALL'ALTO IN BASSO;
 	}
 
 [ON/OFF]
@@ -6728,6 +6768,14 @@
 	fr=Dialogue d'options;
 	es=Diálogo de opciones;
 	it=Finestra delle opzioni;
+	}
+
+[Order]
+	{
+	de=Reihenfolge;
+	fr=Ordre;
+	es=Orden;
+	it=Ordine;
 	}
 
 [Order: tap to arm it, then tap where it goes; tap again to take it back.]
@@ -8034,6 +8082,14 @@
 	it=Cerca mod, autori, etichette;
 	}
 
+[Search mutators]
+	{
+	de=Mutatoren suchen;
+	fr=Rechercher des mutateurs;
+	es=Buscar mutadores;
+	it=Cerca mutatori;
+	}
+
 [Search mutators, authors, tags]
 	{
 	de=Mutatoren, Autoren, Stichworte suchen;
@@ -8296,6 +8352,14 @@
 	fr=Passer;
 	es=Omitir;
 	it=Salta;
+	}
+
+[Skirmish]
+	{
+	de=Gefecht;
+	fr=Escarmouche;
+	es=Escaramuza;
+	it=Schermaglia;
 	}
 
 [Skirmish players]
@@ -9314,6 +9378,14 @@
 	it=Il mod è stato tolto perché un'espansione che gli serve è spenta. Il gioco va con No Mod.;
 	}
 
+[The mutators this was made with cannot be read.]
+	{
+	de=Die Mutatoren, mit denen das gemacht wurde, lassen sich nicht lesen.;
+	fr=Les mutateurs avec lesquels ça a été fait sont illisibles.;
+	es=Los mutadores con los que se hizo esto no se pueden leer.;
+	it=I mutatori con cui è stato fatto questo non si possono leggere.;
+	}
+
 [The new game files are used from the next start of Open Annihilation. Adding or removing files waits until then.]
 	{
 	de=Die neuen Spieldateien gelten ab dem nächsten Start von Open Annihilation. Dateien hinzufügen oder entfernen wartet bis dahin.;
@@ -9778,6 +9850,14 @@
 	it=Questo mod non si può usare;
 	}
 
+[This needs a mutator you do not have: {detail}]
+	{
+	de=Dafür brauchst du einen Mutator, den du nicht hast: {detail};
+	fr=Il te faut un mutateur que tu n'as pas : {detail};
+	es=Te hace falta un mutador que no tienes: {detail};
+	it=Ti serve un mutatore che non hai: {detail};
+	}
+
 [This replaces the game files on this {device} ({size}) with the folder you chose. The current folder is kept as Total Annihilation (old) until you remove it. Saved games and settings stay.]
 	{
 	de=Das ersetzt die Spieldateien auf diesem {device} ({size}) durch den Ordner, den du gewählt hast. Der aktuelle Ordner bleibt als Total Annihilation (alt), bis du ihn entfernst. Speicherstände und Einstellungen bleiben.;
@@ -9808,6 +9888,14 @@
 	fr=Ce système lit les sources HTTPS par HTTP.;
 	es=Este sistema lee fuentes HTTPS por HTTP.;
 	it=Questo sistema legge le fonti HTTPS tramite HTTP.;
+	}
+
+[This was made with mutators, and this run plays none.]
+	{
+	de=Das wurde mit Mutatoren gemacht, und dieser Lauf spielt keine.;
+	fr=Ça a été fait avec des mutateurs, et cette session n'en utilise aucun.;
+	es=Esto se hizo con mutadores, y esta sesión no usa ninguno.;
+	it=Questo è stato fatto con dei mutatori, e questa sessione non ne usa nessuno.;
 	}
 
 [This {device} ran out of space]
@@ -10160,6 +10248,14 @@
 	fr=UTILISER CE DOSSIER;
 	es=USAR ESA CARPETA;
 	it=USA QUELLA CARTELLA;
+	}
+
+[USE THESE]
+	{
+	de=ÜBERNEHMEN;
+	fr=VALIDER;
+	es=USAR ESTOS;
+	it=USA QUESTI;
 	}
 
 [USE THIS GAME]
@@ -13338,6 +13434,14 @@
 	it={save_heading} / {now_heading};
 	}
 
+[{setup} · {mod}]
+	{
+	de={setup} · {mod};
+	fr={setup} · {mod};
+	es={setup} · {mod};
+	it={setup} · {mod};
+	}
+
 [{shown} of {all}]
 	{
 	de={shown} von {all};
@@ -13658,6 +13762,14 @@
 	it={version} · rev. {revision};
 	}
 
+[{version} · {author}]
+	{
+	de={version} · {author};
+	fr={version} · {author};
+	es={version} · {author};
+	it={version} · {author};
+	}
+
 [{version} · {maps}]
 	{
 	de={version} · {maps};
@@ -13736,6 +13848,22 @@
 	fr=‹ TÉLÉCHARGEMENTS;
 	es=‹ DESCARGAS;
 	it=‹ DOWNLOAD;
+	}
+
+[▲ UP]
+	{
+	de=▲ NACH OBEN;
+	fr=▲ HAUT;
+	es=▲ ARRIBA;
+	it=▲ SU;
+	}
+
+[▼ DOWN]
+	{
+	de=▼ NACH UNTEN;
+	fr=▼ BAS;
+	es=▼ ABAJO;
+	it=▼ GIÙ;
 	}
 
 [✓]

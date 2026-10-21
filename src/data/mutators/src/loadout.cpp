@@ -8,6 +8,7 @@
 #include "oa/data/mod_profile/value.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/clashes.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/json.hpp"
 #include "oa/formats/oamod.hpp"
@@ -17,7 +18,9 @@
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <optional>
 #include <span>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -36,6 +39,7 @@ namespace {
 
 namespace fs = std::filesystem;
 namespace oamod = oa::formats::oamod;
+namespace oamut = oa::formats::oamut;
 namespace json = oa::formats::json;
 namespace profile = oa::data::mod_profile;
 
@@ -127,6 +131,9 @@ profile::Value entry_json(const LoadoutEntry& entry) {
         options.members.push_back(profile::Member{option.id, option_json(option)});
 
     profile::Value object = profile::make_map();
+    profile::set_member(
+        object, "clashes", profile::make_string(std::string{oamut::clash_mode_name(entry.clashes)})
+    );
     profile::set_member(object, "folder", profile::make_boolean(entry.folder));
     profile::set_member(object, "id", profile::make_string(entry.id));
     profile::set_member(object, "options", std::move(options));
@@ -138,10 +145,10 @@ profile::Value entry_json(const LoadoutEntry& entry) {
 /// Tells whether a key is one an entry object may hold.
 ///
 /// @param key the key
-/// @return true for folder, id, options, sha256 and version
+/// @return true for clashes, folder, id, options, sha256 and version
 bool entry_key(std::string_view key) noexcept {
-    return key == "folder" || key == "id" || key == "options" || key == "sha256" ||
-           key == "version";
+    return key == "clashes" || key == "folder" || key == "id" || key == "options" ||
+           key == "sha256" || key == "version";
 }
 
 /// Tells whether a text is 64 lower-case hex digits.
@@ -247,6 +254,7 @@ bool read_entry(
     }
 
     bool duplicate = false;
+    const json::Json* clashes = find_member(value, "clashes", duplicate);
     const json::Json* folder = find_member(value, "folder", duplicate);
     const json::Json* id = find_member(value, "id", duplicate);
     const json::Json* options = find_member(value, "options", duplicate);
@@ -256,9 +264,18 @@ bool read_entry(
         set_error(error, place + " repeats a key");
         return false;
     }
-    if (folder == nullptr || id == nullptr || options == nullptr || sha == nullptr ||
-        version == nullptr) {
-        set_error(error, place + " lacks folder, id, options, sha256 or version");
+    if (clashes == nullptr || folder == nullptr || id == nullptr || options == nullptr ||
+        sha == nullptr || version == nullptr) {
+        set_error(error, place + " lacks clashes, folder, id, options, sha256 or version");
+        return false;
+    }
+    if (clashes->type() != json::JsonType::string || clashes->string() == nullptr) {
+        set_error(error, place + " clashes is not a string");
+        return false;
+    }
+    const std::optional<oamut::ClashMode> clash_mode = oamut::parse_clash_mode(*clashes->string());
+    if (!clash_mode.has_value()) {
+        set_error(error, place + " clashes is not add or replace");
         return false;
     }
     if (folder->type() != json::JsonType::boolean) {
@@ -280,6 +297,7 @@ bool read_entry(
     }
 
     entry = LoadoutEntry{};
+    entry.clashes = *clash_mode;
     entry.folder = folder->boolean().value_or(false);
     entry.id = id->string() == nullptr ? std::string{} : *id->string();
     entry.version = version->string() == nullptr ? std::string{} : *version->string();
@@ -766,7 +784,8 @@ std::string options_text(const LoadoutEntry& entry) {
     return text;
 }
 
-Loadout loadout_of(std::span<const ResolvedMutator> chosen) {
+Loadout
+loadout_of(std::span<const ResolvedMutator> chosen, oa::formats::oamut::ClashMode clash_default) {
     Loadout loadout;
     loadout.entries.reserve(chosen.size());
     for (const ResolvedMutator& one : chosen) {
@@ -775,6 +794,7 @@ Loadout loadout_of(std::span<const ResolvedMutator> chosen) {
         entry.version = oa::formats::oamut::version_text(one.manifest.version);
         entry.package = one.package;
         entry.folder = one.folder;
+        entry.clashes = effective_clash(one.clashes, one.manifest.clashes, clash_default);
         entry.options = one.options;
         std::sort(
             entry.options.begin(),
@@ -857,6 +877,7 @@ resolve_loadout(const Loadout& loadout, const fs::path& mutators_folder, std::st
             );
             return std::nullopt;
         }
+        one->clashes = entry.clashes;
         resolved.push_back(std::move(*one));
     }
     return resolved;

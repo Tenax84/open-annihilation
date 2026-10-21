@@ -578,6 +578,122 @@ void expect_sides_budget(const SidesRun& run, uint64_t allowance, const char* la
     OA_CHECK(run.error.message == message);
 }
 
+struct UnitsBind {
+    mutators::Collections* collections{nullptr};
+};
+
+void install_units(void* context, lua_State* state) {
+    auto* bind = static_cast<UnitsBind*>(context);
+    mutators::install_selection_forms(state);
+    bind->collections->push_units(state);
+    lua_setglobal(state, "units");
+    mutators::WriteGrant grant;
+    grant.units = true;
+    bind->collections->begin_mutator("ridge-clone", grant);
+    bind->collections->set_clash_mode(oa::formats::oamut::ClashMode::add);
+    bind->collections->set_clash_active(true);
+}
+
+struct UnitsWorld {
+    oa::data::mutation_rules::DocumentSet documents;
+    mutators::Collections collections;
+    std::optional<host::Sandbox> sandbox;
+
+    UnitsWorld() : collections(documents) {}
+};
+
+struct UnitsRun {
+    bool opened{false};
+    bool ok{false};
+    uint64_t used{0};
+    host::ScriptError error;
+};
+
+UnitsRun run_units(std::string_view documents, std::string_view source, uint64_t allowance) {
+    UnitsRun run;
+    UnitsWorld world;
+    std::string failure;
+    if (!world.documents.add("units/RGBOT.FBI", documents, &failure)) {
+        std::fprintf(stderr, "units: %s\n", failure.c_str());
+        return run;
+    }
+    Package package;
+    put(package, source);
+    UnitsBind bind;
+    bind.collections = &world.collections;
+    host::OpenOptions options;
+    options.package_id = "ridge";
+    options.random_seed = 0;
+    options.time_limit = k_long_limit;
+    options.profile = host::mutator_profile();
+    options.profile.budget.instructions = allowance;
+    options.profile.context = &bind;
+    options.profile.install = install_units;
+    options.sources.context = &package;
+    options.sources.read = read_package;
+    host::ScriptError open_error;
+    world.sandbox = host::Sandbox::open(options, open_error);
+    if (!world.sandbox.has_value()) {
+        std::fprintf(stderr, "open: %s\n", open_error.message.c_str());
+        run.error = open_error;
+        return run;
+    }
+    run.opened = true;
+    run.ok = world.sandbox->run_file("mutator.lua", "apply", nullptr, run.error);
+    run.used = world.sandbox->instructions_used();
+    return run;
+}
+
+constexpr std::string_view k_clone_names = R"(
+for i = 1, 40 do
+  units:clone("RGBOT", "RGBOT", {})
+end
+return true
+)";
+
+/// Small enough that forty Add-mode clones onto one name pass it only when
+/// each private-name lookup is left uncharged.
+constexpr uint64_t k_clone_allowance = 8'000;
+
+void add_mode_clone_lookups_are_charged() {
+    const std::string unit = "[UNITINFO]\n{\nUnitName=RGBOT;\n}\n";
+    const UnitsRun wide = run_units(unit, k_clone_names, k_plan_bound);
+    if (!wide.opened || !wide.ok || wide.used <= k_clone_allowance) {
+        std::fprintf(
+            stderr,
+            "clone charge: opened %d ok %d used %llu kind %d message %s\n",
+            wide.opened ? 1 : 0,
+            wide.ok ? 1 : 0,
+            static_cast<unsigned long long>(wide.used),
+            static_cast<int>(wide.error.kind),
+            wide.error.message.c_str()
+        );
+    }
+    OA_CHECK(wide.opened);
+    OA_CHECK(wide.ok);
+    OA_CHECK(wide.used > k_clone_allowance);
+    OA_CHECK(wide.used <= k_plan_bound);
+
+    const UnitsRun tight = run_units(unit, k_clone_names, k_clone_allowance);
+    const std::string message =
+        "the script ran past its budget of " + std::to_string(k_clone_allowance) + " instructions";
+    if (!tight.opened || tight.ok || tight.error.kind != host::ErrorKind::instruction_budget ||
+        tight.error.message != message) {
+        std::fprintf(
+            stderr,
+            "clone budget: opened %d ok %d kind %d message %s\n",
+            tight.opened ? 1 : 0,
+            tight.ok ? 1 : 0,
+            static_cast<int>(tight.error.kind),
+            tight.error.message.c_str()
+        );
+    }
+    OA_CHECK(tight.opened);
+    OA_CHECK(!tight.ok);
+    OA_CHECK(tight.error.kind == host::ErrorKind::instruction_budget);
+    OA_CHECK(tight.error.message == message);
+}
+
 void side_and_table_walks_stop() {
     expect_sides_budget(
         run_sides(k_side_reads, k_field_allowance), k_field_allowance, "side reads"
@@ -598,5 +714,6 @@ int main() {
     trimmed_fields_are_refused(k_trimmed_where, "trimmed where");
     trimmed_fields_are_refused(k_trimmed_change, "trimmed change");
     side_and_table_walks_stop();
+    add_mode_clone_lookups_are_charged();
     return oa::test::check_exit_status();
 }

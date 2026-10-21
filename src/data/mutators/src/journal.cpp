@@ -326,6 +326,7 @@ Conflict conflict_from_hook(const HookNote& note, std::span<const std::string> i
         break;
     case HookNoteKind::download_first_entry_changed:
     case HookNoteKind::not_a_number:
+    case HookNoteKind::menu_note:
         conflict.severity = Severity::note;
         conflict.kind = ConflictKind::text_change_dropped;
         break;
@@ -379,9 +380,45 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
         const std::string earlier = earlier_names(conflict, ids);
         std::string line = winner_name(conflict, ids);
         line += " replaced ";
-        line += earlier.empty() ? std::string("an earlier mutator") : earlier;
-        line += "'s value";
+        const bool record_note = conflict.field.empty() && !conflict.record.empty();
+        if (record_note && earlier.empty() && !conflict.detail.empty()) {
+            // A record no mutator brought: `detail` says where it came from.
+            line += conflict.record;
+            line += " from ";
+            line += conflict.detail;
+            append_place(line, conflict);
+            return line;
+        }
+        line += earlier.empty() ? std::string{"an earlier mutator"} : earlier;
+        if (record_note) {
+            line += "'s ";
+            line += conflict.record;
+        } else {
+            line += "'s value";
+        }
         append_place(line, conflict);
+        return line;
+    }
+    if (conflict.kind == ConflictKind::record_shared) {
+        std::string line = winner_name(conflict, ids);
+        line += " shares ";
+        line += conflict.record;
+        const std::string earlier = earlier_names(conflict, ids);
+        if (!earlier.empty()) {
+            line += " with ";
+            line += earlier;
+        } else if (!conflict.path.empty()) {
+            line += " on ";
+            line += conflict.path;
+        }
+        return line;
+    }
+    if (conflict.kind == ConflictKind::record_renamed) {
+        std::string line = winner_name(conflict, ids);
+        line += " renamed ";
+        line += conflict.record;
+        line += " to ";
+        line += conflict.detail;
         return line;
     }
     if (conflict.kind == ConflictKind::field_locked) {
@@ -402,9 +439,14 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
         return line;
     }
     if (conflict.kind == ConflictKind::text_change_dropped) {
+        // A menu note keeps its own sentence. The other notes of this kind
+        // share one line, and a factor on an absent field is told apart by
+        // the words in the rules note.
+        if (conflict.detail.find("moved from page") != std::string::npos ||
+            conflict.detail.find("has no picture") != std::string::npos ||
+            conflict.detail.find("does not see") != std::string::npos)
+            return conflict.detail;
         std::string line = names;
-        // A factor on an absent field shares this kind with a dropped text
-        // change. The rules note's own sentence is what tells them apart.
         if (conflict.detail.find("a factor") != std::string::npos)
             line += " found no value to scale";
         else

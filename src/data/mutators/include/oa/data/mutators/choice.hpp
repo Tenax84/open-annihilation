@@ -37,13 +37,14 @@ struct MutatorChoice {
 /// Reads one mutator choice.
 ///
 /// An id holds no `/` and no `\`. Anything else is a path to a package
-/// folder. A target that holds `:` is a path only when it names an existing
+/// folder. On every platform, a text that starts with a drive letter, `:`
+/// and `/` or `\`, as `C:/Mods/pack` does, keeps that `:` in the path. A
+/// target that holds any other `:` is a path only when it names an existing
 /// folder or file; otherwise the text is refused. Options follow the first
-/// `:` that is followed by a name and `=`, and every name is an option id
-/// and every value an identifier, so a Windows drive letter such as `C:`
-/// stays in the path. An empty text, an empty name or value, a repeated
-/// option, and a `,` or `=` inside a value are refused. The text is not
-/// trimmed.
+/// `:` after any drive that is followed by a name and `=`, and every name is
+/// an option id and every value an identifier. An empty text, an empty name
+/// or value, a repeated option, and a `,` or `=` inside a value are refused.
+/// The text is not trimmed.
 ///
 /// @param text the choice, as written
 /// @param[out] error what is wrong, when the text is not a choice; may be null
@@ -80,6 +81,11 @@ struct ResolvedMutator {
     /// True when the package is named by its folder digest: a path, or an
     /// installed folder whose origin record names no SHA-256.
     bool folder{false};
+    /// The player's clash choice. Empty when the player did not choose,
+    /// including a mutator named with `--mutator`. The picker's choice can
+    /// fill it later. `resolve_loadout` sets it from the loadout entry, so
+    /// a guest plays the mode the host recorded.
+    std::optional<oa::formats::oamut::ClashMode> clashes{};
 };
 
 /// Finds the package a choice names and types its options.

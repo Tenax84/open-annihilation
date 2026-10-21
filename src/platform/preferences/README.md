@@ -10,13 +10,20 @@ defaults belong to the frontend.
 | Windows | Local AppData / `CorePrime/Open Annihilation/preferences.conf` |
 | Linux | `$XDG_CONFIG_HOME/open-annihilation/preferences.conf`, or `$HOME/.config/open-annihilation/preferences.conf` |
 
-Beside the preferences file the game keeps two files of its own, in the
+Beside the preferences file the game keeps files of its own, in the
 same format, which it writes itself and the player never needs to edit:
 `renderer-state.conf`, what it has seen of each graphics driver on this
 machine (`src/app/include/oa/app/renderer_state.hpp`), and
 `renderer-sentinel.conf`, the stage a start has reached, which a clean exit
 deletes. Deleting either loses nothing but that record. With
-`--preferences-file` neither is read or written.
+`--preferences-file` neither of those two is read or written.
+`mutators-sentinel.conf` names the mutators in play while a match with
+mutators runs, and a clean match end or a clean exit deletes it. A start
+that finds one keeps what it names and deletes the file, so the next start
+does not ask again. It lives beside whichever preferences file the run
+uses, including one `--preferences-file` names. Two runs whose
+preferences files share a folder share this file, so runs at the same
+time use separate folders.
 
 Data the engine keeps for the player, such as game data it unpacks, goes in a
 per-user data folder (`data_directory()`), beside the preferences file on
@@ -114,6 +121,15 @@ reads is chosen from that token. Absent, no such note is waiting.
 `--content GAME[:EXPANSION,...]` names the base game and expansions for
 one run and writes nothing. An expansion the list needs is included; one
 that was only waiting is not.
+`open-annihilation.mutators.skirmish`,
+`open-annihilation.mutators.multiplayer` and
+`open-annihilation.mutators.campaign` each hold the last set that setup
+started a game with, as the canonical loadout text: the mutators in
+order, with versions, package SHA-256s and options. A setup's START
+writes its key only when that game has mutators. `--mutator` and a
+launch file never write them, and a game without mutators leaves them
+as they are. Absent, or text that cannot be read as that loadout, the
+setup has no set. Restore defaults does not erase them.
 `open-annihilation.user-folder` holds the folder the player keeps their
 saved games, screenshots, films, recordings and mods in, as an absolute
 UTF-8 path, in place of `Open Annihilation` in Documents; absent or
@@ -209,6 +225,7 @@ of range is clamped. A switch is On for any number above 0: a word such as
 | `open-annihilation.base-game` | `totala` or `totala-demo`; any other text reads as `totala` | `totala`, with every copied expansion of it that can be on |
 | `open-annihilation.expansions.<game>` | comma-separated expansion ids, in the built-in order; empty means none on | every copied expansion of that game that can be on |
 | `open-annihilation.content-note` | `required-expansion` when a mod was cleared because an expansion it needs went off | no note waiting |
+| `mutators.clash-default` | `add` or `replace`; any other text reads as `replace`. The clash mode a mutator uses when the player and its manifest leave it unset. `Runtime::apply_match_mutators` reads it | `replace` |
 
 The five file-type keys are words, `on` and `off`, not the `0` and `1` of
 the other switches. Settings › System shows a switch for each on Windows,

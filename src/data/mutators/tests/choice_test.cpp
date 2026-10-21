@@ -191,46 +191,84 @@ mutators::MutatorChoice parsed(std::string_view text) {
     return *choice;
 }
 
-/// A folder whose name holds a colon, so a drive-shaped path can be told
-/// from a malformed id.
+/// Parses a choice, writes it back and parses that again, which must give
+/// the same choice and the same text.
 ///
-/// @param scratch the test's folder
-/// @param name the folder's own name
-/// @return the folder
-fs::path drive_folder(const Scratch& scratch, std::string_view name) {
-    const fs::path folder = scratch.path() / std::string(name);
-    std::error_code failure;
-    fs::create_directories(folder, failure);
-    OA_CHECK(!failure);
-    return folder;
+/// @param text the choice
+void check_round_trip(std::string_view text) {
+    const mutators::MutatorChoice choice = parsed(text);
+    const std::string written = mutators::format_choice(choice);
+    std::string error;
+    const std::optional<mutators::MutatorChoice> again = mutators::parse_choice(written, &error);
+    OA_CHECK(again.has_value());
+    if (!again)
+        return;
+    OA_CHECK(again->target == choice.target);
+    OA_CHECK(again->by_path == choice.by_path);
+    OA_CHECK(again->options == choice.options);
+    OA_CHECK(mutators::format_choice(*again) == written);
 }
 
-void test_parse(const Scratch& scratch) {
+/// Makes a folder the working folder until it goes out of scope.
+class WorkingFolder {
+  public:
+
+    explicit WorkingFolder(const fs::path& folder) : previous_(fs::current_path()) {
+        fs::current_path(folder);
+    }
+
+    ~WorkingFolder() {
+        std::error_code ignored;
+        fs::current_path(previous_, ignored);
+    }
+
+    WorkingFolder(const WorkingFolder&) = delete;
+    WorkingFolder& operator=(const WorkingFolder&) = delete;
+
+  private:
+
+    fs::path previous_;
+};
+
+void test_parse() {
     const mutators::MutatorChoice id = parsed("ridge-swift");
     OA_CHECK(same_choice(id, "ridge-swift", false, {}));
 
     const mutators::MutatorChoice relative = parsed("packages/ridge-tough");
     OA_CHECK(same_choice(relative, "packages/ridge-tough", true, {}));
 
+    const mutators::MutatorChoice relative_option = parsed("./pack:factor=4");
+    OA_CHECK(same_choice(relative_option, "./pack", true, {{"factor", "4"}}));
+
     const mutators::MutatorChoice absolute = parsed("/tmp/ridge-swift");
     OA_CHECK(same_choice(absolute, "/tmp/ridge-swift", true, {}));
 
-    const std::string drive = drive_folder(scratch, "C:\\pkg").string();
-    const mutators::MutatorChoice drive_choice = parsed(drive);
-    OA_CHECK(same_choice(drive_choice, drive, true, {}));
+    // A drive letter's colon is part of the path on every platform, whether
+    // or not the folder is there, and the options follow a later colon.
+    const mutators::MutatorChoice drive_choice = parsed("C:\\pkg");
+    OA_CHECK(same_choice(drive_choice, "C:\\pkg", true, {}));
 
-    const mutators::MutatorChoice drive_option = parsed(drive + ":factor=4");
-    OA_CHECK(same_choice(drive_option, drive, true, {{"factor", "4"}}));
+    const mutators::MutatorChoice drive_option = parsed("C:\\pkg:factor=4");
+    OA_CHECK(same_choice(drive_option, "C:\\pkg", true, {{"factor", "4"}}));
 
     const mutators::MutatorChoice several = parsed("ridge-swift:factor=4,health=2000");
     OA_CHECK(same_choice(several, "ridge-swift", false, {{"factor", "4"}, {"health", "2000"}}));
 
-    const mutators::MutatorChoice drive_several = parsed(drive + ":factor=4,health=2000");
-    OA_CHECK(same_choice(drive_several, drive, true, {{"factor", "4"}, {"health", "2000"}}));
+    const mutators::MutatorChoice drive_several = parsed("C:\\pkg:factor=4,health=2000");
+    OA_CHECK(same_choice(drive_several, "C:\\pkg", true, {{"factor", "4"}, {"health", "2000"}}));
 
-    const std::string equals_path = drive_folder(scratch, "C:\\a=b\\pkg").string();
-    const mutators::MutatorChoice equals_choice = parsed(equals_path);
-    OA_CHECK(same_choice(equals_choice, equals_path, true, {}));
+    const mutators::MutatorChoice forward = parsed("C:/Mods/pack");
+    OA_CHECK(same_choice(forward, "C:/Mods/pack", true, {}));
+
+    const mutators::MutatorChoice lower = parsed("d:\\mods\\pack:pace=fast");
+    OA_CHECK(same_choice(lower, "d:\\mods\\pack", true, {{"pace", "fast"}}));
+
+    const mutators::MutatorChoice equals_choice = parsed("C:\\a=b\\pkg");
+    OA_CHECK(same_choice(equals_choice, "C:\\a=b\\pkg", true, {}));
+
+    // With no slash after it, a letter and a colon are an id and its options.
+    const mutators::MutatorChoice letter = parsed("c:factor=4");
+    OA_CHECK(same_choice(letter, "c", false, {{"factor", "4"}}));
 
     OA_CHECK(parse_error("") == "a mutator needs an id or a path");
     OA_CHECK(parse_error(":factor=4") == "a mutator needs an id or a path");
@@ -242,38 +280,68 @@ void test_parse(const Scratch& scratch) {
     OA_CHECK(parse_error("ridge-swift:a=b=c") == "an option is not name=value");
     OA_CHECK(parse_error("ridge-swift:factor=4,health") == "an option is not name=value");
     OA_CHECK(parse_error("ridge-swift:factor=4 5") == "an option is not name=value");
+    OA_CHECK(parse_error("C:\\pkg:factor=") == "an option needs a value");
+
+    // Any other colon in a target needs the entry to be there.
     OA_CHECK(parse_error("ridge-tough:") == "\"ridge-tough:\" is not an id or a path");
-    OA_CHECK(parse_error("C:\\pkg") == "\"C:\\pkg\" is not an id or a path");
-    OA_CHECK(parse_error("C:\\pkg:factor=4") == "\"C:\\pkg\" is not an id or a path");
-    OA_CHECK(parse_error("C:\\a=b\\pkg") == "\"C:\\a=b\\pkg\" is not an id or a path");
+    OA_CHECK(parse_error("ridge:tough") == "\"ridge:tough\" is not an id or a path");
+    OA_CHECK(
+        parse_error("C:\\ridge-nothere\\pkg:") ==
+        "\"C:\\ridge-nothere\\pkg:\" is not an id or a path"
+    );
+    OA_CHECK(
+        parse_error("C:\\ridge-nothere\\a:b:factor=4") ==
+        "\"C:\\ridge-nothere\\a:b\" is not an id or a path"
+    );
 }
 
-void test_round_trip(const Scratch& scratch) {
-    const std::string drive = drive_folder(scratch, "C:\\pkg").string();
-    const std::string texts[] = {
+void test_round_trip() {
+    const std::string_view texts[] = {
         "ridge-swift",
         "packages/ridge-tough",
         "/tmp/ridge-swift",
-        drive,
-        drive + ":factor=4",
-        drive + ":factor=4,health=2000",
+        "C:\\pkg",
+        "C:\\pkg:factor=4",
+        "C:\\pkg:factor=4,health=2000",
+        "C:/Mods/pack:pace=fast",
         "ridge-swift:ready=true,factor=2.0,pace=fast,health=2000",
     };
-    for (const std::string& text : texts) {
-        const mutators::MutatorChoice choice = parsed(text);
-        const std::string written = mutators::format_choice(choice);
-        std::string error;
-        const std::optional<mutators::MutatorChoice> again =
-            mutators::parse_choice(written, &error);
-        OA_CHECK(again.has_value());
-        if (!again)
-            continue;
-        OA_CHECK(again->target == choice.target);
-        OA_CHECK(again->by_path == choice.by_path);
-        OA_CHECK(again->options == choice.options);
-        OA_CHECK(mutators::format_choice(*again) == written);
-    }
+    for (const std::string_view text : texts)
+        check_round_trip(text);
 }
+
+#if !defined(_WIN32)
+/// A folder whose own name holds a colon, which a Windows file system does
+/// not allow.
+///
+/// @param scratch the test's folder
+/// @param name the folder's own name
+/// @return the folder
+fs::path colon_folder(const Scratch& scratch, std::string_view name) {
+    const fs::path folder = scratch.path() / std::string(name);
+    std::error_code failure;
+    fs::create_directories(folder, failure);
+    OA_CHECK(!failure);
+    return folder;
+}
+
+void test_colon_folders(const Scratch& scratch) {
+    // A colon other than a drive's keeps the target a path when the entry is
+    // there, and the options follow a later colon.
+    const std::string folder = colon_folder(scratch, "ridge:pkg").string();
+    OA_CHECK(same_choice(parsed(folder), folder, true, {}));
+    OA_CHECK(same_choice(parsed(folder + ":factor=4"), folder, true, {{"factor", "4"}}));
+    OA_CHECK(same_choice(
+        parsed(folder + ":factor=4,health=2000"),
+        folder,
+        true,
+        {{"factor", "4"}, {"health", "2000"}}
+    ));
+    check_round_trip(folder);
+    check_round_trip(folder + ":factor=4");
+    OA_CHECK(parse_error(folder + "-gone") == "\"" + folder + "-gone\" is not an id or a path");
+}
+#endif
 
 /// The option of an id, or null.
 ///
@@ -365,11 +433,28 @@ void test_resolve(const Scratch& scratch) {
     );
     OA_CHECK(named_health != nullptr && named_health->value.text == "2000");
 
-    const fs::path relative = fs::relative(by_path, fs::current_path());
-    const mutators::ResolvedMutator from_relative =
-        resolved_text(relative.generic_string(), mutators);
-    OA_CHECK(from_relative.manifest.id == "ridge-swift");
-    OA_CHECK(from_relative.choice.by_path);
+    {
+        // A relative path is read from the working folder. The scratch folder
+        // is the working folder here, so the path is relative on every
+        // platform, even where the temporary folder is on another drive.
+        const WorkingFolder working(scratch.path());
+        const mutators::ResolvedMutator from_relative =
+            resolved_text("loose/ridge-swift", mutators);
+        OA_CHECK(from_relative.manifest.id == "ridge-swift");
+        OA_CHECK(from_relative.choice.by_path);
+        const mutators::ResolvedMutator dotted =
+            resolved_text("./loose/ridge-swift:factor=4", mutators);
+        OA_CHECK(dotted.manifest.id == "ridge-swift");
+        const mutators::LoadoutOption* dotted_factor = option_of(dotted, "factor");
+        OA_CHECK(dotted_factor != nullptr && dotted_factor->value.text == "4");
+
+        // A drive path is a path whether or not it is there, and one that
+        // holds no package is refused when it is resolved.
+        OA_CHECK(resolve_error("C:\\pkg", mutators) == "\"C:\\pkg\" is not a mutator package");
+        OA_CHECK(
+            resolve_error("C:\\pkg:factor=4", mutators) == "\"C:\\pkg\" is not a mutator package"
+        );
+    }
 
     const mutators::ResolvedMutator from_absolute =
         resolved_text(fs::absolute(by_path).string(), mutators);
@@ -443,8 +528,11 @@ void test_resolve(const Scratch& scratch) {
 
 int main() {
     const Scratch scratch;
-    test_parse(scratch);
-    test_round_trip(scratch);
+    test_parse();
+    test_round_trip();
+#if !defined(_WIN32)
+    test_colon_folders(scratch);
+#endif
     test_resolve(scratch);
     return oa::test::check_exit_status();
 }

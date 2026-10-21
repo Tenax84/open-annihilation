@@ -778,32 +778,6 @@ std::string played_mod_name(const Inputs& inputs, const TextHooks& text) {
     return std::string(shown(text, words::no_mod));
 }
 
-/// The word a layer id shows. An id that is not one of the nine is empty.
-///
-/// @param id the layer id
-/// @return the word; empty when the id is not known
-std::string_view layer_word(std::string_view id) {
-    if (id == "files")
-        return words::layer_files;
-    if (id == "units")
-        return words::layer_units;
-    if (id == "weapons")
-        return words::layer_weapons;
-    if (id == "features")
-        return words::layer_features;
-    if (id == "sides")
-        return words::layer_sides;
-    if (id == "tables")
-        return words::layer_tables;
-    if (id == "menus")
-        return words::layer_menus;
-    if (id == "maps")
-        return words::tab_maps;
-    if (id == "hacks")
-        return words::fact_hacks;
-    return {};
-}
-
 /// Writes a mutator's version for its "not installed" status.
 ///
 /// A revision above 0 is included, including 1, as "2.0 · rev 1". A revision
@@ -858,37 +832,11 @@ void append_mutator_facts(const Library& library, const Entry& entry, std::vecto
     }
 
     if (entry.installed != nullptr && facts.verdict) {
-        const Verdict& verdict = *facts.verdict;
-        const std::string mod = played_mod_name(library.inputs, text);
-        std::string value;
-        Mark mark = Mark::none;
-        switch (verdict.state) {
-        case Verdict::State::compatible:
-            value = filled(text, words::checked_good, {{"mod", mod}, {"summary", verdict.summary}});
-            mark = Mark::good;
-            break;
-        case Verdict::State::no_effect:
-            value = filled(text, words::checked_no_effect, {{"mod", mod}});
-            mark = Mark::warn;
-            break;
-        case Verdict::State::incompatible:
-            value = filled(
-                text, words::checked_incompatible, {{"mod", mod}, {"reason", verdict.reason}}
-            );
-            mark = Mark::bad;
-            break;
-        case Verdict::State::failed:
-            value = filled(text, words::checked_failed, {{"mod", mod}, {"reason", verdict.reason}});
-            mark = Mark::bad;
-            break;
-        case Verdict::State::checking:
-            value = filled(text, words::checked_running, {{"mod", mod}});
-            break;
-        case Verdict::State::unchecked:
-            value = filled(text, words::checked_not_yet, {{"mod", mod}});
-            break;
-        }
-        list.push_back(fact_of(shown(text, words::fact_checked), value, value, mark));
+        const CheckedWords checked =
+            checked_text(*facts.verdict, played_mod_name(library.inputs, text), text);
+        list.push_back(
+            fact_of(shown(text, words::fact_checked), checked.value, checked.value, checked.mark)
+        );
     }
 
     for (const Prerequisite& need : facts.needs) {

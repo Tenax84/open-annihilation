@@ -180,7 +180,8 @@ finds it at the start of the output. The version line is the last line.
 
 | Option | What it does |
 |---|---|
-| `--mutator PATH\|ID[:OPTION=VALUE,...]` | Applies one mutator to every match this run starts. Repeat it for several, in the order given, each acting on the game as the ones before it left it. `PATH` is a package folder, one that holds `oamut.yaml`. `ID` is a mutator installed in the Mutators folder. Options follow the first `:` that is followed by a name and `=`, as `name=value` pairs joined by `,`. A toggle is `true` or `false`, a choice one of its values, and a number a step inside its range. |
+| `--mutator PATH\|ID[:OPTION=VALUE,...]` | Applies one mutator to every match this run starts. Repeat it for several, in the order given, each acting on the game as the ones before it left it. `PATH` is a package folder, one that holds `oamut.yaml`. `ID` is a mutator installed in the Mutators folder. Options follow the first `:` that is followed by a name and `=`, as `name=value` pairs joined by `,`. A path that starts with a drive letter, `:` and `/` or `\` keeps that `:` on every platform, so `C:\Mods\pack:factor=4` is the folder `C:\Mods\pack` with `factor` set to 4. A toggle is `true` or `false`, a choice one of its values, and a number a step inside its range. |
+| `--no-mutators` | Plays this run with no mutators. A list `--mutator` or a launch file names is refused and logged, even one that is not installed, and no mutator is applied. The last set of each setup is left as it is. |
 
 `--mutator packages/ridge-swift:factor=4` plays the package at that path
 with `factor` set to 4. `--mutator ridge-swift --mutator ridge-tough`
@@ -347,6 +348,7 @@ Network play's own checks, the last rows, are in every build.
 | `--check-factory-orders` | Gives a Kbot Lab a move and checks the unit it builds carries it out. |
 | `--check-unit-speech` | Selects and orders the commander and checks what it says. |
 | `--check-mutator-layer` | Plays skirmishes with the mutators `--mutator` named and checks the commanders, and that a mutator which does not apply leaves no layer. |
+| `--check-replay-loadout` | Checks a recorded loadout against the installed mutators, plays it for one skirmish and puts the player's own list back. |
 | `--check-download-builds` | Builds a unit from a download page. |
 | `--check-stockpile-builds` | Queues and builds rounds for every unit that stockpiles, through a save and a load. |
 | `--check-unit-page-memory` | Checks each unit keeps its order page through reselection, a save and a load. |

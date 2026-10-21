@@ -13,12 +13,14 @@
 #include "oa/data/mod_profile/overrides.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/clashes.hpp"
 #include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 
 #include <cstdint>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <new>
 #include <optional>
@@ -92,6 +94,20 @@ mutator_seed(const Runtime& runtime, const std::vector<mutators::ResolvedMutator
                 << (static_cast<unsigned>(index) * 8U);
     }
     return seed;
+}
+
+/// The clash mode a mutator plays with when neither the player nor its
+/// manifest names one: the `mutators.clash-default` preference.
+///
+/// The match start and the battle room both read it here, so a room's layer
+/// and digest are the ones its match start makes.
+///
+/// @param values the preferences
+/// @return the mode
+oa::formats::oamut::ClashMode clash_default_of(const std::map<std::string, std::string>& values) {
+    const auto stored = values.find(std::string{mutators::clash_default_preference});
+    return stored == values.end() ? mutators::clash_setting_default
+                                  : mutators::clash_from_setting(stored->second);
 }
 
 /// Why a result cannot be played.
@@ -172,7 +188,8 @@ void log_applied(
         std::set<std::string> rewritten;
         for (const mutators::JournalEntry& entry : result.journal.entries) {
             if (entry.change == mutators::Change::added) {
-                ++added;
+                if (entry.new_text != "shared")
+                    ++added;
             } else if (entry.change == mutators::Change::hidden) {
                 ++hidden;
             } else if (
@@ -335,6 +352,11 @@ std::optional<oa::base::sha256::Digest> Runtime::match_mutator_digest() const no
 }
 
 void Runtime::take_command_line_mutators() {
+    if (options_.no_mutators) {
+        note_mutators_refused(mutator_list_text(options_.mutators));
+        choose_match_mutators({});
+        return;
+    }
     if (options_.mutators.empty()) {
         choose_match_mutators({});
         return;
@@ -366,6 +388,10 @@ std::string Runtime::launch_mutator_refusal(
     const std::vector<std::string>& versions,
     const std::vector<std::string>& fields
 ) const {
+    // The flag refuses the list before any package is read, so a missing
+    // mutator does not stop the launch.
+    if (options_.no_mutators)
+        return {};
     const fs::path folder =
         user_folder_ / std::string(oa::data::mutator_library::mutators_folder_name);
     std::vector<mutators::PipelineMutator> listed;
@@ -399,6 +425,11 @@ std::string Runtime::take_launch_mutators(
     std::vector<std::string> versions,
     std::vector<std::string> fields
 ) {
+    if (options_.no_mutators) {
+        note_mutators_refused(mutator_list_text(texts));
+        choose_match_mutators({});
+        return {};
+    }
     const std::string refusal = launch_mutator_refusal(source, texts, versions, fields);
     if (!refusal.empty())
         return refusal;
@@ -421,9 +452,27 @@ std::string Runtime::take_launch_mutators(
 }
 
 void Runtime::apply_match_mutators(const MatchBootstrap&) {
+    // The held list is the one this start plays, including a start that chooses
+    // none. A teardown before this line is not the end of that match.
+    start_loadout_once();
+    // Taken even when this start applies nothing, so a later start that no
+    // setup made is not labelled with a setup that already started a game.
+    const std::optional<mutators_memory::Setup> pending_setup =
+        std::exchange(mutator_setup_, std::nullopt);
+    if (options_.no_mutators) {
+        if (mutator_state_ != nullptr && !mutator_state_->chosen.empty()) {
+            note_mutators_refused(mutator_names(mutators::loadout_of(mutator_state_->chosen)));
+        }
+        return;
+    }
     if (mutator_state_ == nullptr || mutator_state_->chosen.empty())
         return;
     const std::vector<mutators::ResolvedMutator> listed = mutator_state_->chosen;
+    const oa::formats::oamut::ClashMode clash_default = clash_default_of(preference_values_);
+    const mutators::Loadout requested = mutators::loadout_of(listed, clash_default);
+    // Written before the pipeline, so a crash while the mutators are applied
+    // leaves the file. A playable run rewrites it with what applied.
+    arm_mutator_sentinel(pending_setup, requested);
     // A layer already mounted makes the pipeline refuse the list and leave
     // that layer in place.
     if (assets_.mutator_layer_mounted())
@@ -450,16 +499,23 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
         play_latest_profile();
         const std::string reason = failure_text(listed, *mutator_state_->result);
         release_match_mutators();
+        // A refused start is reported, not a crash: nothing is in play.
+        clear_mutator_sentinel();
         throw std::runtime_error(reason);
     }
     if (mutator_state_->served_map)
         reread_chosen_map(true);
     // Taken after the hacks were played, so a mutator their check failed is
     // not in the loadout.
-    const mutators::Loadout applied =
-        mutators::applied_loadout(mutators::loadout_of(listed), *mutator_state_->result);
-    if (applied.entries.empty())
+    const mutators::Loadout applied = mutators::applied_loadout(requested, *mutator_state_->result);
+    if (applied.entries.empty()) {
+        clear_mutator_sentinel();
         return;
+    }
+    arm_mutator_sentinel(pending_setup, applied);
+    // The applied line above names the same mutators and then the files
+    // they changed. This line is the one a crash report can quote.
+    std::cerr << "open-annihilation: mutators in play: " << mutator_names(applied) << '\n';
     try {
         const oa::base::sha256::Digest layer =
             mutators::layer_digest(mutator_state_->result->layer, [this](std::string_view path) {
@@ -476,12 +532,14 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
 mutators::PipelineInput
 Runtime::mutator_pipeline_input(const std::vector<mutators::ResolvedMutator>& chosen) const {
     mutators::PipelineInput input;
+    input.clash_default = clash_default_of(preference_values_);
     input.mutators.reserve(chosen.size());
     for (const mutators::ResolvedMutator& one : chosen) {
         mutators::PipelineMutator item;
         item.package = one.package_folder;
         item.manifest = one.manifest;
         item.options = one.options;
+        item.clashes = one.clashes;
         input.mutators.push_back(std::move(item));
     }
     if (const oa::data::mod_profile::ModProfile* profile = mod_profile()) {

@@ -12,7 +12,15 @@ order leaves 4000. A missing id, an option the package does not have, a
 mutator listed twice, a prerequisite that is not above it and two mutators
 that conflict end with status 2, one refusal line and no match.
 ridge-commander-boom ends with a non-zero status, a line naming the mutator
-and its error, and no match.
+and its error, and no match. --no-mutators plays the stock health and
+logs the refusal once. A match with mutators leaves no crash record and
+writes no remembered set. A record planted beside the preferences is
+logged once and deleted. A campaign start that the mutators refuse leaves
+no crash record. ridge-commander-copy, whose manifest names no clash mode,
+clones CORCOM onto ARMCOM: with mutators.clash-default=add in the
+preferences the copy takes a private name, one note names the rename and
+both commanders keep their stock health; without the key the copy
+replaces ARMCOM, whose commander then holds 4321, and no rename is noted.
 """
 import argparse
 import os
@@ -29,14 +37,29 @@ RUNNER = shlex.split(os.environ.get("OA_TEST_RUNNER", ""))
 PREPARED = "Offline match world prepared"
 UNIT_LINE = re.compile(r"^tick=(\d+) slot=\d+ type=\d+ owner=(\d+) .* health=(-?\d+)")
 RUN_TIMEOUT = 300
+# The first line of a preferences file.
+PREFERENCES_HEADER = "open-annihilation-preferences 1"
+# The preference that sets the clash mode a mutator's manifest leaves unset.
+CLASH_DEFAULT = "mutators.clash-default"
+# The health ridge-commander-copy gives its copy of CORCOM.
+COPY_HEALTH = 4321
+RENAMED_NOTE = "ridge-commander-copy renamed ARMCOM to ARMCOM_2"
+REPLACED_NOTE = "ridge-commander-copy replaced ARMCOM from the game on "
+# Canonical loadout text for ridge-tough 1.0. The crash record stores this
+# text; the next start names the id and the version and does not resolve it.
+TOUGH_LOADOUT = (
+    '{"mutators":[{"clashes":"replace","folder":false,"id":"ridge-tough","options":{},'
+    '"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",'
+    '"version":"1.0"}],"oaloadout":1}'
+)
 
 
 class ScriptFailure(Exception):
     """A behaviour that differs from the expected one."""
 
 
-def run(native, game_dir, workdir, name, mutators):
-    """Runs one headless skirmish. Returns the status and the output lines."""
+def run(native, game_dir, workdir, name, mutators, extra=()):
+    """Runs one headless start. Returns the status and the output lines."""
     environment = dict(os.environ, SDL_VIDEO_DRIVER="dummy", SDL_AUDIO_DRIVER="dummy")
     digest = workdir / f"{name}.trace"
     units = workdir / f"{name}.units"
@@ -59,6 +82,7 @@ def run(native, game_dir, workdir, name, mutators):
         "--preferences-file",
         str(workdir / f"{name}.conf"),
     ]
+    command.extend(extra)
     for value in mutators:
         command += ["--mutator", value]
     result = subprocess.run(
@@ -132,6 +156,149 @@ def expect_stock(native, game_dir, workdir):
     for health in (first, second):
         if health in (4000, 1234, 2000):
             raise ScriptFailure(f"the stock commanders hold {health}")
+    return first, second
+
+
+def separate(workdir, name):
+    """A folder of one run, so its crash record is not another run's."""
+    folder = workdir / name
+    folder.mkdir()
+    return folder
+
+
+def assert_no_sentinel(folder):
+    """The crash record is not left beside this run's preferences."""
+    sentinel = folder / "mutators-sentinel.conf"
+    if sentinel.exists():
+        raise ScriptFailure(f"{sentinel} was left")
+
+
+def quote_preference(text):
+    """One preferences token, quoted as the file stores it."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def expect_no_mutators(native, game_dir, workdir, package, health):
+    """--no-mutators plays the stock health and leaves no crash record."""
+    folder = separate(workdir, "no-mutators")
+    status, lines, units = run(
+        native, game_dir, folder, "run", [package], extra=("--no-mutators",)
+    )
+    if status != 0:
+        print("\n".join(lines))
+        raise ScriptFailure(f"--no-mutators exited with {status}")
+    if not any(PREPARED in line for line in lines):
+        print("\n".join(lines))
+        raise ScriptFailure("--no-mutators prepared no match")
+    first, second = commanders(units, lines)
+    if (first, second) != health:
+        raise ScriptFailure(
+            f"--no-mutators left the commanders at {first} and {second}, not {health[0]} and {health[1]}"
+        )
+    said = [line for line in lines if "--no-mutators refused" in line]
+    if len(said) != 1:
+        print("\n".join(lines))
+        raise ScriptFailure(f"--no-mutators reported the refusal {len(said)} times, not once")
+    assert_no_sentinel(folder)
+
+
+def expect_no_remembered_set(folder, name):
+    """A match with mutators left no crash record and wrote no remembered set."""
+    assert_no_sentinel(folder)
+    preferences = folder / f"{name}.conf"
+    if not preferences.is_file():
+        return
+    text = preferences.read_text(encoding="utf-8", errors="replace")
+    if "open-annihilation.mutators." in text:
+        raise ScriptFailure(f"{preferences.name} holds a remembered set")
+
+
+def expect_planted_record(native, game_dir, workdir):
+    """A record planted before a stock run is logged once and deleted."""
+    folder = separate(workdir, "planted")
+    sentinel = folder / "mutators-sentinel.conf"
+    sentinel.write_text(
+        "open-annihilation-preferences 1\n"
+        + quote_preference("mutators")
+        + " "
+        + quote_preference(TOUGH_LOADOUT)
+        + "\n"
+        + quote_preference("setup")
+        + " "
+        + quote_preference("none")
+        + "\n",
+        encoding="utf-8",
+    )
+    status, lines, _units = run(native, game_dir, folder, "run", [])
+    if status != 0:
+        print("\n".join(lines))
+        raise ScriptFailure(f"the planted record's run exited with {status}")
+    phrase = "the last game ended in a crash with ridge-tough 1.0"
+    said = [line for line in lines if phrase in line]
+    if len(said) != 1:
+        print("\n".join(lines))
+        raise ScriptFailure(f"the planted record was reported {len(said)} times, not once")
+    assert_no_sentinel(folder)
+
+
+def expect_clash_default(native, game_dir, workdir, package, stock):
+    """The preference sets the clash mode of a mutator whose manifest names none.
+
+    With mutators.clash-default=add the clone onto ARMCOM takes a private
+    name and both commanders keep stock; with no key it replaces ARMCOM.
+    """
+    for mode in ("add", None):
+        name = "clash-" + (mode or "unset")
+        folder = separate(workdir, name)
+        if mode is not None:
+            (folder / "run.conf").write_text(
+                PREFERENCES_HEADER
+                + "\n"
+                + quote_preference(CLASH_DEFAULT)
+                + " "
+                + quote_preference(mode)
+                + "\n",
+                encoding="utf-8",
+            )
+        status, lines, units = run(native, game_dir, folder, "run", [str(package)])
+        if status != 0:
+            print("\n".join(lines))
+            raise ScriptFailure(f"{name} exited with {status}")
+        renamed = [line for line in lines if RENAMED_NOTE in line]
+        replaced = [line for line in lines if REPLACED_NOTE in line]
+        health = commanders(units, lines)
+        if mode == "add":
+            if len(renamed) != 1 or replaced:
+                print("\n".join(lines))
+                raise ScriptFailure(f"{name} did not keep the copy beside ARMCOM")
+            if health != stock:
+                raise ScriptFailure(f"{name} left the commanders at {health}, not {stock}")
+        else:
+            if renamed or len(replaced) != 1:
+                print("\n".join(lines))
+                raise ScriptFailure(f"{name} did not put the copy in place of ARMCOM")
+            if COPY_HEALTH not in health:
+                raise ScriptFailure(
+                    f"{name} left the commanders at {health}, neither at {COPY_HEALTH}"
+                )
+        assert_no_sentinel(folder)
+
+
+def expect_campaign_refusal(native, game_dir, workdir, package):
+    """A campaign start the mutators refuse leaves no crash record."""
+    folder = separate(workdir, "campaign-boom")
+    status, lines, _units = run(
+        native,
+        game_dir,
+        folder,
+        "run",
+        [str(package / "ridge-commander-boom")],
+        extra=("--campaign", "Arm Campaign", "--mission", "1"),
+    )
+    if status == 0:
+        print("\n".join(lines))
+        raise ScriptFailure("the campaign refusal exited with status 0")
+    assert_no_sentinel(folder)
 
 
 def expect_refused(native, game_dir, workdir, name, mutators, phrase, status_code):
@@ -185,8 +352,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix="native-mutators-", dir=args.scratch_root.resolve()) as scratch:
         workdir = Path(scratch)
         try:
-            expect_stock(native, game_dir, workdir)
+            health = expect_stock(native, game_dir, workdir)
             expect_health(native, game_dir, workdir, "tough", [tough], 4000)
+            expect_no_remembered_set(workdir, "tough")
             expect_health(native, game_dir, workdir, "option", [tough + ":health=2000"], 2000)
             expect_health(native, game_dir, workdir, "order", [tough, tougher], 5000)
             expect_health(native, game_dir, workdir, "reverse", [tougher, tough], 4000)
@@ -236,6 +404,12 @@ def main():
                 2,
             )
             expect_boom(native, game_dir, workdir, packages)
+            expect_no_mutators(native, game_dir, workdir, tough, health)
+            expect_planted_record(native, game_dir, workdir)
+            expect_campaign_refusal(native, game_dir, workdir, packages)
+            expect_clash_default(
+                native, game_dir, workdir, packages / "ridge-commander-copy", health
+            )
         except ScriptFailure as failure:
             print(f"FAIL {failure}")
             return 1

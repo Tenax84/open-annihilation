@@ -295,6 +295,10 @@ struct Options {
     fs::path mod_dir;
     // Plays the game folder without the remembered mod folder (--base-game).
     bool base_game = false;
+    /// Plays this run with no mutators (--no-mutators). A list `--mutator`
+    /// or a launch file names is refused and logged, and none is applied.
+    /// The last set of each setup is left as it is.
+    bool no_mutators = false;
     // Mutators for this run (--mutator PATH|ID[:OPTION=VALUE,...]), each
     // value as written, in the order given. Empty applies none.
     std::vector<std::string> mutators;
@@ -455,6 +459,9 @@ struct Options {
     // the commanders' health, and that a mutator which does not apply
     // leaves no layer.
     bool check_mutator_layer = false;
+    // Plays skirmishes with the installed mutators the command line named and
+    // checks a recording's loadout is refused, played once, and given back.
+    bool check_replay_loadout = false;
     // Plays skirmishes over a --mod-dir folder and checks each match reads
     // side data again when gamedata/sidedata.tdf has changed.
     bool check_side_data_per_match = false;
