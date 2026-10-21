@@ -10,6 +10,7 @@
 #include "oa/data/mod_profile/registry.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 #include "oa/ui/kit/tag_icon.hpp"
+#include "oa/ui/library/prerequisites.hpp"
 #include "oa/ui/library/text.hpp"
 #include "oa/ui/library/uninstall.hpp"
 #include "visible.hpp"
@@ -1520,14 +1521,46 @@ std::vector<ActionButton> entry_actions(const Library& library, const Entry& ent
         return buttons;
     }
     // A mutator is got, checked, uninstalled and opened. Nothing switches it on.
+    // GET WITH takes GET's place when the plan brings a prerequisite, or is
+    // blocked before the mutator itself can be the only download.
     if (entry.id.kind == Kind::mutator) {
         if (entry.state == State::get || entry.state == State::update) {
             if (item != nullptr && pending(item->phase))
                 add(Action::cancel, true);
             else if (item != nullptr && item->phase == Phase::failed && item->retryable)
                 add(Action::retry, entry.can_act);
-            else
-                add(entry.state == State::get ? Action::get : Action::update, entry.can_act);
+            else if (entry.state == State::update)
+                add(Action::update, entry.can_act);
+            else {
+                const GetPlan plan = get_plan(library, entry);
+                const bool ends_with_self = !plan.steps.empty() && plan.steps.back().id == entry.id;
+                std::size_t extras = 0;
+                std::string lead;
+                if (ends_with_self) {
+                    extras = plan.steps.size() - 1;
+                    lead = plan.steps.front().name;
+                } else if (!plan.steps.empty()) {
+                    extras = plan.steps.size() + (plan.blocked.empty() ? 0 : 1);
+                    lead = plan.steps.front().name;
+                } else {
+                    extras = 1;
+                    lead = entry.needs_missing.empty() ? std::string(entry_name(entry))
+                                                       : entry.needs_missing;
+                }
+                const bool brings = extras > 0 || (!plan.blocked.empty() && !ends_with_self);
+                if (!brings)
+                    add(Action::get, entry.can_act);
+                else {
+                    const std::string caption =
+                        extras <= 1 ? filled(text, words::action_get_with, {{"name", lead}})
+                                    : filled(
+                                          text,
+                                          words::action_get_with_more,
+                                          {{"count", std::to_string(extras)}}
+                                      );
+                    buttons.push_back({Action::get_with, plan.blocked.empty(), caption});
+                }
+            }
         }
         const MutatorFacts* mutator = mutator_facts(entry);
         if (entry.installed != nullptr && mutator != nullptr && mutator->verdict) {

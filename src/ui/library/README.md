@@ -308,7 +308,11 @@ app removes the folder (`Runtime::library_uninstall`,
   lists it, so the Library cannot get it again."; CANCEL (`cancel`) marked
   and answering Escape, B and N, and UNINSTALL (`uninstall`) primary. Its
   word is the kit's default, so automation lists `oa.prompt.cancel` and
-  `oa.prompt.uninstall`.
+  `oa.prompt.uninstall`. `uninstall_question(library, entry, folder)` is
+  the same question, and for a mutator other installed mutators need it
+  adds, before that last paragraph, that they stay installed and cannot
+  be switched on until it is back. The host uses this form. The answer
+  and the removal are unchanged.
 - `uninstall_notice(entry, step)` makes the notice for a package in use,
   and `uninstall_failed_notice(name, problem)` the one for an uninstall
   that removed nothing (busy, changed, a link, outside the player's
@@ -667,8 +671,9 @@ stay valid until the model's next refresh.
   details page with MORE ▾ open, its Rules fact is whole, and an
   incompatible verdict is drawn in the danger colour.
 - A press on a row only selects it, and at Compact opens its details; only
-  its download arrow or up-arrow asks for GET or UPDATE, by the same rule
-  as the details' button.
+  its download arrow or up-arrow asks for GET, GET WITH or UPDATE, by the
+  same rule as the details' button. The arrow's name stays `get` or
+  `update` from the row's state.
 
 ### Prerequisites
 
@@ -697,6 +702,33 @@ screens all call these three, so a mutator applies after the mutators it
 needs whichever screen put it in a list. They read no file, clock or
 network, and they hold no words.
 
+`needs_of(library)` is the graph those three read: one record per mutator
+entry, its id the package key, its needs the installed manifest's when
+that copy is installed and otherwise the listing's. `get_plan(library,
+entry)` is the download: every missing prerequisite, transitively, from
+the listing that offers a version in range (the entry's own registry,
+then a registry that ships with the game, then the lowest registry id;
+the newest release in that set), in that closure's order, then the entry.
+A prerequisite already installed in range is left out. One installed
+below its range is an update of the listing that meets it. A prerequisite
+no usable listing offers in range blocks the plan, and so does a step
+GET would refuse; a step that does not work with the mod being played
+does not. A cycle blocks the plan and names the ids in the loop, and
+places nothing. The picker reuses this plan. No other part of the Library
+orders prerequisites.
+
+GET WITH takes GET's place when that plan holds more than the mutator, or
+is blocked before the mutator can be the only download. One missing
+prerequisite names it (`GET WITH {name}`); more than one counts them
+(`GET WITH {count} MORE`). The button is off while the plan is blocked.
+`details_note` then says those packages download first and sit above this
+mutator in every list. `get_with_question(library, entry)` asks "Get
+{name}?" with one paragraph, one line per package that will download (its
+badge, "{name} {version}", and " · from {registry}"), CANCEL marked and
+GET BOTH for two packages or GET ALL for more. Nothing is queued until
+that button. Automation reads `library.action.get-with`, `oa.prompt.cancel`,
+`oa.prompt.get-both` and `oa.prompt.get-all`.
+
 ## Tests
 
 `ui-library-prerequisites` closes made-up mutators: one id, a chain of
@@ -706,7 +738,14 @@ needs a cycle without being on it. It takes
 dependants direct, through another id and none, in the list's own order,
 and an order that keeps a chain, a diamond and a list naming an outside
 id, and one that does not. A chain of 1,000 closes with the first id at
-the top.
+the top. It also builds the download plan: needs from an installed
+manifest and from a listing, Gatehouse Keep with Gatehouse absent, installed
+below its range and in range, listed only below the range, and listed by
+two registries; a chain of three missing prerequisites; a prerequisite the
+played mod cannot use; a cycle; GET WITH's words and whether it is on;
+the question's title, paragraph, items, buttons and fit at every class;
+the note; the uninstall paragraph for one dependant and for two; and a
+lookup that translates.
 
 `ui-library-update-question` builds Libraries over a built-in and an added
 registry: `asks_before_update` and `update_question` for an added

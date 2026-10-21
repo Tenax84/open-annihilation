@@ -10,6 +10,14 @@
 
 
 
+[· from {registry}]
+	{
+	de=· von {registry};
+	fr=· depuis {registry};
+	es=· de {registry};
+	it=· da {registry};
+	}
+
 ["{title}" was saved with {name}, which is off.]
 	{
 	de="{title}" wurde mit {name} gespeichert, und das ist aus.;
@@ -3290,12 +3298,44 @@
 	it=OTTIENI;
 	}
 
+[GET ALL]
+	{
+	de=ALLE HOLEN;
+	fr=LES OBTENIR TOUS;
+	es=OBTENER TODOS;
+	it=OTTIENI TUTTI;
+	}
+
+[GET BOTH]
+	{
+	de=BEIDE HOLEN;
+	fr=TOUT OBTENIR;
+	es=OBTENER AMBOS;
+	it=OTTIENI ENTRAMBI;
+	}
+
 [GET MAP]
 	{
 	de=KARTE HOLEN;
 	fr=OBTENIR LA CARTE;
 	es=OBTENER MAPA;
 	it=OTTIENI MAPPA;
+	}
+
+[GET WITH {count} MORE]
+	{
+	de=MIT {count} WEITEREN HOLEN;
+	fr=OBTENIR AVEC {count} DE PLUS;
+	es=OBTENER CON {count} MÁS;
+	it=OTTIENI CON ALTRI {count};
+	}
+
+[GET WITH {name}]
+	{
+	de=MIT {name} HOLEN;
+	fr=OBTENIR AVEC {name};
+	es=OBTENER CON {name};
+	it=OTTIENI CON {name};
 	}
 
 [GET installs it again.]
@@ -3512,6 +3552,14 @@
 	fr=Obtiens, mets à jour et change les mods, les packs de cartes et les langues. Le nombre compte chaque paquet que tu as ajouté : mods, packs de cartes, packs de langue et extensions.;
 	es=Obtén, actualiza y cambia mods, paquetes de mapas e idiomas. El número cuenta cada paquete que has añadido: mods, paquetes de mapas, paquetes de idioma y expansiones.;
 	it=Ottieni, aggiorna e cambia mod, pacchetti di mappe e lingue. Il numero conta ogni pacchetto che hai aggiunto: mod, pacchetti di mappe, pacchetti di lingua ed espansioni.;
+	}
+
+[Get {name}?]
+	{
+	de={name} holen?;
+	fr=Obtenir {name} ?;
+	es=¿Obtener {name}?;
+	it=Ottenere {name}?;
 	}
 
 [Gives this order at the held point.]
@@ -5720,6 +5768,14 @@
 	fr=Nécessite {name};
 	es=Requiere {name};
 	it=Richiede {name};
+	}
+
+[Needs {name} {range}, which no registry offers]
+	{
+	de=Braucht {name} {range}, das keine Registrierung anbietet;
+	fr=Requiert {name} {range}, qu'aucun registre n'offre;
+	es=Necesita {name} {range}, que ningún registro ofrece;
+	it=Richiede {name} {range}, che nessun registro offre;
 	}
 
 [Needs {name} · on]
@@ -9442,6 +9498,14 @@
 	it=Questi file richiedono {need} e questo {device} ha {free} liberi. {advice}, o spegni una parte sopra, poi tocca Controlla di nuovo.;
 	}
 
+[These mutators need each other: {ids}]
+	{
+	de=Diese Mutatoren brauchen einander: {ids};
+	fr=Ces mutateurs ont besoin les uns des autres : {ids};
+	es=Estos mutadores se necesitan entre sí: {ids};
+	it=Questi mutatori hanno bisogno l'uno dell'altro: {ids};
+	}
+
 [This base game is used when the Library closes.]
 	{
 	de=Dieses Grundspiel wird verwendet, wenn die Bibliothek schließt.;
@@ -12498,6 +12562,30 @@
 	it={names} e {count} in più;
 	}
 
+[{names} download first, then sit above {name} in every list.]
+	{
+	de={names} werden zuerst heruntergeladen und stehen dann in jeder Liste über {name}.;
+	fr={names} se téléchargent d'abord, puis passent au-dessus de {name} dans chaque liste.;
+	es={names} se descargan primero y luego quedan por encima de {name} en todas las listas.;
+	it={names} si scaricano prima e poi stanno sopra {name} in ogni elenco.;
+	}
+
+[{names} downloads first, then sits above {name} in every list.]
+	{
+	de={names} wird zuerst heruntergeladen und steht dann in jeder Liste über {name}.;
+	fr={names} se télécharge d'abord, puis passe au-dessus de {name} dans chaque liste.;
+	es={names} se descarga primero y luego queda por encima de {name} en todas las listas.;
+	it={names} si scarica prima e poi sta sopra {name} in ogni elenco.;
+	}
+
+[{names} need it: they stay installed, and cannot be switched on until this is back.]
+	{
+	de={names} brauchen es: sie bleiben installiert und lassen sich nicht einschalten, bis dies wieder da ist.;
+	fr={names} en ont besoin : ils restent installés et ne peuvent pas être activés tant que ceci n'est pas de retour.;
+	es={names} lo necesitan: siguen instalados y no se pueden activar hasta que esto vuelva.;
+	it={names} ne hanno bisogno: restano installati e non si possono attivare finché questo non torna.;
+	}
+
 [{name} from {installed} is installed. Replace it with {name} from {new}? The one from {installed} is kept, and ROLL BACK brings it back.]
 	{
 	de={name} von {installed} ist installiert. Durch {name} von {new} ersetzen? Das von {installed} bleibt erhalten, und ZURÜCKROLLEN holt es zurück.;
@@ -12538,12 +12626,36 @@
 	it={name} è Lua precompilato. Un mutatore contiene solo sorgente Lua.;
 	}
 
+[{name} needs it: it stays installed, and cannot be switched on until this is back.]
+	{
+	de={name} braucht es: es bleibt installiert und lässt sich nicht einschalten, bis dies wieder da ist.;
+	fr={name} en a besoin : il reste installé et ne peut pas être activé tant que ceci n'est pas de retour.;
+	es={name} lo necesita: sigue instalado y no se puede activar hasta que esto vuelva.;
+	it={name} ne ha bisogno: resta installato e non si può attivare finché questo non torna.;
+	}
+
 [{name} needs {need}.]
 	{
 	de={name} braucht {need}.;
 	fr={name} a besoin de {need}.;
 	es={name} necesita {need}.;
 	it={name} ha bisogno di {need}.;
+	}
+
+[{name} needs {prerequisites}, which you don't have. They download first, and go above {name} in every list.]
+	{
+	de={name} braucht {prerequisites}, die du nicht hast. Sie werden zuerst heruntergeladen und stehen in jeder Liste über {name}.;
+	fr={name} a besoin de {prerequisites}, que tu n'as pas. Ils se téléchargent d'abord et passent au-dessus de {name} dans chaque liste.;
+	es={name} necesita {prerequisites}, que no tienes. Se descargan primero y quedan por encima de {name} en todas las listas.;
+	it={name} ha bisogno di {prerequisites}, che non hai. Si scaricano prima e stanno sopra {name} in ogni elenco.;
+	}
+
+[{name} needs {prerequisite}, which you don't have. Both download now, and {short} goes above {name} in every list.]
+	{
+	de={name} braucht {prerequisite}, das du nicht hast. Beide werden jetzt heruntergeladen, und {short} steht in jeder Liste über {name}.;
+	fr={name} a besoin de {prerequisite}, que tu n'as pas. Les deux se téléchargent maintenant, et {short} passe au-dessus de {name} dans chaque liste.;
+	es={name} necesita {prerequisite}, que no tienes. Ambos se descargan ahora, y {short} queda por encima de {name} en todas las listas.;
+	it={name} ha bisogno di {prerequisite}, che non hai. Entrambi si scaricano ora, e {short} sta sopra {name} in ogni elenco.;
 	}
 
 [{name} off]
