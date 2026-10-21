@@ -647,7 +647,43 @@ stay valid until the model's next refresh.
   its download arrow or up-arrow asks for GET or UPDATE, by the same rule
   as the details' button.
 
+### Prerequisites
+
+`prerequisites.hpp` is the order every mutator screen uses when it switches
+a mutator on or downloads one. The graph is ids only (`Need`): the caller
+turns the Library's prerequisite records into needs, and version ranges
+stay with the caller.
+
+- `prerequisite_closure(graph, ids)` returns every id `ids` reach. An id
+  is met when `ids` names it, or when a need list names it while each id's
+  needs are read from left to right before the next id in `ids`. The ids
+  of one cycle stay together in that order. Every other id goes after
+  everything it needs. A component goes after the components it needs, and
+  a tie keeps the component whose id was met first. An id the graph does
+  not hold is a leaf. A cycle sets `Closure::cyclic`. A repeated id in
+  `ids` is kept once.
+- `dependants_of(graph, among, id)` returns every id in `among` that needs
+  `id`, directly or through other ids, in `among`'s order. `id` itself is
+  included only when a cycle leads back to it.
+- `prerequisites_above(graph, order)` is true when no id in `order` comes
+  before an id in `order` that it needs, directly or through other ids.
+
+The list applies from top to bottom, so a prerequisite stands above the
+mutator that needs it. The Library, the picker and the other mutator
+screens all call these three, so a mutator applies after the mutators it
+needs whichever screen put it in a list. They read no file, clock or
+network, and they hold no words.
+
 ## Tests
+
+`ui-library-prerequisites` closes made-up mutators: one id, a chain of
+three, a diamond, two roots that share a prerequisite, a cycle of two and
+of three, an id the graph does not hold, a repeated id, and an id that
+needs a cycle without being on it. It takes
+dependants direct, through another id and none, in the list's own order,
+and an order that keeps a chain, a diamond and a list naming an outside
+id, and one that does not. A chain of 1,000 closes with the first id at
+the top.
 
 `ui-library-update-question` builds Libraries over a built-in and an added
 registry: `asks_before_update` and `update_question` for an added

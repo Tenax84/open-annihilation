@@ -8,11 +8,12 @@
 # clock or network. The update question asked
 # before an update that may stop saved games loading (update_question.hpp),
 # the questions about the mod the game plays: SWITCH OFF's, PLAY NOW's
-# refusal and ROLL BACK's (mod_questions.hpp), and UNINSTALL's rules, its
-# question and its notices (uninstall.hpp).
+# refusal and ROLL BACK's (mod_questions.hpp), UNINSTALL's rules, its
+# question and its notices (uninstall.hpp), and the order of a mutator's
+# prerequisites (prerequisites.cpp).
 add_library(oa-ui-library src/library.cpp src/search.cpp src/text.cpp
   src/content.cpp src/game_icon.cpp src/update_question.cpp src/mod_questions.cpp
-  src/uninstall.cpp)
+  src/uninstall.cpp src/prerequisites.cpp)
 # The Library's screens, made of the UI kit's components: their layout at
 # the three size classes, their drawing and their input (screen.hpp).
 target_sources(oa-ui-library PRIVATE src/layout.cpp src/draw.cpp src/input.cpp)
@@ -54,6 +55,14 @@ if(BUILD_TESTING)
     oa-test-support oa-options)
   add_test(NAME ui-library-uninstall COMMAND oa-ui-library-uninstall-test)
   set_tests_properties(ui-library-uninstall PROPERTIES TIMEOUT 30)
+
+  # The order of mutator prerequisites: the closure, the dependants and
+  # whether a list keeps every prerequisite above what needs it.
+  add_executable(oa-ui-library-prerequisites-test tests/prerequisites_test.cpp)
+  target_link_libraries(oa-ui-library-prerequisites-test PRIVATE oa-ui-library oa-test-support
+    oa-options)
+  add_test(NAME ui-library-prerequisites COMMAND oa-ui-library-prerequisites-test)
+  set_tests_properties(ui-library-prerequisites PROPERTIES TIMEOUT 30)
 
   # The search: what ranks first, several words, a missing word, folding,
   # tag prefixes, the cap and ties.
