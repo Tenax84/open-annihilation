@@ -15,6 +15,7 @@ add_library(
   src/pipeline.cpp
   src/rules_lua.cpp
   src/verdicts.cpp
+  src/weapon_ids.cpp
 )
 add_library(oa::data::mutators ALIAS oa-data-mutators)
 target_include_directories(oa-data-mutators PUBLIC include)
@@ -91,7 +92,9 @@ if(BUILD_TESTING)
   set_tests_properties(data-mutators-journal PROPERTIES TIMEOUT 60)
 
   add_executable(oa-data-mutators-pipeline-test tests/pipeline_test.cpp)
-  target_link_libraries(oa-data-mutators-pipeline-test PRIVATE oa-data-mutators oa-test-support)
+  target_link_libraries(
+    oa-data-mutators-pipeline-test PRIVATE oa-data-mutators oa-data-defs-assets oa-test-support
+  )
   target_compile_definitions(
     oa-data-mutators-pipeline-test
     PRIVATE "OA_MUTATORS_TEST_DATA=\"${CMAKE_SOURCE_DIR}/tests/data/mutators\""
@@ -108,6 +111,13 @@ if(BUILD_TESTING)
   set_tests_properties(data-mutators-menus PROPERTIES TIMEOUT 30)
   oa_add_game_data_test(data-mutators-menus-data oa-data-mutators-menus-test --data)
   set_tests_properties(data-mutators-menus-data PROPERTIES TIMEOUT 180)
+
+  add_executable(oa-data-mutators-weapon-ids-test tests/weapon_ids_test.cpp)
+  target_link_libraries(
+    oa-data-mutators-weapon-ids-test PRIVATE oa-data-mutators oa-formats-tdf oa-test-support
+  )
+  add_test(NAME data-mutators-weapon-ids COMMAND oa-data-mutators-weapon-ids-test)
+  set_tests_properties(data-mutators-weapon-ids PROPERTIES TIMEOUT 30)
 
   add_executable(oa-data-mutators-verdicts-test tests/verdicts_test.cpp)
   target_link_libraries(oa-data-mutators-verdicts-test PRIVATE oa-data-mutators oa-test-support)

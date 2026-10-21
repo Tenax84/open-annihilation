@@ -330,6 +330,10 @@ Conflict conflict_from_hook(const HookNote& note, std::span<const std::string> i
         conflict.severity = Severity::note;
         conflict.kind = ConflictKind::text_change_dropped;
         break;
+    case HookNoteKind::id_kept:
+        conflict.severity = Severity::note;
+        conflict.kind = ConflictKind::write_refused;
+        break;
     }
     return conflict;
 }

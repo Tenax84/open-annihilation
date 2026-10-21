@@ -85,7 +85,8 @@ enum class HookNoteKind : uint8_t {
     hook_overwrote,               ///< a later hook replaced an earlier hook's value
     download_first_entry_changed, ///< removing the first download entry left a different unit first
     not_a_number,                 ///< a scale skipped a value that is not a number
-    menu_note,                    ///< a moved button, a missing picture or a full AI list
+    id_kept,   ///< a write of id on a weapon the game already numbered was left undone
+    menu_note, ///< a moved button, a missing picture or a full AI list
 };
 
 /// One unit or weapon a hook cloned.
@@ -275,6 +276,25 @@ class Collections {
     /// @param store the layered store, or null
     void bind_store(oa::AssetStore* store) { store_ = store; }
 
+    /// Remembers weapon sections whose ids the game already assigned.
+    ///
+    /// A later hook that writes `id` on one of these weapons does not change
+    /// it, and the note names the mutator. A weapon a mutator brings has a
+    /// new name and is not in this list, so a write of `id` on it is kept
+    /// and the numbering pass reads it as that weapon's request.
+    ///
+    /// @param names section names, compared without ASCII case
+    void keep_weapon_ids(std::span<const std::string> names);
+
+    /// Forgets a document the index has listed, so a later read sees it again.
+    ///
+    /// A hook that removed the document leaves the index holding that path.
+    /// Bringing the file back clears that memory before the text is parsed
+    /// again. A handle that still names a section of it then fails.
+    ///
+    /// @param path document path, '/' or '\\' separated
+    void release_document(std::string_view path);
+
     /// Returns the clones made so far, in the order the hooks made them.
     ///
     /// The span is invalidated by the next clone.
@@ -350,6 +370,8 @@ class Collections {
     oa::AssetStore* store_{};         ///< store a clone reads; not owned
     std::vector<CloneRecord> clones_; ///< clones made during the hooks
     std::vector<ServedCopy> served_;  ///< binary copies those clones serve
+    /// Folded weapon section names whose ids stay as the game assigned them.
+    std::vector<std::string> kept_weapon_ids_;
     /// Folded served path to its index in `served_`. A page lookup does not scan the list.
     std::unordered_map<std::string, std::size_t> served_index_;
     SideScratch side_scratch_{};

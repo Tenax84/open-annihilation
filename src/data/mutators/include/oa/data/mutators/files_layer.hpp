@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -51,6 +52,43 @@ struct MutatorFiles {
     FilesPlan plan;
 };
 
+/// Which records a mutator file holds, or `none` when the path is one whole file.
+enum class RecordFileKind : uint8_t {
+    none,     ///< the path is served as one file
+    unit,     ///< one unit: an FBI one level under the units folder
+    weapon,   ///< weapon sections: a TDF one level under the weapons folder
+    download, ///< download entries: a TDF one level under the download folder
+};
+
+/// Classifies a resource path as a record file or a whole file.
+///
+/// A record file sits one level under the layout's units, weapons or download
+/// folder. A unit file uses the layout's unit extension. A weapon or download
+/// file ends in `.tdf`. Names are compared without ASCII case. A nested path
+/// is a whole file, and so is every other folder.
+///
+/// @param path resource path, with '/' or '\\' between parts
+/// @param layout the mod's directory names and unit extension
+/// @return the records the file holds, or `none`
+[[nodiscard]] RecordFileKind
+record_file_kind(std::string_view path, const oa::data::defs::DataLayout& layout);
+
+/// The bytes of one record file a kept mutator added.
+///
+/// The spec still keeps one host file per path, so a later mutator wins that
+/// path for a whole-file mount. Record files are also kept here, one snapshot
+/// per mutator that added the path, including a path a later mutator replaced
+/// in the spec. A mask that hides the path drops these snapshots. A later add
+/// folder of the same mutator replaces only its own snapshot.
+struct RecordFile {
+    /// Id of the mutator that added the file.
+    std::string mutator;
+    /// Resource path, in the spelling that was read.
+    std::string path;
+    /// The file's bytes.
+    std::shared_ptr<const std::vector<uint8_t>> bytes;
+};
+
 /// Why a note was recorded while the layer was built.
 enum class FileNoteKind : uint8_t {
     add_replaced,       ///< a later mutator replaced an earlier mutator's file
@@ -86,9 +124,13 @@ struct MutatorFailure {
 /// The layer built from a list of mutators, with the journal notes.
 struct FilesLayer {
     /// The paths, archives and masks to mount. The function does not mount them.
+    /// A record file still occupies one entry here: the later mutator wins the
+    /// path. The pipeline reads every mutator's copy from `records` instead.
     oa::MutatorLayerSpec spec;
     /// Notes, in the order the situations were found.
     std::vector<FileNote> notes;
+    /// Record files of the mutators that were kept, in the order they were added.
+    std::vector<RecordFile> records;
     /// One entry for each mutator that was left out, in list order.
     std::vector<MutatorFailure> failures;
 };
@@ -106,7 +148,10 @@ struct FilesLayer {
 /// shared path, and a loose file keeps a path over an archive. A later folder of the same mutator
 /// replaces an earlier path without a note. Paths of one folder are stored
 /// in folded-path order, after the paths its earlier folders stored. The
-/// same bytes are produced on every machine.
+/// same bytes are produced on every machine. A unit FBI, a weapon TDF or a
+/// download TDF is also snapshotted into `records` for each mutator that
+/// added it. The spec entry for that path is still the one whole file the
+/// later mutator won.
 ///
 /// A path is judged with check_mutable_path, and a unit's build picture is
 /// allowed when the mod already has that unit or when this mutator or an
