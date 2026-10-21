@@ -14,6 +14,8 @@ namespace oa::ui::frontend_multiplayer {
 /// (oa/data/languages/interface_text.hpp). oa-tool sorts the modules'
 /// lists together and keeps one of each text.
 inline constexpr std::string_view interface_words[] = {
+    "*** {player} plays Total Annihilation 3.1c and cannot join a game with mutators.",
+    "*** {player} plays Total Annihilation 3.1c, which cannot play with mutators.",
     "Add {registry} to get {pack}",
     "CANCEL",
     "COMMANDER",

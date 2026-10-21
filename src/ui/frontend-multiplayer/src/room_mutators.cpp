@@ -8,10 +8,14 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <ostream>
 #include <span>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace oa::ui::frontend_multiplayer {
 
@@ -29,6 +33,8 @@ const char* hold_name(MutatorsHold hold) noexcept {
         return "host_not_built";
     case MutatorsHold::host_failed:
         return "host_failed";
+    case MutatorsHold::classic_player:
+        return "classic_player";
     case MutatorsHold::no_support:
         return "no_support";
     case MutatorsHold::receiving:
@@ -64,6 +70,34 @@ bool first_not_has(uint64_t states, uint8_t total, uint8_t* position) noexcept {
         return true;
     }
     return false;
+}
+
+/// The line posted when mutators come on and a 3.1c player is already seated.
+constexpr const char* kClassicSeated =
+    "*** {player} plays Total Annihilation 3.1c, which cannot play with mutators.";
+
+/// Tells whether a seated remote human or watcher is on 3.1c.
+///
+/// The block has to be that player's. A computer player is not one.
+///
+/// @param lobby Lobby state.
+/// @param player_slot Player slot.
+/// @return True when that slot's block lacks the engine signature.
+bool classic_seated(Lobby& lobby, int32_t player_slot) noexcept {
+    if (lobby.game == nullptr || player_slot < 0 || player_slot >= kSlotCount)
+        return false;
+    const auto& player = slot_player(lobby, player_slot);
+    if (player.in_use == 0 || player.status != kSlotRemote)
+        return false;
+    const auto* info = player_info(lobby, player);
+    if (info == nullptr)
+        return false;
+    const bool watcher = player.in_use != 0 && (info->options & option::watcher) != 0;
+    if (!slot_remote_playing(lobby, player) && !watcher)
+        return false;
+    if (lobby.presence_records.block_player[player_slot] != player.player_id)
+        return false;
+    return !netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(info));
 }
 
 /// Why one peer holds START, or none.
@@ -147,6 +181,12 @@ MutatorsBlock block_for(Lobby& lobby, int32_t only_slot) noexcept {
             static_cast<int32_t>(host),
             netgame::presence_mutator_index_none
         };
+    }
+    for (int32_t player_slot = first; player_slot < end; ++player_slot) {
+        if (classic_seated(lobby, player_slot))
+            return {
+                MutatorsHold::classic_player, player_slot, netgame::presence_mutator_index_none
+            };
     }
     for (int32_t player_slot = first; player_slot < end; ++player_slot) {
         if (player_slot == static_cast<int32_t>(host))
@@ -256,6 +296,54 @@ bool lobby_mutators_allow_start(Lobby& lobby) noexcept {
     return lobby_mutators_block(lobby).hold == MutatorsHold::none;
 }
 
+std::vector<int32_t> lobby_classic_players(Lobby& lobby) {
+    std::vector<int32_t> slots;
+    if (lobby.game == nullptr)
+        return slots;
+    const auto host = lobby_host_slot(lobby);
+    if (host == kNoSlot)
+        return slots;
+    const auto host_record = lobby_presence_record(lobby, static_cast<int32_t>(host));
+    if (!netgame::presence_mutators_state(host_record.data(), host_record.size()))
+        return slots;
+    for (int32_t player_slot = 0; player_slot < kSlotCount; ++player_slot) {
+        if (classic_seated(lobby, player_slot))
+            slots.push_back(player_slot);
+    }
+    return slots;
+}
+
+void lobby_note_classic_room(Lobby& lobby) noexcept {
+    if (lobby.game == nullptr)
+        return;
+    const auto host = lobby_host_slot(lobby);
+    const auto host_record = host == kNoSlot
+                                 ? std::span<const uint8_t>{}
+                                 : lobby_presence_record(lobby, static_cast<int32_t>(host));
+    const bool playing =
+        host != kNoSlot &&
+        netgame::presence_mutators_state(host_record.data(), host_record.size()).has_value();
+    if (!playing) {
+        lobby.classic_lines_posted = false;
+        return;
+    }
+    if (lobby.classic_lines_posted)
+        return;
+    lobby.classic_lines_posted = true;
+    for (int32_t player_slot = 0; player_slot < kSlotCount; ++player_slot) {
+        if (!classic_seated(lobby, player_slot))
+            continue;
+        const auto& named = slot_player(lobby, player_slot);
+        const std::string_view who(named.name, ::strnlen(named.name, sizeof named.name));
+        const std::string_view pattern = lobby_translated(lobby, kClassicSeated);
+        std::string line(pattern);
+        const auto mark = line.find("{player}");
+        if (mark != std::string::npos)
+            line.replace(mark, std::string("{player}").size(), who);
+        lobby_post_chat(lobby, line.c_str());
+    }
+}
+
 bool lobby_mutators_differ_from_host(Lobby& lobby, int32_t slot) noexcept {
     if (lobby.game == nullptr || slot < 0 || slot >= kSlotCount)
         return false;
@@ -263,7 +351,8 @@ bool lobby_mutators_differ_from_host(Lobby& lobby, int32_t slot) noexcept {
     if (host == kNoSlot || host == slot)
         return false;
     const auto block = block_for(lobby, slot);
-    return block.slot == slot && block.hold != MutatorsHold::none;
+    return block.slot == slot && block.hold != MutatorsHold::none &&
+           block.hold != MutatorsHold::classic_player;
 }
 
 void lobby_log_mutators_hold(Lobby& lobby) noexcept {

@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace oa::ui::frontend_multiplayer {
 
@@ -28,6 +29,7 @@ enum class MutatorsHold : uint8_t {
     none,           ///< nothing about mutators holds START
     host_not_built, ///< the host's layer is not built yet
     host_failed,    ///< the host's build stopped with an error
+    classic_player, ///< a seated 3.1c human or watcher, while mutators are on
     no_support,     ///< an OA player sent no mutator field
     receiving,      ///< an OA player is still taking the list, or names another one
     lacking,        ///< an OA player does not have a mutator of the list
@@ -111,13 +113,14 @@ struct MutatorsBlock {
 ///
 /// None when no record carries a mutator field. When the host's record has
 /// none and an Open Annihilation peer's still does, START waits while that
-/// peer drops it. Otherwise the host's own build, then each Open
-/// Annihilation human or watcher of another machine in slot order: no
-/// mutator field, another list or a list still arriving, a mutator they do
-/// not have, a failed build, a build not finished, another layer, another
-/// sim hash. A layer digest that differs names the earlier of the two
-/// dropped positions when those positions differ. Reads the fixed part of
-/// each mutator field and the sim hash only. Allocates nothing.
+/// peer drops it. Otherwise the host's own build, then each seated 3.1c
+/// human or watcher in slot order, then each Open Annihilation human or
+/// watcher of another machine: no mutator field, another list or a list
+/// still arriving, a mutator they do not have, a failed build, a build not
+/// finished, another layer, another sim hash. A layer digest that differs
+/// names the earlier of the two dropped positions when those positions
+/// differ. Reads the fixed part of each mutator field and the sim hash
+/// only. Allocates nothing.
 ///
 /// @param lobby Lobby state.
 /// @return The first hold, or none.
@@ -128,6 +131,29 @@ struct MutatorsBlock {
 /// @param lobby Lobby state.
 /// @return True when nothing about mutators holds START.
 [[nodiscard]] bool lobby_mutators_allow_start(Lobby& lobby) noexcept;
+
+/// Slots of seated 3.1c humans and watchers while the host plays mutators.
+///
+/// Slot order. A player counts when its own setup block has arrived and
+/// lacks the engine signature. Empty when the host's record carries no
+/// mutator field, so a room without mutators names nobody. The picker reads
+/// this before the host turns a list on.
+///
+/// @param lobby Lobby state.
+/// @return The slots. Empty when mutators are off.
+[[nodiscard]] std::vector<int32_t> lobby_classic_players(Lobby& lobby);
+
+/// Posts one local line per seated 3.1c player when mutators turn on.
+///
+/// Looks at the host's record. The first time it carries a mutator field,
+/// each machine posts "*** {player} plays Total Annihilation 3.1c, which
+/// cannot play with mutators." for every seated 3.1c human or watcher, in
+/// its own language, and not again until that field is gone and comes back.
+/// A room without the field posts nothing and arms the next change. The
+/// lines are not sent.
+///
+/// @param[in,out] lobby Lobby state.
+void lobby_note_classic_room(Lobby& lobby) noexcept;
 
 /// Tells whether one slot alone would hold START.
 ///

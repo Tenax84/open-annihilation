@@ -412,14 +412,19 @@ void test_slot_order_and_who_is_skipped() {
     put_peer(room.lobby, 3, 0x300, encode_field(lacking, false, 0, ng::presence_record_max_bytes));
     expect_hold(mp::lobby_mutators_block(room.lobby), mp::MutatorsHold::failed, 1, 1);
 
-    // A 3.1c player and this machine's computer never hold START.
+    // A seated 3.1c player holds START while mutators are on. A computer does not.
     Room plain = hosted(host_ready());
     plain.seat(1, 0x200, false, false);
     plain.seat_computer(2);
     auto missing = host_ready();
     ng::presence_mutator_set_state(missing.states, 0, 1);
     put_peer(plain.lobby, 1, 0x200, encode_field(missing, false, 0, ng::presence_record_max_bytes));
-    expect(mp::lobby_mutators_allow_start(plain.lobby), "a 3.1c row does not hold START");
+    expect_hold(
+        mp::lobby_mutators_block(plain.lobby),
+        mp::MutatorsHold::classic_player,
+        1,
+        ng::presence_mutator_index_none
+    );
     expect(!mp::lobby_mutators_differ_from_host(plain.lobby, 1), "a 3.1c row has no mutator dot");
     expect(
         !mp::lobby_mutators_differ_from_host(plain.lobby, 2), "a computer row has no mutator dot"
@@ -1061,6 +1066,233 @@ void join_again(Room& guest) {
     guest.seat(1, 0x100u, true, true);
 }
 
+/// The chat lines the room has posted, oldest first.
+std::vector<std::string> room_lines(mp::Lobby& lobby) {
+    std::vector<std::string> lines;
+    auto& game = *lobby.game;
+    for (auto at = static_cast<uint32_t>(mp::lobby_chat_tail(game));
+         at != mp::lobby_chat_head(game);
+         at = (at + 1U) % static_cast<uint32_t>(mp::kChatLines))
+        lines.emplace_back(mp::lobby_chat_line(game, at));
+    return lines;
+}
+
+/// What the chat ring keeps of a line.
+std::string shown_line(const std::string& line) {
+    return line.substr(0, mp::kChatLineBytes - 1);
+}
+
+/// Binds the record this machine sends and composes it, as a change of list does.
+void bind_source(mp::Lobby& lobby, const std::vector<uint8_t>& bytes) {
+    std::memcpy(lobby.presence_records.source, bytes.data(), bytes.size());
+    lobby.presence_records.source_size = static_cast<uint16_t>(bytes.size());
+    mp::presence_refresh(lobby);
+}
+
+/// Applies one remote player's setup block.
+///
+/// @param room the room
+/// @param id the player, already seated
+/// @param oa whether the block carries the engine signature
+/// @param watcher whether the block says the player is watching
+/// @return true when the record applied
+bool apply_block(Room& room, uint32_t id, bool oa, bool watcher) {
+    mp::PlayerSetupInfo info{};
+    info.state = mp::kInfoStatePlaying;
+    info.version_major = 3;
+    info.version_minor = 1;
+    if (watcher)
+        info.options = mp::option::watcher;
+    if (oa) {
+        info.engine_signature[0] = ng::engine_signature_first;
+        info.engine_signature[1] = ng::engine_signature_second;
+    }
+    ng::PlayerInfoRecord record{};
+    std::memcpy(record.info_head, &info, sizeof record.info_head);
+    record.player_id = id;
+    std::memcpy(
+        record.info_tail,
+        reinterpret_cast<const uint8_t*>(&info) + ng::player_info_tail_offset,
+        sizeof record.info_tail
+    );
+    mp::LobbyEvent event{};
+    event.kind = mp::LobbyEventKind::record;
+    event.player_id = id;
+    std::size_t written = 0;
+    if (ng::encode_record(record, event.data, sizeof event.data, &written) != ng::WireError::ok)
+        return false;
+    event.size = static_cast<uint16_t>(written);
+    return mp::lobby_apply_event(room.lobby, event);
+}
+
+/// Tells whether a reject of this player and reason was sent.
+bool sent_reject(const Room& room, uint32_t id, uint8_t reason) {
+    for (int32_t index = 0; index < room.loopback.sent_count; ++index) {
+        ng::RejectRecord record{};
+        if (ng::decode_record(room.loopback.sent[index], room.loopback.sent_size[index], &record) ==
+                ng::WireError::ok &&
+            record.player_id == id && record.reason == reason)
+            return true;
+    }
+    return false;
+}
+
+/// A room with mutators refuses a 3.1c block, and a room without one seats it.
+void test_classic_joiner() {
+    const std::string join =
+        "*** Bo plays Total Annihilation 3.1c and cannot join a game with mutators.";
+    {
+        Room room(true);
+        room.seat(1, 0x200, false, false);
+        std::snprintf(
+            mp::slot_player(room.lobby, 1).name, sizeof mp::slot_player(room.lobby, 1).name, "Bo"
+        );
+        expect(apply_block(room, 0x200, false, false), "a 3.1c block applies");
+        const auto& player = mp::slot_player(room.lobby, 1);
+        expect(
+            player.status == mp::kSlotRemote && player.reject_reason == 0,
+            "a room without mutators seats a 3.1c player"
+        );
+        expect(room_lines(room.lobby).empty(), "a room without mutators posts no line");
+        expect(!sent_reject(room, 0x200, 8), "a room without mutators sends no refusal");
+    }
+    {
+        Room room = hosted(host_ready());
+        room.seat(1, 0x200, false, false);
+        std::snprintf(
+            mp::slot_player(room.lobby, 1).name, sizeof mp::slot_player(room.lobby, 1).name, "Bo"
+        );
+        expect(apply_block(room, 0x200, false, false), "a 3.1c block applies under mutators");
+        const auto& player = mp::slot_player(room.lobby, 1);
+        expect(
+            player.reject_reason == 8 && player.status == mp::kSlotOpen,
+            "mutators refuse a 3.1c player with reason 8"
+        );
+        expect(sent_reject(room, 0x200, 8), "the refusal is reason 8");
+        const auto lines = room_lines(room.lobby);
+        expect(
+            lines.size() == 1 && lines[0] == shown_line(join),
+            "the room names the 3.1c player who cannot join"
+        );
+        int32_t chats = 0;
+        for (int32_t index = 0; index < room.loopback.sent_count; ++index)
+            if (room.loopback.sent[index][0] == static_cast<uint8_t>(ng::RecordType::chat))
+                ++chats;
+        expect(chats == 0, "the line is not sent");
+    }
+    {
+        Room room = hosted(host_ready());
+        room.seat(2, 0x300, false, false);
+        expect(apply_block(room, 0x300, false, true), "a 3.1c watcher block applies");
+        const auto& watcher = mp::slot_player(room.lobby, 2);
+        expect(
+            watcher.reject_reason == 8 && watcher.status == mp::kSlotOpen,
+            "mutators refuse a 3.1c watcher with reason 8"
+        );
+    }
+    {
+        Room room = hosted(host_ready());
+        room.seat(1, 0x200, true, false);
+        expect(apply_block(room, 0x200, true, false), "an OA block applies");
+        expect(
+            mp::slot_player(room.lobby, 1).status == mp::kSlotRemote &&
+                mp::slot_player(room.lobby, 1).reject_reason == 0,
+            "an OA block is seated while mutators are on"
+        );
+        put_peer(
+            room.lobby,
+            1,
+            0x200,
+            encode_field(host_ready(), false, 0, ng::presence_record_max_bytes)
+        );
+        expect(
+            mp::slot_player(room.lobby, 1).status == mp::kSlotRemote,
+            "an OA block with a mutator field stays seated"
+        );
+        std::vector<uint8_t> plain(ng::presence_record_max_bytes);
+        std::size_t written = 0;
+        expect(
+            ng::encode_presence(ng::PresenceRecord{}, plain.data(), plain.size(), &written) ==
+                ng::WireError::ok,
+            "a record without mutators encodes"
+        );
+        plain.resize(written);
+        put_peer(room.lobby, 1, 0x200, plain);
+        expect(
+            mp::slot_player(room.lobby, 1).status == mp::kSlotRemote &&
+                mp::slot_player(room.lobby, 1).reject_reason == 0,
+            "an OA block without a mutator field stays seated"
+        );
+    }
+}
+
+/// A 3.1c player already seated holds START until mutators go, and the line posts once.
+void test_classic_seated() {
+    const auto listed = encode_field(host_ready(), false, 0, ng::presence_record_max_bytes);
+    std::vector<uint8_t> plain(ng::presence_record_max_bytes);
+    std::size_t written = 0;
+    expect(
+        ng::encode_presence(ng::PresenceRecord{}, plain.data(), plain.size(), &written) ==
+            ng::WireError::ok,
+        "a record without mutators encodes"
+    );
+    plain.resize(written);
+    const std::string seated =
+        "*** Bo plays Total Annihilation 3.1c, which cannot play with mutators.";
+
+    Room room(true);
+    room.seat(1, 0x200, false, false);
+    std::snprintf(
+        mp::slot_player(room.lobby, 1).name, sizeof mp::slot_player(room.lobby, 1).name, "Bo"
+    );
+    room.seat_computer(2);
+    bind_source(room.lobby, plain);
+    expect(mp::lobby_classic_players(room.lobby).empty(), "no mutators names no 3.1c player");
+    expect(room_lines(room.lobby).empty(), "turning no list on posts nothing");
+
+    bind_source(room.lobby, listed);
+    const auto block = mp::lobby_mutators_block(room.lobby);
+    expect_hold(block, mp::MutatorsHold::classic_player, 1, ng::presence_mutator_index_none);
+    expect(!mp::lobby_mutators_allow_start(room.lobby), "a seated 3.1c player holds START");
+    expect(!mp::lobby_mutators_differ_from_host(room.lobby, 1), "a 3.1c row is not a rules dot");
+    const auto named = mp::lobby_classic_players(room.lobby);
+    expect(named.size() == 1 && named[0] == 1, "the gate names the 3.1c slot");
+    expect(
+        mp::slot_player(room.lobby, 1).status == mp::kSlotRemote &&
+            mp::slot_player(room.lobby, 1).reject_reason == 0,
+        "turning mutators on leaves the 3.1c player seated"
+    );
+    expect(
+        room_lines(room.lobby).size() == 1 && room_lines(room.lobby)[0] == shown_line(seated),
+        "the room says why the seated player holds the game"
+    );
+    bind_source(room.lobby, listed);
+    expect(room_lines(room.lobby).size() == 1, "the same list posts the line once");
+
+    bind_source(room.lobby, plain);
+    expect(mp::lobby_mutators_allow_start(room.lobby), "START waits only while mutators are on");
+    expect(mp::lobby_classic_players(room.lobby).empty(), "mutators off names nobody");
+    bind_source(room.lobby, listed);
+    expect(room_lines(room.lobby).size() == 2, "the line posts once more when mutators return");
+
+    Room guest(false);
+    guest.seat(2, 0x300, false, false);
+    std::snprintf(
+        mp::slot_player(guest.lobby, 2).name, sizeof mp::slot_player(guest.lobby, 2).name, "Bo"
+    );
+    expect(host_record_to(guest, plain), "the guest keeps a host record without mutators");
+    expect(room_lines(guest.lobby).empty(), "a guest posts nothing before mutators");
+    expect(host_record_to(guest, listed), "the guest keeps the host's mutators");
+    expect(host_record_to(guest, listed), "the guest keeps the same list again");
+    expect(
+        room_lines(guest.lobby).size() == 1 && room_lines(guest.lobby)[0] == shown_line(seated),
+        "a guest posts the seated line once"
+    );
+    expect(host_record_to(guest, plain), "the guest keeps the list going away");
+    expect(host_record_to(guest, listed), "the guest keeps the list coming back");
+    expect(room_lines(guest.lobby).size() == 2, "a guest posts once per change");
+}
+
 /// A new room forgets the previous host's list, under a host that sends none
 /// and under one whose records are the same bytes as before.
 void test_new_room_forgets_the_host_list() {
@@ -1120,6 +1352,8 @@ int main() {
     test_legacy_checksum_is_compared();
     test_field_follows_the_phase();
     test_new_room_forgets_the_host_list();
+    test_classic_joiner();
+    test_classic_seated();
     if (g_failures != 0)
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;
