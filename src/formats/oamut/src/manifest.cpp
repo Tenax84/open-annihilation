@@ -341,25 +341,6 @@ bool mutator_id(std::string_view text) noexcept {
     return true;
 }
 
-/// Tells whether an option id is a Lua name of 1 to 32 bytes.
-///
-/// @param text the id
-/// @return true for [a-z][a-z0-9_]*
-bool option_id(std::string_view text) noexcept {
-    if (text.empty() || text.size() > most_option_id_bytes)
-        return false;
-    if (text.front() < 'a' || text.front() > 'z')
-        return false;
-    for (std::size_t index = 1; index < text.size(); ++index) {
-        const char character = text[index];
-        const bool word =
-            (character >= 'a' && character <= 'z') || digit(character) || character == '_';
-        if (!word)
-            return false;
-    }
-    return true;
-}
-
 /// Tells whether a key is a language tag of 2 to 35 bytes.
 ///
 /// The first part is letters. Each later part is letters and digits, joined
@@ -1101,12 +1082,15 @@ void read_number(
 bool read_option(const oamod::Node& entry, Option& option, std::vector<Problem>& problems) {
     const std::string block = "options." + entry.key.text;
     if (entry.key.kind != oamod::KeyKind::string || !option_id(entry.key.text)) {
+        const bool reserved =
+            entry.key.kind == oamod::KeyKind::string && lua_reserved_word(entry.key.text);
         add_problem(
             problems,
             entry.key.position,
             block,
-            "an option id is a Lua name, [a-z][a-z0-9_]*, of 1 to " +
-                std::to_string(most_option_id_bytes) + " bytes"
+            reserved ? "is a word Lua reserves"
+                     : "an option id is a Lua name, [a-z][a-z0-9_]*, of 1 to " +
+                           std::to_string(most_option_id_bytes) + " bytes"
         );
         return false;
     }
@@ -1865,6 +1849,35 @@ std::string cut_summary(std::string_view description) {
 }
 
 } // namespace
+
+bool lua_reserved_word(std::string_view text) noexcept {
+    // Lua 5.4's 22 reserved words, in order, matched byte for byte.
+    constexpr std::array<std::string_view, 22> reserved{
+        "and",      "break",  "do",   "else", "elseif", "end",   "false", "for",
+        "function", "goto",   "if",   "in",   "local",  "nil",   "not",   "or",
+        "repeat",   "return", "then", "true", "until",  "while",
+    };
+    for (const std::string_view word : reserved) {
+        if (word == text)
+            return true;
+    }
+    return false;
+}
+
+bool option_id(std::string_view text) noexcept {
+    if (text.empty() || text.size() > most_option_id_bytes || lua_reserved_word(text))
+        return false;
+    if (text.front() < 'a' || text.front() > 'z')
+        return false;
+    for (std::size_t index = 1; index < text.size(); ++index) {
+        const char character = text[index];
+        const bool word =
+            (character >= 'a' && character <= 'z') || digit(character) || character == '_';
+        if (!word)
+            return false;
+    }
+    return true;
+}
 
 bool choice_value_text(std::string_view text) noexcept {
     if (text.empty() || text.size() > most_choice_value_bytes)
