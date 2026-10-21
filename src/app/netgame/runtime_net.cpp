@@ -1136,8 +1136,11 @@ struct NetworkPlay::NetHost {
         // The room's layer comes off before the match mounts its own, map
         // included. The list is the one this room built. The run's own
         // choice is put back afterwards, including when the start throws,
-        // so a later skirmish does not play this room's list.
-        if (runtime.room_match_unbuilt()) {
+        // so a later skirmish does not play this room's list. A match that
+        // never showed the battle room, such as the loopback check, has no
+        // room list, so it plays the run's own, as a single-player start does.
+        const bool followed = runtime.room_followed();
+        if (followed && runtime.room_match_unbuilt()) {
             std::cerr << "open-annihilation: mutators: room failed: the battle room's "
                          "list is not built\n";
             throw std::runtime_error("the battle room's list is not built");
@@ -1145,9 +1148,16 @@ struct NetworkPlay::NetHost {
         std::vector<oa::data::mutators::ResolvedMutator> saved_choice(
             runtime.chosen_match_mutators().begin(), runtime.chosen_match_mutators().end()
         );
-        std::vector<oa::data::mutators::ResolvedMutator> room_chosen(
-            runtime.room_match_mutators().begin(), runtime.room_match_mutators().end()
-        );
+        std::vector<oa::data::mutators::ResolvedMutator> room_chosen;
+        if (followed) {
+            room_chosen.assign(
+                runtime.room_match_mutators().begin(), runtime.room_match_mutators().end()
+            );
+        } else {
+            room_chosen.assign(
+                runtime.chosen_match_mutators().begin(), runtime.chosen_match_mutators().end()
+            );
+        }
 
         struct RunChoiceRestore {
             Runtime& runtime;

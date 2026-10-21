@@ -332,6 +332,10 @@ std::span<const mutators::ResolvedMutator> Runtime::room_match_mutators() const 
     return state.resolved;
 }
 
+bool Runtime::room_followed() const noexcept {
+    return room_mutator_state_ != nullptr;
+}
+
 bool Runtime::room_match_unbuilt() const {
     // See room_match_mutators: the start asks after the room has stopped showing.
     if (room_hosting()) {

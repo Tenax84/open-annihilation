@@ -4362,6 +4362,14 @@ class Runtime final : public menu::Host,
     /// @return true when the room has named a list this machine has not built
     [[nodiscard]] bool room_match_unbuilt() const;
 
+    /// Tells whether this run has followed a battle room's mutators.
+    ///
+    /// A network start that never showed the battle room, such as the
+    /// loopback check, has no room list and plays the run's own choice.
+    ///
+    /// @return true once the battle room has followed its list
+    [[nodiscard]] bool room_followed() const noexcept;
+
     /// Builds the battle room's mutator layer when its list changes.
     ///
     /// The host's list is its own. A guest's is the host's once every
