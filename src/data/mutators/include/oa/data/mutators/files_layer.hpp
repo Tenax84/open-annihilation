@@ -113,6 +113,26 @@ struct FileNote {
     std::string other;
 };
 
+/// One file a later mutator's file took a path from.
+///
+/// A loose file is read from `host`, and a file inside an archive from
+/// `archive` at `archive_path`. The archive is held here because the
+/// layer's archive list keeps only the archives a served path reads.
+struct DisplacedFile {
+    /// Resource path, in the spelling that was read.
+    std::string path;
+    /// Id of the mutator whose file it was.
+    std::string owner;
+    /// Loose file or archive file.
+    oa::MutatorSourceKind kind{};
+    /// Host path of a loose file.
+    std::filesystem::path host;
+    /// The archive of an archive file; null for a loose file.
+    std::shared_ptr<const oa::HpiArchive> archive;
+    /// Path of an archive file inside its archive.
+    std::string archive_path;
+};
+
 /// One mutator that was left out of the layer, with the reason.
 struct MutatorFailure {
     /// The mutator's id.
@@ -131,15 +151,27 @@ struct FilesLayer {
     std::vector<FileNote> notes;
     /// Record files of the mutators that were kept, in the order they were added.
     std::vector<RecordFile> records;
+    /// Files a later mutator's file displaced, in the order that happened,
+    /// so the files that held one path read from the first to the one the
+    /// spec serves. A mask that hides a path drops its displaced files too.
+    /// A mutator whose later folder replaces its own file displaces nothing.
+    std::vector<DisplacedFile> displaced;
     /// One entry for each mutator that was left out, in list order.
     std::vector<MutatorFailure> failures;
 };
+
+/// Reads the bytes of a file a later mutator displaced.
+///
+/// @param file the displaced file
+/// @return the bytes, or null when the file cannot be read or is empty
+[[nodiscard]] std::shared_ptr<const std::vector<uint8_t>>
+displaced_bytes(const DisplacedFile& file);
 
 /// Builds the mutator file layer from each mutator's files plan.
 ///
 /// Mutators are taken in list order. One that fails is left out, its masks,
 /// files, archives and notes with it, and the mutators after it are still
-/// built. For each mutator that is kept, every mask is applied first and
+/// built. Each file a later mutator's file replaces is kept in `displaced`. For each mutator that is kept, every mask is applied first and
 /// then each add folder in the order listed. An add folder is found one
 /// segment at a time, matching the written name without ASCII case, so the
 /// same plan names the same directory on every machine. In one add folder,

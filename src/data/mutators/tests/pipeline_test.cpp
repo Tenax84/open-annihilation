@@ -2724,6 +2724,148 @@ void test_sixth_download_button_spills() {
     fs::remove_all(scratch);
 }
 
+/// A Ridge bot that differs from the game's, so Add renames it.
+constexpr std::string_view k_other_bot =
+    "[UNITINFO]\n{\nUnitName=RGBOT;\nName=Ridge Bot;\nMaxDamage=999;\nWeapon1=RGGUN;\n}\n";
+/// A Ridge lab that differs from the game's, so Add renames it.
+constexpr std::string_view k_other_lab =
+    "[UNITINFO]\n{\nUnitName=RGLAB;\nBuilder=1;\nBMcode=0;\nWorkerTime=999;\n}\n";
+
+/// The notes, as the log writes them.
+std::vector<std::string>
+note_lines(const mutators::PipelineResult& result, const std::vector<std::string>& ids) {
+    std::vector<std::string> lines;
+    for (const mutators::Conflict& conflict : result.report.conflicts)
+        lines.push_back(mutators::describe(conflict, ids));
+    return lines;
+}
+
+/// True when `lines` holds `line`.
+bool has_line(const std::vector<std::string>& lines, std::string_view line) {
+    for (const std::string& one : lines) {
+        if (one == line)
+            return true;
+    }
+    return false;
+}
+
+/// True when a line of `lines` holds `text`.
+bool line_mentions(const std::vector<std::string>& lines, std::string_view text) {
+    for (const std::string& one : lines) {
+        if (one.find(text) != std::string::npos)
+            return true;
+    }
+    return false;
+}
+
+/// The text the store serves at `path`, or empty when it serves nothing.
+std::string served_at(const oa::AssetStore& store, std::string_view path) {
+    if (store.file_size(path) == 0)
+        return {};
+    return text_of(store.read(path).bytes);
+}
+
+/// An Add rename takes its own script off the asked path, and the file it
+/// had displaced there is served again; a later mutator's patch stays, and
+/// the notes name only the files that still hold the path.
+void test_add_rename_gives_the_path_back() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-give-back");
+    std::vector<std::pair<std::string, std::string>> patch;
+    patch.emplace_back("scripts/RGBOT.cob", "A-COB");
+    std::vector<std::pair<std::string, std::string>> own;
+    own.emplace_back("units/RGBOT.fbi", std::string{k_other_bot});
+    own.emplace_back("scripts/RGBOT.cob", "B-COB");
+    std::vector<std::pair<std::string, std::string>> later;
+    later.emplace_back("scripts/RGBOT.cob", "C-COB");
+    const std::vector<std::string> ids{"ridge-patch", "ridge-own", "ridge-later"};
+    for (const bool with_later : {false, true}) {
+        std::vector<mutators::PipelineMutator> list;
+        list.push_back(make_package(scratch, ids[0], "replace", "\"files\"", k_files_lua, patch));
+        list.push_back(make_package(scratch, ids[1], "add", "\"files\"", k_files_lua, own));
+        if (with_later) {
+            list.push_back(
+                make_package(scratch, ids[2], "replace", "\"files\"", k_files_lua, later)
+            );
+        }
+        oa::AssetStore store = open_ridge();
+        const mutators::PipelineResult result =
+            mutators::run_pipeline(store, make_input(std::move(list)));
+        OA_CHECK(result.playable());
+        if (!result.playable()) {
+            note_failures(result);
+            release(store);
+            continue;
+        }
+        OA_CHECK(served_at(store, "scripts/RGBOT.cob") == (with_later ? "C-COB" : "A-COB"));
+        OA_CHECK(served_at(store, "scripts/RGBOT_2.cob") == "B-COB");
+        const std::vector<std::string> lines = note_lines(result, ids);
+        OA_CHECK(has_line(lines, "ridge-own renamed RGBOT to RGBOT_2"));
+        OA_CHECK(!line_mentions(lines, "wins scripts/RGBOT.cob over ridge-own"));
+        OA_CHECK(!line_mentions(lines, "ridge-own wins scripts/RGBOT.cob"));
+        OA_CHECK(
+            has_line(lines, "ridge-later wins scripts/RGBOT.cob over ridge-patch") == with_later
+        );
+        bool patch_served = false;
+        for (const mutators::JournalEntry& entry : result.journal.entries) {
+            if (entry.collection != mutators::Collection::files ||
+                entry.change != mutators::Change::added || entry.path != "scripts/RGBOT.cob")
+                continue;
+            patch_served = entry.mutators.size() == 1 && entry.mutators.front() == 0;
+        }
+        OA_CHECK(patch_served != with_later);
+        release(store);
+    }
+    fs::remove_all(scratch);
+}
+
+/// A renamed unit that brings no script takes the script as it stood at its
+/// mutator's turn: an earlier mutator's patch, else the game's file, never
+/// a later mutator's patch of the original.
+void test_private_unit_takes_the_script_of_its_turn() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-turn-script");
+    std::vector<std::pair<std::string, std::string>> before;
+    before.emplace_back("scripts/RGBOT.cob", "BASE-COB");
+    std::vector<std::pair<std::string, std::string>> own;
+    own.emplace_back("units/RGBOT.fbi", std::string{k_other_bot});
+    std::vector<std::pair<std::string, std::string>> later;
+    later.emplace_back("scripts/RGBOT.cob", "C-COB");
+    const fs::path game = scratch / "game";
+    write_bytes(game / "scripts" / "RGBOT.cob", "GAME-COB");
+    for (const bool earlier_patch : {true, false}) {
+        std::vector<mutators::PipelineMutator> list;
+        if (earlier_patch) {
+            list.push_back(
+                make_package(scratch, "ridge-before", "replace", "\"files\"", k_files_lua, before)
+            );
+        }
+        list.push_back(make_package(scratch, "ridge-own", "add", "\"files\"", k_files_lua, own));
+        list.push_back(
+            make_package(scratch, "ridge-later", "replace", "\"files\"", k_files_lua, later)
+        );
+        std::vector<fs::path> roots;
+        roots.push_back(game);
+        roots.push_back(k_data / "ridge");
+        oa::AssetStore store(std::move(roots));
+        const mutators::PipelineResult result =
+            mutators::run_pipeline(store, make_input(std::move(list)));
+        OA_CHECK(result.playable());
+        if (!result.playable()) {
+            note_failures(result);
+            release(store);
+            continue;
+        }
+        OA_CHECK(served_at(store, "scripts/RGBOT.cob") == "C-COB");
+        OA_CHECK(
+            served_at(store, "scripts/RGBOT_2.cob") == (earlier_patch ? "BASE-COB" : "GAME-COB")
+        );
+        OA_CHECK(
+            served_at(store, "units/RGBOT_2.fbi").find("UnitName=RGBOT_2") != std::string::npos
+        );
+        release(store);
+    }
+    fs::remove_all(scratch);
+}
+
 /// True when a download file the layer serves holds a button for `unit` on `builder`.
 bool serves_button(
     const oa::AssetStore& store,
@@ -2796,11 +2938,6 @@ void run_menus_case(
     release(store);
     fs::remove_all(scratch);
 }
-
-constexpr std::string_view k_other_bot =
-    "[UNITINFO]\n{\nUnitName=RGBOT;\nName=Ridge Bot;\nMaxDamage=999;\nWeapon1=RGGUN;\n}\n";
-constexpr std::string_view k_other_lab =
-    "[UNITINFO]\n{\nUnitName=RGLAB;\nBuilder=1;\nBMcode=0;\nWorkerTime=999;\n}\n";
 
 /// The same mutator's menus hook names the builder and the unit it renamed,
 /// and reaches its private records: a later call does not depend on the
@@ -2925,5 +3062,7 @@ int main() {
     test_download_section_name_is_per_file();
     test_sixth_download_button_spills();
     test_menus_hook_reaches_the_private_records();
+    test_add_rename_gives_the_path_back();
+    test_private_unit_takes_the_script_of_its_turn();
     return oa::test::check_exit_status();
 }

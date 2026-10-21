@@ -57,7 +57,9 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   free one.
 - `record_file_kind` says whether a path is a unit FBI, a weapon TDF, a
   download TDF, or a whole file. `build_files_layer` keeps every kept
-  mutator's copy of a record file in `FilesLayer::records`.
+  mutator's copy of a record file in `FilesLayer::records`, and each file
+  a later mutator's file replaced in `FilesLayer::displaced`, which
+  `displaced_bytes` reads.
 - A hook's `ctx.sides` is the side table and the build lists. `ctx.sides[1]`
   is the first side, `ctx.sides.ARM` finds a side by name, ignoring case,
   and `ctx.sides:each` walks the sides in that order. `canbuild`,
@@ -315,7 +317,9 @@ on `unitname` or on a unit or weapon section, a clone's source, that
 mutator's own rule writes, a renamed builder's `UNITMENU`, and that
 builder's `canbuild` block. A later mutator's use of the original name is
 left alone. The renamed unit's own files are served under the private
-name, and the unit already in the game keeps its files. The paths the
+name, and the unit already in the game keeps its files, including an
+earlier mutator's patch of them. A later mutator's patch of them does
+not reach the private unit. The paths the
 engine looks up by the unit name are `scripts/<NAME>.COB`,
 `unitpics/<NAME>.PCX`, `objects3d/<NAME>.3DO` when the model is the unit
 name, `anims/<NAME><n>.GAF`, `anims/<NAME>_gadget.GAF` and
@@ -475,7 +479,11 @@ mutator replaced in the spec. A mask that hides the path drops those
 snapshots. A later folder of the same mutator replaces only its own
 snapshot. The pipeline does not mount those spec entries. It reads each
 mutator's snapshot into that mutator's step. Every other file stays one
-whole file, and the later mutator wins the path.
+whole file, and the later mutator wins the path. The file it replaced, of
+any kind, is kept in `displaced` with its mutator, in the order that
+happened, so the files that held one path read from the first to the one
+the spec serves. A mask that hides the path drops them, and a mutator
+whose later folder replaces its own file displaces nothing.
 
 The spec lists entries in mutator order and, within a mutator, in the order
 the paths were first added. Each folder's new paths are sorted by the folded
@@ -1091,8 +1099,14 @@ added. The renamed unit's name-keyed files move with it:
 `scripts/<NAME>.COB`, `unitpics/<NAME>.PCX`, `objects3d/<NAME>.3DO` when
 the model is the unit name, `anims/<NAME><n>.GAF`,
 `anims/<NAME>_gadget.GAF` and `guis/<NAME><page>.GUI`. A file this
-mutator brought is served under the private name and dropped from the
-asked path, so the unit already there keeps what it had. In Add mode
+mutator brought is served under the private name and leaves the asked
+path, so the unit already there keeps what it had: an earlier mutator's
+file at that path, which this mutator's had displaced, is served again,
+and the note that this mutator won the path goes. A file this mutator
+did not bring is copied as the path stood at its turn: the latest file a
+mutator above it brought, else the game's or the mod's, read beneath the
+layer. A later mutator's file at the asked path belongs to the unit
+already there and does not reach the private one. In Add mode
 this mutator's `units.NAME`, `weapons.NAME`, rule `is("NAME")` selectors,
 rule writes, clone sources, `UNITMENU` and `canbuild` builders mean the
 private record. A later mutator's use of the original name is left alone.

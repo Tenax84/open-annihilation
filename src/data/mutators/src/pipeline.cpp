@@ -3732,79 +3732,342 @@ std::string private_unit_path(
     return dest;
 }
 
+/// One file that held a path in the mutator layer.
+///
+/// The files that held one path are listed in the order the mutators
+/// brought them: each file a later mutator displaced, then the file the
+/// spec serves.
+struct PathHolder {
+    /// The path, folded, as the layer keys it.
+    std::string key;
+    /// The path, in the spelling that was read.
+    std::string path;
+    /// The mutator that brought the file.
+    uint16_t mutator{};
+    /// The displaced file, or null for the file the spec serves.
+    const DisplacedFile* displaced{};
+    /// Index in the spec of the file it serves; unused for a displaced file.
+    std::size_t entry{};
+    /// The renaming mutator's own file, served under the private name instead.
+    bool moved{};
+};
+
+/// A path folded the way the layer compares paths.
+std::string path_key(std::string_view path) {
+    std::string key;
+    key.reserve(path.size());
+    for (const char byte : path)
+        key.push_back(fold_path_byte(byte));
+    return key;
+}
+
+/// One copy a renamed unit takes under its private name.
+struct UnitFileCopy {
+    /// The mutator that renamed the unit.
+    uint16_t mutator{};
+    /// The path keyed by the asked name.
+    std::string source;
+    /// The path keyed by the private name.
+    std::string dest;
+    /// The bytes to serve; null when there are none.
+    std::shared_ptr<const std::vector<uint8_t>> bytes;
+    /// The bytes are the game's or the mod's, read beneath the mutator layer.
+    bool beneath{};
+};
+
+/// The bytes a holder's file serves.
+std::shared_ptr<const std::vector<uint8_t>> holder_bytes(
+    const PathHolder& holder, const oa::MutatorLayerSpec& spec, const oa::AssetStore& store
+) {
+    if (holder.displaced != nullptr)
+        return displaced_bytes(*holder.displaced);
+    const oa::MutatorLayerEntry& entry = spec.entries[holder.entry];
+    if (entry.contents != nullptr && !entry.contents->empty())
+        return entry.contents;
+    std::optional<std::vector<uint8_t>> loaded = store.load_file_contents(entry.path);
+    if (!loaded.has_value() || loaded->empty())
+        return nullptr;
+    return std::make_shared<const std::vector<uint8_t>>(std::move(*loaded));
+}
+
+/// The layer entry that serves a displaced file again.
+///
+/// A loose file is read from its host path. A file from an archive is
+/// served from its bytes, since the layer may no longer hold that archive.
+std::optional<oa::MutatorLayerEntry> restored_entry(const DisplacedFile& file) {
+    oa::MutatorLayerEntry entry;
+    entry.path = file.path;
+    entry.owner = file.owner;
+    if (file.kind == oa::MutatorSourceKind::loose) {
+        entry.kind = oa::MutatorSourceKind::loose;
+        entry.host = file.host;
+        return entry;
+    }
+    entry.kind = oa::MutatorSourceKind::contents;
+    entry.contents = displaced_bytes(file);
+    if (entry.contents == nullptr)
+        return std::nullopt;
+    return entry;
+}
+
+/// Reads the game's and the mod's bytes of the paths beneath the mutator layer.
+///
+/// Each copy marked `beneath` is read with the layer swapped for one that
+/// holds only the masks of the renaming mutator and those above it, as the
+/// path stood at that mutator's turn. The layer `spec` is mounted again
+/// afterwards. A copy whose read cannot be made keeps no bytes.
+///
+/// @param store the store, with `spec` mounted
+/// @param spec the layer the pass mounted
+/// @param ids mutator ids, in list order
+/// @param[in,out] copies the planned copies
+/// @param[out] error why the layer could not be mounted again
+/// @return false when the layer could not be mounted again
+bool read_beneath(
+    oa::AssetStore& store,
+    const oa::MutatorLayerSpec& spec,
+    const std::vector<std::string>& ids,
+    std::vector<UnitFileCopy>& copies,
+    std::string& error
+) {
+    const bool mounted = store.mutator_layer_mounted();
+    bool swapped = false;
+    std::vector<uint16_t> done;
+    for (const UnitFileCopy& lead : copies) {
+        if (!lead.beneath || std::find(done.begin(), done.end(), lead.mutator) != done.end())
+            continue;
+        done.push_back(lead.mutator);
+        if (mounted) {
+            oa::MutatorLayerSpec beneath;
+            beneath.label = spec.label.empty() ? std::string{"mutators"} : spec.label;
+            for (const oa::MutatorMask& mask : spec.masks) {
+                const std::optional<uint16_t> owner = index_of(ids, mask.owner);
+                if (owner.has_value() && *owner <= lead.mutator)
+                    beneath.masks.push_back(mask);
+            }
+            bool ready = true;
+            if (beneath.masks.empty())
+                store.unmount_mutator_layer();
+            else
+                ready = store.replace_mutator_layer(std::move(beneath));
+            if (!ready)
+                continue;
+            swapped = true;
+        }
+        for (UnitFileCopy& copy : copies) {
+            if (!copy.beneath || copy.mutator != lead.mutator)
+                continue;
+            std::optional<std::vector<uint8_t>> loaded = store.load_file_contents(copy.source);
+            if (loaded.has_value() && !loaded->empty())
+                copy.bytes = std::make_shared<const std::vector<uint8_t>>(std::move(*loaded));
+        }
+    }
+    if (swapped && !store.replace_mutator_layer(spec, &error)) {
+        if (error.empty())
+            error = "the mutator layer could not be mounted again";
+        return false;
+    }
+    return true;
+}
+
+/// Rewrites the notes that a mutator won `key`, after files moved off it.
+///
+/// A note that names a moved file's mutator goes. A file that displaced a
+/// moved one is noted as winning the path over the file before the moved
+/// one, when there is such a file, in the place of the first note that went.
+///
+/// @param[in,out] notes the files layer's notes
+/// @param ids mutator ids, in list order
+/// @param holders every file that held a path
+/// @param held the indices in `holders` of the files that held `key`, in order
+/// @param key the folded path
+void renote_path(
+    std::vector<FileNote>& notes,
+    const std::vector<std::string>& ids,
+    const std::vector<PathHolder>& holders,
+    const std::vector<std::size_t>& held,
+    const std::string& key
+) {
+    std::vector<FileNote> fresh;
+    std::vector<std::string> moved;
+    const PathHolder* before = nullptr;
+    bool gap = false;
+    for (const std::size_t index : held) {
+        const PathHolder& holder = holders[index];
+        if (holder.moved) {
+            moved.push_back(ids[holder.mutator]);
+            gap = true;
+            continue;
+        }
+        if (before != nullptr && gap && before->mutator != holder.mutator) {
+            FileNote note;
+            note.kind = FileNoteKind::add_replaced;
+            note.path = holder.path;
+            note.mutator = ids[holder.mutator];
+            note.other = ids[before->mutator];
+            fresh.push_back(std::move(note));
+        }
+        before = &holder;
+        gap = false;
+    }
+    const auto names_moved = [&moved](const FileNote& note) {
+        return std::find(moved.begin(), moved.end(), note.mutator) != moved.end() ||
+               std::find(moved.begin(), moved.end(), note.other) != moved.end();
+    };
+    std::vector<FileNote> kept;
+    kept.reserve(notes.size() + fresh.size());
+    bool placed = false;
+    for (FileNote& note : notes) {
+        if (note.kind != FileNoteKind::add_replaced || path_key(note.path) != key ||
+            !names_moved(note)) {
+            kept.push_back(std::move(note));
+            continue;
+        }
+        if (placed)
+            continue;
+        placed = true;
+        for (FileNote& one : fresh)
+            kept.push_back(std::move(one));
+    }
+    notes.swap(kept);
+}
+
 /// Serves a renamed unit's name-keyed files under the private name.
 ///
-/// A file this mutator brought is served from its bytes and dropped from
-/// the asked path, so the unit already there keeps what it had. A file this
-/// mutator did not bring is copied from whatever the store serves now.
-void redirect_renamed_unit_files(
+/// A file the renaming mutator brought for the unit is served under the
+/// private name. When that file still holds the asked path, it leaves it,
+/// and the file it displaced there from a mutator above it is served
+/// again. A file the mutator did not bring is copied as the path stood at
+/// its turn: the latest file a mutator above it brought, else the game's
+/// or the mod's, read beneath the layer. A later mutator's file at the
+/// asked path is the original unit's, and stays there. The notes that a
+/// mutator won such a path are rewritten to name the files that still
+/// hold it.
+///
+/// @param[in,out] spec the layer the pass mounted, changed in place
+/// @param store the store, with `spec` mounted
+/// @param collections the pass's collections, which hold the renames and receive the copies
+/// @param layout directory names
+/// @param ids mutator ids, in list order
+/// @param displaced the files a later mutator displaced, from the files layer
+/// @param[in,out] notes the files layer's notes
+/// @param[out] error why the layer could not be mounted again
+/// @return false when the layer could not be mounted again
+bool redirect_renamed_unit_files(
     oa::MutatorLayerSpec& spec,
-    const oa::AssetStore& store,
+    oa::AssetStore& store,
     Collections& collections,
     const defs::DataLayout& layout,
-    std::span<const std::string> ids
+    const std::vector<std::string>& ids,
+    std::span<const DisplacedFile> displaced,
+    std::vector<FileNote>& notes,
+    std::string& error
 ) {
-    std::vector<std::string> dropped;
-    for (const Collections::UnitFileShift& shift : collections.unit_file_shifts()) {
+    const std::span<const Collections::UnitFileShift> shifts = collections.unit_file_shifts();
+    if (shifts.empty())
+        return true;
+    std::vector<PathHolder> holders;
+    holders.reserve(displaced.size() + spec.entries.size());
+    for (const DisplacedFile& file : displaced) {
+        const std::optional<uint16_t> owner = index_of(ids, file.owner);
+        if (!owner.has_value())
+            continue;
+        PathHolder holder;
+        holder.key = path_key(file.path);
+        holder.path = file.path;
+        holder.mutator = *owner;
+        holder.displaced = &file;
+        holders.push_back(std::move(holder));
+    }
+    for (std::size_t index = 0; index < spec.entries.size(); ++index) {
+        const oa::MutatorLayerEntry& entry = spec.entries[index];
+        const std::optional<uint16_t> owner = index_of(ids, entry.owner);
+        if (entry.kind == oa::MutatorSourceKind::hidden || !owner.has_value())
+            continue;
+        PathHolder holder;
+        holder.key = path_key(entry.path);
+        holder.path = entry.path;
+        holder.mutator = *owner;
+        holder.entry = index;
+        holders.push_back(std::move(holder));
+    }
+    // Displaced files come first, in the order they were displaced, so each
+    // path's list runs from the first file to the one the spec serves.
+    std::map<std::string, std::vector<std::size_t>> held;
+    for (std::size_t index = 0; index < holders.size(); ++index)
+        held[holders[index].key].push_back(index);
+
+    std::vector<UnitFileCopy> copies;
+    std::vector<std::string> moved_keys;
+    for (const Collections::UnitFileShift& shift : shifts) {
         if (shift.mutator >= ids.size())
             continue;
-        const std::string& owner = ids[shift.mutator];
         std::vector<std::string> handled;
         const auto already = [&](std::string_view path) {
-            for (const std::string& prior : handled) {
-                if (same_path(prior, path))
-                    return true;
-            }
-            return false;
+            const std::string key = path_key(path);
+            return std::find(handled.begin(), handled.end(), key) != handled.end();
         };
-        const auto serve = [&](std::string source,
-                               std::shared_ptr<const std::vector<uint8_t>> bytes,
-                               bool drop_source) {
-            if (bytes == nullptr || bytes->empty() || already(source))
-                return;
+        const auto plan = [&](const std::string& source,
+                              std::shared_ptr<const std::vector<uint8_t>> bytes,
+                              bool beneath) {
             const std::string dest =
                 private_unit_path(source, shift.asked, shift.stored, layout, shift.move_model);
             if (dest.empty())
                 return;
-            ServedCopy copy;
-            copy.mutator = owner;
-            copy.path = dest;
-            copy.source_path = source;
-            copy.sentence = "added path ";
-            copy.sentence.append(dest);
-            copy.sentence.append(", copy of ");
-            copy.sentence.append(source);
+            UnitFileCopy copy;
+            copy.mutator = shift.mutator;
+            copy.source = source;
+            copy.dest = dest;
             copy.bytes = std::move(bytes);
-            collections.add_served_copy(std::move(copy));
-            if (drop_source)
-                dropped.push_back(source);
-            handled.push_back(std::move(source));
+            copy.beneath = beneath;
+            copies.push_back(std::move(copy));
+            handled.push_back(path_key(source));
         };
-        for (const oa::MutatorLayerEntry& entry : spec.entries) {
-            if (entry.owner != owner || entry.kind == oa::MutatorSourceKind::hidden)
+        for (PathHolder& holder : holders) {
+            if (holder.mutator != shift.mutator || holder.moved || already(holder.path))
                 continue;
-            if (private_unit_path(entry.path, shift.asked, shift.stored, layout, shift.move_model)
+            if (private_unit_path(holder.path, shift.asked, shift.stored, layout, shift.move_model)
                     .empty())
                 continue;
-            std::shared_ptr<const std::vector<uint8_t>> bytes = entry.contents;
-            if (bytes == nullptr || bytes->empty()) {
-                std::optional<std::vector<uint8_t>> loaded = store.load_file_contents(entry.path);
-                if (loaded.has_value() && !loaded->empty())
-                    bytes = std::make_shared<const std::vector<uint8_t>>(std::move(*loaded));
-            }
-            serve(entry.path, std::move(bytes), true);
+            plan(holder.path, holder_bytes(holder, spec, store), false);
+            holder.moved = true;
+            moved_keys.push_back(holder.key);
         }
-        const auto consider = [&](std::string source) {
-            if (already(source) || store.file_size(source) == 0)
+        const auto consider = [&](const std::string& source) {
+            if (already(source))
                 return;
+            const auto found = held.find(path_key(source));
+            const PathHolder* earlier = nullptr;
+            bool layer_serves = false;
+            if (found != held.end()) {
+                for (const std::size_t index : found->second) {
+                    const PathHolder& holder = holders[index];
+                    if (holder.displaced == nullptr)
+                        layer_serves = true;
+                    if (!holder.moved && holder.mutator < shift.mutator)
+                        earlier = &holder;
+                }
+            }
+            if (earlier != nullptr) {
+                plan(source, holder_bytes(*earlier, spec, store), false);
+                return;
+            }
+            // The store shows another mutator's file, or hides the path for a
+            // mutator after this one: the game's bytes lie beneath the layer.
+            for (const oa::MutatorMask& mask : spec.masks) {
+                const std::optional<uint16_t> owner = index_of(ids, mask.owner);
+                if (owner.has_value() && *owner > shift.mutator &&
+                    oa::mutator_mask_matches(mask.pattern, source))
+                    layer_serves = true;
+            }
+            if (layer_serves) {
+                plan(source, nullptr, true);
+                return;
+            }
             std::optional<std::vector<uint8_t>> loaded = store.load_file_contents(source);
             if (!loaded.has_value() || loaded->empty())
                 return;
-            serve(
-                std::move(source),
-                std::make_shared<const std::vector<uint8_t>>(std::move(*loaded)),
-                false
-            );
+            plan(source, std::make_shared<const std::vector<uint8_t>>(std::move(*loaded)), false);
         };
         const std::string& pictures =
             layout.directories[static_cast<std::size_t>(defs::DataDirectory::unitpics)];
@@ -3829,20 +4092,56 @@ void redirect_renamed_unit_files(
                 break;
         }
     }
-    if (dropped.empty())
-        return;
+    if (!read_beneath(store, spec, ids, copies, error))
+        return false;
+    for (UnitFileCopy& copy : copies) {
+        if (copy.bytes == nullptr || copy.bytes->empty())
+            continue;
+        ServedCopy served;
+        served.mutator = ids[copy.mutator];
+        served.path = copy.dest;
+        served.source_path = copy.source;
+        served.sentence = "added path ";
+        served.sentence.append(copy.dest);
+        served.sentence.append(", copy of ");
+        served.sentence.append(copy.source);
+        served.bytes = std::move(copy.bytes);
+        collections.add_served_copy(std::move(served));
+    }
+    if (moved_keys.empty())
+        return true;
+
+    // A moved file that the spec served gives the path back to the latest
+    // file it displaced from a mutator above it, when there is one.
+    std::vector<std::optional<oa::MutatorLayerEntry>> replacement(spec.entries.size());
+    std::vector<uint8_t> dropped(spec.entries.size(), 0);
+    for (const PathHolder& holder : holders) {
+        if (!holder.moved || holder.displaced != nullptr)
+            continue;
+        dropped[holder.entry] = 1;
+        const PathHolder* earlier = nullptr;
+        for (const std::size_t index : held[holder.key]) {
+            const PathHolder& other = holders[index];
+            if (other.displaced != nullptr && !other.moved && other.mutator < holder.mutator)
+                earlier = &other;
+        }
+        if (earlier != nullptr)
+            replacement[holder.entry] = restored_entry(*earlier->displaced);
+    }
     std::vector<oa::MutatorLayerEntry> kept;
     kept.reserve(spec.entries.size());
-    for (oa::MutatorLayerEntry& entry : spec.entries) {
-        bool drop = false;
-        for (const std::string& path : dropped) {
-            if (same_path(entry.path, path))
-                drop = true;
-        }
-        if (!drop)
-            kept.push_back(std::move(entry));
+    for (std::size_t index = 0; index < spec.entries.size(); ++index) {
+        if (dropped[index] == 0)
+            kept.push_back(std::move(spec.entries[index]));
+        else if (replacement[index].has_value())
+            kept.push_back(std::move(*replacement[index]));
     }
     spec.entries.swap(kept);
+    std::sort(moved_keys.begin(), moved_keys.end());
+    moved_keys.erase(std::unique(moved_keys.begin(), moved_keys.end()), moved_keys.end());
+    for (const std::string& key : moved_keys)
+        renote_path(notes, ids, holders, held[key], key);
+    return true;
 }
 
 /// Fails every mutator still in the pass with an engine error.
@@ -4428,8 +4727,20 @@ bool run_pass(
     for (Conflict& conflict : map_notes)
         report.conflicts.push_back(std::move(conflict));
 
-    if (collections.has_value())
-        redirect_renamed_unit_files(spec, store, *collections, layout, ids);
+    std::vector<FileNote> file_notes = built.notes;
+    if (collections.has_value()) {
+        std::string redirect_error;
+        if (!redirect_renamed_unit_files(
+                spec, store, *collections, layout, ids, built.displaced, file_notes, redirect_error
+            )) {
+            sandboxes.clear();
+            build_menus.reset();
+            collections.reset();
+            guard.release();
+            fail_every(results, active, Phase::files, redirect_error);
+            return false;
+        }
+    }
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
         const std::optional<uint16_t> mutator = index_of(ids, entry.owner);
@@ -4441,7 +4752,7 @@ bool run_pass(
     }
     for (JournalEntry& entry : masked)
         journal.entries.push_back(std::move(entry));
-    for (const FileNote& note : built.notes) {
+    for (const FileNote& note : file_notes) {
         if (note.kind == FileNoteKind::add_replaced &&
             record_file_kind(note.path, layout) != RecordFileKind::none)
             continue;
