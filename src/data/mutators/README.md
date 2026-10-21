@@ -12,7 +12,8 @@ sentence chosen from the rule, which is not this module's to write.
 
 Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 `oa::data::mutators`. Headers `oa/data/mutators/allow_list.hpp`,
-`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp` and
+`oa/data/mutators/collections.hpp`, `oa/data/mutators/files_layer.hpp`,
+`oa/data/mutators/journal.hpp`, `oa/data/mutators/pipeline.hpp` and
 `oa/data/mutators/rules_lua.hpp`.
 
 - `check_mutable_path` judges one file path.
@@ -378,3 +379,56 @@ is an error. An unfinished block in the list refuses the plan.
 `data-mutators-rules-lua` checks each Lua fixture against the rule file
 beside it, both as records and as the writes those records make on one
 Ridge document set.
+
+## Pipeline
+
+`run_pipeline` takes an asset store and an ordered list of mutators and
+applies them in one fixed order: each `mutate(ctx)` for its plan, then the
+files layer, then every document the match will load, then one rules pass,
+then each mutator's hooks in list order. A hook is a transaction. A mutator
+that fails is dropped, with every mutator that requires it, and the run is
+repeated, so a failure leaves no file, rule or note. Only a document the
+run changed is written back. The result names each mutator's outcome and
+holds the journal and the conflict report. The store must hold no mutator
+layer when the call starts. On return the final layer is mounted when it
+holds at least one entry or mask, and the caller unmounts it.
+
+## Entry points
+
+- `run_pipeline` runs one loadout and returns the outcomes, the layer, the
+  journal and the conflict report. It prints nothing.
+- `Journal` records the changes that were kept, in phase order, and
+  `entries_of` returns one mutator's entries.
+- `ConflictReport` holds the stacking notes and the paths a parse left out.
+  `describe` writes one note as a single English line.
+
+## State
+
+None kept between calls. The pipeline mounts the layer on the store it is
+given and keeps nothing after it returns.
+
+## Invariants
+
+- The same input produces the same layer bytes, journal and report.
+- A mutator that fails leaves no trace: the result equals the run without
+  it and without every mutator that requires it.
+- A document that did not change is never written. A changed document is
+  written with the text writer, at the path the store listed.
+- Nothing of a mutator runs after `run_pipeline` returns. The scripts stay
+  inside the sandbox they were given.
+
+## Tests
+
+`data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up Ridge
+packages under `tests/data/mutators`: rules, hooks, a failed mutator, the
+budgets, files added and hidden, and the list checks. `data-mutators-journal`
+checks the entry order, `entries_of`, each note conversion and the sentences
+`describe` writes.
+
+## Limitations
+
+The plan keys `menus`, `sides`, `tables`, `maps` and `hacks` are refused
+until their tickets add them: menus with D06, sides and tables with D04,
+maps with D07 and hacks with D08. The integrity check after the last hook
+arrives with V04. Until then a plan that names one of those keys fails
+that mutator instead of ignoring the key.
