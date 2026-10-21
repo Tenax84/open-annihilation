@@ -16,6 +16,7 @@
 #include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/rules_lua.hpp"
 #include "oa/data/mutation_rules/documents.hpp"
+#include "oa/formats/hpi.hpp"
 #include "oa/formats/oamod.hpp"
 #include "oa/formats/soft_mutator.hpp"
 #include "oa/formats/tdf/edit.hpp"
@@ -1330,6 +1331,86 @@ void parse_documents(
     }
 }
 
+/// The folder a mask's files are listed from: its segments before the first
+/// one that holds a wildcard, never including the last segment.
+std::string mask_folder(std::string_view pattern) {
+    std::string folder;
+    std::size_t begin = 0;
+    while (begin < pattern.size()) {
+        const std::size_t slash = pattern.find_first_of("/\\", begin);
+        if (slash == std::string_view::npos)
+            break;
+        const std::string_view segment = pattern.substr(begin, slash - begin);
+        if (segment.find_first_of("*?") != std::string_view::npos)
+            break;
+        if (!folder.empty())
+            folder.push_back('/');
+        folder.append(segment.data(), segment.size());
+        begin = slash + 1;
+    }
+    return folder;
+}
+
+/// One hidden entry for each file of the mod that a mask hides.
+///
+/// The store is read before the layer is mounted, so these are the mod's
+/// own files. A file a mutator adds is not counted here: the layer serves
+/// it over every mask, and a mask that hides another mutator's file is
+/// journaled from the files layer's note. Each mutator names a path once.
+std::vector<JournalEntry> mask_entries(
+    const oa::AssetStore& store,
+    const oa::MutatorLayerSpec& spec,
+    const std::vector<std::string>& ids
+) {
+    std::vector<JournalEntry> entries;
+    std::vector<std::string> folders;
+    std::vector<std::vector<std::string>> listed;
+    for (const oa::MutatorMask& mask : spec.masks) {
+        const std::optional<uint16_t> owner = index_of(ids, mask.owner);
+        if (!owner.has_value())
+            continue;
+        const std::string folder = mask_folder(mask.pattern);
+        std::size_t known = 0;
+        while (known < folders.size() && folders[known] != folder)
+            ++known;
+        if (known == folders.size()) {
+            folders.push_back(folder);
+            listed.push_back(store.list_effective_recursive(folder, "", true));
+        }
+        for (const std::string& name : listed[known]) {
+            if (!oa::mutator_mask_matches(mask.pattern, name))
+                continue;
+            bool served = false;
+            for (const oa::MutatorLayerEntry& entry : spec.entries) {
+                if (same_path(entry.path, name)) {
+                    served = true;
+                    break;
+                }
+            }
+            if (!served)
+                entries.push_back(file_entry(*owner, name, Change::hidden));
+        }
+    }
+    std::stable_sort(
+        entries.begin(), entries.end(), [](const JournalEntry& left, const JournalEntry& right) {
+            if (left.mutators.front() != right.mutators.front())
+                return left.mutators.front() < right.mutators.front();
+            return left.path < right.path;
+        }
+    );
+    entries.erase(
+        std::unique(
+            entries.begin(),
+            entries.end(),
+            [](const JournalEntry& left, const JournalEntry& right) {
+                return left.mutators.front() == right.mutators.front() && left.path == right.path;
+            }
+        ),
+        entries.end()
+    );
+    return entries;
+}
+
 /// The position no failure has.
 constexpr std::size_t k_no_slot = std::numeric_limits<std::size_t>::max();
 
@@ -1765,6 +1846,7 @@ bool run_pass(
         first.offer(*slot, Phase::files, Cause::files_refused, failure.message);
         active[*slot] = 0;
     }
+    std::vector<JournalEntry> masked = mask_entries(store, built.spec, ids);
 
     oa::MutatorLayerSpec spec = built.spec;
     if (!spec.entries.empty() || !spec.masks.empty() || !spec.archives.empty()) {
@@ -1916,6 +1998,8 @@ bool run_pass(
             entry.kind == oa::MutatorSourceKind::hidden ? Change::hidden : Change::added;
         journal.entries.push_back(file_entry(*mutator, entry.path, change));
     }
+    for (JournalEntry& entry : masked)
+        journal.entries.push_back(std::move(entry));
     for (const FileNote& note : built.notes) {
         report.conflicts.push_back(conflict_from_file(note, ids));
         if (note.kind != FileNoteKind::add_masked)

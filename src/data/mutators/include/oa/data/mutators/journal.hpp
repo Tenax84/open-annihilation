@@ -58,6 +58,11 @@ enum class Change : uint8_t {
 /// absent when the field was absent or removed. `record` is a unit name, a
 /// weapon or feature section, or a path. `block` is empty for a key of the
 /// record itself.
+///
+/// A file entry is `added` for each path a mutator's files add, and `hidden`
+/// for each file of the mod a mask hides and for each file a hook's removal
+/// empties. A mask that hides another mutator's file names both, the one
+/// whose file it hid first.
 struct JournalEntry {
     /// Mutators that made the change, as indices into the input list.
     std::vector<uint16_t> mutators;

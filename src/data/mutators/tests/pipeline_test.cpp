@@ -824,6 +824,25 @@ void test_plan_tables_are_plain() {
     }
 }
 
+void test_mask_is_journaled() {
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult masked =
+        mutators::run_pipeline(store, input_of({"ridge-mask-lab"}));
+    OA_CHECK(masked.playable());
+    OA_CHECK(masked.layer.masks.size() == 1);
+    OA_CHECK(!lists_name(store, "units", ".fbi", "rglab.fbi"));
+    const std::vector<mutators::JournalEntry> own = masked.journal.entries_of(0);
+    OA_CHECK(own.size() == 1);
+    if (own.size() == 1) {
+        OA_CHECK(own[0].change == mutators::Change::hidden);
+        OA_CHECK(own[0].phase == mutators::Phase::files);
+        OA_CHECK(own[0].collection == mutators::Collection::files);
+        OA_CHECK(count_paths({own[0].path}, "units/rglab.fbi") == 1);
+        OA_CHECK(own[0].mutators == std::vector<uint16_t>{0});
+    }
+    release(store);
+}
+
 void test_string_cap_is_its_own_cause() {
     oa::AssetStore store = open_ridge();
     const mutators::PipelineResult result =
@@ -892,6 +911,7 @@ int main() {
     test_failure_ends_the_pass();
     test_dependants_of_dependants();
     test_plan_tables_are_plain();
+    test_mask_is_journaled();
     test_string_cap_is_its_own_cause();
     test_unread_document_warned_once();
     test_player_option();
