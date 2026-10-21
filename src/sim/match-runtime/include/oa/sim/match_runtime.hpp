@@ -3097,6 +3097,20 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
     /// @param viewer The viewing player of this pass.
     /// @param scan_own_units Whether its own radar and sonar units stamp.
     void scan_picture_pass(uint8_t picture, const oa::Player& viewer, bool scan_own_units);
+    /// Visits the units around a point as for_each_unit_in_radius does,
+    /// following the bucket links of the spatial projections as they stand
+    /// instead of refreshing every projection first.
+    ///
+    /// @param centre Signed 16.16 centre.
+    /// @param radius Radius, signed 16.16.
+    /// @param visit Called once per unit found, in bucket order.
+    /// @param context Passed to `visit`.
+    void walk_units_in_radius(
+        const sim::ground_orders::Point& centre,
+        int32_t radius,
+        void (*visit)(void* context, sim::unit_spawn::Slot& slot),
+        void* context
+    );
     /// Tells whether the contact scan lets a jammer jam the viewing player's
     /// radar picture: always in 3.1c; under intel.allied-jammers-ignored not
     /// when the viewer allies the jammer's owner, nor for a local watcher or
