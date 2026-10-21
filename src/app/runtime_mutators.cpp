@@ -227,29 +227,44 @@ void log_applied(
     }
 }
 
+/// What `hack_refusal_only` has found for one slot.
+enum class Judged : uint8_t {
+    unknown, ///< not asked yet
+    judging, ///< being judged, further up the same chain of requirements
+    yes,     ///< its failure is that mutator's alone
+    no,      ///< its failure stops the start
+};
+
 /// True when this mutator failed because its hacks were refused, or was
 /// excluded only because a mutator it requires failed that way, directly
 /// or through another exclusion.
+///
+/// Each slot's answer is kept in `judged`, so a mutator that several others
+/// require gives every one of them the same answer. A slot met again while
+/// it is being judged would be a loop of requirements, which the list check
+/// refuses before the pipeline runs; it counts as no.
 bool hack_refusal_only(
     std::size_t slot,
     const std::vector<mutators::MutatorResult>& results,
     const std::vector<mutators::ResolvedMutator>& listed,
-    std::vector<uint8_t>& seen
+    std::vector<Judged>& judged
 ) {
-    if (slot >= results.size())
+    if (slot >= results.size() || slot >= judged.size())
         return false;
+    if (judged[slot] != Judged::unknown)
+        return judged[slot] == Judged::yes;
     const mutators::MutatorResult& one = results[slot];
-    if (one.outcome == mutators::Outcome::failed)
-        return one.cause == mutators::Cause::hack_refused;
+    if (one.outcome == mutators::Outcome::failed) {
+        const bool alone = one.cause == mutators::Cause::hack_refused;
+        judged[slot] = alone ? Judged::yes : Judged::no;
+        return alone;
+    }
     if (one.outcome != mutators::Outcome::excluded ||
-        one.cause != mutators::Cause::prerequisite_failed)
+        one.cause != mutators::Cause::prerequisite_failed || slot >= listed.size()) {
+        judged[slot] = Judged::no;
         return false;
-    if (slot < seen.size() && seen[slot] != 0)
-        return false;
-    if (slot < seen.size())
-        seen[slot] = 1;
-    if (slot >= listed.size())
-        return false;
+    }
+    judged[slot] = Judged::judging;
     bool unmet = false;
     for (const oa::formats::oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
         bool satisfied = false;
@@ -273,10 +288,13 @@ bool hack_refusal_only(
             continue;
         unmet = true;
         for (const std::size_t other : failed) {
-            if (!hack_refusal_only(other, results, listed, seen))
+            if (!hack_refusal_only(other, results, listed, judged)) {
+                judged[slot] = Judged::no;
                 return false;
+            }
         }
     }
+    judged[slot] = unmet ? Judged::yes : Judged::no;
     return unmet;
 }
 
@@ -494,14 +512,14 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     log_applied(listed, *mutator_state_->result);
     bool blocking = !mutator_state_->result->refusal.empty();
     if (!blocking) {
-        std::vector<uint8_t> seen(mutator_state_->result->mutators.size(), 0);
+        std::vector<Judged> judged(mutator_state_->result->mutators.size(), Judged::unknown);
         for (std::size_t slot = 0; slot < mutator_state_->result->mutators.size(); ++slot) {
             if (mutator_state_->result->mutators[slot].outcome == mutators::Outcome::applied)
                 continue;
             // A refused hack, and a mutator excluded only because it requires
             // one, fails that mutator alone. Anything else still refuses the
             // start, as a plan or a rule failure does.
-            if (!hack_refusal_only(slot, mutator_state_->result->mutators, listed, seen)) {
+            if (!hack_refusal_only(slot, mutator_state_->result->mutators, listed, judged)) {
                 blocking = true;
                 break;
             }
