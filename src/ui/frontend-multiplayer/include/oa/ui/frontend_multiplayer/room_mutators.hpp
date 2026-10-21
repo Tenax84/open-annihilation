@@ -155,6 +155,16 @@ struct MutatorsBlock {
 /// @param[in,out] lobby Lobby state.
 void lobby_note_classic_room(Lobby& lobby) noexcept;
 
+/// Posts one 3.1c line about a slot, split between words so each part fits.
+///
+/// Translates `words`, fills `{player}` with the slot's name, and posts each
+/// part of the sentence. The parts are not sent.
+///
+/// @param[in,out] lobby Lobby state.
+/// @param words The English sentence, with `{player}`.
+/// @param player_slot The player the line names.
+void lobby_post_classic_line(Lobby& lobby, const char* words, int32_t player_slot) noexcept;
+
 /// Tells whether one slot alone would hold START.
 ///
 /// The host's own row does not. A 3.1c player and this machine's computer

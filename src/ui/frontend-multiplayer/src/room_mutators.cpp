@@ -5,6 +5,7 @@
 #include "oa/ui/frontend_multiplayer/lobby.hpp"
 
 #include "oa/netgame/records.hpp"
+#include "oa/netgame/unicode_chat.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -313,6 +314,20 @@ std::vector<int32_t> lobby_classic_players(Lobby& lobby) {
     return slots;
 }
 
+void lobby_post_classic_line(Lobby& lobby, const char* words, int32_t player_slot) noexcept {
+    if (lobby.game == nullptr || words == nullptr || player_slot < 0 || player_slot >= kSlotCount)
+        return;
+    const auto& named = slot_player(lobby, player_slot);
+    const std::string_view who(named.name, ::strnlen(named.name, sizeof named.name));
+    std::string line(lobby_translated(lobby, words));
+    const auto mark = line.find("{player}");
+    if (mark != std::string::npos)
+        line.replace(mark, std::string_view("{player}").size(), who);
+    const auto parts = netgame::chat_parts(line, kChatLineBytes - 1, netgame::chat_line_parts);
+    for (const auto& part : parts)
+        lobby_post_chat(lobby, part.c_str());
+}
+
 void lobby_note_classic_room(Lobby& lobby) noexcept {
     if (lobby.game == nullptr)
         return;
@@ -333,14 +348,7 @@ void lobby_note_classic_room(Lobby& lobby) noexcept {
     for (int32_t player_slot = 0; player_slot < kSlotCount; ++player_slot) {
         if (!classic_seated(lobby, player_slot))
             continue;
-        const auto& named = slot_player(lobby, player_slot);
-        const std::string_view who(named.name, ::strnlen(named.name, sizeof named.name));
-        const std::string_view pattern = lobby_translated(lobby, kClassicSeated);
-        std::string line(pattern);
-        const auto mark = line.find("{player}");
-        if (mark != std::string::npos)
-            line.replace(mark, std::string("{player}").size(), who);
-        lobby_post_chat(lobby, line.c_str());
+        lobby_post_classic_line(lobby, kClassicSeated, player_slot);
     }
 }
 

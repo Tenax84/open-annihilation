@@ -4650,18 +4650,12 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
                 netgame::presence_mutators_state(host_record.data(), host_record.size()) &&
                 arrived != nullptr &&
                 !netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(arrived))) {
-                const auto& named = slot_player(lobby, slot);
-                const std::string_view who(named.name, ::strnlen(named.name, sizeof named.name));
-                const std::string_view pattern = lobby_translated(
+                lobby_post_classic_line(
                     lobby,
                     "*** {player} plays Total Annihilation 3.1c and cannot join a game with "
-                    "mutators."
+                    "mutators.",
+                    slot
                 );
-                std::string line(pattern);
-                const auto mark = line.find("{player}");
-                if (mark != std::string::npos)
-                    line.replace(mark, 8, who);
-                lobby_post_chat(lobby, line.c_str());
                 lobby_reject(lobby, record.player_id, kRejectVersion);
                 flush(lobby);
                 return true;

@@ -1077,9 +1077,23 @@ std::vector<std::string> room_lines(mp::Lobby& lobby) {
     return lines;
 }
 
-/// What the chat ring keeps of a line.
-std::string shown_line(const std::string& line) {
-    return line.substr(0, mp::kChatLineBytes - 1);
+/// The ring lines joined with one space, which is the space a split drops.
+std::string joined_lines(const std::vector<std::string>& lines) {
+    std::string text;
+    for (const auto& line : lines) {
+        if (!text.empty())
+            text += ' ';
+        text += line;
+    }
+    return text;
+}
+
+/// True when every part fits in one chat line.
+bool parts_fit(const std::vector<std::string>& lines) {
+    for (const auto& line : lines)
+        if (line.size() > mp::kChatLineBytes - 1)
+            return false;
+    return true;
 }
 
 /// Binds the record this machine sends and composes it, as a change of list does.
@@ -1175,7 +1189,7 @@ void test_classic_joiner() {
         expect(sent_reject(room, 0x200, 8), "the refusal is reason 8");
         const auto lines = room_lines(room.lobby);
         expect(
-            lines.size() == 1 && lines[0] == shown_line(join),
+            parts_fit(lines) && joined_lines(lines) == join,
             "the room names the 3.1c player who cannot join"
         );
         int32_t chats = 0;
@@ -1271,17 +1285,21 @@ void test_classic_seated() {
         "turning mutators on leaves the 3.1c player seated"
     );
     expect(
-        room_lines(room.lobby).size() == 1 && room_lines(room.lobby)[0] == shown_line(seated),
+        parts_fit(room_lines(room.lobby)) && joined_lines(room_lines(room.lobby)) == seated,
         "the room says why the seated player holds the game"
     );
+    const auto posted = room_lines(room.lobby).size();
     bind_source(room.lobby, listed);
-    expect(room_lines(room.lobby).size() == 1, "the same list posts the line once");
+    expect(room_lines(room.lobby).size() == posted, "the same list posts the line once");
 
     bind_source(room.lobby, plain);
     expect(mp::lobby_mutators_allow_start(room.lobby), "START waits only while mutators are on");
     expect(mp::lobby_classic_players(room.lobby).empty(), "mutators off names nobody");
     bind_source(room.lobby, listed);
-    expect(room_lines(room.lobby).size() == 2, "the line posts once more when mutators return");
+    expect(
+        joined_lines(room_lines(room.lobby)) == seated + " " + seated,
+        "the line posts once more when mutators return"
+    );
 
     Room guest(false);
     guest.seat(2, 0x300, false, false);
@@ -1293,12 +1311,15 @@ void test_classic_seated() {
     expect(host_record_to(guest, listed), "the guest keeps the host's mutators");
     expect(host_record_to(guest, listed), "the guest keeps the same list again");
     expect(
-        room_lines(guest.lobby).size() == 1 && room_lines(guest.lobby)[0] == shown_line(seated),
+        parts_fit(room_lines(guest.lobby)) && joined_lines(room_lines(guest.lobby)) == seated,
         "a guest posts the seated line once"
     );
     expect(host_record_to(guest, plain), "the guest keeps the list going away");
     expect(host_record_to(guest, listed), "the guest keeps the list coming back");
-    expect(room_lines(guest.lobby).size() == 2, "a guest posts once per change");
+    expect(
+        joined_lines(room_lines(guest.lobby)) == seated + " " + seated,
+        "a guest posts once per change"
+    );
 }
 
 /// A new room forgets the previous host's list, under a host that sends none
