@@ -23,6 +23,8 @@ struct lua_State;
 
 namespace oa::data::mutators {
 
+class Collections;
+
 /// The chosen map the maps phase reads. Absent on a dry run with no map.
 struct ChosenMap {
     /// The map key the match selected, including a pack's `\@id` when it has one.
@@ -62,8 +64,6 @@ struct MapsTurn {
     std::string message;
     /// Journal rows for the writes that remain.
     std::vector<JournalEntry> entries;
-    /// A later write over an earlier mutator's map field.
-    std::vector<Conflict> conflicts;
     /// True when the served bytes differ from the bytes the turn was given.
     bool changed{false};
     /// The OTA to serve after this turn. Empty when nothing changed.
@@ -112,16 +112,25 @@ void install_map_match_forms(lua_State* state);
 /// turn and no bytes. An unreadable OTA fails with an engine message before
 /// the script runs.
 ///
+/// Every read and write of the view is charged against the turn's
+/// instruction allowance, at the collections' rates: one field access, the
+/// key's bytes and the value's, each schema a `:set`, `:scale` or list item
+/// writes, and each element a walk or a `where` visits. A refused write is
+/// an error the script can catch. One turn may journal at most
+/// `mutator_write_limit` writes; a further write fails the mutator, even
+/// when the script catches that error. No exception leaves the call.
+///
 /// @param sandbox the mutator's sandbox, still holding `ref`
 /// @param function_entry true when the entry is a function
 /// @param ref registry reference of the function or the list
 /// @param chosen the map being played
 /// @param current the OTA bytes at the start of this turn
-/// @param store the layered store, for unit, feature and profile checks
+/// @param store the layered store, for the profile checks
+/// @param collections the pass's units and features as the mutators above
+///     left them; a placed name is checked here
 /// @param layout directory names the checks build paths from
 /// @param context what `ctx` shows
 /// @param mutator this mutator's index in the input list
-/// @param earlier journal rows from maps turns already kept this pass
 /// @return the turn's bytes, journal and failure
 [[nodiscard]] MapsTurn apply_maps(
     oa::data::script_host::Sandbox& sandbox,
@@ -130,10 +139,20 @@ void install_map_match_forms(lua_State* state);
     const ChosenMap& chosen,
     const std::vector<uint8_t>& current,
     oa::AssetStore& store,
+    Collections& collections,
     const oa::data::defs::DataLayout& layout,
     const MapScriptContext& context,
-    uint16_t mutator,
-    const std::vector<JournalEntry>& earlier
+    uint16_t mutator
 );
+
+/// The notes for map fields that more than one mutator wrote.
+///
+/// One `same_field_hooked` note for each pair of an earlier and a later
+/// mutator that set the same record, block and field, naming the earlier
+/// one first. The rows are read once, indexed by that field.
+///
+/// @param rows the maps journal rows the pass kept, in list order
+/// @return the notes, in the order the later writes were made
+[[nodiscard]] std::vector<Conflict> map_conflicts(const std::vector<JournalEntry>& rows);
 
 } // namespace oa::data::mutators

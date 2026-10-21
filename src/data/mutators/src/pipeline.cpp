@@ -3094,7 +3094,7 @@ bool run_pass(
     // then errors keeps none of its bytes. The served file, when the bytes
     // differ from the map the caller passed, is published with the pass.
     std::vector<JournalEntry> map_journal;
-    std::vector<Conflict> map_conflicts;
+    std::vector<Conflict> map_notes;
     std::shared_ptr<const std::vector<uint8_t>> served_ota;
     std::string served_owner;
     if (input.map.has_value()) {
@@ -3105,7 +3105,7 @@ bool run_pass(
         for (std::size_t slot = 0; slot < count && slot < first.slot; ++slot) {
             if (active[slot] == 0 || !plans[slot].has_maps)
                 continue;
-            if (!sandboxes[slot].has_value()) {
+            if (!sandboxes[slot].has_value() || !collections.has_value()) {
                 first.offer(
                     slot, Phase::hooks, Cause::engine_error, "the maps hook has no sandbox"
                 );
@@ -3125,10 +3125,10 @@ bool run_pass(
                 *input.map,
                 working,
                 store,
+                *collections,
                 layout,
                 context,
-                static_cast<uint16_t>(slot),
-                map_journal
+                static_cast<uint16_t>(slot)
             );
             if (!turn.ok) {
                 const Cause cause = turn.from_script ? cause_of(turn.kind) : Cause::engine_error;
@@ -3138,8 +3138,6 @@ bool run_pass(
             }
             for (JournalEntry& entry : turn.entries)
                 map_journal.push_back(std::move(entry));
-            for (Conflict& conflict : turn.conflicts)
-                map_conflicts.push_back(std::move(conflict));
             if (turn.changed && turn.bytes != nullptr) {
                 working.assign(turn.bytes->begin(), turn.bytes->end());
                 served_ota = std::move(turn.bytes);
@@ -3157,6 +3155,7 @@ bool run_pass(
             served_ota.reset();
         if (working == original)
             served_ota.reset();
+        map_notes = map_conflicts(map_journal);
     }
 
     std::vector<std::vector<Writer>> writers(documents.size());
@@ -3250,7 +3249,7 @@ bool run_pass(
     journal_record_touches(journal, report, touches, documents, writers, menus);
     for (JournalEntry& entry : map_journal)
         journal.entries.push_back(std::move(entry));
-    for (Conflict& conflict : map_conflicts)
+    for (Conflict& conflict : map_notes)
         report.conflicts.push_back(std::move(conflict));
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {

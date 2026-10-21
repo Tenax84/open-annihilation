@@ -884,12 +884,13 @@ numbers from 0 to 1,000,000. `surfacemetal` is a whole number from 0 to 255.
 `:scale` multiplies a stored number; it cannot scale `aiprofile`.
 
 `schema.units` and `schema.features` are the placed entries, in order. A
-unit's `unitname` may name a unit that is already in `units`. Its `xpos`
-and `zpos` are whole numbers from 0 to 32,767, and its `player` is a whole
-number from 1 to 255. A feature's `featurename` may name a feature that is
-already in `features`. `:remove()` drops that one entry. Nothing in the
-view adds a placed unit, a placed feature or a schema, and start positions
-are never shown or written.
+unit's `unitname` may name a unit that is in `units` as the mutators above
+left it: a unit an earlier hook cloned counts, and one a hook removed does
+not. Its `xpos` and `zpos` are whole numbers from 0 to 32,767, and its
+`player` is a whole number from 1 to 255. A feature's `featurename` may
+name a feature that is in `features` the same way. `:remove()` drops that
+one entry. Nothing in the view adds a placed unit, a placed feature or a
+schema, and start positions are never shown or written.
 
 In the list form, `where` reads `name`, `file`, `planet`, `pack` and header
 keys. A header key in `change` writes the header. A schema key writes every
@@ -899,6 +900,18 @@ case ignored, at most 256 bytes, with `/` ordinary. `pattern` is a Lua
 pattern, matched with the sandbox's `string.find`, so its case matters.
 Both are refused in a units rule with "glob() and pattern() match maps
 only". The list is applied in order. A later mutator's write wins, and
-both writes stay in the journal. A mutator that writes and then errors
-leaves the scenario as the mutator above it left it, or unserved when it
-was the first to write.
+both writes stay in the journal, with a `same_field_hooked` note for the
+pair. A mutator that writes and then errors leaves the scenario as the
+mutator above it left it, or unserved when it was the first to write.
+
+A refused write is an error the script can catch with `pcall`, and it
+names the field or the rule it broke. Every read and write of the view
+counts against the instruction allowance at the collections' rates: 8
+units for each field read or written, and one unit per 32 bytes of the
+key and of the value. A `:set`, a `:scale` or a list item costs that for
+each schema and key it writes, a walk or a `where` one unit for each
+element it visits plus the bytes it compares, and a profile or a placed
+name the lookup that checks it. A `where`, `:set` or `:scale` table holds
+at most 4096 keys. One mutator may journal at most 65536 map writes; a
+further write fails that mutator with "this mutator has changed too many
+fields", even when the script catches the error.

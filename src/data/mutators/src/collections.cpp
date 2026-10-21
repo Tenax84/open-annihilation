@@ -3266,6 +3266,25 @@ int Collections::lookup_unit(lua_State* state, std::string_view sought) {
     return 1;
 }
 
+int Collections::has_record(lua_State* state, bool feature, std::string_view sought) {
+    const CollectionsState::Rec* found = nullptr;
+    try {
+        found = find_named(
+            *this,
+            feature ? CollectionsState::Kind::features : CollectionsState::Kind::units,
+            sought,
+            state
+        );
+    } catch (const std::bad_alloc&) {
+        return -1;
+    }
+    if (found == nullptr || found->section == nullptr)
+        return 0;
+    if (state != nullptr)
+        charge_text(state, found->name.size());
+    return 1;
+}
+
 void Collections::end_mutator() {
     active_ = false;
     mutator_.clear();
