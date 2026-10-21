@@ -24,16 +24,28 @@ struct lua_State;
 
 namespace oa::data::mutators {
 
+/// The most sources one plan may hold.
+///
+/// Each run of consecutive Lua blocks is one source, and each `sm` path is
+/// one source. A plan with more sources than this is refused.
+inline constexpr std::uint32_t max_plan_sources = 256;
+
 /// Publishes the rule forms in a state.
 ///
 /// The globals are `where`, `all`, `named`, `on`, `set`, `scale`, `lock`,
-/// `remove`, `append` and `sm`. `range`, `is`, `has`, `absent` and `not_`
-/// are published too, by `install_selection_forms`. `where`, `all`, `named`
-/// and `on` build an unfinished block. `:change { }` finishes it, and a
-/// second `:change` is an error. `sm` holds a path; it does not read.
+/// `remove`, `append`, `sm` and `empty`. `range`, `is`, `has`, `absent` and
+/// `not_` are published too, by `install_selection_forms`. `where`, `all`,
+/// `named` and `on` build an unfinished block. `:change { }` finishes it,
+/// and a second `:change` is an error. A block has one selector: a later
+/// `where`, `all` or `named` is an error that names the line. `on` may come
+/// before or after the selector and only replaces the folder and extension.
+/// `sm` holds a path; it does not read. `empty` assigns empty text, the
+/// record a rule file writes with `field=;`.
 ///
 /// The state is one the script host opened. The forms' metatables cannot
-/// be read or replaced.
+/// be read or replaced. A script can hold a block after it has been
+/// collected: the block keeps its fields as Lua values and has no
+/// finalizer.
 ///
 /// @param state state to publish into
 void install_rule_forms(lua_State* state);
@@ -43,6 +55,8 @@ void install_rule_forms(lua_State* state);
 /// `path` uses `/` separators. The function returns the bytes, or no value
 /// when the package has no such file. `error` receives a reason when it is
 /// not null; it may be left empty. The function does not call into `state`.
+/// It may throw. `read_plan_rules` catches that and reports `cannot read`,
+/// and itself does not throw.
 using PackageReader =
     std::function<std::optional<std::vector<uint8_t>>(std::string_view path, std::string* error)>;
 
@@ -71,22 +85,28 @@ struct PlanRules {
 /// The list is the sequence at `rules_index`, from 1 until the first hole.
 /// A Lua block joins the current source, which is named `entry_name`. A
 /// `sm` value ends that source and adds one source of its own. Anything
-/// else, and a block `:change` was not called on, refuses the plan. The
-/// records are copied out: the result does not use the state after return.
+/// else refuses the plan. A block `:change` was not called on refuses the
+/// plan, and the message names that block's call and its line. The records
+/// are copied out: the result does not use the state after return.
 ///
 /// A rule-file path is a relative path inside the package. `\` is read as
 /// `/`. A path that is absolute, has a drive, or has a `..` segment is
 /// refused, and the reader is not called. The reader is the only way the
-/// bytes are obtained. A file that cannot be read, or that the rule parser
-/// reports an error in, refuses the plan. The message names the path, and
-/// for a parse error the line as well. Warnings are kept on the result.
+/// bytes are obtained. Each distinct path is read and parsed once. A file
+/// that cannot be read, or that the rule parser reports an error in,
+/// refuses the plan. The message names the path, and for a parse error the
+/// line as well. An exception from the reader is reported as `cannot read`
+/// for that path. Warnings are kept on the result, once per path.
 ///
 /// Field names in one block are stored in the order of their names compared
 /// after ASCII lower-casing, with the raw bytes breaking a tie, so the
 /// records do not depend on the order the keys were inserted. A block's
-/// line is the line the host reports for the `where`, `all`, `named` or
-/// `on` call that started it. The limits on blocks, statements and text
-/// length apply to Lua blocks as they apply to a rule file.
+/// line is the line the host reports for the `where`, `all` or `named` call
+/// that chose its selector, or for `on` when `on` is what starts the block.
+/// The blocks of every source together stay within the rule file's block
+/// limit, and the sources stay within `max_plan_sources`. The statement and
+/// text limits apply to Lua blocks as they apply to a rule file. Passing a
+/// limit refuses the plan.
 ///
 /// @param state state that holds the list; must be the state the forms were built in
 /// @param rules_index stack index of the rules list

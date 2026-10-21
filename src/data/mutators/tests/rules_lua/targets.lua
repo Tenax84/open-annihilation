@@ -1,3 +1,6 @@
+-- SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+-- SPDX-License-Identifier: GPL-3.0-only
+
 -- Weapons, corpse features and side data for Ridge.
 return {
 on("weapons", "tdf"):change { range = scale(2) },

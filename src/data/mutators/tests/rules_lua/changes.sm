@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
 [*All*]
 {
 plain=5;
@@ -15,4 +18,5 @@ locked=^4;
 bolt="LIGHTNING ";
 cleared="";
 quoted="850";
+yardmap=;
 }

@@ -19,6 +19,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -103,8 +104,8 @@ commander=CORCOM;
 )";
 
 struct FileText {
-    const char* path;
-    std::string_view text;
+    const char* path = nullptr;
+    std::string_view text{};
 };
 
 constexpr FileText k_files[] = {
@@ -567,17 +568,17 @@ void test_pairs(HostBox& box) {
             if (capture.plan.sources[0].rules.blocks.size() == 2) {
                 const sm::Block& all_block = capture.plan.sources[0].rules.blocks[0];
                 const sm::Block& where_block = capture.plan.sources[0].rules.blocks[1];
-                OA_CHECK(all_block.line == 2);
-                OA_CHECK(where_block.line == 3);
+                OA_CHECK(all_block.line == 5);
+                OA_CHECK(where_block.line == 6);
                 OA_CHECK(where_block.needs.size() == 1);
                 if (where_block.needs.size() == 1)
-                    OA_CHECK(where_block.needs[0].line == 3);
+                    OA_CHECK(where_block.needs[0].line == 6);
                 OA_CHECK(all_block.changes.size() == 1);
                 if (all_block.changes.size() == 1)
-                    OA_CHECK(all_block.changes[0].line == 2);
+                    OA_CHECK(all_block.changes[0].line == 5);
                 OA_CHECK(where_block.changes.size() == 1);
                 if (where_block.changes.size() == 1)
-                    OA_CHECK(where_block.changes[0].line == 3);
+                    OA_CHECK(where_block.changes[0].line == 6);
             }
         }
         if (std::string(name) == "changes") {
@@ -587,18 +588,45 @@ void test_pairs(HostBox& box) {
                     quoted = true;
             }
             OA_CHECK(quoted);
+            bool empty_text = false;
+            for (const sm::Diagnostic& item : parsed.diagnostics) {
+                if (item.code == sm::DiagnosticCode::empty_value)
+                    empty_text = true;
+            }
+            OA_CHECK(empty_text);
+            bool saw_empty = false;
+            bool saw_remove = false;
+            const std::vector<sm::Block>& blocks = capture.plan.sources[0].rules.blocks;
+            if (blocks.size() == 1) {
+                for (const sm::Change& change : blocks[0].changes) {
+                    if (change.field == "yardmap")
+                        saw_empty =
+                            change.kind == sm::ChangeKind::assign_text && change.text.empty();
+                    if (change.field == "gone")
+                        saw_remove = change.kind == sm::ChangeKind::remove;
+                }
+            }
+            OA_CHECK(saw_empty);
+            OA_CHECK(saw_remove);
         }
     }
 }
 
 void test_order(HostBox& box) {
-    constexpr const char* k_source = R"(local function make(first, second)
+    constexpr const char* k_source = R"(local function make(first_key, second_key)
   local needs = {}
-  needs[first] = 1
-  needs[second] = "ridge"
   local changes = {}
-  changes[second] = scale(2)
-  changes[first] = set(5)
+  local function put(key)
+    if key == "alpha" then
+      needs[key] = 1
+      changes[key] = set(5)
+    else
+      needs[key] = "ridge"
+      changes[key] = scale(2)
+    end
+  end
+  put(first_key)
+  put(second_key)
   return where(needs):change(changes)
 end
 return { make("Zeta", "alpha"), make("alpha", "Zeta") }
@@ -633,11 +661,11 @@ return { make("Zeta", "alpha"), make("alpha", "Zeta") }
         OA_CHECK(block.needs[1].kind == sm::NeedKind::equals);
         OA_CHECK(block.needs[1].text == "ridge");
         OA_CHECK(block.changes[0].field == "alpha");
-        OA_CHECK(block.changes[0].kind == sm::ChangeKind::scale);
-        OA_CHECK(block.changes[0].value == 2);
+        OA_CHECK(block.changes[0].kind == sm::ChangeKind::assign);
+        OA_CHECK(block.changes[0].value == 5);
         OA_CHECK(block.changes[1].field == "Zeta");
-        OA_CHECK(block.changes[1].kind == sm::ChangeKind::assign);
-        OA_CHECK(block.changes[1].value == 5);
+        OA_CHECK(block.changes[1].kind == sm::ChangeKind::scale);
+        OA_CHECK(block.changes[1].value == 2);
     }
 }
 
@@ -928,7 +956,13 @@ void test_refusals(HostBox& box) {
         box,
         "incomplete.lua",
         "return { where { builder = true } }\n",
-        "rules[1] is not a complete rule"
+        "rules[1]: the where on line 1 has no change"
+    );
+    expect_plan_error(
+        box,
+        "on-open.lua",
+        "return { on(\"weapons\", \"tdf\") }\n",
+        "rules[1]: the on on line 1 has no change"
     );
     expect_script_error(
         box,
@@ -977,17 +1011,87 @@ changes[string.rep("a", 1025)] = 1
 return { all():change(changes) }
 )";
     expect_script_error(box, "text.lua", k_text, "text is longer than 1024 bytes");
+
+    Asked wide_asked;
+    std::string wide_text;
+    wide_text.reserve(static_cast<std::size_t>(3000) * 20);
+    for (int count = 0; count < 3000; ++count)
+        wide_text += "[*All*]{marker=1;}\n";
+    wide_asked.files["rules/wide.sm"] = std::vector<uint8_t>(wide_text.begin(), wide_text.end());
+    constexpr const char* k_wide = R"(local rules = {}
+for n = 1, 2000 do
+  rules[n] = all():change { marker = 1 }
+end
+rules[2001] = sm("rules/wide.sm")
+return rules
+)";
+    Eval wide;
+    wide.source = k_wide;
+    wide.chunk = "wide.lua";
+    wide.reader = asking_reader(wide_asked);
+    if (!run_source(box, wide)) {
+        std::fprintf(stderr, "wide script '%s'\n", wide.script_error.c_str());
+        OA_CHECK(false);
+    } else {
+        OA_CHECK(!wide.plan.ok());
+        OA_CHECK(wide.plan.error.find("too many blocks") != std::string::npos);
+        OA_CHECK(wide_asked.paths.size() == 1);
+    }
+
+    Asked once_asked;
+    const std::string one_text = "[*All*]{marker=1;}\n";
+    once_asked.files["rules/one.sm"] = std::vector<uint8_t>(one_text.begin(), one_text.end());
+    const std::string source_list = "local rules = {}\nfor n = 1, " +
+                                    std::to_string(mutators::max_plan_sources + 1) +
+                                    " do\n  rules[n] = sm(\"rules/one.sm\")\nend\nreturn rules\n";
+    Eval sources;
+    sources.source = source_list.c_str();
+    sources.chunk = "sources.lua";
+    sources.reader = asking_reader(once_asked);
+    if (!run_source(box, sources)) {
+        std::fprintf(stderr, "sources script '%s'\n", sources.script_error.c_str());
+        OA_CHECK(false);
+    } else {
+        OA_CHECK(!sources.plan.ok());
+        OA_CHECK(sources.plan.error.find("too many sources") != std::string::npos);
+        OA_CHECK(once_asked.paths.size() == 1);
+    }
+
+    Asked repeated;
+    const std::string quoted = "[*All*]{MaxDamage=\"850\";}\n";
+    repeated.files["rules/mid.sm"] = std::vector<uint8_t>(quoted.begin(), quoted.end());
+    constexpr const char* k_repeat = R"(return {
+sm("rules/mid.sm"),
+sm("rules/mid.sm"),
+}
+)";
+    Eval repeat;
+    repeat.source = k_repeat;
+    repeat.chunk = "repeat.lua";
+    repeat.reader = asking_reader(repeated);
+    if (!run_source(box, repeat)) {
+        std::fprintf(stderr, "repeat script '%s'\n", repeat.script_error.c_str());
+        OA_CHECK(false);
+    } else {
+        OA_CHECK(repeat.plan.ok());
+        OA_CHECK(repeat.plan.sources.size() == 2);
+        OA_CHECK(repeated.paths.size() == 1);
+        OA_CHECK(repeat.plan.diagnostics.size() == 1);
+        OA_CHECK(repeat.plan.diagnostic_sources.size() == 1);
+    }
 }
 
 void test_metatable(HostBox& box) {
     constexpr const char* k_source = R"(local rule = all()
 local change = scale(1)
 local source = sm("rules/mid.sm")
-local hidden = getmetatable(rule) == false and getmetatable(change) == false and getmetatable(source) == false
+local blank = empty
+local hidden = getmetatable(rule) == false and getmetatable(change) == false and getmetatable(source) == false and getmetatable(blank) == false
 local rule_ok = pcall(setmetatable, rule, {})
 local change_ok = pcall(setmetatable, change, {})
 local source_ok = pcall(setmetatable, source, {})
-return hidden and not rule_ok and not change_ok and not source_ok
+local blank_ok = pcall(setmetatable, blank, {})
+return hidden and not rule_ok and not change_ok and not source_ok and not blank_ok
 )";
     Eval eval;
     eval.source = k_source;
@@ -999,6 +1103,68 @@ return hidden and not rule_ok and not change_ok and not source_ok
         return;
     }
     OA_CHECK(eval.flag);
+}
+
+void test_selectors(HostBox& box) {
+    expect_script_error(
+        box,
+        "named-where.lua",
+        "return { named(\"RIDGECOM\"):where { builder = true }:change { workertime = 1 } }\n",
+        "already has a selector"
+    );
+    expect_script_error(
+        box,
+        "where-named.lua",
+        "return { where { builder = true }:named(\"RIDGECOM\"):change { workertime = 1 } }\n",
+        "already has a selector"
+    );
+    expect_script_error(
+        box,
+        "selector-line.lua",
+        "return { named(\"RIDGECOM\")\n:where { builder = true } }\n",
+        "where on line 2: a rule already has a selector"
+    );
+}
+
+void test_leaks(HostBox& box) {
+    constexpr const char* k_source = R"(local ok = true
+for n = 1, 5000 do
+  if pcall(function() all():change { a = 1 }:change { a = 2 } end) then
+    ok = false
+  end
+  if pcall(function() all():change { maxvelocity = {} } end) then
+    ok = false
+  end
+end
+return ok
+)";
+    Eval eval;
+    eval.source = k_source;
+    eval.chunk = "leaks.lua";
+    eval.want_plan = false;
+    if (!run_source(box, eval)) {
+        std::fprintf(stderr, "leaks script '%s'\n", eval.script_error.c_str());
+        OA_CHECK(false);
+        return;
+    }
+    OA_CHECK(eval.flag);
+}
+
+void test_throwing_reader(HostBox& box) {
+    Eval eval;
+    eval.source = "return { sm(\"rules/mid.sm\") }\n";
+    eval.chunk = "throw.lua";
+    eval.reader = [](std::string_view, std::string*) -> std::optional<std::vector<uint8_t>> {
+        throw std::runtime_error("disk");
+    };
+    if (!run_source(box, eval)) {
+        std::fprintf(stderr, "throw script '%s'\n", eval.script_error.c_str());
+        OA_CHECK(false);
+        return;
+    }
+    OA_CHECK(!eval.plan.ok());
+    OA_CHECK(eval.plan.error.find("cannot read \"rules/mid.sm\"") != std::string::npos);
+    OA_CHECK(eval.plan.error.find("disk") != std::string::npos);
 }
 
 } // namespace
@@ -1019,5 +1185,8 @@ int main() {
     test_refusals(box);
     test_limits(box);
     test_metatable(box);
+    test_selectors(box);
+    test_leaks(box);
+    test_throwing_reader(box);
     return oa::test::check_exit_status();
 }

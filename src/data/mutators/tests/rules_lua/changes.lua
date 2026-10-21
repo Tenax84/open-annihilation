@@ -1,3 +1,6 @@
+-- SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+-- SPDX-License-Identifier: GPL-3.0-only
+
 -- Every change form, on every Ridge unit.
 return {
 all():change {
@@ -16,5 +19,6 @@ locked = lock(4),
 bolt = "LIGHTNING ",
 cleared = remove(),
 quoted = "850",
+yardmap = empty,
 },
 }

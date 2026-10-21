@@ -321,8 +321,18 @@ changes to one field are two blocks, because one table cannot hold the
 same key twice. A block's line is the line the host reports for the
 `where`, `all` or `named` call, or for `on` when `on` is what starts the
 block. Calling `on` on a block that already has a selector keeps that
-line and only replaces the folder and extension. The limits on blocks,
-statements and text length are the rule file's limits.
+line and only replaces the folder and extension. A later `where`, `all`
+or `named` on a block that already has a selector is refused, and the
+message names the line of that call. An unfinished block refuses the
+plan, and the message names the call that started it and that call's
+line.
+
+The blocks of every source together stay within the rule file's block
+limit, and the plan holds at most `max_plan_sources` sources. Passing
+either limit refuses the plan. A path is read and parsed once, however
+many times the list names it. The statement and text limits are the
+rule file's limits. `empty` assigns empty text, the record a rule file
+writes with `field=;`. `""`, `set("")` and `remove()` remove the field.
 
 `on` takes a folder and an extension together. It stores both in lower
 case, turns `\` into `/`, trims spaces, and strips one leading `.` from
@@ -352,6 +362,7 @@ is an error. An unfinished block in the list refuses the plan.
 | `change { field = n }` or `set(n)` | `field=n` |
 | `change { field = "text" }` or `set("text")` | `field="text"` |
 | `change { field = "" }` or `set("")` or `remove()` | `field=""` |
+| `change { field = empty }` | `field=;` |
 | `change { field = true }` | `field=1` |
 | `change { field = false }` | `field=0` |
 | `change { field = scale(k) }` | `field=*k` |
