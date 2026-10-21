@@ -141,7 +141,9 @@ moves that state; the moved-from object has no state.
   units per value it converts, and one unit per byte of each text it copies
   with `%s` or `%q`. `utf8.char` counts one unit per code point.
   `math.max` and `math.min` count a comparison, as `table.sort` does, for
-  each value after the first. `warn` counts 2 units per argument.
+  each value after the first. `fixed.min` and `fixed.max` do the same.
+  `fixed.parse`, and `fixed` of a text, count one unit per 32 bytes of that
+  text. `warn` counts 2 units per argument.
 - `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `string.format`,
   the charged `table` and `utf8` calls and `utf8.char` are copies of Lua
   5.4.9's with the count inside. The script calls them directly, so an
@@ -224,8 +226,11 @@ wraps or stops at the end.
 a float or a string. `fixed.parse(text)` reads text the way `get_fixed`
 does: `parse_double`, times 65536, truncated toward zero with
 `truncate_to_int64`, and it keeps the full count rather than the low 32
-bits. `fixed.raw(n)` builds a value from a count. `fixed.min` and
-`fixed.max` take one or more values, each converted as `fixed(v)` is.
+bits. Text with no digits reads as 0, and characters after the number are
+ignored, so `fixed("abc")` is 0 and `fixed("1,5")` is 1. `fixed.raw(n)`
+builds a value from an integer count; a fractional count is refused.
+`fixed.min` and `fixed.max` take one or more values, each converted as
+`fixed(v)` is.
 
 `f:raw()` is the count. `f:text()` and `tostring(f)` are `format_number` of
 the count divided by 65536, so the decimal is exact. `f:tonumber()` is that

@@ -12,11 +12,13 @@
 #include "oa/test/check.hpp"
 
 #include <charconv>
+#include <chrono>
 #include <clocale>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <optional>
 #include <set>
@@ -1384,6 +1386,9 @@ assert(math.type(fixed(1)) == nil)
 assert(math.type(fixed(1):raw()) == "integer")
 assert(math.type(fixed(1):tonumber()) == "float")
 assert(fixed(-2147483648):raw() == -2147483648 * 65536)
+assert(fixed.raw(2.0):raw() == 2)
+assert(fixed("abc"):raw() == 0)
+assert(fixed("1,5"):raw() == 65536)
 
 local keyed = {}
 keyed[fixed(1)] = true
@@ -1415,6 +1420,9 @@ expect(function() return fixed(1) * "hidden-text" end, "fixed: cannot multiply a
 expect(function() return fixed(1) / "hidden-text" end, "fixed: cannot divide a string; use fixed(text)")
 expect(function() return fixed(1) < "hidden-text" end, "fixed: cannot compare a string; use fixed(text)")
 expect(function() return fixed.raw(1.5) end, "fixed: 1.5 is not an integer count")
+expect(function() return fixed.raw(-1.5) end, "fixed: -1.5 is not an integer count")
+expect(function() return fixed.raw(1e300) end, "fixed: 1e+300" .. range)
+expect(function() return fixed.raw(math.huge) end, "fixed: inf is not a finite number")
 expect(function() return fixed.raw(true) end, "fixed: expected a number, got boolean")
 expect(function() return fixed.parse(1) end, "fixed: expected a text, got number")
 expect(function() return fixed.parse() end, "fixed: expected a text, got no value")
@@ -1452,6 +1460,87 @@ void run_lua() {
     }
 }
 
+/// A loop over `fixed`'s C work must stop on the instruction allowance.
+///
+/// The real-time limit is long, so a busy machine cannot turn the stop into
+/// a time stop. The processor bound is what says the charge fired in time.
+void expect_scan_budget(const char* source) {
+    Package package;
+    host::ScriptError error;
+    host::OpenOptions options;
+    options.package_id = "sample";
+    options.profile = host::mutator_profile();
+    options.time_limit = std::chrono::minutes(10);
+    options.sources.context = &package;
+    options.sources.read = read_package;
+    auto sandbox = host::Sandbox::open(options, error);
+    OA_CHECK(sandbox.has_value());
+    if (!sandbox)
+        return;
+    const std::clock_t processor_started = std::clock();
+    const auto started = std::chrono::steady_clock::now();
+    const bool ran = run_source(*sandbox, package, source, error);
+    const double processor_seconds =
+        static_cast<double>(std::clock() - processor_started) / CLOCKS_PER_SEC;
+    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - started
+    )
+                                  .count();
+    const std::string_view text(source);
+    const std::string_view first = text.substr(0, text.find('\n'));
+    std::printf(
+        "fixed scan stopped in %lld ms (%.0f ms of processor time), %llu units: %.*s\n",
+        static_cast<long long>(milliseconds),
+        processor_seconds * 1000.0,
+        static_cast<unsigned long long>(sandbox->instructions_used()),
+        static_cast<int>(first.size()),
+        first.data()
+    );
+    OA_CHECK(!ran);
+    OA_CHECK(error.kind == host::ErrorKind::instruction_budget);
+    OA_CHECK(sandbox->instructions_used() >= host::default_instruction_budget);
+    OA_CHECK(processor_seconds < 20.0);
+}
+
+void charged_scans_stop() {
+    expect_scan_budget(
+        "local t = {}\n"
+        "for i = 1, 300000 do\n"
+        "  t[i] = i\n"
+        "end\n"
+        "local function f(...)\n"
+        "  while true do\n"
+        "    fixed.max(...)\n"
+        "  end\n"
+        "end\n"
+        "f(table.unpack(t))\n"
+    );
+    expect_scan_budget(
+        "local t = {}\n"
+        "for i = 1, 300000 do\n"
+        "  t[i] = \"1\"\n"
+        "end\n"
+        "local function f(...)\n"
+        "  while true do\n"
+        "    fixed.min(...)\n"
+        "  end\n"
+        "end\n"
+        "f(table.unpack(t))\n"
+    );
+    expect_scan_budget(
+        "local s = string.rep(\" \", 65535) .. \"1\"\n"
+        "while true do\n"
+        "  fixed.parse(s)\n"
+        "end\n"
+    );
+    expect_scan_budget(
+        "local s = string.rep(\"1\", 60000)\n"
+        "while true do\n"
+        "  pcall(fixed, s)\n"
+        "end\n"
+    );
+}
+
 } // namespace
 
 int main() {
@@ -1459,5 +1548,6 @@ int main() {
     check_rows();
     pin_loader();
     run_lua();
+    charged_scans_stop();
     return oa::test::check_exit_status();
 }

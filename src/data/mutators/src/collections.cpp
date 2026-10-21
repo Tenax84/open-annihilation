@@ -1709,25 +1709,25 @@ void copy_capped(const char* text, char* out, std::size_t size) {
 
 /// True when the exponent is not the all-ones pattern of a NaN or an infinity.
 bool finite_bits(double value) noexcept {
-    static_assert(sizeof(std::uint64_t) == sizeof(double));
-    std::uint64_t bits = 0;
+    static_assert(sizeof(uint64_t) == sizeof(double));
+    uint64_t bits = 0;
     std::memcpy(&bits, &value, sizeof bits);
     return ((bits >> 52) & 0x7ffu) != 0x7ffu;
 }
 
 /// The sign bit of `value`.
 bool negative_bits(double value) noexcept {
-    std::uint64_t bits = 0;
+    uint64_t bits = 0;
     std::memcpy(&bits, &value, sizeof bits);
     return (bits >> 63) != 0;
 }
 
 /// True when `value` is a NaN.
 bool nan_bits(double value) noexcept {
-    std::uint64_t bits = 0;
+    uint64_t bits = 0;
     std::memcpy(&bits, &value, sizeof bits);
-    const auto exponent = static_cast<std::uint32_t>((bits >> 52) & 0x7ffu);
-    const std::uint64_t fraction = bits & ((std::uint64_t{1} << 52) - 1u);
+    const auto exponent = static_cast<uint32_t>((bits >> 52) & 0x7ffu);
+    const uint64_t fraction = bits & ((uint64_t{1} << 52) - 1u);
     return exponent == 0x7ffu && fraction != 0;
 }
 

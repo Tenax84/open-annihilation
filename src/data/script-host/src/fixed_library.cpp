@@ -39,8 +39,8 @@ constexpr char range_text[] = "(-2147483648 to 2147483647.99998)";
 
 /// True when the exponent is not the all-ones pattern of a NaN or an infinity.
 bool double_is_finite(double value) noexcept {
-    static_assert(sizeof(std::uint64_t) == sizeof(double));
-    std::uint64_t bits = 0;
+    static_assert(sizeof(uint64_t) == sizeof(double));
+    uint64_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
     return ((bits >> 52) & 0x7ffu) != 0x7ffu;
 }
@@ -145,16 +145,24 @@ int raise_operation(lua_State* state, const char* symbol, int64_t left_count, in
 ///
 /// @return false after a raising call, so the caller returns as well
 [[nodiscard]] bool read_text_value(lua_State* state, int index, int64_t* count) {
-    const char* text = lua_tolstring(state, index, nullptr);
+    std::size_t length = 0;
+    const char* text = lua_tolstring(state, index, &length);
+    // Charge the scan before it runs, including a call that then raises.
+    // One unit per 32 bytes, the same as tonumber of a text.
+    charge(state, units_for_bytes(length));
+    const char* body = text != nullptr ? text : "";
     char shown[160];
-    copy_capped(text != nullptr ? text : "", shown, sizeof shown);
+    const std::size_t keep = length < sizeof shown ? length : sizeof shown - 1;
+    if (keep > 0)
+        std::memcpy(shown, body, keep);
+    shown[keep] = '\0';
     int64_t converted = 0;
     bool fitted = false;
     bool finite = true;
     {
-        const double parsed = oa::formats::tdf::parse_double(text != nullptr ? text : "");
+        const double parsed = oa::formats::tdf::parse_double(body);
         finite = double_is_finite(parsed);
-        const std::optional<int64_t> got = fixed_from_text(text != nullptr ? text : "");
+        const std::optional<int64_t> got = fixed_from_number(parsed);
         fitted = got.has_value();
         if (fitted)
             converted = *got;
@@ -224,7 +232,7 @@ int push_converted(lua_State* state, int index) {
     return 1;
 }
 
-enum class Arithmetic : std::uint8_t { add, subtract, multiply, divide };
+enum class Arithmetic : uint8_t { add, subtract, multiply, divide };
 
 int meta_arithmetic(lua_State* state, Arithmetic which) {
     const char* verb = "add";
@@ -473,29 +481,31 @@ static int lib_raw(lua_State* state) {
             state, "fixed: expected a number, got %s", type_name != nullptr ? type_name : "value"
         );
     }
-    lua_Integer raw_count = 0;
-    if (lua_isinteger(state, 1) != 0) {
-        raw_count = lua_tointeger(state, 1);
-    } else {
-        const double value = lua_tonumber(state, 1);
-        if (!double_is_finite(value)) {
-            char spelling[64];
-            copy_number_text(state, 1, spelling, sizeof spelling);
-            return luaL_error(state, "fixed: %s is not a finite number", spelling);
+    // lua_tointegerx accepts an integer, or a float that is an exact integer.
+    // lua_numbertointeger only range-checks and truncates, so 1.5 would become 1.
+    int is_exact = 0;
+    const lua_Integer raw_count = lua_tointegerx(state, 1, &is_exact);
+    if (is_exact != 0) {
+        if (raw_count < fixed_count_min || raw_count > fixed_count_max) {
+            char spelling[32];
+            std::snprintf(spelling, sizeof spelling, "%lld", static_cast<long long>(raw_count));
+            return raise_outside(state, spelling);
         }
-        if (lua_numbertointeger(value, &raw_count) == 0) {
-            char spelling[64];
-            copy_number_text(state, 1, spelling, sizeof spelling);
-            return luaL_error(state, "fixed: %s is not an integer count", spelling);
-        }
+        push_fixed(state, static_cast<int64_t>(raw_count));
+        return 1;
     }
-    if (raw_count < fixed_count_min || raw_count > fixed_count_max) {
-        char spelling[32];
-        std::snprintf(spelling, sizeof spelling, "%lld", static_cast<long long>(raw_count));
+    const double value = lua_tonumber(state, 1);
+    char spelling[64];
+    copy_number_text(state, 1, spelling, sizeof spelling);
+    if (!double_is_finite(value))
+        return luaL_error(state, "fixed: %s is not a finite number", spelling);
+    // Both ends of the count range are exact doubles. 1e300 is finite and far
+    // outside them, so it names the range; 1.5 sits inside and is not a count.
+    // The comparison classifies the number. It does not produce the count.
+    if (value < static_cast<double>(fixed_count_min) ||
+        value > static_cast<double>(fixed_count_max))
         return raise_outside(state, spelling);
-    }
-    push_fixed(state, static_cast<int64_t>(raw_count));
-    return 1;
+    return luaL_error(state, "fixed: %s is not an integer count", spelling);
 }
 
 static int extreme(lua_State* state, bool want_min) {
@@ -505,15 +515,22 @@ static int extreme(lua_State* state, bool want_min) {
     int64_t best = 0;
     if (!convert_argument(state, 1, &best))
         return 0;
+    int best_slot = 1;
     for (int slot = 2; slot <= argc; ++slot) {
+        // One comparison per value after the first, as math.min and math.max
+        // charge, before the conversion so a long list cannot run for free.
+        charge(state, comparison_charge(state, best_slot, slot));
         int64_t current = 0;
         if (!convert_argument(state, slot, &current))
             return 0;
         if (want_min) {
-            if (current < best)
+            if (current < best) {
                 best = current;
+                best_slot = slot;
+            }
         } else if (current > best) {
             best = current;
+            best_slot = slot;
         }
     }
     push_fixed(state, best);
@@ -579,24 +596,24 @@ std::optional<int64_t> fixed_multiply(int64_t a, int64_t b) noexcept {
     // from 32-bit limbs. A product that is not a signed 64-bit integer has
     // no fixed result. The arithmetic shift rounds a negative product toward
     // minus infinity, as scale_vector_fixed does.
-    const std::uint64_t left_bits = static_cast<std::uint64_t>(a);
-    const std::uint64_t right_bits = static_cast<std::uint64_t>(b);
-    const std::uint64_t left_low = left_bits & 0xffffffffu;
-    const std::uint64_t left_high = left_bits >> 32;
-    const std::uint64_t right_low = right_bits & 0xffffffffu;
-    const std::uint64_t right_high = right_bits >> 32;
-    const std::uint64_t low_low = left_low * right_low;
-    const std::uint64_t low_high = left_low * right_high;
-    const std::uint64_t high_low = left_high * right_low;
-    const std::uint64_t high_high = left_high * right_high;
-    const std::uint64_t mid = (low_low >> 32) + (low_high & 0xffffffffu) + (high_low & 0xffffffffu);
-    const std::uint64_t lo = (low_low & 0xffffffffu) | ((mid & 0xffffffffu) << 32);
-    std::uint64_t hi = high_high + (low_high >> 32) + (high_low >> 32) + (mid >> 32);
+    const uint64_t left_bits = static_cast<uint64_t>(a);
+    const uint64_t right_bits = static_cast<uint64_t>(b);
+    const uint64_t left_low = left_bits & 0xffffffffu;
+    const uint64_t left_high = left_bits >> 32;
+    const uint64_t right_low = right_bits & 0xffffffffu;
+    const uint64_t right_high = right_bits >> 32;
+    const uint64_t low_low = left_low * right_low;
+    const uint64_t low_high = left_low * right_high;
+    const uint64_t high_low = left_high * right_low;
+    const uint64_t high_high = left_high * right_high;
+    const uint64_t mid = (low_low >> 32) + (low_high & 0xffffffffu) + (high_low & 0xffffffffu);
+    const uint64_t lo = (low_low & 0xffffffffu) | ((mid & 0xffffffffu) << 32);
+    uint64_t hi = high_high + (low_high >> 32) + (high_low >> 32) + (mid >> 32);
     if (a < 0)
         hi -= right_bits;
     if (b < 0)
         hi -= left_bits;
-    const std::uint64_t sign = (lo >> 63) == 0 ? std::uint64_t{0} : ~std::uint64_t{0};
+    const uint64_t sign = (lo >> 63) == 0 ? uint64_t{0} : ~uint64_t{0};
     if (hi != sign)
         return std::nullopt;
     const int64_t shifted = static_cast<int64_t>(lo) >> 16;
