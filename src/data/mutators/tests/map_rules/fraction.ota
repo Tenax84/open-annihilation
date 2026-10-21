@@ -1,0 +1,9 @@
+[GlobalHeader]
+{
+missionname=Ridge Acid;
+waterdamage=6;
+[Schema 0]
+{
+SurfaceMetal=1;
+}
+}
