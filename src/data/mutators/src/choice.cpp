@@ -577,7 +577,9 @@ resolve_choice(const MutatorChoice& choice, const fs::path& mutators_folder, std
         const oa::data::mutator_library::InstalledMutator* installed =
             oa::data::mutator_library::find(listing, choice.target);
         if (installed == nullptr)
-            return refuse_resolved(error, in_quotes(choice.target) + " is not an installed mutator");
+            return refuse_resolved(
+                error, in_quotes(choice.target) + " is not an installed mutator"
+            );
         resolved.folder = installed->folder;
         resolved.manifest = installed->manifest;
     }
