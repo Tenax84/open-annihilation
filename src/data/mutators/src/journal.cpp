@@ -381,14 +381,15 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
         std::string line = winner_name(conflict, ids);
         line += " replaced ";
         const bool record_note = conflict.field.empty() && !conflict.record.empty();
-        std::string who = earlier;
-        if (who.empty()) {
-            if (record_note && !conflict.detail.empty())
-                who = conflict.detail;
-            else
-                who = "an earlier mutator";
+        if (record_note && earlier.empty() && !conflict.detail.empty()) {
+            // A record no mutator brought: `detail` says where it came from.
+            line += conflict.record;
+            line += " from ";
+            line += conflict.detail;
+            append_place(line, conflict);
+            return line;
         }
-        line += who;
+        line += earlier.empty() ? std::string{"an earlier mutator"} : earlier;
         if (record_note) {
             line += "'s ";
             line += conflict.record;

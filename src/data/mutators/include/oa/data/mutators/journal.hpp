@@ -159,7 +159,8 @@ struct Conflict {
     std::string field;
     /// Document path, or the add folder when that folder is missing.
     std::string path;
-    /// The note's own sentence, when it had one.
+    /// The note's own sentence, when it had one. For a replaced record
+    /// that no mutator brought, where it came from: "the game" or "the mod".
     std::string detail;
 };
 
@@ -222,9 +223,10 @@ struct ConflictReport {
 /// ridge-tough". A replaced value reads as "ridge-tougher replaced
 /// ridge-tough's value on units/rgcom.fbi maxdamage". A replaced record,
 /// which has no field, names the record: "ridge-bot-b replaced
-/// ridge-bot-a's RGBOT on units/rgbot.fbi". A record the match already
-/// had, which no mutator brought, reads as "ridge-bot-a replaced the
-/// game's RGBOT on units/rgbot.fbi". A locked field reads as
+/// ridge-bot-a's RGBOT on units/rgbot.fbi". A record no mutator brought
+/// names where it came from, which `detail` holds: "ridge-bot-a replaced
+/// RGBOT from the game on units/rgbot.fbi", or "from the mod" when the
+/// mod in play served it. A locked field reads as
 /// "ridge-tough locked units/rgcom.fbi maxdamage, so ridge-tougher left it
 /// alone". A shared record reads as "ridge-kit shares SPARK with ridge-pace",
 /// or "on <path>" when no earlier mutator brought it. A rename reads as

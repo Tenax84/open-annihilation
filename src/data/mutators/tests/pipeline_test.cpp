@@ -1369,8 +1369,7 @@ void test_records_replace_and_base_weapon_id_stays() {
         if (conflict.kind != mutators::ConflictKind::value_replaced)
             continue;
         const std::string line = mutators::describe(conflict, bot_ids);
-        const std::string game_owner = std::string("the ") + "game";
-        if (line == "ridge-bot-a replaced " + game_owner + "'s RGBOT on " + conflict.path)
+        if (line == "ridge-bot-a replaced RGBOT from the game on " + conflict.path)
             saw_game_bot = true;
         if (line == "ridge-bot-b replaced ridge-bot-a's RGBOT on " + conflict.path)
             saw_pair_bot = true;
@@ -2582,8 +2581,7 @@ void test_replace_clone_overwrites_the_existing_unit() {
         if (conflict.kind != mutators::ConflictKind::value_replaced)
             continue;
         const std::string line = mutators::describe(conflict, ids);
-        const std::string game_owner = std::string("the ") + "game";
-        if (line == "ridge-clone-replace replaced " + game_owner + "'s RGCOM on " + conflict.path)
+        if (line == "ridge-clone-replace replaced RGCOM from the game on " + conflict.path)
             saw_game = true;
     }
     OA_CHECK(saw_game);
@@ -2644,12 +2642,18 @@ void test_replace_clone_brings_the_source_script() {
             saw_script = entry.mutators.size() == 1 && entry.mutators.front() == 1;
     }
     OA_CHECK(saw_script);
+    const std::vector<std::string> ids{"ridge-art-first", "ridge-clone-onto"};
     std::size_t notes = 0;
+    bool saw_note = false;
     for (const mutators::Conflict& conflict : result.report.conflicts) {
-        if (conflict.kind == mutators::ConflictKind::value_replaced && conflict.record == "RGCOM")
-            ++notes;
+        if (conflict.kind != mutators::ConflictKind::value_replaced || conflict.record != "RGCOM")
+            continue;
+        ++notes;
+        saw_note = mutators::describe(conflict, ids) ==
+                   "ridge-clone-onto replaced RGCOM from the game on " + conflict.path;
     }
     OA_CHECK(notes == 1);
+    OA_CHECK(saw_note);
     release(store);
     fs::remove_all(scratch);
 }
@@ -2866,6 +2870,101 @@ void test_private_unit_takes_the_script_of_its_turn() {
     fs::remove_all(scratch);
 }
 
+/// A replacement note names whose record it was: an earlier mutator's
+/// clone, an earlier mutator's file, the game's or the mod's.
+void test_replacement_notes_name_the_owner() {
+    const fs::path scratch = oa::test::make_scratch_directory("V14-owner");
+    const std::string clone_new = "function mutate(ctx)\n"
+                                  "  return {\n"
+                                  "    units = function(units, ctx)\n"
+                                  "      units:clone(\"RGBOT\", \"RGNEWX\", {})\n"
+                                  "    end\n"
+                                  "  }\n"
+                                  "end\n";
+    const std::string clone_onto = "function mutate(ctx)\n"
+                                   "  return {\n"
+                                   "    units = function(units, ctx)\n"
+                                   "      units:clone(\"RGLAB\", \"RGNEWX\", {})\n"
+                                   "    end\n"
+                                   "  }\n"
+                                   "end\n";
+    std::vector<std::pair<std::string, std::string>> unit_file;
+    unit_file.emplace_back(
+        "units/RGNEWX.fbi", "[UNITINFO]\n{\nUnitName=RGNEWX;\nMaxDamage=5;\n}\n"
+    );
+    const std::vector<std::string> ids{"ridge-cloner", "ridge-file", "ridge-reclone"};
+    std::vector<mutators::PipelineMutator> list;
+    list.push_back(make_package(scratch, ids[0], "replace", "\"units\"", clone_new, {}));
+    list.push_back(make_package(scratch, ids[1], "replace", "\"files\"", k_files_lua, unit_file));
+    list.push_back(make_package(scratch, ids[2], "replace", "\"units\"", clone_onto, {}));
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result =
+        mutators::run_pipeline(store, make_input(std::move(list)));
+    OA_CHECK(result.playable());
+    if (!result.playable())
+        note_failures(result);
+    std::size_t notes = 0;
+    bool saw_clone_owner = false;
+    bool saw_file_owner = false;
+    for (const mutators::Conflict& conflict : result.report.conflicts) {
+        if (conflict.kind != mutators::ConflictKind::value_replaced || conflict.record != "RGNEWX")
+            continue;
+        ++notes;
+        const std::string line = mutators::describe(conflict, ids);
+        if (line == "ridge-file replaced ridge-cloner's RGNEWX on " + conflict.path)
+            saw_clone_owner = true;
+        if (line == "ridge-reclone replaced ridge-file's RGNEWX on " + conflict.path)
+            saw_file_owner = true;
+    }
+    OA_CHECK(notes == 2);
+    OA_CHECK(saw_clone_owner);
+    OA_CHECK(saw_file_owner);
+    release(store);
+
+    // The mod's folder serves its own RGBOT; the game's folder serves RGGUN.
+    const fs::path mod = scratch / "mod";
+    write_bytes(mod / "units" / "RGBOT.fbi", "[UNITINFO]\n{\nUnitName=RGBOT;\nMaxDamage=77;\n}\n");
+    std::vector<std::pair<std::string, std::string>> both;
+    both.emplace_back("units/RGBOT.fbi", std::string{k_other_bot});
+    both.emplace_back("weapons/mine.tdf", "[RGGUN]\n{\nrange=777;\n}\n");
+    std::vector<mutators::PipelineMutator> replacing;
+    replacing.push_back(
+        make_package(scratch, "ridge-over-mod", "replace", "\"files\"", k_files_lua, both)
+    );
+    mutators::PipelineInput input = make_input(std::move(replacing));
+    input.mod.id = "ridge-mod";
+    for (const bool layered : {true, false}) {
+        std::vector<fs::path> roots;
+        roots.push_back(mod);
+        roots.push_back(k_data / "ridge");
+        oa::AssetStore over_mod(std::move(roots));
+        mutators::PipelineInput run = input;
+        if (!layered)
+            run.mod.id = "ridge";
+        const mutators::PipelineResult played = mutators::run_pipeline(over_mod, run);
+        OA_CHECK(played.playable());
+        if (!played.playable())
+            note_failures(played);
+        const std::vector<std::string> one{"ridge-over-mod"};
+        bool saw_bot = false;
+        bool saw_gun = false;
+        for (const mutators::Conflict& conflict : played.report.conflicts) {
+            if (conflict.kind != mutators::ConflictKind::value_replaced)
+                continue;
+            const std::string line = mutators::describe(conflict, one);
+            const std::string bot_from = layered ? "the mod" : "the game";
+            if (line == "ridge-over-mod replaced RGBOT from " + bot_from + " on " + conflict.path)
+                saw_bot = true;
+            if (line == "ridge-over-mod replaced RGGUN from the game on " + conflict.path)
+                saw_gun = true;
+        }
+        OA_CHECK(saw_bot);
+        OA_CHECK(saw_gun);
+        release(over_mod);
+    }
+    fs::remove_all(scratch);
+}
+
 /// True when a download file the layer serves holds a button for `unit` on `builder`.
 bool serves_button(
     const oa::AssetStore& store,
@@ -3064,5 +3163,6 @@ int main() {
     test_menus_hook_reaches_the_private_records();
     test_add_rename_gives_the_path_back();
     test_private_unit_takes_the_script_of_its_turn();
+    test_replacement_notes_name_the_owner();
     return oa::test::check_exit_status();
 }

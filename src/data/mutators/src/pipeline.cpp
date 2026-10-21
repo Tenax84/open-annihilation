@@ -15,6 +15,7 @@
 #include "oa/data/defs/files.hpp"
 #include "oa/data/defs/unit_catalog.hpp"
 #include "oa/data/field_schema.hpp"
+#include "oa/data/mod_profile/overrides.hpp"
 #include "oa/data/mutators/allow_list.hpp"
 #include "oa/data/mutators/clashes.hpp"
 #include "oa/data/mutators/loadout.hpp"
@@ -3512,21 +3513,108 @@ struct RecordPair {
     }
 };
 
+/// True when the run plays a mod rather than the base game.
+///
+/// The base game is named by its own id, or by a mod id equal to its game id.
+bool plays_mod(const ModIdentity& mod) {
+    return !mod.id.empty() && mod.id != oa::data::mod_profile::base_game_id &&
+           !same_text(mod.id, mod.game);
+}
+
+/// Where a record that no mutator brought came from: "the mod" when the run
+/// plays a mod and the mod's folder serves the record's file, else "the game".
+///
+/// A mod is the first of the store's folders when the store layers several,
+/// and the whole store when it has one. A file from an archive is the mod's
+/// when the archive sits in the mod's folder.
+///
+/// @param store the store, with the pass's layer mounted
+/// @param mod the mod the run plays
+/// @param path the record's document path
+/// @return "the mod" or "the game"
+std::string base_owner(const oa::AssetStore& store, const ModIdentity& mod, std::string_view path) {
+    const std::string game{"the game"};
+    if (!plays_mod(mod))
+        return game;
+    const std::span<const std::filesystem::path> roots = store.loose_roots();
+    if (roots.size() <= 1)
+        return "the mod";
+    try {
+        const oa::Provider provider = store.provider(path);
+        if (provider.kind != oa::ProviderKind::loose && provider.kind != oa::ProviderKind::archive)
+            return game;
+        const std::filesystem::path relative =
+            provider.path.lexically_normal().lexically_relative(roots.front().lexically_normal());
+        if (!relative.empty() && *relative.begin() != "..")
+            return "the mod";
+    } catch (const std::exception&) {
+    }
+    return game;
+}
+
+/// The mutators that cloned each unit or weapon, in the order they cloned it.
+///
+/// The key is the record's folded name, and true for a weapon.
+using CloneOwners =
+    std::map<std::pair<bool, std::string>, std::vector<std::pair<uint16_t, std::size_t>>>;
+
+/// Indexes the pass's clones by record, with their mutator and their place in the list.
+CloneOwners clone_owners(std::span<const CloneRecord> clones, const std::vector<std::string>& ids) {
+    CloneOwners owners;
+    for (std::size_t index = 0; index < clones.size(); ++index) {
+        const std::optional<uint16_t> mutator = index_of(ids, clones[index].mutator);
+        if (!mutator.has_value())
+            continue;
+        owners[{clones[index].weapon, fold_copy(clones[index].name)}].emplace_back(*mutator, index);
+    }
+    return owners;
+}
+
+/// The latest clone of a record made before another change, or nothing.
+///
+/// @param owners the pass's clones by record
+/// @param weapon true for a weapon, false for a unit
+/// @param name the record
+/// @param before_mutator only clones by a mutator above this one count
+/// @param before_clone only clones earlier in the list than this count
+/// @return the mutator that made it
+std::optional<uint16_t> earlier_clone(
+    const CloneOwners& owners,
+    bool weapon,
+    std::string_view name,
+    std::size_t before_mutator,
+    std::size_t before_clone
+) {
+    const auto found = owners.find({weapon, fold_copy(name)});
+    if (found == owners.end())
+        return std::nullopt;
+    std::optional<uint16_t> latest;
+    for (const std::pair<uint16_t, std::size_t>& clone : found->second) {
+        if (clone.first < before_mutator && clone.second < before_clone)
+            latest = clone.first;
+    }
+    return latest;
+}
+
 /// Journals every record a file added, replaced, shared or renamed.
 ///
 /// A replacement keeps the record name in `old_text`. When the record is one
-/// an earlier mutator brought, one `value_replaced` note is kept for that
-/// collection and that pair of mutators. A share records the record and does
-/// not take it from whoever brought it, and it names no writer because the
-/// document was not changed. A rename records the private name and leaves
-/// the original record with the mutator that already owned it.
+/// an earlier mutator brought, by a file or by a clone, one `value_replaced`
+/// note is kept for that collection and that pair of mutators. A record no
+/// mutator brought is noted as the game's or the mod's. A share records the
+/// record and does not take it from whoever brought it, and it names no
+/// writer because the document was not changed. A rename records the private
+/// name and leaves the original record with the mutator that already owned it.
 void journal_record_touches(
     Journal& journal,
     ConflictReport& report,
     const std::vector<RecordTouch>& touches,
     const rules::DocumentSet& documents,
     std::vector<std::vector<Writer>>& writers,
-    std::vector<uint8_t>& menus
+    std::vector<uint8_t>& menus,
+    const CloneOwners& clones,
+    const oa::AssetStore& store,
+    const ModIdentity& mod
 ) {
     std::map<SeenRecord, uint16_t> owners;
     std::set<RecordPair> noted;
@@ -3560,12 +3648,29 @@ void journal_record_touches(
         if (touch.collection == Collection::menus)
             identity.path = fold_copy(touch.path);
         const auto found = owners.find(identity);
+        // A record an earlier mutator's hook cloned is that mutator's, unless
+        // a later mutator's file replaced it since. Records come before hooks
+        // in a mutator's turn, so a clone by the same mutator counts as later.
+        std::optional<uint16_t> owner;
+        if (found != owners.end())
+            owner = found->second;
+        if (touch.collection != Collection::menus) {
+            const std::optional<uint16_t> cloned = earlier_clone(
+                clones,
+                touch.collection == Collection::weapons,
+                touch.record,
+                touch.mutator,
+                std::numeric_limits<std::size_t>::max()
+            );
+            if (cloned.has_value() && (!owner.has_value() || *cloned >= *owner))
+                owner = cloned;
+        }
         if (touch.fate == RecordFate::shared) {
             Conflict conflict;
             conflict.severity = Severity::note;
             conflict.kind = ConflictKind::record_shared;
-            if (found != owners.end() && found->second != touch.mutator)
-                conflict.mutators.push_back(found->second);
+            if (owner.has_value() && *owner != touch.mutator)
+                conflict.mutators.push_back(*owner);
             conflict.mutators.push_back(touch.mutator);
             conflict.record = touch.record;
             conflict.path = touch.path;
@@ -3582,12 +3687,11 @@ void journal_record_touches(
             conflict.path = touch.path;
             report.conflicts.push_back(std::move(conflict));
         } else if (
-            touch.fate == RecordFate::replaced && found != owners.end() &&
-            found->second != touch.mutator
+            touch.fate == RecordFate::replaced && owner.has_value() && *owner != touch.mutator
         ) {
             RecordPair pair;
             pair.collection = touch.collection;
-            pair.earlier = found->second;
+            pair.earlier = *owner;
             pair.later = touch.mutator;
             if (noted.insert(pair).second) {
                 Conflict conflict;
@@ -3599,14 +3703,14 @@ void journal_record_touches(
                 conflict.path = touch.path;
                 report.conflicts.push_back(std::move(conflict));
             }
-        } else if (touch.fate == RecordFate::replaced && found == owners.end()) {
+        } else if (touch.fate == RecordFate::replaced && !owner.has_value()) {
             Conflict conflict;
             conflict.severity = Severity::note;
             conflict.kind = ConflictKind::value_replaced;
             conflict.mutators.push_back(touch.mutator);
             conflict.record = touch.record;
             conflict.path = touch.path;
-            conflict.detail = "the game";
+            conflict.detail = base_owner(store, mod, touch.path);
             report.conflicts.push_back(std::move(conflict));
         }
         owners.insert_or_assign(std::move(identity), touch.mutator);
@@ -4645,7 +4749,9 @@ bool run_pass(
         }
         journal.entries.push_back(std::move(entry));
     }
-    for (const CloneRecord& clone : collections->clones()) {
+    const CloneOwners cloned = clone_owners(collections->clones(), ids);
+    for (std::size_t clone_index = 0; clone_index < collections->clones().size(); ++clone_index) {
+        const CloneRecord& clone = collections->clones()[clone_index];
         JournalEntry entry;
         const std::optional<uint16_t> mutator = index_of(ids, clone.mutator);
         if (mutator.has_value())
@@ -4695,14 +4801,23 @@ bool run_pass(
         }
         if (!clone.replaced)
             continue;
+        // The record was the latest of: a file of this mutator or one above
+        // it, which came before its hooks, and an earlier clone.
         std::optional<uint16_t> earlier;
         for (const RecordTouch& touch : touches) {
             if (touch.fate == RecordFate::shared || touch.collection != stored_collection)
                 continue;
-            if (touch.mutator >= *mutator || !same_text(touch.record, clone.name))
+            if (touch.mutator > *mutator || !same_text(touch.record, clone.name))
                 continue;
             earlier = touch.mutator;
         }
+        const std::optional<uint16_t> earlier_cloned = earlier_clone(
+            cloned, clone.weapon, clone.name, static_cast<std::size_t>(*mutator) + 1, clone_index
+        );
+        if (earlier_cloned.has_value() && (!earlier.has_value() || *earlier_cloned >= *earlier))
+            earlier = earlier_cloned;
+        if (earlier.has_value() && *earlier == *mutator)
+            continue;
         Conflict replaced;
         replaced.severity = Severity::note;
         replaced.kind = ConflictKind::value_replaced;
@@ -4712,7 +4827,7 @@ bool run_pass(
         replaced.record = clone.name;
         replaced.path = clone.path;
         if (!earlier.has_value())
-            replaced.detail = "the game";
+            replaced.detail = base_owner(store, input.mod, clone.path);
         report.conflicts.push_back(std::move(replaced));
     }
     // A download file the build menus created is a file the requesting mutator added.
@@ -4721,7 +4836,9 @@ bool run_pass(
         if (mutator.has_value())
             journal.entries.push_back(file_entry(*mutator, file.path, Change::added, Phase::hooks));
     }
-    journal_record_touches(journal, report, touches, documents, writers, menus);
+    journal_record_touches(
+        journal, report, touches, documents, writers, menus, cloned, store, input.mod
+    );
     for (JournalEntry& entry : map_journal)
         journal.entries.push_back(std::move(entry));
     for (Conflict& conflict : map_notes)

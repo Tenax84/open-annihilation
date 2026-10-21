@@ -411,8 +411,7 @@ void test_same_letters_replace_the_unit(const fs::path& game, const fs::path& pa
         if (conflict.kind != mutators::ConflictKind::value_replaced)
             continue;
         const std::string line = mutators::describe(conflict, ids);
-        const std::string game_owner = std::string("the ") + "game";
-        if (line == "ridge-clone-case replaced " + game_owner + "'s PLAIN on " + conflict.path)
+        if (line == "ridge-clone-case replaced PLAIN from the game on " + conflict.path)
             saw_note = true;
     }
     expect(saw_note, "replace note names the record");

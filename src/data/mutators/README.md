@@ -323,9 +323,14 @@ not reach the private unit. The paths the
 engine looks up by the unit name are `scripts/<NAME>.COB`,
 `unitpics/<NAME>.PCX`, `objects3d/<NAME>.3DO` when the model is the unit
 name, `anims/<NAME><n>.GAF`, `anims/<NAME>_gadget.GAF` and
-`guis/<NAME><page>.GUI`. A replaced record the match already had, which
-no mutator brought, is named in the conflict report as the game's. A
-record an earlier mutator brought is named as that mutator's. A shared
+`guis/<NAME><page>.GUI`. A replacement note names whose record it was.
+A record an earlier mutator brought, by a file or by a clone, is that
+mutator's: "ridge-b replaced ridge-a's RGBOT on units/rgbot.fbi". A
+record no mutator brought reads "ridge-a replaced RGBOT from the game on
+units/rgbot.fbi", or "from the mod" when the run plays a mod and the
+mod's folder serves the record's file: the first of the store's folders
+when it layers several, and the whole store when it has one. A run plays
+a mod when its mod id is neither the base game's nor its game id. A shared
 record is journaled, and the match log does not count it as a file added.
 A replaced base or mod weapon keeps the id it had. A rule or a hook
 that writes `id` on a weapon the game already numbered does not change
@@ -1170,8 +1175,10 @@ record file that does not parse is unread the same way, and it is not
 served. Among the notes, `value_replaced` is a value a later mutator's
 rule replaced, and also a record a later mutator replaced. A record the
 match already had, which no mutator brought, is one note naming that
-record as the game's. A record an earlier mutator brought is one note for
-that collection and that pair of mutators. One field note is kept for each
+record and whether the game or the mod served it. A record an earlier
+mutator brought, by a file or by a clone, is one note for that collection
+and that pair of mutators. A clone in Replace mode onto a record its own
+mutator brought is not noted. One field note is kept for each
 field name and pair, so a stack that rewrites the same field does not
 flood the report. A clone that Add stores under a private name is a
 `record_renamed` note, as a renamed record file is. `field_locked`
