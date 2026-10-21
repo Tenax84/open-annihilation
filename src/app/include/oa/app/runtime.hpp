@@ -4348,9 +4348,10 @@ class Runtime final : public menu::Host,
     ///
     /// On the host, the chosen list while it is built for that list and for
     /// this machine's sim hash. On a guest, the host's list while it is
-    /// built for the host's current digest, and empty when the host names
-    /// none. Empty when a named list is not built yet. The battle room stops
-    /// counting as showing before the start asks, and this still answers.
+    /// built for the digest the host's current record names, and empty when
+    /// that record names none or another. Empty when a named list is not
+    /// built yet. The battle room stops counting as showing before the
+    /// start asks, and this still answers.
     ///
     /// @return the list, top first
     [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator> room_match_mutators() const;

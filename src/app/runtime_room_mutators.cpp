@@ -329,6 +329,16 @@ std::span<const mutators::ResolvedMutator> Runtime::room_match_mutators() const 
     }
     if (state.assembly.total == 0 || state.for_digest != state.assembly.digest)
         return {};
+    // A guest plays the list only while the host's current record names it,
+    // so a copy kept from an earlier record or room plays nothing.
+    mp::Lobby& lobby = mp::multiplayer_lobby();
+    const auto host = lobby.game != nullptr ? mp::lobby_host_slot(lobby) : mp::kNoSlot;
+    if (host == mp::kNoSlot)
+        return {};
+    const auto record = mp::lobby_presence_record(lobby, static_cast<int32_t>(host));
+    const auto named = netgame::presence_mutators_state(record.data(), record.size());
+    if (!named || named->digest != state.for_digest)
+        return {};
     return state.resolved;
 }
 

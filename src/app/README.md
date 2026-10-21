@@ -4350,10 +4350,12 @@ hold START; two machines that drop different ones do, and the hold names
 the earlier of the two positions. The same Developer Mode settings are
 what make the machines agree. The room's layer is not the match's: leaving
 the multiplayer screens releases it. A network start applies the list this
-room built, then puts the run's own choice back, so a later skirmish plays
-that choice. A network start that never showed the battle room, such as
-`--net-loopback-check`, has no room list and plays the run's own choice,
-as a single-player start does. The presence record's mutators field says what this machine
+room built; a guest's start applies it only while the host's current
+record names it. The start then puts the run's own choice back, so a
+later skirmish plays that choice. A network start that never showed the
+battle room, such as `--net-loopback-check`, has no room list and plays
+the run's own choice, as a single-player start does. The presence
+record's mutators field says what this machine
 built. The host's names every mutator and says it has each one. A guest's
 carries the host's digest, how much of the list it holds and whether each
 package is installed here, and it names no mutator. While a guest is
