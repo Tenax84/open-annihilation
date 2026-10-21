@@ -5643,6 +5643,15 @@ class Runtime final : public menu::Host,
     /// first step that failed. With no installer, the demo half is not run.
     void check_library_content();
 
+    /// Runs --check-library-update-question. Installs made-up Ridge from an
+    /// added registry, offers an update whose rules change, and at 640x480
+    /// opens that row's details page. NOT NOW leaves the page. UPDATE, fifty
+    /// times, leaves the Library on top with its tabs on the next frames,
+    /// and the Library stays there after the update is no longer offered.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_library_update_question();
+
     // The map browser on the OA layer (runtime_map_browser.cpp): MORE MAPS…
     // over the skirmish map list and over the host's map list in the battle
     // room opens it.

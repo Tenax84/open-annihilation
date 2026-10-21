@@ -2397,4 +2397,262 @@ void Runtime::check_library_install() {
     }
 }
 
+void Runtime::check_library_update_question() {
+    // How many times UPDATE is confirmed. Each time the Library must already
+    // be showing its tabs two frames later, before the update leaves the list.
+    constexpr int kRounds = 50;
+    const auto require_step = [](bool ok, std::string_view what) {
+        if (!ok)
+            throw std::runtime_error("library update question check: " + std::string(what));
+    };
+    require_step(sdl_.window != nullptr, "the check needs the SDL presenter");
+    require_step(!user_folder_.empty(), "the run has no folder of the player's own");
+    require_step(
+        SDL_SetWindowSize(sdl_.window, 640, 480) && SDL_SyncWindow(sdl_.window),
+        std::string("the window did not take 640x480: ") + SDL_GetError()
+    );
+    apply_output_mode();
+
+    auto& state = mod_install_state();
+    state.check_shows_prompts = true;
+    const fs::path mods = user_folder_ / std::string(user_mods_folder_name);
+    const fs::path packages = user_folder_.parent_path() / "files";
+    const fs::path ridge = mods / std::string(kRidge);
+
+    InstallFeed fixture;
+    fixture.inputs.registries.push_back(feed_registry(kAdded, "Check Added", false));
+    fixture.inputs.engine = content::this_engine_rules().engine;
+    fixture.inputs.version_text = "v0.8.0";
+    LibraryHost& host = library_host();
+    const LibraryFeed own = host.feed;
+
+    struct OwnFeedBack {
+        LibraryHost& host;
+        LibraryFeed feed;
+
+        ~OwnFeedBack() {
+            host.feed = feed;
+            host.own_feed = true;
+            host.refreshed = false;
+        }
+    } own_back{host, own};
+
+    host.feed = LibraryFeed{
+        &fixture, feed_inputs, feed_generation, feed_enqueue, nullptr, nullptr, feed_built_in
+    };
+    host.own_feed = false;
+    host.refreshed = false;
+
+    bool running = true;
+    const auto frame = [&] {
+        run_frame(running);
+        require_step(running, "a frame ended the run");
+    };
+    // Two frames: the model follows the feed on the first, after the layer
+    // has ticked, and the Library lays itself out on the second. No longer.
+    const auto frames = [&] {
+        frame();
+        frame();
+    };
+    const auto named = [this](std::string_view name) -> std::optional<AutomationControl> {
+        std::vector<AutomationControl> controls;
+        oa_layer().automation_controls(controls);
+        for (const AutomationControl& control : controls)
+            if (control.name == name && control.visible && control.window_width > 0 &&
+                control.window_height > 0)
+                return control;
+        return std::nullopt;
+    };
+    const auto click_named = [&](std::string_view name) {
+        const std::optional<AutomationControl> control = named(name);
+        require_step(control.has_value(), std::string(name) + " is not shown");
+        const layout::Point pixel{
+            control->window_x + control->window_width / 2,
+            control->window_y + control->window_height / 2
+        };
+        for (const SDL_EventType type :
+             {SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+            SDL_Event event = window_pointer_event(
+                sdl_.window,
+                sdl_.renderer,
+                type,
+                pixel,
+                type == SDL_EVENT_MOUSE_MOTION ? 0 : SDL_BUTTON_LEFT
+            );
+            bool going = true;
+            dispatch_event(event, going);
+            require_step(going, "a click ended the run");
+        }
+        send_check_pointer(SDL_EVENT_MOUSE_MOTION, kRestingPointer, 0);
+    };
+    const auto top_is = [this](std::string_view name) {
+        const LayerScreen* top = oa_layer().top();
+        return top != nullptr && top->name() == name;
+    };
+    const auto press_action = [&](std::string_view word) {
+        const std::string action = "oa.library.action." + std::string(word);
+        if (!named(action))
+            click_named("oa.library.action");
+        click_named(action);
+    };
+    const auto on_details = [&] {
+        return top_is(library_screen_name) && named("oa.library.back").has_value() &&
+               !named("oa.library.tab.mods").has_value() &&
+               !named("oa.library.tab.updates").has_value();
+    };
+    const auto tabs_shown = [&] {
+        return top_is(library_screen_name) && named("oa.library.tab.mods").has_value() &&
+               named("oa.library.tab.updates").has_value() &&
+               dynamic_cast<const QuestionScreen*>(oa_layer().top()) == nullptr;
+    };
+
+    frames();
+    const fs::path package = packages / "ridge-check-added-1.oamod";
+    write_package(package, profile_text(kRidge, "Ridge", "1.0", 1), 1);
+    install::Origin origin{};
+    origin.kind = install::OriginKind::catalogue;
+    origin.registry = std::string(kAdded);
+    origin.catalogue_id = std::string(kRidge);
+    origin.release = 1;
+    origin.sha256 = file_hash(package);
+    install::post_package_file(package, origin);
+    std::optional<install::PackageOutcome> outcome;
+    for (int count = 0; count < kMostFrames && !outcome; ++count) {
+        tell_mod_installs();
+        std::vector<install::PackageOutcome> outcomes = install::take_package_outcomes();
+        if (!outcomes.empty())
+            outcome = outcomes.front();
+        require_step(
+            state.prompt == nullptr || state.stage != ModInstallState::Stage::asking,
+            "installing Ridge asked a question"
+        );
+    }
+    require_step(
+        outcome && outcome->result == install::OutcomeResult::installed &&
+            revision_in(ridge) == 1 && recorded_from(ridge, kAdded, 1),
+        "Ridge was not installed from the added registry"
+    );
+    for (int count = 0; count < kMostFrames && state.discarder.busy(); ++count)
+        tell_mod_installs();
+    require_step(!state.discarder.busy(), "installing Ridge left a folder of its own");
+
+    fixture.inputs.installed.clear();
+    std::error_code walk_error;
+    for (fs::directory_iterator folder_entry{mods, walk_error}, end;
+         !walk_error && folder_entry != end;
+         folder_entry.increment(walk_error)) {
+        const fs::path folder = folder_entry->path();
+        if (path_to_utf8(folder.filename()).starts_with('.'))
+            continue;
+        const install::InstalledPackage held = install::oamod::read_installed_mod(folder);
+        if (held.kind != install::FolderKind::package)
+            continue;
+        const std::optional<install::Origin> record = install::read_origin(folder);
+        library::Installed shown;
+        shown.kind = library::Kind::mod;
+        shown.key = held.id;
+        shown.folder = folder;
+        shown.name = held.name;
+        shown.version = held.version;
+        shown.revision = held.revision;
+        if (record && record->kind == install::OriginKind::catalogue) {
+            shown.key = record->catalogue_id;
+            shown.registry = record->registry;
+            shown.release = record->release;
+        }
+        shown.playing = package_target_in_use(install::mod_kind(), folder);
+        fixture.inputs.installed.push_back(std::move(shown));
+    }
+    oa::base::sha256::Digest old_rules{};
+    old_rules[0] = 0x9c;
+    oa::base::sha256::Digest new_rules{};
+    new_rules[0] = 0x51;
+    const auto offer_update = [&] {
+        library::UpdateNote update;
+        update.registry = std::string(kAdded);
+        update.kind = library::Kind::mod;
+        update.key = std::string(kRidge);
+        update.to_release = 2;
+        update.to_version = "1.0";
+        update.to_revision = 2;
+        update.size = 3355443;
+        update.rules = library::UpdateNote::Rules::changes;
+        update.from_rules = old_rules;
+        update.to_rules = new_rules;
+        fixture.inputs.updates.clear();
+        fixture.inputs.updates.push_back(std::move(update));
+        fixture.inputs.queue.clear();
+        ++fixture.generation;
+    };
+    offer_update();
+    open_library(library::Tab::updates);
+    frames();
+    require_step(top_is(library_screen_name), "the Library did not open");
+    const std::string ridge_row = "oa.library.row.check-added.ridge";
+    click_named(ridge_row);
+    require_step(on_details(), "Ridge's update did not open its details page");
+
+    // NOT NOW leaves the details page, so the player can answer again from it.
+    press_action("update");
+    frame();
+    require_step(
+        dynamic_cast<const QuestionScreen*>(oa_layer().top()) != nullptr &&
+            oa_layer().find(library_screen_name) != nullptr,
+        "the update question was not asked over the Library"
+    );
+    click_named("oa.prompt.not-now");
+    frames();
+    require_step(
+        on_details() && fixture.queued.empty(), "NOT NOW left the details page or queued the update"
+    );
+
+    for (int pass = 1; pass <= kRounds; ++pass) {
+        const std::string where = "round " + std::to_string(pass) + ": ";
+        require_step(on_details(), where + "the details page was not open");
+        press_action("update");
+        frame();
+        require_step(
+            dynamic_cast<const QuestionScreen*>(oa_layer().top()) != nullptr &&
+                oa_layer().find(library_screen_name) != nullptr,
+            where + "the update question was not asked over the Library"
+        );
+        click_named("oa.prompt.update");
+        frames();
+        require_step(tabs_shown(), where + "the Library's tabs were not shown after UPDATE");
+        require_step(
+            fixture.queued.size() == static_cast<std::size_t>(pass) &&
+                fixture.queued.back().registry == kAdded && fixture.queued.back().key == kRidge &&
+                fixture.queued.back().reason == content::DownloadReason::update,
+            where + "UPDATE did not queue the update"
+        );
+        click_named("oa.library.tab.mods");
+        require_step(
+            top_is(library_screen_name) && host.model.tab == library::Tab::mods,
+            where + "Mods could not be opened"
+        );
+        // The update is in place: its note is gone, so the row leaves Updates.
+        // The Library stays, with its tabs.
+        fixture.inputs.updates.clear();
+        ++fixture.generation;
+        frames();
+        require_step(
+            tabs_shown() && host.model.tab == library::Tab::mods,
+            where + "the Library was not on top with its tabs once the update was in place"
+        );
+        if (pass == kRounds)
+            break;
+        offer_update();
+        frames();
+        click_named("oa.library.tab.updates");
+        require_step(
+            top_is(library_screen_name) && host.model.tab == library::Tab::updates,
+            where + "Updates could not be opened again"
+        );
+        click_named(ridge_row);
+        require_step(on_details(), where + "the details page did not open again");
+    }
+    std::cout << "library update question check: the Library stayed open with its tabs for "
+              << kRounds << " rounds\n";
+}
+
 } // namespace oa::app

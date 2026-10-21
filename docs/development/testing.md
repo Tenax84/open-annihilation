@@ -85,6 +85,13 @@ and still passes the Core Contingency half; it does not skip with code 77.
 `--game-dir` is only the source the copy is made from. The check plays the
 player's copy, and its preferences and player folder stay in the build tree.
 
+`native-library-update-question` (`--check-library-update-question`) installs
+made-up Ridge from an added registry and offers an update whose rules change.
+At 640x480 it opens that row's details page, where the tabs are not shown.
+NOT NOW leaves the page. UPDATE, fifty times, leaves the Library on top with
+its tabs on the next frames, including once the update is no longer offered.
+Its preferences, data and player folder stay in the build tree.
+
 `native-map-pack-lists` (`--check-map-pack-lists`) installs one map pack
 from the Library during the run and requires its fitting map in the
 skirmish list and the battle room's map list the next time each is shown,

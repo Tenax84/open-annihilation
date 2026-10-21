@@ -429,10 +429,25 @@ void Runtime::ask_before_updates(
         if (question.buttons[place].id == library::update_button_id)
             update_button = static_cast<int32_t>(place);
     QuestionScreen::Host answers;
+    // UPDATE leaves the details page at once. At the compact size that page
+    // has no tabs, and it would stay until a later refresh dropped the row
+    // from Updates. The player has confirmed, so the list and its tabs are
+    // there on the next tick, while this question closes and the download is
+    // queued. NOT NOW leaves the page where it is, and UPDATE asked from the
+    // list, or at a size with no details page, leaves the Library as it is.
     answers.answer = [this, entries, update_button](int32_t button) {
-        if (button == update_button)
-            for (const library::EntryId& each : entries)
-                std::ignore = request_update(each, true);
+        if (button != update_button)
+            return true;
+        if (library_ && library_->state.details_page) {
+            library::close_details(library_->model);
+            library_->state.details_page = false;
+            library_->state.menu = library::MenuKind::none;
+            library_->state.details_scroll = 0;
+            library_->state.interaction.focus_shown = false;
+            ++library_->model_revision;
+        }
+        for (const library::EntryId& each : entries)
+            std::ignore = request_update(each, true);
         return true;
     };
     // It goes with the main menu, as the Library and the settings it asks

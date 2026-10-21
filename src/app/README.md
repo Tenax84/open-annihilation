@@ -760,6 +760,14 @@ runtime goes).
   Library, which waits for its answer until REPLACE installs it, and a file
   opened outside the game stays in the inbox. A FIXTURES_SETUP test
   (`library-install-clean`) clears its folders before each run.
+- **The update question check.** `native-library-update-question`
+  (`--check-library-update-question`, `runtime_library_actions_check.cpp`)
+  installs made-up Ridge from an added registry and offers an update whose
+  rules change. At 640x480 the row's details page has no tabs. NOT NOW
+  leaves that page. UPDATE, fifty times, leaves the Library on top with its
+  tabs on the next frames, and it is still there once the update is no
+  longer offered. A FIXTURES_SETUP test (`library-update-question-clean`)
+  clears its folders before each run.
 - **Limitations.** A held update is replaced by a ROLL BACK of the mod
   being played, which waits for the run to end in its place; the download
   queue has counted the update installed by then. CANCEL on the held line
