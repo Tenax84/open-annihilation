@@ -1367,7 +1367,15 @@ void Runtime::load_profile_layers() {
     state.profile_source = folder_profile_source(
         options_.game_folders.empty() ? std::vector<fs::path>{options_.game_dir}
                                       : options_.game_folders,
-        ModChoice{{}, options_.mod_file, options_.accept_unimplemented_hacks, &preference_values_}
+        // The layered mod folder, so --mod-dir and a folder chosen in
+        // Settings are read again. An empty folder still uses the game
+        // install, which is what a run without a mod does.
+        ModChoice{
+            options_.layered_mod_folder,
+            options_.mod_file,
+            options_.accept_unimplemented_hacks,
+            &preference_values_
+        }
     );
     if (!state.profile_source)
         return;

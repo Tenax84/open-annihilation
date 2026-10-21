@@ -655,12 +655,14 @@ Each parameter resolves in this order; later steps win.
 4. **The profile's own value.**
 5. **The player's settings**, for `install` and `match` parameters the
    profile binds under `settings`.
-6. **The host's choice for this game**, for `match` parameters.
-7. **A per-unit or per-weapon data key**, for that unit or weapon type only,
+6. **The player's overrides** (Developer Mode), for standard hacks.
+7. **The host's choice for this game**, for `match` parameters. A mutator's
+   hacks are such choices, and they apply over the player's overrides.
+8. **A per-unit or per-weapon data key**, for that unit or weapon type only,
    applied when its files are read (for example `veterancy.thresholds`
    overriding `veterancy.model`'s `default-thresholds`).
 
-After steps 5 and 6, a parameter with `clamp-between` is held between the
+After steps 5 and 7, a parameter with `clamp-between` is held between the
 two parameters it names, with a warning when it moves. Constraints are
 checked after the profile's own values and again at the end.
 
@@ -706,10 +708,21 @@ fresh install starts where the mod's own install would.
 ### 5.5 The host's choices
 
 A `match` parameter may also be changed by the host for one game, after the
-player's settings. The resolver takes each choice as `ENTRY.PARAM=VALUE`,
+player's overrides. The resolver takes each choice as `ENTRY.PARAM=VALUE`,
 the value written as in a profile. A choice for a parameter that is not
-`match`, or for an entry the profile does not turn on, is refused. The
-unit limit's `default` is held between its `min` and `max`.
+`match` is refused. A choice for an entry the profile does not turn on is
+refused, unless the choice turns on an entry the registry marks
+`mutator: true`. The unit limit's `default` is held between its `min` and
+`max`.
+
+Mutators are such choices. A mutator's `hacks` block may set the `match`
+parameters of an entry marked `mutator: true`, over Developer Mode, for that
+game only. The registry check refuses `mutator: true` on an install-scoped
+entry (one with no `match` parameter), on an entry that touches the
+interface (`visual: true`, entry `scope: view`, an id under `ui.`, or a
+`match` parameter of `scope: view`), and on an entry whose kind is not a
+hack or a limit. The entries that carry it are `limits.units-per-player` and
+`console.game-speed-range`.
 
 The `match` parameters in the registry are the unit limit
 (`limits.units-per-player.default`) and the game speed range
