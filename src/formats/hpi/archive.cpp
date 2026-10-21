@@ -666,7 +666,7 @@ struct HpiArchive::Impl {
         }
         std::size_t copied = 0;
         return decode_blocks(
-            node, *chunks, position, wanted, [&](const uint8_t* bytes, std::size_t count) {
+            *chunks, position, wanted, [&](const uint8_t* bytes, std::size_t count) {
                 std::memcpy(output.data() + copied, bytes, count);
                 copied += count;
             }
@@ -714,8 +714,7 @@ struct HpiArchive::Impl {
     /// Decodes the chunks of a compressed file node that hold `wanted`
     /// bytes from `position`, handing each chunk's part to `take` in order.
     ///
-    /// @param node the file node; compressed
-    /// @param chunks the node's chunk table
+    /// @param chunks the chunk table of a compressed file node
     /// @param position first decoded byte wanted
     /// @param wanted count of bytes wanted; within the entry
     /// @param take called with each part's bytes and count
@@ -723,11 +722,7 @@ struct HpiArchive::Impl {
     ///         a chunk that cannot be read or decoded
     template <class Take>
     [[nodiscard]] Decoded<uint32_t> decode_blocks(
-        const ArchiveNode& node,
-        const formats::hpi::ChunkTable& chunks,
-        uint32_t position,
-        std::size_t wanted,
-        Take&& take
+        const formats::hpi::ChunkTable& chunks, uint32_t position, std::size_t wanted, Take&& take
     ) const {
         // Every byte of these buffers is written before it is read, so they
         // are allocated without being filled.
@@ -895,11 +890,11 @@ Decoded<std::vector<uint8_t>> HpiArchive::read_node(uint32_t index) const {
             // Room is set aside for the claimed size, and only the chunks
             // that decode fill it.
             bytes.reserve(node.size);
-            auto chunks = impl_->chunk_table(index);
-            if (!chunks.ok())
-                return chunks.error;
+            auto table = impl_->chunk_table(index);
+            if (!table.ok())
+                return table.error;
             read = impl_->decode_blocks(
-                node, *chunks.value, 0, node.size, [&](const uint8_t* decoded, std::size_t count) {
+                *table.value, 0, node.size, [&](const uint8_t* decoded, std::size_t count) {
                     bytes.insert(bytes.end(), decoded, decoded + count);
                 }
             );
