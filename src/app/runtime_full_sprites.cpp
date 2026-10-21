@@ -44,8 +44,8 @@ constexpr float channel_full = 255.0F;
 /// the light table's row.
 constexpr float reduced_flash_light = 0.5F;
 
-/// The GAF frame each rendered frame of a list was decoded from this
-/// frame, for the frames decoded anew each frame (WorldDrawList::decoded).
+/// The GAF frame each rendered frame of a list was decoded from, for the
+/// frames this frame's draws use (WorldDrawList::kept_decoded).
 using DecodedFrom = std::unordered_map<const RenderedFrame*, const oa::formats::gaf::Frame*>;
 
 /// Returns the key a sprite's picture is held under on the pages: the
