@@ -2465,8 +2465,9 @@ struct Runtime::LibraryScreen final : LayerScreen {
         bool moved = false;
         if (runtime_.library_) {
             LibraryHost& host = *runtime_.library_;
-            // A refresh that closes the model's details closes the page too,
-            // so the list the player then sees is the list Escape closes.
+            // A refresh that closes the model's details closes the page and
+            // its drop-down too, so the list the player then sees is the list
+            // Escape closes.
             if (!host.model.details_open && host.state.details_page) {
                 host.state.details_page = false;
                 host.state.menu = library::MenuKind::none;
@@ -2483,9 +2484,11 @@ struct Runtime::LibraryScreen final : LayerScreen {
             pulses.reserve(registries.size());
             for (const library::Registry& registry : registries)
                 pulses.push_back({registry.id, registry.refreshing, registry.unreachable});
-            moved = library::step_refresh_marks(
+            const bool marks_moved = library::step_refresh_marks(
                 host.state, host.model.inputs.checking, pulses, elapsed
             );
+            // The page closed above lays the screen out again too.
+            moved = moved || marks_moved;
         }
         if (!runtime_.library_ || (runtime_.library_->model_revision == seen_model_ && !moved))
             return LayerAnswer::none;

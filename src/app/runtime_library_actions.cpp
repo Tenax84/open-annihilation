@@ -433,11 +433,12 @@ void Runtime::ask_before_updates(
     // has no tabs, and it would stay until a later refresh dropped the row
     // from Updates. The player has confirmed, so the list and its tabs are
     // there on the next tick, while this question closes and the download is
-    // queued. NOT NOW leaves the page where it is.
+    // queued. NOT NOW leaves the page where it is, and UPDATE asked from the
+    // list, or at a size with no details page, leaves the Library as it is.
     answers.answer = [this, entries, update_button](int32_t button) {
         if (button != update_button)
             return true;
-        if (library_) {
+        if (library_ && library_->state.details_page) {
             library::close_details(library_->model);
             library_->state.details_page = false;
             library_->state.menu = library::MenuKind::none;
