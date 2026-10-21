@@ -72,12 +72,12 @@ and that every message starts with the path and every rule has its own name.
 `data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
 Ridge packages under `tests/data/mutators` through `run_pipeline`: rules in
 either order, a later assignment replacing an earlier one, a rule that
-reads a hook's write from the mutator above it, a lock that holds against
-a later mutator's rules but not its hook, hooks in list order, each kind
-of failure, and a run with a failing mutator against the run of the
-mutators that remain, whether its hook, its rules or its files would have
-reached the mutators below it, and with the mutators that require it. It
-also covers plans whose tables have
+reads a hook's write from the mutator above it, a hook that replaces a
+rule's value, a lock that holds against a later mutator's rules but not
+its hook, hooks in list order, each kind of failure, and a run with a
+failing mutator against the run of the mutators that remain, whether its
+hook, its rules or its files would have reached the mutators below it, and
+with the mutators that require it. It also covers plans whose tables have
 metatables, the allowances and the string cap, files added, masked and
 hidden with their journal entries, a document that does not parse, a
 player's option, the list checks and two identical runs.
@@ -584,8 +584,7 @@ mutator in list order and applies its rules and then its hooks, on the
 documents the mutators above it left. Its units hook runs, then its
 weapons hook. A plan that returns map hooks is refused, so none run. Only
 a document the pass changed is written back, whole, with the text writer,
-at the path the store listed
-it under. A document a hook removed is hidden.
+at the path the store listed it under. A document a hook removed is hidden.
 
 The plan is read inside the plan phase, with the mutator's allowances and
 real-time limit in force, and by raw access only, so no metamethod of the
@@ -618,11 +617,14 @@ notes, and the paths a parse left out, one warning each. Among the notes,
 is kept for each field name and pair of mutators, so a stack that rewrites
 the same field on many records does not flood the report. `field_locked`
 is a field an earlier mutator locked, so a later mutator's rule left it
-alone. A later hook can still write that field, and the report notes the
-hook as the writer that won, naming both. Each of these names both
-mutators, the earlier first. A script stopped by an allowance, the
-real-time limit or the string cap has a cause of its own (`instruction_budget`,
-`memory_budget`, `time_limit` or `string_length`), never `script_error`.
+alone. A later hook that writes a field names the mutator who last wrote
+it, which may be a rule rather than an earlier hook, and then itself. One
+such note is kept for each field name and pair, including a hook's set
+over every unit. A write over a lock is that one note, naming the locker.
+Each of these names both mutators, the earlier first. A script stopped by
+an allowance, the real-time limit or the string cap has a cause of its own
+(`instruction_budget`, `memory_budget`, `time_limit` or `string_length`),
+never `script_error`.
 
 The pipeline prints nothing and keeps nothing between calls. The same input
 gives the same layer bytes, journal and report. The store must hold no

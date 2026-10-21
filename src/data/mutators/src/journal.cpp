@@ -399,7 +399,12 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
     }
     if (conflict.kind == ConflictKind::text_change_dropped) {
         std::string line = names;
-        line += " dropped a text change";
+        // A factor on an absent field shares this kind with a dropped text
+        // change. The rules note's own sentence is what tells them apart.
+        if (conflict.detail.find("a factor") != std::string::npos)
+            line += " found no value to scale";
+        else
+            line += " dropped a text change";
         append_place(line, conflict);
         return line;
     }

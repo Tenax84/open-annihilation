@@ -118,7 +118,7 @@ enum class ConflictKind : uint8_t {
     same_path_added,     ///< two mutators added one path; the later one won
     added_path_hidden,   ///< a mask hid a file an earlier mutator added
     add_folder_missing,  ///< an add folder is not in the package
-    same_field_hooked,   ///< a later hook wrote a field an earlier mutator wrote or locked
+    same_field_hooked,   ///< a later hook wrote a field the last writer, or its locker, had set
     value_replaced,      ///< a later mutator's rule replaced a value an earlier mutator wrote
     field_locked,        ///< a later mutator's rule left a field an earlier mutator locked alone
     text_change_dropped, ///< a text change was dropped
@@ -178,8 +178,9 @@ struct ConflictReport {
 /// field a later mutator left alone becomes `field_locked`. Both are notes
 /// and keep the note's order: the earlier mutator, then the later one. A
 /// factor on an absent field and a value that is not a number become
-/// `text_change_dropped`. A value that is not finite and a refused check
-/// become `write_refused`. `ids` is the input list, in order.
+/// `text_change_dropped`. The factor's sentence says it found no value to
+/// scale. A value that is not finite and a refused check become
+/// `write_refused`. `ids` is the input list, in order.
 ///
 /// @param note the rules note
 /// @param ids mutator ids, in list order
@@ -206,7 +207,8 @@ struct ConflictReport {
 /// ridge-tough". A replaced value reads as "ridge-tougher replaced
 /// ridge-tough's value on units/rgcom.fbi maxdamage", and a locked field as
 /// "ridge-tough locked units/rgcom.fbi maxdamage, so ridge-tougher left it
-/// alone".
+/// alone". A factor on an absent field reads as "ridge-swift found no value
+/// to scale on units/rglab.fbi maxdamage".
 ///
 /// @param conflict the conflict
 /// @param ids mutator ids, in the same order as the conflict's indices

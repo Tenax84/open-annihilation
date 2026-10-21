@@ -202,9 +202,8 @@ that renames `units`, the spelling of a key a record does not hold, the
 writes of one field listed in applied order when a change creates it again
 under another spelling, a depth change applied once when a block has two
 case variants of a key, and the notes for a block that matched nothing, a
-field that is not a
-number, a result that is not finite (including a clamp that does not rescue
-it), and a check that warns or refuses.
+field that is not a number, a result that is not finite (including a clamp
+that does not rescue it), and a check that warns or refuses.
 
 ## Limitations
 

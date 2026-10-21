@@ -1798,25 +1798,53 @@ void append_rule_note(
     report.conflicts.push_back(std::move(conflict));
 }
 
-/// Reports whether `note` names `mutator`.
+/// Adds one hook-replaced note, once per field name and pair of mutators.
 ///
-/// @param note the hook note
-/// @param mutator the id
-/// @return true when the note names it
-bool note_names(const HookNote& note, std::string_view mutator) {
-    for (const std::string& name : note.mutators) {
-        if (name == mutator)
-            return true;
-    }
-    return false;
+/// @param report the pass report
+/// @param ids mutator ids, in list order
+/// @param[in,out] replaced the hook replacements already kept
+/// @param earlier the mutator who last wrote the field, or who locked it
+/// @param writer the hook's mutator
+/// @param write the hook write
+/// @param message the note's own sentence
+void append_hook_replaced(
+    ConflictReport& report,
+    const std::vector<std::string>& ids,
+    std::set<ReplacedField>& replaced,
+    const std::string& earlier,
+    const std::string& writer,
+    const rules::FieldWrite& write,
+    std::string message
+) {
+    const std::optional<uint16_t> earlier_slot = index_of(ids, earlier);
+    const std::optional<uint16_t> later_slot = index_of(ids, writer);
+    if (!earlier_slot.has_value() || !later_slot.has_value())
+        return;
+    ReplacedField key;
+    key.field = fold_copy(write.key);
+    key.earlier = *earlier_slot;
+    key.later = *later_slot;
+    if (!replaced.insert(std::move(key)).second)
+        return;
+    HookNote note;
+    note.kind = HookNoteKind::hook_overwrote;
+    note.mutators.push_back(earlier);
+    note.mutators.push_back(writer);
+    note.path = write.path;
+    note.record = write.record;
+    note.key = write.key;
+    note.message = std::move(message);
+    report.conflicts.push_back(conflict_from_hook(note, ids));
 }
 
 /// Records this mutator's new hook notes and writes.
 ///
-/// A hook may write a field an earlier mutator locked. The write stands, and
-/// the report names both mutators. The step state remembers the hook as the
-/// last writer, and keeps the lock, so a later mutator's rules still leave
-/// the field alone.
+/// The collections remember earlier hooks only. The note names the mutator
+/// in the step state who last wrote the field, which may be a rule, and one
+/// such note is kept for each field name and pair. A write over a lock keeps
+/// the lock note, naming the locker, and does not add a second note for the
+/// same pair. The step state remembers the hook as the last writer and keeps
+/// the lock, so a later mutator's rules still leave the field alone.
 ///
 /// @param collections the hooks' collections
 /// @param[in,out] state lock marks and last writers
@@ -1825,6 +1853,7 @@ bool note_names(const HookNote& note, std::string_view mutator) {
 /// @param slot this mutator's index
 /// @param notes_before how many hook notes existed before this mutator
 /// @param writes_before how many hook writes existed before this mutator
+/// @param[in,out] hook_replaced the hook replacements already kept
 void record_hook_turn(
     Collections& collections,
     rules::ApplyState& state,
@@ -1832,45 +1861,48 @@ void record_hook_turn(
     const std::vector<std::string>& ids,
     std::size_t slot,
     std::size_t notes_before,
-    std::size_t writes_before
+    std::size_t writes_before,
+    std::set<ReplacedField>& hook_replaced
 ) {
     const std::span<const HookNote> notes = collections.notes();
-    for (std::size_t note_index = notes_before; note_index < notes.size(); ++note_index)
+    for (std::size_t note_index = notes_before; note_index < notes.size(); ++note_index) {
+        // The collections' overwrite names the last hook, not a rule that
+        // wrote the field afterwards. The write loop records that note.
+        if (notes[note_index].kind == HookNoteKind::hook_overwrote)
+            continue;
         report.conflicts.push_back(conflict_from_hook(notes[note_index], ids));
+    }
 
     const std::span<const rules::FieldWrite> writes = collections.writes();
     for (std::size_t write_index = writes_before; write_index < writes.size(); ++write_index) {
         const rules::FieldWrite& write = writes[write_index];
         const rules::FieldId id = field_id_of(write);
         const std::string& writer = write.mutators.empty() ? ids[slot] : write.mutators.front();
+        const auto found = state.writers.find(id);
+        const bool other_wrote = found != state.writers.end() && found->second != writer;
+        const std::string earlier = other_wrote ? found->second : std::string();
         state.writers.insert_or_assign(id, writer);
         const auto locker = state.locks.find(id);
-        if (locker == state.locks.end() || locker->second == writer)
-            continue;
-        bool named = false;
-        for (std::size_t seen = notes_before; seen < notes.size(); ++seen) {
-            const HookNote& earlier = notes[seen];
-            if (earlier.kind == HookNoteKind::hook_overwrote &&
-                same_path(earlier.path, write.path) && same_text(earlier.record, write.record) &&
-                same_text(earlier.key, write.key) && note_names(earlier, locker->second)) {
-                named = true;
-                break;
-            }
+        const bool locked_by_other = locker != state.locks.end() && locker->second != writer;
+        const bool earlier_holds_lock = locked_by_other && earlier == locker->second;
+        if (other_wrote && !earlier_holds_lock) {
+            std::string message = writer;
+            message += " replaced the value ";
+            message += earlier;
+            message += " wrote";
+            append_hook_replaced(
+                report, ids, hook_replaced, earlier, writer, write, std::move(message)
+            );
         }
-        if (named)
+        if (!locked_by_other)
             continue;
-        HookNote note;
-        note.kind = HookNoteKind::hook_overwrote;
-        note.mutators.push_back(locker->second);
-        note.mutators.push_back(writer);
-        note.path = write.path;
-        note.record = write.record;
-        note.key = write.key;
-        note.message = writer;
-        note.message += " wrote a field ";
-        note.message += locker->second;
-        note.message += " had locked";
-        report.conflicts.push_back(conflict_from_hook(note, ids));
+        std::string message = writer;
+        message += " wrote a field ";
+        message += locker->second;
+        message += " had locked";
+        append_hook_replaced(
+            report, ids, hook_replaced, locker->second, writer, write, std::move(message)
+        );
     }
 }
 
@@ -2027,6 +2059,7 @@ bool run_pass(
     rules::ApplyState apply_state;
     std::vector<rules::FieldWrite> rule_writes;
     std::set<ReplacedField> replaced_fields;
+    std::set<ReplacedField> hook_replaced;
 
     // Each mutator applies its rules, then its units hook and its weapons
     // hook, on the documents the mutators above it left. A plan that returns
@@ -2083,7 +2116,9 @@ bool run_pass(
             break;
         }
         collections->end_mutator();
-        record_hook_turn(*collections, apply_state, report, ids, slot, notes_before, writes_before);
+        record_hook_turn(
+            *collections, apply_state, report, ids, slot, notes_before, writes_before, hook_replaced
+        );
     }
     if (!steps_done) {
         sandboxes.clear();

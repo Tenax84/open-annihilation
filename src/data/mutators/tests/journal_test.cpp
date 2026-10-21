@@ -147,20 +147,26 @@ rules::RuleNote rule_note(rules::NoteKind kind) {
 }
 
 void test_rule_notes() {
-    const rules::NoteKind dropped[] = {
-        rules::NoteKind::factor_on_absent_field,
-        rules::NoteKind::not_a_number,
-    };
-    for (const rules::NoteKind kind : dropped) {
-        const mutators::Conflict conflict = mutators::conflict_from_rule(rule_note(kind), k_ids);
-        OA_CHECK(conflict.kind == mutators::ConflictKind::text_change_dropped);
-        OA_CHECK(conflict.severity == mutators::Severity::note);
-        OA_CHECK(conflict.field == "maxdamage");
-        OA_CHECK(
-            mutators::describe(conflict, k_ids) ==
-            "ridge-tough, ridge-tougher dropped a text change on units/rgcom.fbi maxdamage"
-        );
-    }
+    rules::RuleNote absent = rule_note(rules::NoteKind::factor_on_absent_field);
+    absent.message = "a factor did nothing because the field is absent";
+    const mutators::Conflict factor = mutators::conflict_from_rule(absent, k_ids);
+    OA_CHECK(factor.kind == mutators::ConflictKind::text_change_dropped);
+    OA_CHECK(factor.severity == mutators::Severity::note);
+    OA_CHECK(factor.field == "maxdamage");
+    OA_CHECK(
+        mutators::describe(factor, k_ids) ==
+        "ridge-tough, ridge-tougher found no value to scale on units/rgcom.fbi maxdamage"
+    );
+
+    const mutators::Conflict dropped =
+        mutators::conflict_from_rule(rule_note(rules::NoteKind::not_a_number), k_ids);
+    OA_CHECK(dropped.kind == mutators::ConflictKind::text_change_dropped);
+    OA_CHECK(dropped.severity == mutators::Severity::note);
+    OA_CHECK(dropped.field == "maxdamage");
+    OA_CHECK(
+        mutators::describe(dropped, k_ids) ==
+        "ridge-tough, ridge-tougher dropped a text change on units/rgcom.fbi maxdamage"
+    );
 
     const rules::NoteKind refused[] = {rules::NoteKind::not_finite, rules::NoteKind::check_refused};
     for (const rules::NoteKind kind : refused) {
