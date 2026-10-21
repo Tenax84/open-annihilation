@@ -100,16 +100,6 @@ struct PipelineMutator {
     std::vector<LoadoutOption> options;
 };
 
-/// One planned hack the check refuses, before anything of that mutator is applied.
-struct HackCheckError {
-    /// The mutator the error names.
-    std::string mutator;
-    /// The parameter path, or the entry id when the error is a constraint.
-    std::string path;
-    /// The refusal, as the plan message records it.
-    std::string message;
-};
-
 /// What one run needs. The same input produces the same layer, journal and report.
 struct PipelineInput {
     /// The mutators, top of the list first.

@@ -27,7 +27,9 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   `MutatorLayerSpec`. See [Files layer](#files-layer).
 - `read_hacks` reads a plan's `hacks` table, `merge_hacks` keeps the later
   value for each path, and `developer_conflicts` notes where those hacks
-  overlap Developer Mode or a mod that leaves the entry off.
+  overlap Developer Mode or a mod that leaves the entry off. `hack_faults`
+  names the mutators a refused resolution of those hacks fails: each one
+  an error names, or every one when no error names any.
 - `run_pipeline` runs an ordered list of mutators against an asset store
   and returns each mutator's outcome, the layer it left mounted, the
   `Journal` of the changes kept and the `ConflictReport`. See

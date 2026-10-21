@@ -1096,14 +1096,6 @@ void test_lock_holds_against_rules_not_hooks() {
     release(store);
 }
 
-/// The entry a parameter path names.
-std::string entry_of_path(std::string_view path) {
-    const std::size_t dot = path.rfind('.');
-    if (dot == std::string_view::npos)
-        return std::string{path};
-    return std::string{path.substr(0, dot)};
-}
-
 /// Resolves the planned hacks against the base profile, as the app's check does.
 std::vector<mutators::HackCheckError>
 refuse_unresolved_hacks(std::span<const mutators::MutatorHack> hacks) {
@@ -1128,39 +1120,7 @@ refuse_unresolved_hacks(std::span<const mutators::MutatorHack> hacks) {
     );
     if (resolved.resolution.has_value())
         return faults;
-    std::vector<std::string> named;
-    for (const mutators::MutatorHack& hack : hacks) {
-        bool seen = false;
-        for (const std::string& id : named) {
-            if (id == hack.mutator)
-                seen = true;
-        }
-        if (seen)
-            continue;
-        named.push_back(hack.mutator);
-        std::string message;
-        std::string path;
-        for (const oa::data::mod_profile::Diagnostic& diagnostic : resolved.errors) {
-            const std::string entry = entry_of_path(hack.path);
-            if (diagnostic.path != "match " + hack.path && diagnostic.path != entry)
-                continue;
-            message = "hacks: " + entry + ": " + diagnostic.message;
-            path = diagnostic.path;
-            break;
-        }
-        if (message.empty()) {
-            const std::string entry = entry_of_path(hack.path);
-            const std::string fallback = resolved.errors.empty()
-                                             ? std::string{"the hacks were refused"}
-                                             : resolved.errors.front().message;
-            message = "hacks: " + entry + ": " + fallback;
-            path = entry;
-        }
-        faults.push_back(
-            mutators::HackCheckError{hack.mutator, std::move(path), std::move(message)}
-        );
-    }
-    return faults;
+    return mutators::hack_faults(resolved.errors, hacks);
 }
 
 void test_refused_hack_drops_the_hook() {
@@ -1225,6 +1185,62 @@ void test_refused_hack_drops_the_hook() {
     OA_CHECK(commander.find("7000") == std::string::npos);
     OA_CHECK(commander.find("8000") == std::string::npos);
     release(store);
+    fs::remove_all(scratch);
+}
+
+/// Writes a mutator that only sets hacks.
+void write_hack_mutator(const fs::path& package, std::string_view id, std::string_view hacks) {
+    write_bytes(
+        package / "oamut.yaml",
+        "oamut: 1\nid: " + std::string{id} + "\nname: \"" + std::string{id} +
+            "\"\nversion: \"1.0\"\nauthor:\n  name: \"Ridge Maker\"\ntags: [\"gameplay\"]\n"
+            "works-with: [\"*\"]\nlayers: [\"hacks\"]\n"
+    );
+    write_bytes(
+        package / "mutator.lua",
+        "function mutate(ctx)\n  return { hacks = { " + std::string{hacks} + " } }\nend\n"
+    );
+}
+
+/// A mutator whose hacks break a constraint fails alone. One beside it whose
+/// hack resolves keeps it, in either order.
+void test_refused_hack_spares_the_others() {
+    const fs::path scratch = oa::test::make_scratch_directory("D08-spares");
+    const fs::path bad = scratch / "ridge-bad-range";
+    const fs::path cap = scratch / "ridge-cap";
+    write_hack_mutator(
+        bad, "ridge-bad-range", "[\"console.game-speed-range\"] = { min = 15, max = 5 }"
+    );
+    write_hack_mutator(cap, "ridge-cap", "[\"limits.units-per-player\"] = 400");
+    for (const bool bad_first : {true, false}) {
+        std::vector<mutators::PipelineMutator> list;
+        list.push_back(load_mutator(bad_first ? bad : cap));
+        list.push_back(load_mutator(bad_first ? cap : bad));
+        mutators::PipelineInput input = make_input(std::move(list));
+        input.check_hacks = refuse_unresolved_hacks;
+        oa::AssetStore store = open_ridge();
+        const mutators::PipelineResult result = mutators::run_pipeline(store, input);
+        OA_CHECK(result.refusal.empty());
+        OA_CHECK(result.mutators.size() == 2);
+        if (result.mutators.size() == 2) {
+            const mutators::MutatorResult& refused = result.mutators[bad_first ? 0 : 1];
+            const mutators::MutatorResult& kept = result.mutators[bad_first ? 1 : 0];
+            OA_CHECK(refused.id == "ridge-bad-range");
+            OA_CHECK(refused.outcome == mutators::Outcome::failed);
+            OA_CHECK(refused.cause == mutators::Cause::hack_refused);
+            OA_CHECK(refused.message.find("console.game-speed-range") != std::string::npos);
+            OA_CHECK(refused.message.find("min <= max") != std::string::npos);
+            OA_CHECK(kept.id == "ridge-cap");
+            OA_CHECK(kept.outcome == mutators::Outcome::applied);
+            OA_CHECK(kept.message.empty());
+            OA_CHECK(kept.hacks.size() == 1);
+            if (kept.hacks.size() == 1) {
+                OA_CHECK(kept.hacks[0].path == "limits.units-per-player.default");
+                OA_CHECK(kept.hacks[0].value == "400");
+            }
+        }
+        release(store);
+    }
     fs::remove_all(scratch);
 }
 
@@ -1691,6 +1707,7 @@ int main() {
     test_unread_document_warned_once();
     test_player_option();
     test_refused_hack_drops_the_hook();
+    test_refused_hack_spares_the_others();
     test_two_weapon_files_keep_both_weapons();
     test_records_replace_and_base_weapon_id_stays();
     test_download_sections_merge();

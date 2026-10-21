@@ -40,27 +40,6 @@ std::string entry_of(std::string_view path) {
     return std::string{path.substr(0, dot)};
 }
 
-/// Reports whether a resolve error names this parameter or its entry.
-bool names_hack(const profiles::Diagnostic& diagnostic, std::string_view path) {
-    if (diagnostic.path == "match " + std::string{path})
-        return true;
-    return diagnostic.path == entry_of(path);
-}
-
-/// The first resolve error that names one of a mutator's hacks.
-std::string error_for(
-    const std::vector<profiles::Diagnostic>& errors, const std::vector<mutators::MutatorHack>& hacks
-) {
-    for (const profiles::Diagnostic& diagnostic : errors) {
-        for (const mutators::MutatorHack& hack : hacks) {
-            if (!names_hack(diagnostic, hack.path))
-                continue;
-            return "hacks: " + entry_of(hack.path) + ": " + diagnostic.message;
-        }
-    }
-    return {};
-}
-
 /// The entries a profile turns on before overrides and match choices.
 std::vector<std::string> entries_on(const profiles::Resolution& resolution) {
     std::vector<std::string> on;
@@ -128,48 +107,6 @@ profiles::ResolveResult resolve_with(
     return profiles::resolve_profile(source.text, source.name, options);
 }
 
-/// One fault per mutator whose hacks the resolution refused.
-std::vector<mutators::HackCheckError>
-faults_for(const profiles::ResolveResult& resolved, std::span<const mutators::MutatorHack> hacks) {
-    std::vector<mutators::HackCheckError> faults;
-    std::vector<std::string> named;
-    const std::string fallback = resolved.errors.empty() ? std::string{"the hacks were refused"}
-                                                         : resolved.errors.front().message;
-    for (const mutators::MutatorHack& hack : hacks) {
-        bool seen = false;
-        for (const std::string& id : named) {
-            if (id == hack.mutator)
-                seen = true;
-        }
-        if (seen)
-            continue;
-        named.push_back(hack.mutator);
-        std::vector<mutators::MutatorHack> own;
-        for (const mutators::MutatorHack& one : hacks) {
-            if (one.mutator == hack.mutator)
-                own.push_back(one);
-        }
-        std::string message = error_for(resolved.errors, own);
-        std::string path = entry_of(hack.path);
-        if (message.empty())
-            message = "hacks: " + path + ": " + fallback;
-        else
-            path = entry_of(own.front().path);
-        for (const profiles::Diagnostic& diagnostic : resolved.errors) {
-            for (const mutators::MutatorHack& one : own) {
-                if (!names_hack(diagnostic, one.path))
-                    continue;
-                path = diagnostic.path;
-                break;
-            }
-        }
-        faults.push_back(
-            mutators::HackCheckError{hack.mutator, std::move(path), std::move(message)}
-        );
-    }
-    return faults;
-}
-
 /// The faults in a planned hack list, or none when the profile accepts them.
 std::vector<mutators::HackCheckError> check_planned(
     bool can_change,
@@ -205,7 +142,7 @@ std::vector<mutators::HackCheckError> check_planned(
     const profiles::ResolveResult resolved = resolve_with(*source, overrides, hacks);
     if (resolved.resolution.has_value())
         return {};
-    return faults_for(resolved, hacks);
+    return mutators::hack_faults(resolved.errors, hacks);
 }
 
 /// Fails one mutator for its hacks and drops the records.
@@ -294,7 +231,8 @@ void Runtime::play_mutator_hacks() {
     const profiles::ResolveResult resolved =
         resolve_with(*settings.profile_source, overrides, hacks);
     if (!resolved.resolution.has_value()) {
-        const std::vector<mutators::HackCheckError> again = faults_for(resolved, hacks);
+        const std::vector<mutators::HackCheckError> again =
+            mutators::hack_faults(resolved.errors, hacks);
         const std::string reason = again.empty()
                                        ? std::string{"the hacks were refused"}
                                        : again.front().mutator + ": plan: " + again.front().message;

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // A mutator's hacks: reading the plan's table, merging two mutators, the
-// notes Developer Mode and a mod that leaves a hack off produce, and the
-// values the resolver plays.
+// notes Developer Mode and a mod that leaves a hack off produce, the values
+// the resolver plays, and which mutators a refused resolution fails.
 
 #include "oa/data/mod_profile.hpp"
 #include "oa/data/mod_profile/registry.hpp"
@@ -21,10 +21,12 @@
 
 namespace {
 
+using oa::data::mod_profile::Diagnostic;
 using oa::data::mod_profile::HackOverride;
 using oa::data::mod_profile::MatchOption;
 using oa::data::mod_profile::ResolveOptions;
 using oa::data::mod_profile::ResolveResult;
+using oa::data::mutators::HackCheckError;
 using oa::data::mutators::HackMerge;
 using oa::data::mutators::HackNote;
 using oa::data::mutators::MutatorHack;
@@ -345,6 +347,93 @@ void test_resolver() {
     );
 }
 
+/// The resolution of these hacks as match choices that turn entries on.
+ResolveResult resolve_hacks(std::string_view text, const std::vector<MutatorHack>& hacks) {
+    ResolveOptions options{};
+    for (const MutatorHack& hack : hacks) {
+        MatchOption option;
+        option.path = hack.path;
+        option.value = hack.value;
+        option.source = hack.mutator;
+        option.turn_on = true;
+        options.match.push_back(std::move(option));
+    }
+    return resolve(text, options);
+}
+
+void test_faults() {
+    const std::string plain = profile_text("ridge", "");
+    const MutatorHack fast_min{"ridge-bad-range", "console.game-speed-range.min", "15"};
+    const MutatorHack fast_max{"ridge-bad-range", "console.game-speed-range.max", "5"};
+    const MutatorHack cap{"ridge-cap", "limits.units-per-player.default", "400"};
+
+    // One mutator breaks min <= max and the other sets the unit cap: only the
+    // first fails, in either order, and its message names its own hack.
+    for (const bool bad_first : {true, false}) {
+        const std::vector<MutatorHack> hacks =
+            bad_first ? std::vector<MutatorHack>{fast_max, fast_min, cap}
+                      : std::vector<MutatorHack>{cap, fast_max, fast_min};
+        const ResolveResult resolved = resolve_hacks(plain, hacks);
+        OA_CHECK(!resolved.resolution.has_value());
+        const std::vector<HackCheckError> faults =
+            oa::data::mutators::hack_faults(resolved.errors, hacks);
+        OA_CHECK(faults.size() == 1);
+        if (faults.size() == 1) {
+            OA_CHECK(faults[0].mutator == "ridge-bad-range");
+            OA_CHECK(faults[0].path == "console.game-speed-range");
+            OA_CHECK(faults[0].message.starts_with("hacks: console.game-speed-range: "));
+            OA_CHECK(faults[0].message.find("min <= max") != std::string::npos);
+        }
+    }
+
+    // Two mutators that break one constraint together both fail.
+    const std::vector<MutatorHack> split{
+        MutatorHack{"ridge-slow", "console.game-speed-range.min", "15"},
+        MutatorHack{"ridge-fast", "console.game-speed-range.max", "5"},
+        cap,
+    };
+    const ResolveResult together = resolve_hacks(plain, split);
+    OA_CHECK(!together.resolution.has_value());
+    const std::vector<HackCheckError> both =
+        oa::data::mutators::hack_faults(together.errors, split);
+    OA_CHECK(both.size() == 2);
+    if (both.size() == 2) {
+        OA_CHECK(both[0].mutator == "ridge-slow");
+        OA_CHECK(both[1].mutator == "ridge-fast");
+    }
+
+    // An error that names no hack fails every mutator with hacks, each with
+    // that error under its own entry.
+    const std::vector<Diagnostic> unnamed{
+        Diagnostic{"test.oamod", {}, "data-keys.unit.x", "the profile no longer resolves"}
+    };
+    const std::vector<MutatorHack> two{fast_min, cap};
+    const std::vector<HackCheckError> all = oa::data::mutators::hack_faults(unnamed, two);
+    OA_CHECK(all.size() == 2);
+    if (all.size() == 2) {
+        OA_CHECK(all[0].mutator == "ridge-bad-range");
+        OA_CHECK(
+            all[0].message == "hacks: console.game-speed-range: the profile no longer resolves"
+        );
+        OA_CHECK(all[1].mutator == "ridge-cap");
+        OA_CHECK(
+            all[1].message == "hacks: limits.units-per-player: the profile no longer resolves"
+        );
+    }
+
+    // A value error names its parameter, so only that mutator fails.
+    const std::vector<Diagnostic> value_error{
+        Diagnostic{"test.oamod", {}, "match limits.units-per-player.default", "too large"}
+    };
+    const std::vector<HackCheckError> one = oa::data::mutators::hack_faults(value_error, two);
+    OA_CHECK(one.size() == 1);
+    if (one.size() == 1) {
+        OA_CHECK(one[0].mutator == "ridge-cap");
+        OA_CHECK(one[0].path == "match limits.units-per-player.default");
+        OA_CHECK(one[0].message == "hacks: limits.units-per-player: too large");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -352,5 +441,6 @@ int main() {
     test_merging();
     test_developer_mode();
     test_resolver();
+    test_faults();
     return oa::test::check_exit_status();
 }

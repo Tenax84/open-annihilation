@@ -204,6 +204,13 @@ std::string read_entry(
     return take_parameter(mutator, id, parameter.name, *raw, parameter, made);
 }
 
+/// Reports whether a resolve error names this parameter or its entry.
+bool names_hack(const oa::data::mod_profile::Diagnostic& diagnostic, std::string_view path) {
+    if (diagnostic.path == "match " + std::string{path})
+        return true;
+    return diagnostic.path == entry_id(path);
+}
+
 } // namespace
 
 std::string read_hacks(
@@ -357,6 +364,52 @@ std::vector<HackNote> developer_conflicts(
         notes.push_back(std::move(note));
     }
     return notes;
+}
+
+std::vector<HackCheckError> hack_faults(
+    std::span<const oa::data::mod_profile::Diagnostic> errors, std::span<const MutatorHack> hacks
+) {
+    std::vector<std::string> ids;
+    for (const MutatorHack& hack : hacks) {
+        if (std::find(ids.begin(), ids.end(), hack.mutator) == ids.end())
+            ids.push_back(hack.mutator);
+    }
+    std::vector<HackCheckError> faults;
+    for (const std::string& id : ids) {
+        bool found = false;
+        for (const oa::data::mod_profile::Diagnostic& diagnostic : errors) {
+            for (const MutatorHack& hack : hacks) {
+                if (hack.mutator != id || !names_hack(diagnostic, hack.path))
+                    continue;
+                faults.push_back(
+                    HackCheckError{
+                        id,
+                        diagnostic.path,
+                        "hacks: " + entry_id(hack.path) + ": " + diagnostic.message
+                    }
+                );
+                found = true;
+                break;
+            }
+            if (found)
+                break;
+        }
+    }
+    if (!faults.empty())
+        return faults;
+    // No error names a hack, so none of them can be told apart from the rest.
+    const std::string fallback =
+        errors.empty() ? std::string{"the hacks were refused"} : errors.front().message;
+    for (const std::string& id : ids) {
+        for (const MutatorHack& hack : hacks) {
+            if (hack.mutator != id)
+                continue;
+            const std::string entry = entry_id(hack.path);
+            faults.push_back(HackCheckError{id, entry, "hacks: " + entry + ": " + fallback});
+            break;
+        }
+    }
+    return faults;
 }
 
 } // namespace oa::data::mutators

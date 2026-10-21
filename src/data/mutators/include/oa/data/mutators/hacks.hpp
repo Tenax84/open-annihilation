@@ -6,6 +6,7 @@
 // Developer Mode or each other.
 #pragma once
 
+#include "oa/data/mod_profile.hpp"
 #include "oa/data/mod_profile/overrides.hpp"
 
 #include <span>
@@ -25,6 +26,16 @@ struct MutatorHack {
     std::string path;
     /// The value in the registry's normal form, such as 15.
     std::string value;
+};
+
+/// One planned hack the check refuses, before anything of that mutator is applied.
+struct HackCheckError {
+    /// The mutator the error names.
+    std::string mutator;
+    /// The parameter path, or the entry id when the error is a constraint.
+    std::string path;
+    /// The refusal, as the plan message records it.
+    std::string message;
 };
 
 /// A sentence for the picker's conflict report.
@@ -97,6 +108,22 @@ struct HackMerge {
     std::span<const MutatorHack> hacks,
     std::span<const oa::data::mod_profile::HackOverride> overrides,
     std::span<const std::string> profile_on
+);
+
+/// The mutators a refused resolution of their hacks fails, one fault each.
+///
+/// A mutator fails when an error names one of its hacks: `match ENTRY.PARAM`
+/// for a value, or the entry for a constraint, so two mutators that break
+/// one constraint together both fail. The first error that names it is its
+/// message. A mutator no error names is not faulted. Only when no error
+/// names any of them, as when the profile itself no longer resolves, does
+/// every mutator with hacks fail, each with the first error.
+///
+/// @param errors the resolution's errors
+/// @param hacks the records that were resolved, in list order
+/// @return one fault per failed mutator, in the order the mutators first appear
+[[nodiscard]] std::vector<HackCheckError> hack_faults(
+    std::span<const oa::data::mod_profile::Diagnostic> errors, std::span<const MutatorHack> hacks
 );
 
 } // namespace oa::data::mutators
