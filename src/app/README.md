@@ -858,6 +858,51 @@ hosts them on the OA layer.
   while SELMAP is open joins its list, when the map fits, as Select or
   Download and select chooses it.
 
+## The mutator picker
+
+The mutator picker is one modal screen on the OA layer (`mutator-picker`),
+centred over the screen that asked, at the size class's dialog size. Its
+model and screen are
+[src/ui/mutator-picker](../ui/mutator-picker/README.md);
+`runtime_mutator_picker.cpp` hosts them. Skirmish, the campaign and the
+battle room open it later. It closes as Cancel when that screen goes or a
+match starts.
+
+- **The request.** `open_mutator_picker` takes a `MutatorPickerRequest`: the
+  setup, the set it opens on (each mutator with its options), whether a
+  guest is only looking, and two calls. USE THESE calls the first with the
+  set, in order with its options, once every mutator in it is installed.
+  CANCEL, the header's close mark, and the screen underneath going away call
+  the second and hand nothing back. It refuses while a match is running,
+  while a front-end dialog or a modal OA screen is up, without the layer's
+  fonts, or while the picker is already open.
+- **The feed.** `MutatorPickerFeed` is where the list comes from. The
+  runtime's own feed, installed the first time the picker opens, lists the
+  installed mutators (`list_installed`) and the catalogues' mutator entries,
+  with each one's download, its badge, and why it cannot be switched on
+  here. Every verdict stays unchecked and `check` stays null, so no chip
+  shows. A check replaces the feed with `set_mutator_picker_feed` and puts
+  the runtime's back with `restore_mutator_picker_feed`. Switching on a
+  mutator that is not installed queues it and the prerequisites it lacks
+  (`get_plan` on the runtime's own catalogue; the listing itself when a
+  check's feed has none). A refusal switches it off and the row reads why.
+  Changing an option asks `check` again, and the row reads the checking
+  words until a later list brings the verdict.
+- **Turn off.** Switching off a prerequisite asks "Turn off X?" over the
+  picker, pushed at once. TURN OFF turns it and what needs it off, and
+  cancels a download that is still waiting. CANCEL leaves them on.
+- **The check.** `native-mutator-picker` (`--check-mutator-picker`,
+  `runtime_mutator_picker_check.cpp`) turns every built-in registry off and
+  at 640x480, 1280x720, 1920x1080 and 2560x1440 opens the picker over the
+  main menu on a feed of made-up mutators. It requires the size class, the
+  mended On order, every row's grip and switch, one download with the
+  waiting words, the turn-off question, a drag, the set USE THESE hands
+  back, CANCEL handing nothing, and the verdict chip. It writes each size's
+  opening frame as `mutator-picker-<w>x<h>.png`. `--check-text-fit` paints
+  the same screen, its details, the waiting line, the question and the
+  read-only footer in every language. A FIXTURES_SETUP test
+  (`mutator-picker-clean`) clears its folders before each run.
+
 ## Files
 
 - `app.hpp`, `runtime.hpp`, `runtime.cpp`, `runtime_frontend_host.cpp`,

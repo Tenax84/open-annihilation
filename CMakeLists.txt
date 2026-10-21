@@ -1122,6 +1122,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/oa_layer.cpp
   src/app/runtime_library.cpp src/app/runtime_library_actions.cpp
   src/app/runtime_map_browser.cpp
+  src/app/runtime_mutator_picker.cpp
   src/app/runtime_engine_settings_app_menu.cpp
   src/app/runtime_view_rules.cpp src/app/runtime_game_text.cpp src/app/runtime_language.cpp
   src/app/runtime_language_notice.cpp
@@ -1184,6 +1185,7 @@ set(oa_game_self_check_sources src/app/runtime_checks.cpp src/app/runtime_order_
   src/app/runtime_map_pack_lists_check.cpp
   src/app/runtime_mod_map_settings_check.cpp
   src/app/runtime_map_browser_check.cpp
+  src/app/runtime_mutator_picker_check.cpp
   src/app/runtime_mod_warning_check.cpp src/app/runtime_mod_install_check.cpp
   src/app/runtime_language_install_check.cpp src/app/runtime_challenge_check.cpp
   src/app/runtime_registries_check.cpp
@@ -1916,6 +1918,28 @@ if(OA_BUILD_PLATFORM)
         WORKING_DIRECTORY "${oa_map_browser_dir}"
         ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software"
         FIXTURES_REQUIRED map-browser-clean)
+      # The mutator picker over the main menu, on a feed of made-up mutators,
+      # at 640x480, 1280x720, 1920x1080 and 2560x1440: the mended On order,
+      # every row's grip and switch, one download and the waiting words, the
+      # turn-off question, a drag, the set USE THESE hands back, CANCEL
+      # handing nothing, and the verdict chip. It leaves each size's frame
+      # in its folder for review. Every built-in registry is off, so nothing
+      # is fetched. Each run starts from a clean folder.
+      set(oa_mutator_picker_dir "${CMAKE_CURRENT_BINARY_DIR}/native-checks/mutator-picker")
+      file(MAKE_DIRECTORY "${oa_mutator_picker_dir}")
+      add_test(NAME mutator-picker-clean COMMAND ${CMAKE_COMMAND} -E rm -rf
+        "${oa_mutator_picker_dir}/Open Annihilation" "${oa_mutator_picker_dir}/files"
+        "${oa_mutator_picker_dir}/data" "${oa_mutator_picker_dir}/mutator-picker.conf")
+      set_tests_properties(mutator-picker-clean PROPERTIES FIXTURES_SETUP mutator-picker-clean)
+      add_test(NAME native-mutator-picker COMMAND oa-game --game-dir "${OA_GAME_DIR}"
+        --skip-intro --mute --check-mutator-picker
+        --preferences-file "${oa_mutator_picker_dir}/mutator-picker.conf"
+        --user-folder "${oa_mutator_picker_dir}/Open Annihilation"
+        --data-dir "${oa_mutator_picker_dir}/data")
+      set_tests_properties(native-mutator-picker PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+        WORKING_DIRECTORY "${oa_mutator_picker_dir}"
+        ENVIRONMENT "SDL_VIDEO_DRIVER=dummy;SDL_AUDIO_DRIVER=dummy;SDL_RENDER_DRIVER=software"
+        FIXTURES_REQUIRED mutator-picker-clean)
       # A two-map pack installed from the check's own registry after the
       # skirmish list has been shown and the battle room's list has been
       # read. One stem has a space, an apostrophe and parentheses and the

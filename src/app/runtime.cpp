@@ -489,6 +489,8 @@ Runtime::Runtime(
             prepare_registries_check();
         if (options_.check_map_browser)
             prepare_map_browser_check();
+        if (options_.check_mutator_picker)
+            prepare_mutator_picker_check();
         if (options_.check_map_pack_lists)
             prepare_map_pack_lists_check();
         if (options_.check_first_run)
@@ -722,6 +724,11 @@ int Runtime::run() {
         }
         if (options_.check_map_browser) {
             check_map_browser();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_mutator_picker) {
+            check_mutator_picker();
             flush_preferences();
             return 0;
         }

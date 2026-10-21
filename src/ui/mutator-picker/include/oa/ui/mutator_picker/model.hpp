@@ -212,7 +212,7 @@ struct Row {
     std::string line{};    ///< the line under the name
     Tone tone{Tone::hint}; ///< how `line` is drawn
     bool locked{};         ///< true when it cannot be switched on
-    bool to_download{};    ///< true when switching it on downloads it
+    bool to_download{};    ///< true when it is not installed and nothing is queued for it
 };
 
 /// The footer's chip and the sentence beside it.
@@ -412,8 +412,10 @@ set_option(Picker& picker, std::string_view id, std::string_view option, std::st
 /// A row's line is the first that holds: locked (why it cannot be on beside
 /// the On list, as `switch_on` refuses it), an incompatible or failed
 /// verdict, needed by an On mutator, a no-effect verdict, a download, not
-/// installed, the options (and the clash choice when it brings units or
-/// weapons), or the summary.
+/// installed (an Off row), the options (and the clash choice when it brings
+/// units or weapons), or the summary. `to_download` is set when the mutator
+/// is not installed and nothing is queued, whether the row is On or Off,
+/// unless a line above the not-installed line already returned.
 ///
 /// @param picker the picker
 /// @return the rows, On first

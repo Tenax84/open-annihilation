@@ -686,6 +686,10 @@ struct Options {
     // columns and window, its installed maps, its search, the clashing map
     // greyed with its reason, and Select moving SELMAP's selection.
     bool check_map_browser = false;
+    // Opens the mutator picker over the main menu at four window sizes, on
+    // a feed of made-up mutators, and requires the rows, a download, the
+    // turn-off question, a drag, the handed set and the verdict chip.
+    bool check_mutator_picker = false;
     // Installs one map pack from the check's own registry while both map
     // lists already exist. Requires the map whose stem has a space, an
     // apostrophe and parentheses in both lists, under its index title,
