@@ -162,6 +162,11 @@ namespace oa::data::mutator_library {
 struct Listing;
 } // namespace oa::data::mutator_library
 
+namespace oa::data::mutators {
+struct PipelineResult;
+struct ResolvedMutator;
+} // namespace oa::data::mutators
+
 namespace oa::platform::text_font {
 class FontStack;
 } // namespace oa::platform::text_font
@@ -4247,6 +4252,61 @@ class Runtime final : public menu::Host,
     ///
     /// A package change before the first read leaves the listing unmade.
     void reload_installed_mutators() const;
+
+  public:
+
+    /// Replaces the mutators the next matches apply.
+    ///
+    /// The list is top first. An empty list applies nothing. A match already
+    /// running keeps the result it applied.
+    ///
+    /// @param chosen the mutators, top first
+    void choose_match_mutators(std::vector<oa::data::mutators::ResolvedMutator> chosen);
+
+    /// Returns the mutators the next matches apply.
+    ///
+    /// @return the list, top first; empty when none were chosen
+    [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator>
+    chosen_match_mutators() const noexcept;
+
+    /// Returns the running match's mutator result.
+    ///
+    /// @return the result, or null when this match applied none
+    [[nodiscard]] const oa::data::mutators::PipelineResult* match_mutators() const noexcept;
+
+  private:
+
+    /// The mutators chosen for the next matches, and the running match's result.
+    struct MutatorState;
+
+    /// Frees the mutator state.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_mutator_state(MutatorState* state) noexcept;
+
+    /// Runs the chosen mutators for one match, after the pack map is mounted
+    /// and before the match reads its game data.
+    ///
+    /// An empty choice does nothing: no pipeline, no layer and no log line.
+    /// A mutator that does not apply, or a list the pipeline refuses,
+    /// releases the layer and throws std::runtime_error naming it.
+    ///
+    /// @param bootstrap the match being started
+    void apply_match_mutators(const MatchBootstrap& bootstrap);
+
+    /// Resolves the command line's `--mutator` values and chooses them.
+    ///
+    /// An empty list chooses nothing and logs nothing. A value that does not
+    /// resolve throws std::runtime_error naming it, which ends the run with
+    /// status 1.
+    void take_command_line_mutators();
+
+    /// Unmounts the match's mutator layer and forgets its result.
+    ///
+    /// Logs one line when a layer was unmounted or a result was held.
+    /// A quiet no-op when neither is true. When a mounted layer cannot be
+    /// dropped, the result is kept so a later call can try again.
+    void release_match_mutators() noexcept;
 
     /// The name an installed pack gives a map, for a campaign load.
     friend const char* pack_index_title(void* context, const char* map_name);
@@ -16767,6 +16827,11 @@ class Runtime final : public menu::Host,
     // The installed mutators; null until first read.
     mutable std::unique_ptr<MutatorLibraryState, void (*)(MutatorLibraryState*) noexcept>
         mutator_library_state_{nullptr, destroy_mutator_library_state};
+    // The mutators the next matches apply, and the running match's result;
+    // null until a choice is stored.
+    std::unique_ptr<MutatorState, void (*)(MutatorState*) noexcept> mutator_state_{
+        nullptr, destroy_mutator_state
+    };
     // The mounted pack map, the game's names, the fits and the refusals;
     // null until a pack map is first named.
     std::unique_ptr<PackMapState, void (*)(PackMapState*) noexcept> pack_map_state_{

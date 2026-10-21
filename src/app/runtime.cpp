@@ -405,6 +405,10 @@ Runtime::Runtime(
     phase_began = oa::platform::tick_ms();
     start_user_folder();
     mark_phase("user folder", phase_began);
+    // --mutator is resolved once the player's folder is known. A value that
+    // does not name an installed mutator, or an option it cannot take, ends
+    // the run here.
+    take_command_line_mutators();
     // Which copied files differ, for the main menu's notice and for the
     // Library and Settings. A named --game-dir still fills it; the notice
     // stays closed then. A bundle this start's setup already copied and
