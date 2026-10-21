@@ -1,0 +1,17 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+folder=maps;
+extension=ota;
+[*group*]
+{
+[Needs]
+{
+lavaworld=1,1;
+}
+[Changes]
+{
+lavaworld=0;
+waterdamage=30;
+}
+}

@@ -13,6 +13,7 @@ add_library(
   src/hacks.cpp
   src/journal.cpp
   src/loadout.cpp
+  src/map_rules.cpp
   src/maps.cpp
   src/menus.cpp
   src/pipeline.cpp
@@ -111,6 +112,17 @@ if(BUILD_TESTING)
   )
   add_test(NAME data-mutators-maps COMMAND oa-data-mutators-maps-test)
   set_tests_properties(data-mutators-maps PROPERTIES TIMEOUT 30)
+
+  add_executable(oa-data-mutators-map-rules-test tests/map_rules_test.cpp)
+  target_link_libraries(
+    oa-data-mutators-map-rules-test PRIVATE oa-data-mutators oa-formats-tdf oa-test-support
+  )
+  target_compile_definitions(
+    oa-data-mutators-map-rules-test
+    PRIVATE "OA_MUTATORS_MAP_RULES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/map_rules\""
+  )
+  add_test(NAME data-mutators-map-rules COMMAND oa-data-mutators-map-rules-test)
+  set_tests_properties(data-mutators-map-rules PROPERTIES TIMEOUT 30)
   oa_add_game_data_test(data-mutators-maps-data oa-data-mutators-maps-test --data)
   set_tests_properties(data-mutators-maps-data PROPERTIES TIMEOUT 300)
 
