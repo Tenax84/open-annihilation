@@ -36,6 +36,7 @@ using Control = HostDetail::Control;
 const char string_rep_key = 0;
 const char setmetatable_key = 0;
 const char rawset_key = 0;
+const char metatable_guard_key = 0;
 const char xpcall_key = 0;
 
 static_assert(string_length_limit == 65536);
@@ -410,6 +411,35 @@ void aux_sort(lua_State* state, SortIndex lo, SortIndex up, unsigned salt) {
     }
 }
 
+/// Replaces the metatable at `index` with a copy whose own metatable refuses
+/// `__mode`.
+///
+/// The caller's table stays theirs, so a later write to it, including one
+/// through a table shared by several values, cannot make this value weak.
+/// `__index` still points at the table it pointed at. The walk costs
+/// scan_call_charge, as one walk of `pairs` does, since an emptied table can
+/// make it visit every slot it used to hold, and each field copied costs one
+/// unit. No object with a destructor may be alive across this call.
+///
+/// @param state the sandbox state
+/// @param index stack index of the caller's metatable, a table
+void replace_with_guarded_copy(lua_State* state, int index) {
+    index = lua_absindex(state, index);
+    charge(state, scan_call_charge);
+    lua_newtable(state);
+    const int copy = lua_gettop(state);
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0) {
+        charge(state, 1);
+        lua_pushvalue(state, -2);
+        lua_insert(state, -2);
+        lua_rawset(state, copy);
+    }
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &metatable_guard_key);
+    lua_setmetatable(state, copy);
+    lua_replace(state, index);
+}
+
 extern "C" {
 static int host_print(lua_State* state) {
     const int count = lua_gettop(state);
@@ -518,6 +548,24 @@ static int host_string_rep(lua_State* state) {
     return 1;
 }
 
+// The installed metatable's own metatable. Writing __mode would make the
+// table weak, and a weak table drops entries at different times on each machine.
+static int host_mode_newindex(lua_State* state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+    if (lua_type(state, 2) == LUA_TSTRING) {
+        std::size_t length = 0;
+        const char* key = lua_tolstring(state, 2, &length);
+        if (length == 6 && std::memcmp(key, "__mode", 6) == 0)
+            return luaL_error(state, "the key __mode is refused");
+    }
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &rawset_key);
+    lua_pushvalue(state, 1);
+    lua_pushvalue(state, 2);
+    lua_pushvalue(state, 3);
+    lua_call(state, 3, 0);
+    return 0;
+}
+
 static int host_setmetatable(lua_State* state) {
     const int metatable_type = lua_type(state, 2);
     luaL_checktype(state, 1, LUA_TTABLE);
@@ -535,6 +583,7 @@ static int host_setmetatable(lua_State* state) {
         if (!lua_isnil(state, -1))
             return luaL_error(state, "setmetatable: a metatable with __mode is refused");
         lua_pop(state, 1);
+        replace_with_guarded_copy(state, 2);
     }
     lua_rawgetp(state, LUA_REGISTRYINDEX, &setmetatable_key);
     lua_pushvalue(state, 1);
@@ -1112,11 +1161,19 @@ void open_libraries(lua_State* state) {
     lua_rawsetp(state, LUA_REGISTRYINDEX, &string_rep_key);
     lua_pushnil(state);
     lua_setfield(state, -2, "dump");
+    // Sizes and alignment differ between 32-bit and 64-bit builds, and between
+    // Windows and the rest, so a script cannot pack bytes itself.
+    lua_pushnil(state);
+    lua_setfield(state, -2, "pack");
+    lua_pushnil(state);
+    lua_setfield(state, -2, "unpack");
+    lua_pushnil(state);
+    lua_setfield(state, -2, "packsize");
     lua_pushcfunction(state, host_string_rep);
     lua_setfield(state, -2, "rep");
     // The string metatable's __index is this table, so ("x"):find and
     // ("%d"):format use these.
-    install_format_and_pack(state);
+    install_format(state);
     install_patterns(state);
     lua_pop(state, 1);
 
@@ -1129,6 +1186,13 @@ void open_libraries(lua_State* state) {
     lua_rawsetp(state, LUA_REGISTRYINDEX, &rawset_key);
     lua_pushcfunction(state, host_rawset);
     lua_setglobal(state, "rawset");
+
+    lua_newtable(state);
+    lua_pushcfunction(state, host_mode_newindex);
+    lua_setfield(state, -2, "__newindex");
+    lua_pushboolean(state, 1);
+    lua_setfield(state, -2, "__metatable");
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &metatable_guard_key);
 
     lua_pushcfunction(state, host_print);
     lua_setglobal(state, "print");
