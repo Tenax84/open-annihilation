@@ -12,7 +12,8 @@
 // painted over a picture is transparent where nothing changed and the
 // painted colour through the gamma table, opaque, where something did, its
 // bands noted, the same on every pool. A picture fills with one colour, and
-// a gamma table that keeps every level converts as no table does.
+// a gamma table that keeps every level converts as no table does; the bands
+// two frames differ in are found.
 #include "xrgb_conversion.hpp"
 
 #include <SDL3/SDL.h>
@@ -664,6 +665,31 @@ void fill_writes_every_pixel() {
     }
 }
 
+/// The bands two frames differ in are found: none for equal frames, the
+/// band of a changed pixel, the last band a part one, and nothing written
+/// with too few entries.
+void changed_bands_are_found() {
+    constexpr uint32_t width = 13;
+    constexpr uint32_t height = 70; // three bands, the last a part one
+    const uint32_t bands = job_pool::bands_of_rows(height, oa::app::xrgb_band_rows);
+    std::mt19937 random(test_seed + 8);
+    std::vector<uint8_t> previous(static_cast<std::size_t>(width) * height * 3U);
+    for (auto& byte : previous)
+        byte = static_cast<uint8_t>(random());
+    auto rgb = previous;
+    std::vector<uint8_t> changed(bands, 7);
+    oa::app::find_changed_rgb24_bands(rgb.data(), previous.data(), width, height, changed);
+    CHECK((changed == std::vector<uint8_t>{0, 0, 0}));
+    // The last byte of band 0 and the first of the last band.
+    rgb[static_cast<std::size_t>(width) * 32U * 3U - 1U] ^= 1U;
+    rgb[static_cast<std::size_t>(width) * 64U * 3U] ^= 0x80U;
+    oa::app::find_changed_rgb24_bands(rgb.data(), previous.data(), width, height, changed);
+    CHECK((changed == std::vector<uint8_t>{1, 0, 1}));
+    std::vector<uint8_t> short_bands(bands - 1, 7);
+    oa::app::find_changed_rgb24_bands(rgb.data(), previous.data(), width, height, short_bands);
+    CHECK(short_bands == std::vector<uint8_t>(bands - 1, 7));
+}
+
 /// The overlays and the frame through a gamma table that maps every level
 /// to itself are the overlays and the frame with no table: rows wholly
 /// unpainted, rows painted at either end alone and rows painted throughout.
@@ -761,6 +787,7 @@ int main() {
     keyed_overlay_holds_what_was_painted();
     fill_writes_every_pixel();
     identity_gamma_is_no_gamma();
+    changed_bands_are_found();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return EXIT_FAILURE;
@@ -769,7 +796,8 @@ int main() {
         "xrgb conversion: every pixel packed alike on every pool, RGB565 as SDL packs it, "
         "rectangles as the whole frame's, the front end as opaque ARGB8888, "
         "overlays of what was painted, over a base and over a key colour, "
-        "pictures filled with one colour, and a gamma of 1 as no gamma"
+        "pictures filled with one colour, a gamma of 1 as no gamma, "
+        "and the bands two frames differ in"
     );
     return EXIT_SUCCESS;
 }

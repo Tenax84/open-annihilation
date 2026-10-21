@@ -240,6 +240,26 @@ std::array<uint8_t, 3> overlay_key_colour(std::span<const uint8_t> palette) noex
     };
 }
 
+void find_changed_rgb24_bands(
+    const uint8_t* rgb,
+    const uint8_t* previous,
+    uint32_t width,
+    uint32_t height,
+    std::span<uint8_t> changed
+) noexcept {
+    const uint32_t bands = platform::job_pool::bands_of_rows(height, xrgb_band_rows);
+    if (changed.size() < bands)
+        return;
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * 3U;
+    for (uint32_t band = 0; band < bands; ++band) {
+        const uint32_t first_row = band * xrgb_band_rows;
+        const uint32_t end_row = std::min(height, first_row + xrgb_band_rows);
+        const std::size_t at = static_cast<std::size_t>(first_row) * row_bytes;
+        const std::size_t bytes = static_cast<std::size_t>(end_row - first_row) * row_bytes;
+        changed[band] = std::memcmp(rgb + at, previous + at, bytes) != 0 ? 1 : 0;
+    }
+}
+
 void fill_rgb24(uint8_t* rgb, std::size_t pixels, std::array<uint8_t, 3> colour) noexcept {
     if (pixels == 0)
         return;
