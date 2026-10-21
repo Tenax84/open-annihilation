@@ -831,7 +831,9 @@ entries the registry marks `mutator: true`. Today those are
 `limits.units-per-player.default`, `console.game-speed-range.min` and
 `console.game-speed-range.max`. The manifest must list the `hacks` layer.
 Each value is kept in the registry's normal form. A hack the registry does
-not open, or a value it refuses, fails that mutator in the plan phase.
+not open, a value it refuses, a table it cannot read, or a `hacks` table
+whose manifest lacks the layer fails that mutator in the plan phase, as
+`Cause::hack_refused`, and the game starts without it.
 `PipelineInput::check_hacks` runs after the plans are read and before
 files, rules and hooks, so a hack the profile refuses fails the same way
 and the pass runs again without that mutator. Nothing of it is mounted.

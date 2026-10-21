@@ -963,23 +963,6 @@ PlanFault read_rules_part(
     return {};
 }
 
-/// The cause a hacks refusal belongs to.
-///
-/// A missing layer stays undeclared. A table of the wrong shape is an
-/// invalid plan. Every other refusal is a hack the registry does not accept.
-Cause cause_of_hacks(const std::string& problem) {
-    if (problem.find("does not declare the hacks layer") != std::string::npos)
-        return Cause::undeclared_layer;
-    if (problem.starts_with("hacks: hacks must be") ||
-        problem.find("a hacks key must be text") != std::string::npos ||
-        problem.find("a parameter table must be plain") != std::string::npos ||
-        problem.find("a parameter name must be text") != std::string::npos ||
-        problem.find("a parameter value must be a scalar") != std::string::npos) {
-        return Cause::invalid_plan;
-    }
-    return Cause::hack_refused;
-}
-
 /// Turns the hacks table the plan phase found into records, or refuses it.
 PlanFault read_hacks_part(
     lua_State* state, const PlanShape& shape, const oamut::Manifest& manifest, Plan& plan
@@ -1003,7 +986,9 @@ PlanFault read_hacks_part(
     lua_pop(state, 1);
     if (problem.empty())
         return {};
-    return refuse_plan(cause_of_hacks(problem), std::move(problem));
+    // Every refusal of the table's contents, the missing hacks layer among
+    // them, is that mutator's failure alone and never stops the game.
+    return refuse_plan(Cause::hack_refused, std::move(problem));
 }
 
 /// Checks one hook the plan phase found and keeps its reference.

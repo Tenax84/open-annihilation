@@ -53,7 +53,7 @@ enum class Cause : uint8_t {
     engine_version,      ///< the engine is outside the mutator's requirement
     prerequisite_failed, ///< a mutator it requires did not apply
     engine_error,        ///< the engine stopped while running the mutator
-    hack_refused,        ///< the registry or the profile refused a hack
+    hack_refused,        ///< a hack was refused: its table, the registry or the profile
     weapon_ids,          ///< a weapon this mutator brought could not be given an id
 };
 

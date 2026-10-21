@@ -1244,6 +1244,46 @@ void test_refused_hack_spares_the_others() {
     fs::remove_all(scratch);
 }
 
+/// A hacks table in a manifest without the hacks layer fails that mutator
+/// alone, as a refused hack, and the one beside it applies.
+void test_hacks_without_the_layer() {
+    const fs::path scratch = oa::test::make_scratch_directory("D08-no-layer");
+    const fs::path bare = scratch / "ridge-no-layer";
+    const fs::path cap = scratch / "ridge-cap";
+    write_bytes(
+        bare / "oamut.yaml",
+        "oamut: 1\nid: ridge-no-layer\nname: \"Ridge No Layer\"\nversion: \"1.0\"\n"
+        "author:\n  name: \"Ridge Maker\"\ntags: [\"gameplay\"]\nworks-with: [\"*\"]\n"
+        "layers: [\"units\"]\n"
+    );
+    write_bytes(
+        bare / "mutator.lua",
+        "function mutate(ctx)\n"
+        "  return { hacks = { [\"console.game-speed-range\"] = { max = 15 } } }\n"
+        "end\n"
+    );
+    write_hack_mutator(cap, "ridge-cap", "[\"limits.units-per-player\"] = 400");
+    mutators::PipelineInput input = make_input({load_mutator(bare), load_mutator(cap)});
+    input.check_hacks = refuse_unresolved_hacks;
+    oa::AssetStore store = open_ridge();
+    const mutators::PipelineResult result = mutators::run_pipeline(store, input);
+    OA_CHECK(result.refusal.empty());
+    OA_CHECK(result.mutators.size() == 2);
+    if (result.mutators.size() == 2) {
+        OA_CHECK(result.mutators[0].outcome == mutators::Outcome::failed);
+        OA_CHECK(result.mutators[0].phase == mutators::Phase::plan);
+        OA_CHECK(result.mutators[0].cause == mutators::Cause::hack_refused);
+        OA_CHECK(
+            result.mutators[0].message ==
+            "hacks: console.game-speed-range: the manifest does not declare the hacks layer"
+        );
+        OA_CHECK(result.mutators[1].outcome == mutators::Outcome::applied);
+        OA_CHECK(result.mutators[1].hacks.size() == 1);
+    }
+    release(store);
+    fs::remove_all(scratch);
+}
+
 void test_player_option() {
     mutators::PipelineMutator swift = load_id("ridge-swift");
     for (const oamut::Option& option : swift.manifest.options) {
@@ -1708,6 +1748,7 @@ int main() {
     test_player_option();
     test_refused_hack_drops_the_hook();
     test_refused_hack_spares_the_others();
+    test_hacks_without_the_layer();
     test_two_weapon_files_keep_both_weapons();
     test_records_replace_and_base_weapon_id_stays();
     test_download_sections_merge();
