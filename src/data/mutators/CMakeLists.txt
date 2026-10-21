@@ -148,7 +148,7 @@ if(BUILD_TESTING)
             oa-test-game-data
   )
   add_test(NAME data-mutators-menus COMMAND oa-data-mutators-menus-test)
-  set_tests_properties(data-mutators-menus PROPERTIES TIMEOUT 30)
+  set_tests_properties(data-mutators-menus PROPERTIES TIMEOUT 60)
   oa_add_game_data_test(data-mutators-menus-data oa-data-mutators-menus-test --data)
   set_tests_properties(data-mutators-menus-data PROPERTIES TIMEOUT 180)
 

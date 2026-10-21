@@ -174,6 +174,33 @@ const Command mutator_commands[] = {
         run_mutator_import,
         {},
     },
+    {
+        "diff",
+        "--game-dir DIR [--mod-dir DIR] [--map NAME] [--seed N] [--mutator SPEC]... "
+        "[--versus SPEC]... [--allow FILE] [--dump FILE]",
+        "Report what a loadout changes, or compare two loadouts.",
+        "Mounts DIR the way the game does, and --mod-dir as a mod folder over it. Each "
+        "--mutator is a package folder, with options after the last colon, in the same text "
+        "as the game's --mutator. An id with no path is refused: this command reads package "
+        "folders. The mutators run in the order given, through the game's mutation pipeline, "
+        "and --map also runs each mutator's maps hook for that map. A map the game does not "
+        "have is a usage error. --seed is the match seed, "
+        "and it is 0 when left out. The report lists units dropped or added, files added, "
+        "hidden or replaced, every changed field, and build-menu entries added or removed. "
+        "--versus builds a second loadout the same way and compares the two reports. Lines "
+        "that name the same removal or the same menu in two ways are folded together. --allow "
+        "is a file of differences that may remain; each pattern needs a reason above it, and "
+        "a pattern that matches nothing fails the comparison. --allow without --versus is a "
+        "usage error. --dump writes the mutated file list and its fields, and does not change "
+        "the report. Exit 0 when the report was written, and when a comparison has no "
+        "remaining difference and no unused allowance. Exit 1 when a mutator fails, the "
+        "folder is not a usable game, or a comparison does not match. Exit 2 when the "
+        "arguments are not the command's.",
+        0,
+        any_count,
+        run_mutator_diff,
+        {},
+    },
 };
 
 const Command command_table[] = {
@@ -300,7 +327,8 @@ const Command command_table[] = {
         "and mutator check reads a .oamut. A folder without oamut.yaml, or a file of another "
         "kind, is a usage error. Those two subcommands otherwise run the same work as pack and "
         "check. mutator import reads .tam files or a zip and writes one mutator folder per "
-        "mutator.",
+        "mutator. mutator diff mounts a game, runs package folders through the mutation "
+        "pipeline and reports what changed.",
         0,
         0,
         nullptr,

@@ -97,6 +97,12 @@ struct MenusAccess {
 
     static std::size_t writes(const Collections& self) noexcept { return self.writes_.size(); }
 
+    static std::vector<rules::FieldWrite>& field_writes(Collections& self) noexcept {
+        return self.writes_;
+    }
+
+    static std::vector<HookNote>& notes(Collections& self) noexcept { return self.notes_; }
+
     static std::vector<RecordRemoval>& removals(Collections& self) noexcept {
         return self.removals_;
     }
@@ -730,11 +736,96 @@ bool only_placeholders(MenusState& m, uint32_t doc) {
     return true;
 }
 
+/// True when `loaded` is an empty document no pass has added or removed.
+bool quiet_shell(const rules::LoadedDocument& loaded) noexcept {
+    if (loaded.added || loaded.removed || tdf::document_edited(loaded.document.get()))
+        return false;
+    return tdf::child_count(loaded.document.root()) == 0;
+}
+
+/// True when this mutator created the download file and it is still listed as added.
+bool created_by_actor(const MenusState& m, std::string_view path) noexcept {
+    for (const MenuFile& file : m.added) {
+        if (file.mutator == actor(m) && same_path(file.path, path))
+            return true;
+    }
+    return false;
+}
+
+/// Drops the journal of a path, and the menus' record that they created it.
+void forget_created(MenusState& m, std::string_view path) {
+    std::vector<rules::FieldWrite>& writes = MenusAccess::field_writes(*m.collections);
+    writes.erase(
+        std::remove_if(
+            writes.begin(),
+            writes.end(),
+            [&](const rules::FieldWrite& write) { return same_path(write.path, path); }
+        ),
+        writes.end()
+    );
+    std::vector<RecordRemoval>& removals = MenusAccess::removals(*m.collections);
+    removals.erase(
+        std::remove_if(
+            removals.begin(),
+            removals.end(),
+            [&](const RecordRemoval& removal) { return same_path(removal.path, path); }
+        ),
+        removals.end()
+    );
+    std::vector<HookNote>& notes = MenusAccess::notes(*m.collections);
+    notes.erase(
+        std::remove_if(
+            notes.begin(),
+            notes.end(),
+            [&](const HookNote& note) { return same_path(note.path, path); }
+        ),
+        notes.end()
+    );
+    m.created.erase(
+        std::remove_if(
+            m.created.begin(),
+            m.created.end(),
+            [&](const CreatedFile& file) { return same_path(file.path, path); }
+        ),
+        m.created.end()
+    );
+    m.added.erase(
+        std::remove_if(
+            m.added.begin(),
+            m.added.end(),
+            [&](const MenuFile& file) { return same_path(file.path, path); }
+        ),
+        m.added.end()
+    );
+}
+
+/// Puts a created file back to the empty document it started as.
+///
+/// The journal then has no entry for it, and a later entry in this mutator
+/// can use the same path. The store never held the path, so nothing is hidden.
+void discard_created(MenusState& m, uint32_t doc) {
+    rules::LoadedDocument& loaded = documents_of(m).at(doc);
+    const std::string path = loaded.path;
+    forget_created(m, path);
+    if (!loaded.document.parse("\n"))
+        refuse("a build menu could not be written");
+    loaded.added = false;
+    loaded.removed = false;
+    take_snapshot(m, doc);
+}
+
 /// Hides a download file left with nothing to offer.
+///
+/// A file this mutator created and then emptied is dropped instead: the
+/// journal does not add it and does not hide it.
 void hide_document(MenusState& m, uint32_t doc) {
     rules::LoadedDocument& loaded = documents_of(m).at(doc);
     if (loaded.removed)
         return;
+    if (created_by_actor(m, loaded.path)) {
+        discard_created(m, doc);
+        return;
+    }
     loaded.removed = true;
     journal_removal(m, RemovalKind::document, file_name(loaded.path), loaded.path);
 }
@@ -816,8 +907,13 @@ bool path_taken(MenusState& m, const std::string& path) {
     rules::DocumentSet& docs = documents_of(m);
     bill_visits(m, m.download_docs.size());
     for (const uint32_t doc : m.download_docs) {
-        if (same_path(docs.at(doc).path, path))
-            return true;
+        const rules::LoadedDocument& loaded = docs.at(doc);
+        if (!same_path(loaded.path, path))
+            continue;
+        // A file this mutator created and then emptied is free again.
+        if (quiet_shell(loaded))
+            continue;
+        return true;
     }
     bill(m, k_probe_charge);
     return m.store->file_size(path) > 0;
@@ -841,26 +937,44 @@ std::string fresh_path(MenusState& m, std::string_view unit) {
     refuse("a build menu could not be written");
 }
 
-/// Adds an empty download file for `unit` and records it as created.
-uint32_t create_file(MenusState& m, std::string_view unit) {
-    const std::string path = fresh_path(m, unit);
-    rules::DocumentSet& docs = documents_of(m);
-    std::string error;
-    if (!docs.add(path, "\n", &error))
-        refuse(error.empty() ? std::string{"a build menu could not be written"} : error);
-    const std::size_t index = docs.size() - 1;
-    docs.at(index).added = true;
-    refresh_lists(m);
-    const auto doc = static_cast<uint32_t>(index);
+/// Records `doc` as a download file this mutator created.
+void remember_created(MenusState& m, uint32_t doc, std::string_view unit) {
+    rules::LoadedDocument& loaded = documents_of(m).at(doc);
+    loaded.added = true;
     CreatedFile created;
-    created.path = docs.at(index).path;
+    created.path = loaded.path;
     created.unit = fold_copy(unit);
     created.doc = doc;
     m.created.push_back(std::move(created));
     MenuFile added;
     added.mutator = actor(m);
-    added.path = docs.at(index).path;
+    added.path = loaded.path;
     m.added.push_back(std::move(added));
+}
+
+/// Adds an empty download file for `unit` and records it as created.
+///
+/// A path left by a file this mutator created and then emptied is used again.
+uint32_t create_file(MenusState& m, std::string_view unit) {
+    const std::string path = fresh_path(m, unit);
+    rules::DocumentSet& docs = documents_of(m);
+    for (std::size_t index = 0; index < docs.size(); ++index) {
+        rules::LoadedDocument& loaded = docs.at(index);
+        if (!same_path(loaded.path, path) || !quiet_shell(loaded))
+            continue;
+        if (index > static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+            refuse("too many documents");
+        const auto doc = static_cast<uint32_t>(index);
+        remember_created(m, doc, unit);
+        return doc;
+    }
+    std::string error;
+    if (!docs.add(path, "\n", &error))
+        refuse(error.empty() ? std::string{"a build menu could not be written"} : error);
+    const std::size_t index = docs.size() - 1;
+    refresh_lists(m);
+    const auto doc = static_cast<uint32_t>(index);
+    remember_created(m, doc, unit);
     return doc;
 }
 
@@ -973,6 +1087,20 @@ void promote(MenusState& m, std::string_view unit) {
     }
 }
 
+/// When a placeholder holds a file's first place, the removal note must not
+/// name a unit as the one the file marks.
+void settle_first_mark(MenusState& m, uint32_t doc) {
+    const tdf::Block* root = root_of(m, doc);
+    if (root == nullptr || tdf::child_count(root) == 0 || !placeholder(tdf::child_at(root, 0)))
+        return;
+    const std::string& path = documents_of(m).at(doc).path;
+    for (HookNote& note : MenusAccess::notes(*m.collections)) {
+        if (note.kind != HookNoteKind::download_first_entry_changed || !same_path(note.path, path))
+            continue;
+        note.message = "a placeholder now holds the first place, so no unit gains a mark";
+    }
+}
+
 /// Puts placeholders where the hooks' unit removals took visible entries
 /// out of a download file, so no section past the fifth becomes visible and
 /// no other unit takes the first place, then gives back a lost mark.
@@ -1002,15 +1130,17 @@ void repair(MenusState& m, uint32_t doc) {
     if (tdf::child_count(root_of(m, doc)) > 0 && only_placeholders(m, doc))
         hide_document(m, doc);
     take_snapshot(m, doc);
-    if (!first_gone || before.first_unit.empty())
-        return;
-    bill_lookup(m, before.first_unit.size());
-    const std::string* canonical = MenusAccess::indexed(*m.collections, before.first_unit, nullptr);
-    if (canonical == nullptr)
-        return;
-    const std::string spelled = *canonical;
-    if (!marked_now(m, spelled))
-        promote(m, spelled);
+    if (first_gone && !before.first_unit.empty()) {
+        bill_lookup(m, before.first_unit.size());
+        const std::string* canonical =
+            MenusAccess::indexed(*m.collections, before.first_unit, nullptr);
+        if (canonical != nullptr) {
+            const std::string spelled = *canonical;
+            if (!marked_now(m, spelled))
+                promote(m, spelled);
+        }
+    }
+    settle_first_mark(m, doc);
 }
 
 /// Repairs the download files a unit removal touched since the menus last looked.
@@ -1651,6 +1781,7 @@ void drop_targets(MenusState& m, uint32_t doc) {
     if (only_placeholders(m, doc))
         hide_document(m, doc);
     take_snapshot(m, doc);
+    settle_first_mark(m, doc);
 }
 
 bool work_remove(MenusState& m) {
