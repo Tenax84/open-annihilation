@@ -34,6 +34,7 @@ namespace {
 
 constexpr std::string_view kUnreadable = "The mutators this was made with cannot be read.";
 constexpr std::string_view kMissing = "This needs a mutator you do not have: {detail}";
+constexpr std::string_view kPlayedNone = "This was made with mutators, and this run plays none.";
 
 /// The sentence for a mutator this machine does not have, with `detail` in place.
 ///
@@ -106,6 +107,13 @@ std::string Runtime::recorded_mutators_refusal(
         std::cerr << "open-annihilation: mutators: the recorded loadout cannot be read: "
                   << parse_error << '\n';
         return std::string(oa::data::languages::interface_text(kUnreadable));
+    }
+    // A run that plays none refuses a recording that names mutators, before
+    // those packages are looked up. N05's saves ask the same question here.
+    if (options_.no_mutators && !parsed->entries.empty()) {
+        std::cerr << "open-annihilation: mutators: --no-mutators refused the recorded "
+                  << mutator_names(*parsed) << '\n';
+        return std::string(oa::data::languages::interface_text(kPlayedNone));
     }
     const fs::path folder =
         user_folder() / std::string(oa::data::mutator_library::mutators_folder_name);

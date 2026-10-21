@@ -4403,7 +4403,8 @@ class Runtime final : public menu::Host,
     /// installed at that version and package SHA-256. `resolved` then holds
     /// those mutators, in the loadout's order. Text that is not that form
     /// is refused as unreadable. A mutator that is missing or at another
-    /// release is refused by name.
+    /// release is refused by name. A run that plays no mutators refuses a
+    /// loadout that names any, before those packages are looked up.
     ///
     /// @param loadout_text the recording's loadout text
     /// @param[out] resolved the mutators, when the text can be played; may be null

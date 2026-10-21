@@ -9890,6 +9890,14 @@
 	it=Questo sistema legge le fonti HTTPS tramite HTTP.;
 	}
 
+[This was made with mutators, and this run plays none.]
+	{
+	de=Das wurde mit Mutatoren gemacht, und dieser Lauf spielt keine.;
+	fr=Ça a été fait avec des mutateurs, et cette session n'en utilise aucun.;
+	es=Esto se hizo con mutadores, y esta sesión no usa ninguno.;
+	it=Questo è stato fatto con dei mutatori, e questa sessione non ne usa nessuno.;
+	}
+
 [This {device} ran out of space]
 	{
 	de=Diesem {device} ist der Platz ausgegangen;

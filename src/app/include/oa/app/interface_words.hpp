@@ -255,6 +255,7 @@ inline constexpr std::string_view interface_words[] = {
     "This map is for the TA demo.",
     "This map is for {name}.",
     "This needs a mutator you do not have: {detail}",
+    "This was made with mutators, and this run plays none.",
     "Total Annihilation",
     "Touch",
     "Try again",

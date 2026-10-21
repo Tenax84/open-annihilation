@@ -96,7 +96,6 @@ void NetworkPlay::start_demo_playback() {
                 throw std::runtime_error(refusal);
         }
     }
-    const std::size_t playback_mutator_count = playback_mutators.size();
     const bool ignore_unit_table = staged ? !staged->strict : net_options().demo_ignore_unit_table;
     const auto& recording = session->playback.demo;
     const auto& players = recording.players;
@@ -166,7 +165,9 @@ void NetworkPlay::start_demo_playback() {
     if (!extra.empty())
         table_line += extra.size() > kReportedExtraDefinitions ? ", ...)" : ")";
     std::cerr << table_line << '\n';
-    std::cerr << "demo mutators: " << playback_mutator_count << " applied\n";
+    const oa::data::mutators::Loadout* applied = runtime_.match_loadout();
+    const std::size_t applied_count = applied == nullptr ? 0 : applied->entries.size();
+    std::cerr << "demo mutators: " << applied_count << " applied\n";
     if (!check.identical && !ignore_unit_table)
         throw std::runtime_error(
             "demo playback needs the recording's unit definitions: " + table_line
