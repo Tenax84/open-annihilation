@@ -3175,6 +3175,12 @@ bool run_pass(
         }
         journal.entries.push_back(std::move(entry));
     }
+    // A download file the build menus created is a file the requesting mutator added.
+    for (const MenuFile& file : build_menus->added_files()) {
+        const std::optional<uint16_t> mutator = index_of(ids, file.mutator);
+        if (mutator.has_value())
+            journal.entries.push_back(file_entry(*mutator, file.path, Change::added, Phase::hooks));
+    }
     journal_record_touches(journal, report, touches, documents, writers, menus);
 
     for (const oa::MutatorLayerEntry& entry : spec.entries) {
