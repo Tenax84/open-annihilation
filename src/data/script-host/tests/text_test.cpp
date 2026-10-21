@@ -173,30 +173,50 @@ void format_keeps_finite_text_and_refuses_the_rest() {
     OA_CHECK(equal.present);
     OA_CHECK(equal.value);
 
-    const char* refused_source[] = {
-        "string.format('%p', {})\n",
-        "string.format('%.3f', 0/0)\n",
-        "('%g'):format(1/0)\n",
+    // The refusals sit inside the charged copy of string.format, so each is
+    // raised at the script's own line, a method call's included.
+    struct Refusal {
+        const char* source;
+        const char* message;
+        int line;
     };
-    const char* refused_message[] = {
-        "string.format: %p would show a memory address",
-        "string.format: cannot write nan or an infinity with %f; test the number first, or use "
-        "tostring",
-        "string.format: cannot write nan or an infinity with %g; test the number first, or use "
-        "tostring",
+
+    const char* const address = "string.format: %p would show a memory address";
+    const Refusal refusals[] = {
+        {"string.format('%p', {})\n", address, 1},
+        {"local t = {}\nreturn ('%-3p'):format(t)\n", address, 2},
+        {"string.format('%.3f', 0/0)\n",
+         "string.format: cannot write nan or an infinity with %f; test the number first, or use "
+         "tostring",
+         1},
+        {"('%g'):format(1/0)\n",
+         "string.format: cannot write nan or an infinity with %g; test the number first, or use "
+         "tostring",
+         1},
+        {"return ('%a'):format(-(0/0))\n",
+         "string.format: cannot write nan or an infinity with %a; test the number first, or use "
+         "tostring",
+         1},
+        {"local x = 1\nreturn string.format('%d %5.1E', x, -1/0)\n",
+         "string.format: cannot write nan or an infinity with %E; test the number first, or use "
+         "tostring",
+         2},
     };
-    for (int index = 0; index < 3; ++index) {
+    for (const Refusal& refusal : refusals) {
         Package own;
         host::ScriptError refused;
         auto box = open_box(own, refused);
         if (!box)
             continue;
-        OA_CHECK(!run_source(*box, own, refused_source[index], refused));
+        OA_CHECK(!run_source(*box, own, refusal.source, refused));
         OA_CHECK(refused.kind == host::ErrorKind::runtime);
-        OA_CHECK(refused.line == 1);
-        OA_CHECK(refused.message == refused_message[index]);
-        if (refused.message != refused_message[index])
-            std::fprintf(stderr, "format refuse: [%s]\n", refused.message.c_str());
+        OA_CHECK(refused.line == refusal.line);
+        OA_CHECK(refused.message == refusal.message);
+        if (refused.message != refusal.message || refused.line != refusal.line) {
+            std::fprintf(
+                stderr, "format refuse: line %d [%s]\n", refused.line, refused.message.c_str()
+            );
+        }
     }
 }
 

@@ -315,9 +315,25 @@ void string_rep_obeys_the_limit() {
     OA_CHECK(repeated.first.empty());
     OA_CHECK(repeated.second.empty());
 
+    int capped = 0;
+    host::CallHooks cap_hooks;
+    cap_hooks.context = &capped;
+    cap_hooks.read = read_length;
+    const bool at_cap = run_source(
+        *sandbox,
+        package,
+        "cap.lua",
+        "return #string.rep(\"a\", 65536)\n",
+        "plan",
+        error,
+        &cap_hooks
+    );
+    OA_CHECK(at_cap);
+    OA_CHECK(capped == 65536);
+
     const char* sources[] = {
-        "local marker = 1\nstring.rep(\"a\", 1048577)\n",
-        "local marker = 1\nstring.rep(\"a\", 524289, \"b\")\n",
+        "local marker = 1\nstring.rep(\"a\", 65537)\n",
+        "local marker = 1\nstring.rep(\"a\", 32769, \"b\")\n",
     };
     for (const char* source : sources) {
         Package own;
@@ -326,12 +342,11 @@ void string_rep_obeys_the_limit() {
         if (!limited)
             continue;
         OA_CHECK(!run_source(*limited, own, "mutator.lua", source, "plan", refused));
-        OA_CHECK(refused.kind == host::ErrorKind::runtime);
+        OA_CHECK(refused.kind == host::ErrorKind::string_length);
         OA_CHECK(refused.chunk == "mutator.lua");
         OA_CHECK(refused.line == 2);
         OA_CHECK(
-            refused.message ==
-            "string.rep would make a string of 1048577 bytes; the most is 1048576"
+            refused.message == "string.rep would make a string of 65537 bytes; the most is 65536"
         );
     }
 }

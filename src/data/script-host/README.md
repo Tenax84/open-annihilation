@@ -55,7 +55,8 @@ moves that state; the moved-from object has no state.
   `xpcall` returns the error unchanged and does not run the handler the
   script passed. A handler that loops, or one that catches errors with
   `pcall`, cannot keep the phase alive. An instruction error or a memory
-  error is reported even when the script's own `pcall` caught it.
+  error is reported even when the script's own `pcall` caught it, including
+  when an allocation spent the allowance.
 - No C++ object with a destructor is alive across a Lua raise. `install`,
   `push`, `read` and the `run_host` work may raise and must not throw.
 - The instruction allowance is per phase and is not a clock. The memory cap
@@ -69,6 +70,61 @@ moves that state; the moved-from object has no state.
   four functions return the same values, of the same types, and raise the
   same errors, as Lua 5.4.9. A call on a string value, such as `("x"):find`,
   uses the same functions.
+- A new string longer than 40 bytes counts against that same allowance: one
+  unit per 32 bytes of its length, rounded up. A string of 40 bytes or fewer
+  is shared, and making one allocates only when no live copy exists, which
+  depends on when the collector last ran, so it is not counted; the
+  instruction or call that makes it bounds that work. The header in front of
+  the bytes is not counted, and neither is any other block. Every count
+  depends only on the script and the values the host gives it, so the same
+  script spends the same count on every build and every run. Freeing a
+  string does not give the units back.
+- `string.byte` counts one unit per byte it returns. `utf8.codepoint` counts
+  one per code point it returns. `utf8.codes` counts one unit per 32 bytes
+  the iterator walks, including continuation bytes, on every call, including
+  the call that finds the end. `utf8.len` and `utf8.offset` count one unit
+  per 32 bytes of the interval they walk. A plain `string.find` counts one
+  unit per 32 bytes each scan and each comparison examines, as the search
+  goes. `require` counts one unit per caller it walks.
+- `table.move`, `table.insert`, `table.remove`, `table.concat`,
+  `table.pack` and `table.unpack` count one unit per element they move or
+  visit. A range
+  longer than the default memory cap could hold, one element per value the
+  interpreter stores, is refused before the call loops. The message names
+  the function, the number of elements and that limit. `table.sort` counts
+  every comparison, including a comparison function written in C. Two
+  strings cost one unit per byte of the two lengths, and at least 2 units.
+  Any other comparison costs 2 units, about the time of one or two
+  instructions. Within these limits the calls return the same values and
+  raise the same errors as Lua 5.4.9.
+- `next` counts 4096 units per call. `pairs` counts 4096 units for the walk
+  that collects the keys, and each ordering of two keys costs the same as a
+  `table.sort` comparison. `rawequal` of two strings counts one unit per 32
+  bytes of the two lengths. `tonumber` of a string counts one unit per 32
+  bytes of that text. `string.format` counts one unit per format byte, 2
+  units per value it converts, and one unit per byte of each text it copies
+  with `%s` or `%q`. `utf8.char` counts one unit per code point.
+  `math.max` and `math.min` count a comparison, as `table.sort` does, for
+  each value after the first. `warn` counts 2 units per argument.
+- `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `string.format`,
+  the charged `table` and `utf8` calls and `utf8.char` are copies of Lua
+  5.4.9's with the count inside. The script calls them directly, so an
+  error names the function, numbers the arguments of a method call such as
+  `("%d"):format(x)` as Lua does, and starts with the script's chunk and
+  line. `string.format` also holds the two refusals under Text.
+- No string may be longer than 65,536 bytes. Every string the interpreter
+  creates passes the allocator, and Lua has no switch that stops a longer
+  one, so the cap is applied there. The header in front of the bytes differs
+  by build, so each state measures it once, from one 200-byte string, before
+  the libraries open. A longer string ends the phase with `string_length`.
+  The message names the size and 65,536, at the line that made the string.
+  `string.rep`, `table.concat` and `string.gsub` refuse earlier with the
+  same error when they can see the size coming. `print` keeps at most one
+  byte past its own 16 KiB line, so a long value is cut instead of refused.
+  A `pcall` that catches the refusal does not let the phase continue. A
+  value the host pushes counts as a string too, so text longer than 65,536
+  bytes fails the script that receives it. A string literal that long fails
+  the chunk that contains it.
 - The sources in `third_party/lua` are unchanged. Every string hash uses one
   constant seed, `0x4F414C55` (the letters OALU), so two states walk the same
   table in the same order wherever they sit. `table.sort` does not draw a
@@ -123,10 +179,11 @@ sees, and a key whose value became nil is skipped. Keys added during the
 walk are not visited. A table whose keys include a table, a function or any
 other type with no fixed order raises, and tells the script to keep those
 values in a sequence and walk it with `ipairs`. A table with a `__pairs`
-metamethod keeps that metamethod. `ipairs` is unchanged. `next` is unchanged
-too, so `next(t) == nil` is still the emptiness test, and its order is not
-fixed: it depends on the table's history, and a key that is itself a table
-has no order that two machines share. A mutator that lets the last write in
+metamethod keeps that metamethod. `ipairs` is unchanged. `next` returns the
+same key the interpreter would, so `next(t) == nil` is still the emptiness
+test, and its order is not fixed: it depends on the table's history, and a
+key that is itself a table has no order that two machines share. The call
+is charged as the invariants describe. A mutator that lets the last write in
 a loop win, or that joins text in loop order, has to use `pairs` or a
 sequence. Depending on `next` builds different game data on different
 machines.
@@ -149,7 +206,8 @@ kind, a colon and `hidden`, for example `table: hidden`. It does not print
 where the value sits. `__tostring` is used when the metatable has one, and
 `__name` is used as the kind when it has no `__tostring`.
 
-`string.format` is Lua's own format, with two refusals. `%p` is refused,
+`string.format` is the charged copy of Lua's own format, with two
+refusals inside it, each raised at the script's line. `%p` is refused,
 because it would show where a value sits. `%a`, `%e`, `%f` and `%g`, in
 either case, are refused when the number is a NaN or an infinity; the
 script tests the number first, or uses `tostring`. A finite number, `%q`,
@@ -202,15 +260,49 @@ the allowance stops with an instruction-budget error, including when the
 script catches that error itself, and that a long match which stays inside
 the allowance adds to `instructions_used`.
 
+`data-script-host-c-work` compares every copied call with Lua's own
+results and error messages, chunk and line included, method calls among
+them, and checks that a loop or an impossible range in each one stops the
+phase. That includes a plain find, a direct `utf8.codes` call, `table.sort`
+of a C comparison and of long zero-filled strings, an allocation loop
+caught with `pcall`, `string.format` copying long texts before an error
+the script catches, and `table.pack` of 300,000 values. It checks that a
+loop of short strings costs the same with an empty heap and with 20,000
+live tables, and that walking, clamping, formatting and sorting the fields
+of 400 units stays a small part of the allowance. It also checks that
+`utf8.codes` returns one function, that the pack functions stay absent,
+and runs a phase that reads several hundred small tables and rewrites
+their text.
+
+`data-script-host-string-length` checks that a string of 65,536 bytes is
+kept for each way of making one, and that each way of making a longer one
+stops with `string_length`, naming the place it happened. It also checks
+that catching the refusal does not let the phase continue, and that filling
+memory with shorter strings is still a memory error.
+
 `data-script-host-text` checks the float spellings, `hidden` in place of
 where a value sits, the `string.format` refusals, the absent pack functions,
 C collation, and that no route makes a weak table.
 
 ## Limitations
 
-Some work inside a C function is bounded by memory, not by the instruction
-count: `table.sort` with no comparison function, `table.concat`, and
-`string.rep` up to its cap. A `__gc` entry added to the installed metatable
-after `setmetatable` is not caught. `instructions_used` counts Lua
-instructions in steps of the check interval, so a short phase can report
-zero; pattern steps are counted one by one.
+Comparing two strings with `<` or `==` is one instruction of the
+interpreter, and the library charges above do not see it. Equality of two
+65,536-byte strings takes about 1.3 microseconds on the machine where this
+was measured. Ordering two such strings of ordinary bytes takes about 3.3
+microseconds. Ordering two strings of that length filled with zero bytes
+takes about 480 microseconds, because each zero ends a segment that is
+ordered on its own. A phase cannot build a longer string. `table.sort` and
+`pairs` charge a comparison of two strings by their lengths, one unit per
+byte, so a sort of those zero-filled strings stops inside the default
+allowance. A bare `<` of two zero-filled strings does not. Other single
+steps of the interpreter are not charged either: a call or `select` with
+hundreds of thousands of values passed through `...`, a chain of thousands
+of `__index` tables, arithmetic on a long string of spaces (`s + 0`), and a
+table that grows and shrinks its parts again and again. `next` on a table
+emptied after millions of entries does more work than its 4096 units pay
+for. A limit on a phase's real time is still to come for those. A `__gc`
+entry added to the installed metatable after `setmetatable` is not caught.
+`instructions_used` counts Lua instructions in steps of the check interval,
+so a short phase can report zero; pattern steps, string lengths, scans and
+table work are counted in the units above.

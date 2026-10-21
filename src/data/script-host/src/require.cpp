@@ -149,7 +149,9 @@ void mark_loading(Control* control) {
 int require_frames(lua_State* state, lua_CFunction require_function) {
     int found = 0;
     lua_Debug activation;
+    int walked = 0;
     for (int level = 0; lua_getstack(state, level, &activation) != 0; ++level) {
+        ++walked;
         lua_getinfo(state, "f", &activation);
         const bool is_require =
             lua_iscfunction(state, -1) != 0 && lua_tocfunction(state, -1) == require_function;
@@ -157,6 +159,7 @@ int require_frames(lua_State* state, lua_CFunction require_function) {
         if (is_require)
             ++found;
     }
+    charge(state, static_cast<uint64_t>(walked));
     return found;
 }
 
@@ -230,12 +233,15 @@ static int host_require(lua_State* state) {
                             ? ""
                             : reinterpret_cast<const char*>(control->read_buffer.data());
     control->active_chunk_name = control->chunk_at_path;
+    control->loading_chunk = true;
     const int loaded =
         luaL_loadbufferx(state, bytes, control->read_buffer.size(), control->chunk_at_path, "t");
+    control->loading_chunk = false;
     if (loaded != LUA_OK) {
         --control->loading_count;
         if (loaded == LUA_ERRMEM) {
-            control->allocation_refused = true;
+            if (!control->string_refused)
+                control->allocation_refused = true;
             return lua_error(state);
         }
         remember_load_error(control, state);
