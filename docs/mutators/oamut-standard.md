@@ -45,20 +45,18 @@ The principles that follow:
 3. **The same result on every machine.** The sandbox's numbers, the order
    it walks tables, and the text it writes do not depend on the machine.
    A real-time limit can stop a script on a slow machine and let it finish
-   on a fast one. The loadout digest refuses a match whose machines
-   disagree.
+   on a fast one. Every machine must produce the same result.
 
 ## 2. The package
 
 A mutator is one `.oamut` file, or the folder that file unpacks to. The
 archive is the zip every package kind uses. The names it may hold, and the
-limits on its size, are that zip's. They are named below where a mutator
-meets them. They are not defined a second time.
+limits on its size, are
+[Packages](../registries/packages.md). They are not defined a second time.
 
 The manifest is the strict YAML a mod profile uses
 ([3.3 Strict YAML rules](../mods/oamod-standard.md#33-strict-yaml-rules)).
 One document, one top-level mapping, no anchors and no block scalars.
-`oamut.yaml` is at most 256 KiB.
 
 ### 2.1 Folder layout
 
@@ -92,32 +90,30 @@ steady-hands/
 
 ### 2.2 The .oamut file
 
-`oa-tool mutator pack FOLDER` packs a folder whose top holds `oamut.yaml`.
-`oa-tool pack FOLDER` does the same when it finds that manifest. The
-manifest is the first entry. Every other file follows in byte order of its
-path. A file whose extension, without regard to case, is `png`, `jpg`,
-`jpeg`, `gif`, `ogg`, `mp3`, `zip`, `gz`, `bz2`, `xz`, `7z`, `oamod`,
-`oalang` or `oamap`, and an empty file, is stored. Every other file is
-deflated. The same files give the same bytes. The default name is
-`<id>-<version>.oamut`, written in the current folder. `--out FILE` names
-another file. `--force` replaces a file that is already there.
-`--game-dir` with a mutator is a usage error.
+`oa-tool mutator pack` and `oa-tool mutator check` are the pack and check
+commands limited to a mutator. How a package is packed, which files are
+stored, the default name, `--out`, `--force`, `--game-dir`, the problem
+lines and the report are [Packages](../registries/packages.md). A mutator's
+revision in that report is null.
 
-Before the file is written, the manifest is read, every Lua file is
-compiled, and every rule file is parsed. Nothing is run, and no rule is
-applied. A problem is printed and the file is not written. A manifest
-problem reads `oamut.yaml:<line>:<column>: <key>: <message>`. A script or
-a rule problem reads `<path>:<line>: <message>`.
+What those commands add for a mutator:
 
-`oa-tool mutator check FILE` checks a `.oamut` and reports the facts a
-catalogue lists. `oa-tool check FILE` does the same for a file it
-recognises as a mutator. `--json` prints one object. Without it, each fact
-is a `key: value` line and the last line is `result: ok` or
-`result: refused`. The command exits 0 when an install would accept the
-package, and 1 when an install would refuse it. A file of another kind is
-a usage error for `mutator check`. The facts, and the way they are
-spelled, are [Packages](../registries/packages.md). A mutator's revision
-in that report is null: a mutator package has no packaging revision.
+- They compile the entry script and every file under `lua/` whose name
+  ends `.lua`. A `.lua` file under `files/` is not compiled. The
+  installer's size and precompiled-source checks still cover every
+  `.lua` file, as [2.4 Size limits](#24-size-limits) says.
+- They parse every file under `rules/` whose name ends `.sm`. A rule file
+  larger than 4 MiB is refused before it is parsed. The rule reader
+  refuses a text longer than 1 MiB, so a rule file past 1 MiB is refused
+  either way. A warning does not refuse the package. An error does.
+- Neither command runs a script or applies a rule.
+- `mutator check` exits 1 when the installer would refuse the package, and
+  also when one of those scripts does not compile or a rule file has an
+  error. The installer would accept a package whose only fault is a
+  script that does not compile or a rule file that has an error.
+- `--out` must name a file ending in `.oamut`. After pack writes the file,
+  it reads that file back with the installer and refuses a package the
+  installer refuses.
 
 ### 2.3 Where it installs
 
@@ -132,42 +128,19 @@ The revision stored for an installed mutator is 0.
 
 ### 2.4 Size limits
 
-These limits are the ones the installer applies to every package, a
-mutator included. Crossing one refuses the package before anything is
-written.
+The limits every package meets, a mutator included, are
+[Packages](../registries/packages.md). That covers the manifest's size,
+the archive's size, the spare path length, and the name, link, encryption
+and compression rules.
 
-| Limit | Value |
-| --- | --- |
-| Manifest | 256 KiB |
-| Folders, including folders a path only passes through | 16,384 |
-| Unpacked size | 4 GiB |
-| Unpacked size against the file's own size | Above 64 MiB unpacked, and more than 200 times the package file, is refused |
-| Free space | The unpacked files, and 64 MiB more |
-| One path part | 1 to 255 bytes |
-
-A name that cannot be unpacked on every system is refused: UTF-8, no
-control character, no `< > : " | ? * \`, not ending in a dot or a space,
-and not a name Windows keeps for a device. Two names that differ only in
-the case of their ASCII letters are refused, and so is a file and a folder
-of one name. A link, a special file, an encrypted entry, and an entry
-packed otherwise than stored or deflated, are refused. An id that names a
-device on Windows is refused. An unpacked path longer than the system
-opens, less 16 characters, is refused.
-
-A mutator also meets these limits:
+A mutator also meets these limits. The installer applies them to every
+`.lua` file, including one under `files/`:
 
 | Limit | Value |
 | --- | --- |
 | One Lua file, the entry included | 1 MiB. An empty file is source. A file whose first byte is `0x1B` is precompiled Lua and is refused. |
 | The icon, when named | A PNG, square, at least 1 pixel and at most 256 pixels on a side, and at most 256 KiB. Every icon failure shares one sentence. |
 | `requires.engine`, when written | This build's version meets the range. The refusal names the range and this build. |
-
-`oa-tool mutator check` and `oa-tool mutator pack` add two checks the
-installer does not. Each Lua file must compile. Each rule file must parse,
-and a rule file larger than 4 MiB is refused before it is parsed. The rule
-reader itself refuses a text longer than 1 MiB, so a rule file past 1 MiB
-is refused either way. A warning in a rule file does not refuse the
-package. An error does. Neither command runs a script or applies a rule.
 
 ## 3. The manifest
 
@@ -196,10 +169,10 @@ a tag problem, the four-tag limit is not reported again.
 | `version` | string | yes | A mutator version, written in quotes, at most 32 bytes | One to three parts joined by `.`, each a decimal from 0 to 65535 with no leading zero. A plain number, and a plain scalar such as `2.0.1`, are refused. |
 | `author` | mapping | yes | `name`, and optionally `email` | Who wrote the mutator. |
 | `author.name` | string | yes | 1 to 128 bytes | The author or team. |
-| `author.email` | string | no | At most 254 bytes | One `@`, text on both sides, a dot in the part after it, and no space or control character. |
+| `author.email` | string | no | At most 254 bytes | One `@`, text on both sides, a dot in the part after it, that part not starting or ending with `.`, and no space or control character. |
 | `description` | string | no | 1 to 2,000 bytes | A line feed is allowed. No other control character. The first line, cut to 200 bytes on a UTF-8 boundary, is the summary the Library and the catalogue show. |
 | `homepage` | string | no | 1 to 256 bytes | An `http` or `https` address, the scheme in either case, with at least one byte after the scheme and no space or control character. |
-| `icon` | string | no | A package path ending `.png` | Parts separated by `/`. No part is empty, `.` or `..`. No leading `/` or `\`, and no `\` anywhere. The installer checks the pixels. |
+| `icon` | string | no | A package path ending `.png` | The ending matches in either case. Parts separated by `/`. No part is empty, `.` or `..`. No leading `/` or `\`, and no `\` anywhere. The installer checks the pixels. |
 | `tags` | list of strings | yes | 1 to 4 | Each tag is lower-case kebab-case of 1 to 32 bytes. None is repeated. An empty list is refused. The key is required, so the list holds one to four tags. |
 | `works-with` | list of strings | yes | 1 to 32 | Conditions, below. No id twice. |
 | `requires` | mapping | no | Only `engine` and `mutators` | Anything else in the mapping is refused. |
@@ -261,15 +234,17 @@ for these eight ids, matched exactly:
 | `statistics` | Statistics |
 | `economy` | Economy |
 | `commanders` | Commanders |
-| `new-units` | New units |
-| `disable` | Units turned off |
+| `new-units` | New Units |
+| `disable` | Disable |
 | `gameplay` | Gameplay |
-| `ai` | Computer players |
+| `ai` | AI |
 | `maps` | Maps |
 
 Any other id is shown as it was written, with no icon of its own. When the
-manifest names no `icon`, the Library draws the icon of the first of these
-ids the mutator carries.
+manifest names no `icon`, the badge uses one tag: the catalogue listing's
+tags when that list has any, and otherwise the installed manifest's tags.
+The icon is the first tag's, when that id is one of the eight. An id
+outside the eight shows no icon, and a later tag is not tried.
 
 ### 3.3 Layers
 
@@ -295,8 +270,9 @@ this text. The files a `files` layer may add are
 ### 3.4 Options
 
 `options` is a mapping of at most 16 entries. The key is the option id: a
-Lua name, `[a-z][a-z0-9_]*`, of 1 to 32 bytes, so a script reads
-`ctx.options.<id>`. Each option is a mapping. The keys any option may hold
+Lua name, `[a-z][a-z0-9_]*`, of 1 to 32 bytes. The reader accepts the id
+even when it is a Lua keyword, such as `end`. Each option is a mapping.
+The keys any option may hold
 are `type`, `label`, `default`, `values`, `labels`, `min`, `max` and
 `step`. A key its type does not use is refused.
 
@@ -316,9 +292,10 @@ run of letters, then hyphen-joined parts of letters and digits, in either
 case. Each language is a mapping of optional `name`, `description`,
 `options` and `labels`. Any other key is refused.
 
-`name` is 1 to 64 bytes. `description` follows the description rule.
-`options` maps an option id to a label of 1 to 64 bytes. `labels` maps a
-choice option's id to a list of value labels, one of 1 to 64 bytes for
+`name` is 1 to 64 bytes with no control character. `description` follows
+the description rule. `options` maps an option id to a label of 1 to 64
+bytes with no control character. `labels` maps a choice option's id to a
+list of value labels, one of 1 to 64 bytes with no control character for
 each value, in the same order as `values`. An option id the manifest does
 not define is refused, and so are value labels for an option that is not a
 choice.
@@ -332,12 +309,13 @@ and `files`.
 | --- | --- |
 | `name` | 1 to 128 bytes, no control character. The TA: Mutation name. |
 | `prefix` | `"{}"` or `"}{"`. |
-| `compatibility` | 1 to 8 codes of 1 to 8 letters and digits, or the one entry `*`. |
-| `files` | 1 to 16 file names of 1 to 255 bytes, with no `/` or `\`. |
+| `compatibility` | 1 to 8 codes. Each code is 1 to 8 letters and digits, or `*`. `*` may sit beside other codes. |
+| `files` | 1 to 16 file names of 1 to 255 bytes, with no control character and no `/` or `\`. |
 
 `oa-tool mutator import` reads TA: Mutation `.tam` files and zips and
 writes this list. Its warnings and its flags are
-[Packages](../registries/packages.md) and the tool's own help.
+[the tool](../../tools/oa-tool/README.md) and
+[the importer](../../src/data/mutator-import/README.md).
 
 ### 3.7 A full example
 
@@ -357,12 +335,12 @@ homepage: "https://example.org/steady-hands"
 icon: icon.png
 tags: [economy, gameplay]
 works-with:
-  - "ridge >= 1"
+  - ridge >= 1
   - ta-3.1c
 requires:
   engine: ">= 0.8.5"
   mutators:
-    - "long-reach >= 1"
+    - long-reach >= 1
 conflicts-with:
   - long-shadows
 layers: [units, files]
@@ -400,10 +378,13 @@ legacy:
     files: ["steady.sm"]
 ```
 
-A range is quoted, as `"ridge >= 1"` is, because a plain `>` starts a
-block scalar, which the strict reader refuses. A description that holds a
-line break is one double-quoted string, with `\n` for the break. A block
-scalar (`|` or `>`) is refused. The summary is `Builders take their time.`
+A plain value such as `ridge >= 1` is read as text. A value is quoted
+when it would otherwise be something else: a leading `>` is a block
+scalar, so `requires.engine` is quoted; `*` is an alias unless it is
+quoted; a range that holds a comma is quoted when it sits in a flow
+list. A description that holds a line break is one double-quoted string,
+with `\n` for the break. A block scalar (`|` or `>`) is refused. The
+summary is `Builders take their time.`
 
 ## 5. The Files layer
 
@@ -440,8 +421,9 @@ Inside a folder that exists:
   that folder's archives. Listings are sorted by the folded path, so the
   machine's own directory order never decides a file.
 - A path this mutator already added from an earlier folder is replaced, with
-  no note. A path an earlier mutator added is replaced, and the note names
-  the later mutator as the one that won.
+  no note. A path an earlier mutator added is replaced whole, except a unit
+  file, a weapon file and a download file, which a coming change reads as
+  records.
 
 The layer lists paths in mutator order and, within a mutator, in the order
 the paths were first added. Each folder's new paths are sorted by the
@@ -465,9 +447,9 @@ number of whole segments, including none. `**` anywhere but as a whole
 segment is refused.
 
 A pattern is refused when it is empty, longer than 256 bytes, absolute,
-holds `:`, holds a NUL, holds an empty, `.` or `..` segment, starts with
-`.backup`, or holds more than 16 `*` and `?` counted together. A refused
-pattern matches nothing.
+holds `:`, holds a NUL, holds an empty, `.` or `..` segment, has a first
+segment that is exactly `.backup` in any case, or holds more than 16
+`*` and `?` counted together. A refused pattern matches nothing.
 
 | Limit | Value | What it counts |
 | --- | --- | --- |
@@ -479,26 +461,27 @@ pattern matches nothing.
 | Masks in the whole layer | 2,048 | Every kept mutator's masks |
 | Paths in the whole layer | 65,536 | Served and hidden paths together |
 | Archives in the whole layer | 512 | Archives a kept entry still reads |
-| Bytes held in memory | 256 MiB | The content the layer keeps in memory, taken together, when the layer is mounted |
+| Bytes held in memory | 256 MiB | Content the layer holds in memory. File bytes read from disk or from an archive are not counted here. |
 
 Crossing a plan or folder limit fails that mutator. Crossing the mask,
 path or archive limit of the whole layer fails the mutator that would
-cross it. The 256 MiB bound is applied when the layer is mounted.
+cross it. The 256 MiB bound is applied when the layer is mounted, and
+only to content held in memory. Crossing it refuses the mount.
 
 ### 5.2 The allow-list
 
 Every path an add contributes, and every mask, is judged against one
-table. The default is to refuse. A path of 4,096 bytes or more is
-over-long. An empty path, a path that holds a NUL, an absolute path, a
-path that holds `:`, and a path with an empty, `.` or `..` segment, are
-refused.
+table. The default is to refuse. A path longer than 4,096 bytes is
+over-long. A path of 4,096 bytes is not. An empty path, a path that holds
+a NUL, an absolute path, a path that holds `:`, and a path with an empty,
+`.` or `..` segment, are refused.
 
 Names are compared without ASCII case. `/` and `\` both separate segments.
-A variant folder `<directory>-<variant>` follows its base folder. The seven
-directory names a mod may rename come from the active layout. In the base
-game they are `units`, `Weapons`, `gamedata`, `ai`, `guis`, `unitpics` and
-`download`. A renamed directory replaces the base name, and the base name
-is then an unknown folder.
+A first segment `<folder>-<variant>` follows that folder's row, for every
+folder in the table. The seven directory names a mod may rename come from
+the active layout. In the base game they are `units`, `Weapons`,
+`gamedata`, `ai`, `guis`, `unitpics` and `download`. A renamed directory
+replaces the base name, and the base name is then an unknown folder.
 
 A folder the table allows as a whole may use a wildcard. A folder the
 table allows file by file must name one file in the mask: a wildcard there
@@ -506,11 +489,11 @@ is refused. A mask with no wildcard is judged as that one path.
 
 | Path | Verdict | Why |
 | --- | --- | --- |
-| `units/`, and a variant | allowed, the whole tree | Read again for every match. The layout's units folder. |
-| `Weapons/`, and a variant | allowed, the whole tree | Read again for every match. The layout's weapons folder. |
-| `ai/`, and a variant | allowed, the whole tree | Read again for every match. |
-| `unitpics/`, and a variant | allowed, the whole tree | Read again for every match. |
-| `download/`, and a variant | allowed, the whole tree | Read again for every match. |
+| `units/` | allowed, the whole tree | Read again for every match. The layout's units folder. |
+| `Weapons/` | allowed, the whole tree | Read again for every match. The layout's weapons folder. |
+| `ai/` | allowed, the whole tree | Read again for every match. |
+| `unitpics/` | allowed, the whole tree | Read again for every match. |
+| `download/` | allowed, the whole tree | Read again for every match. |
 | `features/` | allowed, the whole tree | Read again for every match. |
 | `objects3d/` | allowed, the whole tree | Read again for every match. |
 | `scripts/` | allowed, the whole tree | Read again for every match. |
@@ -538,10 +521,9 @@ The rule names are `allowed`, `invalid-path`, `menus-only`, `maps-only`,
 `read-once`, `not-confirmed`, `interface-art` and `unknown-folder`.
 
 A path whose rule is anything other than `allowed` fails that mutator
-when the layer is built. The failure names the mutator and the mask,
-folder, archive or file, and it includes the allow-list's own message.
-The message starts with the path. The player sees a translated sentence
-chosen from the rule.
+when the layer is built. The failure is an English message. It names the
+mutator and the mask, folder, archive or file, and it includes the
+allow-list's own message. The message starts with the path.
 
 `oa-tool mutator import` does not fail the import for a protected path
 inside a TA: Mutation archive. An archive with no such entry is copied
@@ -561,9 +543,12 @@ second line, `path`, a tab, then `mutator <id>` or
 
 A rule selects records and writes their fields. The same records are
 written two ways: a Lua block, and a `.sm` file. The two spellings compare
-equal when they are the same rules. Several mutators' rules are combined
-in one pass. The numbers do not depend on the order of the mutators.
-Text that is appended does: appends follow the list.
+equal when they are the same rules. Mutators apply one after another, in
+list order. Each one is applied to the data the mutators above it left.
+Within one mutator, its rules apply in file order. How one mutator's
+result meets the next is outside this text: the design's Stacking section
+is the account of that order, and the detailed rules are written when R06
+and V12 land, in O01.
 
 A plan's rules list is a sequence of finished blocks and `sm` paths.
 Consecutive blocks become one source. Each `sm` path is its own source.
@@ -639,9 +624,6 @@ and the extension.
 
 ### 6.2 A field the record leaves out
 
-A need is decided on the record as the pass found it, before any write, so
-one rule's change cannot decide which records another rule selects.
-
 When the field is written, a range holds when the text's number is inside
 the bounds, inclusive. Text that is not a number reads as zero, the way
 the game reads it. An equality holds when the text matches without ASCII
@@ -690,7 +672,9 @@ value       = number
           | string
           | string "+"
           | bare ;
+bare        = (* empty, or words with their inner spaces *) ;
 string      = '"' { byte - '"' } '"' ;
+stray_brace = "}" ;                                  (* lenient, outside a block *)
 ```
 
 `folder` and `extension` apply to every block after them, and each may be
@@ -707,8 +691,10 @@ only in ASCII case, are one field: the reader keeps the newest, and the
 change is applied once.
 
 A group's needs are all required. There is no or between them. A group
-with no needs matches every record of its target. A group whose body holds
-a statement outside `[Needs]` and `[Changes]` drops that statement.
+with no needs matches every record of its target. A statement outside
+`[Needs]` and `[Changes]` in a group is a `stray_text` error. The
+statement is dropped, and the error refuses the plan and
+`oa-tool mutator check`.
 
 ### 6.4 Lenient forms
 
@@ -757,100 +743,56 @@ are skipped.
 | One name, field, quoted text or bare text | 1,024 bytes |
 | Diagnostics stored | 1,000. The last one stored is the notice that collection stopped. |
 
-Warnings keep the statement or the block. Errors drop the statement, or
-the block when its braces or header are broken.
+The twelve lenient codes are warnings. A warning keeps the statement or
+the block. Every other code is an error. An error drops the statement, or
+the block when its braces or header are broken, and it refuses the plan
+and `oa-tool mutator check`. `too_many_diagnostics` is an error, so a file
+with more than 1,000 findings is refused even when each earlier finding
+is a warning.
 
-| Code | Meaning |
-| --- | --- |
-| `missing_semicolon` | a kept statement was not closed with `;` |
-| `group_without_asterisks` | a header without `*Group*` holds a group body |
-| `quoted_number` | a change's quoted text is a number |
-| `spaces_in_value` | spaces inside an unquoted value were ignored |
-| `empty_range` | a need's low bound is above its high bound |
-| `group_without_needs` | a group has no needs, so it matches every record |
-| `repeated_section` | a second needs or changes section was merged |
-| `byte_order_mark` | a leading byte-order mark was skipped |
-| `unquoted_text` | bare words read as a text assignment |
-| `empty_value` | a change with nothing after `=`, read as empty text |
-| `empty_text_need` | `""` or `!""` in a need, equality with empty text |
-| `stray_closing_brace` | a `}` outside any block, ignored |
-| `unknown_section` | a section other than needs or changes, or a section inside a section |
-| `unclosed_block` | a header or a brace was never closed |
-| `unexpected_brace` | a brace where a block did not call for one |
-| `directive_in_block` | `folder` or `extension` inside a block |
-| `bad_number` | a number the grammar does not allow |
-| `bad_need` | a need that matches no need form |
-| `bad_change` | a change that matches no change form |
-| `need_form_in_changes` | a need written where a change belongs |
-| `change_form_in_needs` | a change written where a need belongs |
-| `clamp_low_above_high` | a scale's low clamp is above its high clamp |
-| `unterminated_string` | a quote was never closed |
-| `block_comment` | `/*`, which is not part of the language |
-| `stray_text` | text that is not a directive, a block or a statement |
-| `too_large` | the text is longer than 1 MiB |
-| `too_many_blocks` | more than 4,096 blocks |
-| `too_many_statements` | more than 4,096 statements in one block |
-| `text_too_long` | a name, field or quoted text is longer than 1,024 bytes |
-| `too_many_diagnostics` | the list stopped at 1,000 diagnostics |
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `missing_semicolon` | warning | a kept statement was not closed with `;` |
+| `group_without_asterisks` | warning | a header without `*Group*` holds a group body |
+| `quoted_number` | warning | a change's quoted text is a number |
+| `spaces_in_value` | warning | spaces inside an unquoted value were ignored |
+| `empty_range` | warning | a need's low bound is above its high bound |
+| `group_without_needs` | warning | a group has no needs, so it matches every record |
+| `repeated_section` | warning | a second needs or changes section was merged |
+| `byte_order_mark` | warning | a leading byte-order mark was skipped |
+| `unquoted_text` | warning | bare words read as a text assignment |
+| `empty_value` | warning | a change with nothing after `=`, read as empty text |
+| `empty_text_need` | warning | `""` or `!""` in a need, equality with empty text |
+| `stray_closing_brace` | warning | a `}` outside any block, ignored |
+| `unknown_section` | error | a section other than needs or changes, or a section inside a section |
+| `unclosed_block` | error | a header or a brace was never closed |
+| `unexpected_brace` | error | a brace where a block did not call for one |
+| `directive_in_block` | error | `folder` or `extension` inside a block |
+| `bad_number` | error | a number the grammar does not allow |
+| `bad_need` | error | a need that matches no need form |
+| `bad_change` | error | a change that matches no change form |
+| `need_form_in_changes` | error | a need written where a change belongs |
+| `change_form_in_needs` | error | a change written where a need belongs |
+| `clamp_low_above_high` | error | a scale's low clamp is above its high clamp |
+| `unterminated_string` | error | a quote was never closed |
+| `block_comment` | error | `/*`, which is not part of the language |
+| `stray_text` | error | text that is not a directive, a block or a statement, or a statement outside `[Needs]` and `[Changes]` in a group |
+| `too_large` | error | the text is longer than 1 MiB |
+| `too_many_blocks` | error | more than 4,096 blocks |
+| `too_many_statements` | error | more than 4,096 statements in one block |
+| `text_too_long` | error | a name, field or quoted text is longer than 1,024 bytes |
+| `too_many_diagnostics` | error | the list stopped at 1,000 diagnostics |
 
-`oa-tool mutator check` refuses the package when a diagnostic is an error.
-A warning does not refuse it. The tool reads a rule file up to 4 MiB and
-then this reader refuses a text longer than 1 MiB, so either bound refuses
-the file.
+The tool reads a rule file up to 4 MiB and then this reader refuses a text
+longer than 1 MiB, so either bound refuses the file.
 
-### 6.6 How changes combine
-
-Within one mutator, sources in plan order and blocks and changes in file
-order, the last change of a field decides its kind. An assignment resets
-that mutator's factors and clamps. Factors then multiply onto whatever is
-current. Clamps join, taking the lower low and the higher high. A meta
-value, written `lock` or `^`, replaces the numeric state and survives
-later numeric changes; a later meta value replaces the earlier one. Text
-assignments replace, appends extend, and a removal clears. An append after
-a removal becomes an assignment of the appended text, and an append after
-an assignment extends that assignment. A change of the other kind discards
-what came before. That discard inside one mutator is not noted.
-
-Across mutators:
-
-- When any contribution is a meta value, the result is the mean of the
-  meta values. Every other change, numeric or text, is dropped. Only the
-  mutators that supplied a meta value are listed on the write.
-- Otherwise the base is the mean of the assignments, or the field's
-  current value when there is none. That base is multiplied by the product
-  of the factors, then clamped to the lowest low and the highest high of
-  every clamp. Sums run in mutator list order. Each mutator multiplies its
-  own factors in file order. Those products then multiply in a fixed
-  order: the exact bits of the factor, smaller first, and, when the bits
-  match, the rule text of the scales (the source name and line of each
-  one, in file order). A mean is the sum divided by the count. The clamp
-  is applied to the combined product, not to each mutator before the
-  product.
-- A factor on a field that is absent, and that no assignment creates,
-  does nothing. An assignment or a meta value creates the field, and other
-  mutators' factors then apply to that base.
-- Text changes apply only when no numeric change touches the field.
-  Appends add in list order, including when the field is absent. An
-  assignment or a removal takes effect only when it is the only text
-  change. Two assignments, two removals, or one of each, cancel, and the
-  field stays as it was. Appends alongside an assignment or a removal
-  still append; the assignment or removal is noted and does not write. A
-  mutator that contributed nothing to the value actually written is not
-  listed on it.
+### 6.6 How a number is written
 
 A number is written only with the TDF number spelling, and only when it is
-finite and different from the field's current number. The current text has
-to start, after spaces or tabs, with a sign and a digit before it counts
-as that number: a factor does not treat a word as zero. A result that is
-not finite is not written, and a clamp is not allowed to pull an infinite
-result back into range. A combined value that is written outside the clamp
-one mutator gave on its own is noted, naming that mutator, its range, and
-the range that was used.
-
-One field is written at most once. A key the record does not hold is
-written with the spelling that sorts first by raw bytes among the changes
-that name it, so `EnergyStorage` precedes `energystorage` and the file's
-bytes do not depend on list order.
+finite and different from the field's current number. The current text
+counts as that number when, after spaces or tabs, it has an optional sign
+and then a digit. A leading point is not a number. A factor does not
+treat a word as zero.
 
 ### 6.7 Which records a rule reaches
 
@@ -932,9 +874,11 @@ A later write of `__mode` on the copy is refused with
 write of `__gc` on the copy is not refused.
 
 `print` writes nothing to a file. The host keeps at most 256 lines and
-16,384 bytes of that text. A line is cut so the kept text stays inside
-that byte cap. Further lines become the note `1 line left out` or
-`<n> lines left out`.
+16,384 bytes of that text. A line is cut only when it is longer than
+16,384 bytes, and then to 16,384. A line that does not fit in the bytes
+still left is dropped whole, and that drop closes `print`. Every later
+line is dropped too. Kept lines may be dropped so the note
+`1 line left out` or `<n> lines left out` fits.
 
 ### 10.2 Loading code
 
@@ -971,7 +915,7 @@ A cycle names the chain, for example
 `require: lua/a.lua needs lua/b.lua, which needs lua/a.lua`.
 The first module is joined with ` needs `, and
 each later one with `, which needs `. `require` counts one instruction
-unit for each caller it walks while it looks for that chain.
+unit for every frame it walks, on every call.
 
 ### 10.4 Budgets
 
@@ -1003,7 +947,8 @@ default cap that number is 64.
 ### 10.5 Charged work
 
 Library work that would otherwise run in C is counted against the same
-instruction allowance. One unit is about the time of one or two
+instruction allowance. A unit counts one-for-one against that allowance.
+A comparison that costs 2 units is about the time of one or two
 instructions of the interpreter. A new string longer than 40 bytes
 counts one unit per 32 bytes of its length, rounded up. A string of 40
 bytes or fewer is not counted: making one allocates only when no live
@@ -1030,7 +975,7 @@ functions.
 | `utf8.codes` | One per 32 bytes the iterator walks, continuation bytes included, on every call, including the call that finds the end. |
 | `utf8.len`, `utf8.offset` | One per 32 bytes of the interval they walk. |
 | A plain `string.find` | One per 32 bytes each scan and each comparison examines. |
-| `require` | One per caller walked. |
+| `require` | One per frame walked, on every call. |
 | `table.move`, `table.insert`, `table.remove`, `table.concat`, `table.pack`, `table.unpack` | One per element moved or visited. |
 | `table.sort` | Every comparison. Two strings cost one unit per byte of the two lengths, and at least 2. Any other comparison costs 2. A comparison function written in C is counted too. |
 | `next` | 4,096 per call. |
@@ -1100,9 +1045,9 @@ print where the value sits. `__tostring` is used when the metatable has
 one, and `__name` is used as the kind when it has no `__tostring`.
 
 `string.format` refuses `%p`, because it would show where a value sits,
-with `string.format: %p would show a memory address`. `%a`, `%e`, `%f`
-and `%g`, in either case, are refused when the number is a NaN or an
-infinity, with
+with `string.format: %p would show a memory address`. Lua 5.4.9 has no
+`%F`. `%a` and `%A`, `%e` and `%E`, `%f`, and `%g` and `%G` are refused
+when the number is a NaN or an infinity, with
 `string.format: cannot write nan or an infinity with %<letter>; test the number first, or use tostring`.
 A finite number,
 `%q`, `%s`, `%d`, `%i`, `%x` and `%c` are unchanged. `%q` of an
@@ -1118,9 +1063,11 @@ classes such as `%a` treat a byte past 127 the same way on every
 machine. Hexadecimal numbers use Lua's own conversion.
 
 Every string hash uses one constant seed, `0x4F414C55`. `table.sort`
-does not draw a pivot from the clock. The interpreter is built with no
-fused multiply-add and no value-changing optimisation, and the Windows
-build uses strict floating-point mode.
+does not draw a pivot from the clock. Each basic floating-point
+operation is rounded as written. A Visual Studio build uses `/fp:strict`.
+Every other build, including a MinGW build, uses `-fno-fast-math` and
+`-ffp-contract=off`. There is no fused multiply-add and no
+value-changing optimisation.
 
 `pairs` visits number keys in ascending order, then string keys in byte
 order, then `false` and then `true`. The key list is taken when `pairs`
@@ -1132,9 +1079,11 @@ function or any other type with no fixed order raises
 A table with a `__pairs`
 metamethod keeps that metamethod. `ipairs` is unchanged. `next` returns
 the key the interpreter would, so `next(t) == nil` is still the
-emptiness test. Its order depends on the table's history and is not the
-same on every machine. A mutator that lets the last write in a loop
-win, or that joins text in loop order, uses `pairs` or a sequence.
+emptiness test. The hash seed makes the same history of a table walk
+the same way on every machine, and `next` follows that order. A key
+that is a table has no order two machines share, and `pairs` refuses a
+table that holds such a key. A mutator that lets the last write in a
+loop win, or that joins text in loop order, uses `pairs` or a sequence.
 
 `math` is Lua 5.4's library, with `pi`, `huge`, `maxinteger` and
 `mininteger`. The compatibility names `cosh`, `sinh`, `tanh`, `pow`,
@@ -1152,10 +1101,12 @@ squaring. A larger integer exponent is `exp(y · log x)`, and a negative
 base keeps the sign an odd integer calls for. `sqrt`, `floor`, `ceil`,
 `fmod` and the four basic operations are the IEEE results.
 
-`math.random` is Lua 5.4's generator. It starts from the game's seed.
-`math.randomseed()` with no argument returns to that seed. It does not
-read a clock. Zero is a defined sequence. A call with one integer, or
-two, sets a new seed from those integers.
+`math.random` is Lua 5.4's generator. It starts from
+`OpenOptions::random_seed`, which defaults to 0. Nothing opens a mutator
+sandbox with the game's seed. `math.randomseed()` with no argument
+returns to `OpenOptions::random_seed`. It does not read a clock. Zero is
+a defined sequence. A call with one integer, or two, sets a new seed
+from those integers.
 
 ### 10.8 The time limit
 
@@ -1192,10 +1143,8 @@ it. A loop of 64 KiB zero-filled comparisons stopped within 60
 milliseconds of a 300 millisecond limit, and a tight loop within the
 same millisecond.
 
-A script near the limit can pass on one machine and fail on another. In
-multiplayer the loadout digest refuses a match whose machines disagree,
-so the two outcomes cannot run as one match. A dry run records
-`time_limit` like any other failure.
+A script near the limit can pass on one machine and fail on another.
+Every machine must produce the same result.
 
 ## 13. Versioning
 
