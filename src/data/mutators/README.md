@@ -865,9 +865,16 @@ A mutator's `maps` entry is a function `maps(map, ctx)` or a list of
 `where { … }:change { … }` blocks. It runs only once a match has chosen a
 map, after every other hook, and only for that match. The setup screens
 keep the installed scenario. The rewritten text is served from the mutator
-layer at `maps/<key>.ota` when a mutator changed the bytes. The 3.1c map
-hash is unchanged: the hash is of the installed file, and this rewrite is
-not part of it.
+layer at `maps/<key>.ota` when a mutator changed the bytes.
+
+The 3.1c map hash covers the schemas, not only the header and the terrain:
+the GlobalHeader hash is taken over the block's whole text, and the
+`[Schema N]` blocks sit inside it. A rewritten OTA would therefore hash
+differently. What keeps a room together is when the rewrite is served.
+The battle room's map check reads the installed file before the match
+starts, and the rewrite is served only from the match's start, so the
+check and the hash itself are unchanged. Every machine that runs the same
+loadout writes the same bytes.
 
 `map.name` is the scenario's `missionname`, or the map key when that key is
 absent. `map.file` is the key. `map.planet` is the header's planet.
