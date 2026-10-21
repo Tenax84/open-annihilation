@@ -479,6 +479,10 @@ std::string describe(const Conflict& conflict, std::span<const std::string> ids)
     std::string line = names;
     line += " refused a write";
     append_place(line, conflict);
+    if (!conflict.detail.empty()) {
+        line += ": ";
+        line += conflict.detail;
+    }
     return line;
 }
 

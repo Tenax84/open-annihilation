@@ -190,3 +190,10 @@ SPDX-License-Identifier = "GPL-3.0-only"
 path = "tests/data/mutators/**"
 SPDX-FileCopyrightText = "The Open Annihilation Authors; see COPYRIGHT"
 SPDX-License-Identifier = "GPL-3.0-only"
+
+# The made-up Ridge maps the map-rule tests read. An OTA has no comment
+# style the licence check knows, so these carry no header lines.
+[[annotations]]
+path = "src/data/mutators/tests/map_rules/**.ota"
+SPDX-FileCopyrightText = "The Open Annihilation Authors; see COPYRIGHT"
+SPDX-License-Identifier = "GPL-3.0-only"
