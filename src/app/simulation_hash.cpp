@@ -8,12 +8,16 @@
 
 #include "engine_settings_state.hpp"
 
+#include "oa/base/sha256.hpp"
 #include "oa/data/mod_profile.hpp"
 #include "oa/data/mod_profile/overrides.hpp"
 #include "oa/data/mod_profile/value.hpp"
+#include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/loadout.hpp"
 
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -57,17 +61,41 @@ const std::string& baseline_hash() {
 
 } // namespace
 
+oa::base::sha256::Digest played_sim_hash(const Runtime& runtime) {
+    // The hash simulation_hash chose before mutators. This function is the
+    // friend, so the profile fields stay here.
+    oa::base::sha256::Digest profile{};
+    if (const auto* mod = runtime.mod_profile()) {
+        profile = mod->sim_hash;
+    } else if (runtime.engine_settings_ && runtime.engine_settings_->layered) {
+        profile = runtime.engine_settings_->base_sim_hash;
+    } else if (runtime.options_.mod_profile) {
+        profile = runtime.options_.mod_profile->sim_hash;
+    } else {
+        const std::optional<oa::base::sha256::Digest> parsed =
+            oa::base::sha256::parse_hex(baseline_hash());
+        if (!parsed)
+            throw std::runtime_error("the plain baseline does not resolve");
+        profile = *parsed;
+    }
+    return oa::data::mutators::fold_sim_hash(profile, runtime.match_mutator_digest());
+}
+
 std::string simulation_hash(const Runtime& runtime) {
-    if (const auto* profile = runtime.mod_profile())
-        return profiles::digest_text(profile->sim_hash);
-    if (runtime.engine_settings_ && runtime.engine_settings_->layered)
-        return profiles::digest_text(runtime.engine_settings_->base_sim_hash);
-    if (runtime.options_.mod_profile)
-        return profiles::digest_text(runtime.options_.mod_profile->sim_hash);
-    return baseline_hash();
+    return profiles::digest_text(played_sim_hash(runtime));
 }
 
 void Runtime::check_simulation_hash() {
+    // The command line names the mutator. Keep it, then choose none, so the
+    // hash below is the one a list that has not been built leaves unchanged.
+    const auto chosen_now = chosen_match_mutators();
+    const std::vector<oa::data::mutators::ResolvedMutator> kept(
+        chosen_now.begin(), chosen_now.end()
+    );
+    if (kept.empty())
+        throw std::runtime_error("the command line must name a mutator");
+    choose_match_mutators({});
+
     const std::string played = simulation_hash(*this);
     if (played.size() != 64)
         throw std::runtime_error("the simulation hash is not 64 hexadecimal digits");
@@ -95,6 +123,58 @@ void Runtime::check_simulation_hash() {
         );
     if (profiles::digest_text(before.sim_hash) != played)
         throw std::runtime_error("the presence simulation hash is not the one the game plays");
+
+    const auto back_to_menu = [this] {
+        if (match_)
+            leave_match();
+        load(Screen::main_menu);
+    };
+
+    start_benchmark_skirmish();
+    if (simulation_hash(*this) != played || presence_facts(*this) != before)
+        throw std::runtime_error("a skirmish with no mutators changed the simulation hash");
+    if (match_loadout() != nullptr || match_mutator_digest())
+        throw std::runtime_error("a skirmish with no mutators recorded a loadout");
+    back_to_menu();
+
+    choose_match_mutators(kept);
+    if (simulation_hash(*this) != played || presence_facts(*this) != before)
+        throw std::runtime_error("a list chosen but not yet built changed the simulation hash");
+
+    start_benchmark_skirmish();
+    const std::optional<oa::base::sha256::Digest> digest = match_mutator_digest();
+    const oa::data::mutators::Loadout* loadout = match_loadout();
+    if (!digest || loadout == nullptr)
+        throw std::runtime_error("the mutators did not record a loadout");
+    const std::optional<oa::base::sha256::Digest> first = oa::base::sha256::parse_hex(played);
+    if (!first)
+        throw std::runtime_error("the simulation hash is not hexadecimal");
+    const std::string folded =
+        profiles::digest_text(oa::data::mutators::fold_sim_hash(*first, digest));
+    const std::string during = simulation_hash(*this);
+    if (during != folded)
+        throw std::runtime_error(
+            "the simulation hash is not the profile hash folded with the mutator digest"
+        );
+    if (during == played)
+        throw std::runtime_error("mutators left the simulation hash unchanged");
+    const auto played_facts = presence_facts(*this);
+    if (profiles::digest_text(played_facts.sim_hash) != during ||
+        !played_facts.rules_differ_from_base)
+        throw std::runtime_error(
+            "the presence facts did not report the folded hash as differing from 3.1c"
+        );
+    std::string read_error;
+    const std::optional<oa::data::mutators::Loadout> read_back = oa::data::mutators::parse_loadout(
+        oa::data::mutators::canonical_loadout(*loadout), &read_error
+    );
+    if (!read_back || *read_back != *loadout)
+        throw std::runtime_error("the match loadout did not read back: " + read_error);
+    back_to_menu();
+    if (simulation_hash(*this) != played || presence_facts(*this) != before)
+        throw std::runtime_error("leaving the match left the mutator digest in the hash");
+    if (match_loadout() != nullptr || match_mutator_digest())
+        throw std::runtime_error("leaving the match kept the loadout");
 
     const auto original = engine_settings();
     auto settings = original;

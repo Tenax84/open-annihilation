@@ -32,6 +32,7 @@
 #include "oa/netgame/unicode_chat.hpp"
 #include "oa/app/netgame/extension_api.hpp"
 #include "oa/base/sha256.hpp"
+#include "oa/data/mutators/loadout.hpp"
 #include "oa/base/text.hpp"
 #include "oa/data/languages/interface_text.hpp"
 #include "oa/present/game_text.hpp"
@@ -813,9 +814,11 @@ std::string local_time_text(const char* pattern) {
 /// Fills the integrity check's answers about this machine: a digest of the
 /// program line, and one of the profile's sim hash with the map, so two
 /// machines agree exactly when they run the same program on the same rules and
-/// map. A managed copy appends the canonical bytes of its base game and
+/// map. While this match holds a mutator digest, that digest is folded into
+/// the profile hash (or hashed on its own when there is no profile). A
+/// managed copy appends the canonical bytes of its base game and
 /// rule-changing expansions (presence_content_identity). With no bundles
-/// field the digest stays the sim hash and the map.
+/// field and no mutator digest the digest stays the sim hash and the map.
 ///
 /// @param[out] identity the identity
 /// @param runtime the runtime whose profile is read
@@ -829,8 +832,15 @@ void fill_integrity_identity(
     );
     std::memcpy(identity.program, program_digest.data(), sizeof identity.program);
     oa::base::sha256::Hasher data{};
-    if (const auto* profile = runtime.mod_profile())
-        oa::base::sha256::update(data, profile->sim_hash);
+    if (const auto* profile = runtime.mod_profile()) {
+        const oa::base::sha256::Digest played_hash =
+            oa::data::mutators::fold_sim_hash(profile->sim_hash, runtime.match_mutator_digest());
+        oa::base::sha256::update(data, played_hash);
+    } else if (
+        const std::optional<oa::base::sha256::Digest> held = runtime.match_mutator_digest()
+    ) {
+        oa::base::sha256::update(data, *held);
+    }
     oa::base::sha256::update(data, {reinterpret_cast<const uint8_t*>(map.data()), map.size()});
     const auto played = played_content(runtime);
     if (played.announce_bundles) {

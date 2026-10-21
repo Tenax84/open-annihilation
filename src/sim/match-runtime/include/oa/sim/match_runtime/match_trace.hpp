@@ -30,7 +30,8 @@ void fill_trace_sides(const Match& match, std::span<sim::trace::UnitSide> sides)
 /// @param match the match
 /// @param[out] digest receives Match::fold_rule_state from digest_basis and
 ///        the number of tables
-/// @return false, leaving `digest` as it is, when the match keeps no rule state
+/// @return false, leaving `digest` as it is, when the match keeps no rule
+///         state and no mutator digest
 bool rule_state_digest(const Match& match, sim::trace::SectionDigest& digest) noexcept;
 
 /// Computes the section digests of the match's current tick

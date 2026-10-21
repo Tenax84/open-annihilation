@@ -12,6 +12,7 @@
 #include "oa/data/mod_profile/overrides.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 
@@ -267,6 +268,8 @@ bool resolve_run_mutator(
 struct Runtime::MutatorState {
     std::vector<mutators::ResolvedMutator> chosen{};
     std::optional<mutators::PipelineResult> result{};
+    std::optional<mutators::Loadout> loadout{};
+    std::optional<oa::base::sha256::Digest> digest{};
 };
 
 void Runtime::destroy_mutator_state(MutatorState* state) noexcept {
@@ -300,6 +303,18 @@ const mutators::PipelineResult* Runtime::match_mutators() const noexcept {
     if (mutator_state_ == nullptr || !mutator_state_->result.has_value())
         return nullptr;
     return &*mutator_state_->result;
+}
+
+const mutators::Loadout* Runtime::match_loadout() const noexcept {
+    if (mutator_state_ == nullptr || !mutator_state_->loadout.has_value())
+        return nullptr;
+    return &*mutator_state_->loadout;
+}
+
+std::optional<oa::base::sha256::Digest> Runtime::match_mutator_digest() const noexcept {
+    if (mutator_state_ == nullptr)
+        return std::nullopt;
+    return mutator_state_->digest;
 }
 
 void Runtime::take_command_line_mutators() {
@@ -349,7 +364,7 @@ std::string Runtime::launch_mutator_refusal(
         if (!resolve_run_mutator(texts[index], version, folder, &resolved, &error))
             return std::string(source) + ": " + field + ": " + error;
         mutators::PipelineMutator entry;
-        entry.package = resolved.folder;
+        entry.package = resolved.package_folder;
         entry.manifest = resolved.manifest;
         entry.options = resolved.options;
         installed.push_back(oa::formats::oamut::version_text(resolved.manifest.version));
@@ -401,7 +416,7 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     input.mutators.reserve(listed.size());
     for (const mutators::ResolvedMutator& one : listed) {
         mutators::PipelineMutator item;
-        item.package = one.folder;
+        item.package = one.package_folder;
         item.manifest = one.manifest;
         item.options = one.options;
         input.mutators.push_back(std::move(item));
@@ -428,11 +443,26 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     }
     mutator_state_->result = std::move(result);
     log_applied(listed, *mutator_state_->result);
-    if (mutator_state_->result->playable())
+    if (!mutator_state_->result->playable()) {
+        const std::string reason = failure_text(listed, *mutator_state_->result);
+        release_match_mutators();
+        throw std::runtime_error(reason);
+    }
+    const mutators::Loadout applied =
+        mutators::applied_loadout(mutators::loadout_of(listed), *mutator_state_->result);
+    if (applied.entries.empty())
         return;
-    const std::string reason = failure_text(listed, *mutator_state_->result);
-    release_match_mutators();
-    throw std::runtime_error(reason);
+    try {
+        const oa::base::sha256::Digest layer =
+            mutators::layer_digest(mutator_state_->result->layer, [this](std::string_view path) {
+                return assets_.read(path).bytes;
+            });
+        mutator_state_->digest = mutators::mutator_digest(applied, layer);
+        mutator_state_->loadout = applied;
+    } catch (...) {
+        release_match_mutators();
+        throw;
+    }
 }
 
 void Runtime::release_match_mutators() noexcept {
@@ -446,8 +476,11 @@ void Runtime::release_match_mutators() noexcept {
         }
         if (!unmounted && !held)
             return;
-        if (mutator_state_ != nullptr)
+        if (mutator_state_ != nullptr) {
             mutator_state_->result.reset();
+            mutator_state_->loadout.reset();
+            mutator_state_->digest.reset();
+        }
         std::cerr << "open-annihilation: mutators: released\n";
     } catch (...) {
     }
