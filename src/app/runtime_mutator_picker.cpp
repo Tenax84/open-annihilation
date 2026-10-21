@@ -881,10 +881,12 @@ std::optional<uint64_t> Runtime::own_picker_enqueue(
 void Runtime::own_picker_cancel(void* context, std::string_view registry, std::string_view key) {
     Runtime& runtime = *static_cast<Runtime*>(context);
     const std::vector<content::DownloadView> downloads = runtime.content_downloads().view();
+    // Waiting as the row says it: queued, asking for a key, or held for the
+    // player's confirmation. Nothing has been fetched yet.
     std::optional<uint64_t> waiting;
     for (const content::DownloadView& item : downloads)
         if (item.target.registry == registry && item.target.key == key &&
-            item.state == content::DownloadState::waiting)
+            phase_of(item.state) == library::QueueItem::Phase::waiting)
             waiting = item.item;
     if (waiting)
         runtime.content_downloads().cancel(*waiting);

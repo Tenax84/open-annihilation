@@ -897,8 +897,10 @@ match starts.
   a later list brings the verdict.
 - **Turn off.** Switching off a prerequisite asks "Turn off X?" over the
   picker, pushed at once. TURN OFF turns it and what needs it off. Switching
-  a mutator off, by its switch or by that question, cancels a download that
-  is still waiting. CANCEL on the question leaves them on.
+  a mutator off, by its switch or by that question, cancels a download the
+  picker queued that is still waiting (queued, asking for its key, or
+  waiting for the player's confirmation). CANCEL on the question leaves them
+  on.
 - **The check.** `native-mutator-picker` (`--check-mutator-picker`,
   `runtime_mutator_picker_check.cpp`) turns every built-in registry off and
   at 640x480, 1280x720, 1920x1080 and 2560x1440 opens the picker over the
