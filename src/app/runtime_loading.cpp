@@ -269,6 +269,9 @@ void Runtime::teardown_match() {
     effect_boundary_.clock = nullptr;
     match_.reset();
     release_match_mutators();
+    // A replay or a saved game puts the player's mutators back once its match
+    // ends. A teardown before that match starts leaves the held list as it is.
+    finish_loadout_once();
     // The menus keep the sides the game started with.
     restore_run_side_table();
     release_unsaved_unit_limit();

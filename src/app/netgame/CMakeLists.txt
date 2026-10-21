@@ -273,6 +273,16 @@ if(BUILD_TESTING AND TARGET oa-game AND IS_DIRECTORY "${OA_GAME_DIR}")
       --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
       --scratch-root "${oa_netgame_checks}")
     set_tests_properties(native-net-options PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
+    # A loopback recording carries the played loadout, and playback applies it
+    # or refuses. ridge-art-a changes no units, so the shared asset store can
+    # play it. The driver installs the packages and writes their origin records.
+    add_test(NAME native-replay-mutators COMMAND ${Python3_EXECUTABLE}
+      "${PROJECT_SOURCE_DIR}/tools/check_native_replay_mutators.py"
+      --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+      --art "${PROJECT_SOURCE_DIR}/tests/data/mutators/packages/ridge-art-a"
+      --tough "${PROJECT_SOURCE_DIR}/tests/data/mutators/packages/ridge-tough"
+      --scratch-root "${oa_netgame_checks}")
+    set_tests_properties(native-replay-mutators PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
     # A launch file, TA Forever's or this game's, opens the battle room on
     # the file's map and rules. A file the game cannot use, or a map or mod
     # it names that is not installed, ends before a window with the status

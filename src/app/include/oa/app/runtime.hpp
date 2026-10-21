@@ -170,6 +170,10 @@ struct PipelineResult;
 struct ResolvedMutator;
 } // namespace oa::data::mutators
 
+namespace oa::data::saves {
+struct ContentMutator;
+} // namespace oa::data::saves
+
 namespace oa::app::mutators_memory {
 enum class Setup : uint8_t;
 struct Crash;
@@ -1089,7 +1093,8 @@ class Runtime final : public menu::Host,
     /// calls it for the recording it writes.
     ///
     /// The save or the recording itself is unchanged, so an older build still
-    /// reads it. The note names the base game and the rule-changing expansions.
+    /// reads it. The note names the base game, the rule-changing expansions
+    /// and the mutators the match is playing.
     ///
     /// @param path the save or the recording
     void note_content_beside(const fs::path& path) const;
@@ -4375,6 +4380,56 @@ class Runtime final : public menu::Host,
         std::vector<std::string> fields
     );
 
+    /// The loadout the running match applied, as its canonical text.
+    ///
+    /// Empty when this match applied no mutator. The text is the one
+    /// canonical form, so a recording can store it and read it back.
+    ///
+    /// @return the canonical text, or empty when this match applied none
+    [[nodiscard]] std::string played_loadout_text() const;
+
+    /// The mutators the running match applied, for the content note.
+    ///
+    /// One entry per mutator of the applied loadout, in that order. The name
+    /// is the package's name, the one the player saw. Empty when this match
+    /// applied no mutator.
+    ///
+    /// @return the mutators, or an empty list when this match applied none
+    [[nodiscard]] std::vector<oa::data::saves::ContentMutator> played_mutators() const;
+
+    /// Why a recording's loadout cannot be played on this machine.
+    ///
+    /// Empty when the text is the canonical loadout and every mutator is
+    /// installed at that version and package SHA-256. `resolved` then holds
+    /// those mutators, in the loadout's order. Text that is not that form
+    /// is refused as unreadable. A mutator that is missing or at another
+    /// release is refused by name. A run that plays no mutators refuses a
+    /// loadout that names any, before those packages are looked up.
+    ///
+    /// @param loadout_text the recording's loadout text
+    /// @param[out] resolved the mutators, when the text can be played; may be null
+    /// @return the sentence, or empty when the loadout can be played
+    [[nodiscard]] std::string recorded_mutators_refusal(
+        std::string_view loadout_text, std::vector<oa::data::mutators::ResolvedMutator>* resolved
+    ) const;
+
+    /// Plays one list for the next match, then puts the player's list back.
+    ///
+    /// The list the player had chosen is kept. `playback` is chosen for the
+    /// next match start, and an empty list chooses none. When that match ends,
+    /// the kept list is chosen again. A match already running is left as it is
+    /// until it ends and the next one starts. A caller whose start does not
+    /// happen, by an exception or an early return, calls `cancel_loadout_once`.
+    ///
+    /// @param playback the mutators the next match plays, top first
+    void play_loadout_once(std::vector<oa::data::mutators::ResolvedMutator> playback);
+
+    /// Puts the player's list back and forgets a list held for one match.
+    ///
+    /// A quiet no-op when no list is held. A caller calls this when the match
+    /// start that `play_loadout_once` armed does not happen.
+    void cancel_loadout_once() noexcept;
+
     /// The last set a setup started a game with.
     ///
     /// The mutator picker reads it. None when the key is absent or its
@@ -4537,6 +4592,28 @@ class Runtime final : public menu::Host,
     /// served a rewritten map, the cached scenario is read again from the
     /// installed files. A campaign mission is not bound again here.
     void release_match_mutators() noexcept;
+
+    /// The player's chosen mutators, held aside while a replay or a saved game
+    /// plays another list once.
+    struct LoadoutOnceHold;
+
+    /// Frees the held list.
+    ///
+    /// @param hold state to free; null is allowed
+    static void destroy_loadout_once_hold(LoadoutOnceHold* hold) noexcept;
+
+    /// Marks the held list as the one this match start plays.
+    ///
+    /// A quiet no-op when no list is held. Called when a match start reads the
+    /// chosen list, before an empty list returns. A teardown before this leaves
+    /// the hold as it is.
+    void start_loadout_once() noexcept;
+
+    /// Puts the player's mutators back when a replay's or a saved game's match ends.
+    ///
+    /// Restores only after `start_loadout_once` has marked that match. A teardown
+    /// before the start leaves the hold as it is. A quiet no-op when no list is held.
+    void finish_loadout_once();
 
     /// Reads the crash record beside the preferences file into memory and
     /// deletes the file, so the next start does not ask again.
@@ -12271,6 +12348,17 @@ class Runtime final : public menu::Host,
     /// "mutator layer check: passed". Throws std::runtime_error on a failure.
     void check_mutator_layer();
 
+    /// Checks a recorded loadout against the installed mutators.
+    ///
+    /// The command line names ridge-tough and ridge-art-a, both installed in
+    /// the player's Mutators folder. An unreadable loadout and one whose
+    /// mutator is missing, at another package, at another version, or a folder
+    /// entry are refused. A skirmish plays ridge-art-a for one match and then
+    /// the player's list again, including after a start that does not happen.
+    /// Prints "replay loadout check: passed". Throws std::runtime_error on a
+    /// failure.
+    void check_replay_loadout();
+
     /// Plays skirmishes and checks each one reads gamedata/sidedata.tdf again.
     ///
     /// Needs --mod-dir on a folder that does not already hold that file. The first match keeps
@@ -17107,6 +17195,11 @@ class Runtime final : public menu::Host,
     std::unique_ptr<MutatorState, void (*)(MutatorState*) noexcept> mutator_state_{
         nullptr, destroy_mutator_state
     };
+    /// The player's mutators while a replay or a saved game plays another list; null until then.
+    std::unique_ptr<LoadoutOnceHold, void (*)(LoadoutOnceHold*) noexcept> loadout_once_hold_{
+        nullptr, destroy_loadout_once_hold
+    };
+
     /// The crash record beside the preferences file, and a leftover read at
     /// the start. Null until the preferences are loaded. A run with no
     /// preferences file holds a record that reads and writes nothing.
