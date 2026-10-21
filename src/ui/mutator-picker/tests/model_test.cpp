@@ -745,6 +745,7 @@ void row_lines() {
     gatehouse.tags = {"gameplay", "custom-tag"};
     picker::Mutator keep = made("gatehouse-keep", "Gatehouse Keep");
     need(keep, "gatehouse");
+    keep.installed = false;
     keep.summary = "The keep";
     picker::Mutator walls = made("ridge-walls", "Ridge Walls");
     walls.installed = false;
@@ -812,6 +813,9 @@ void row_lines() {
     OA_CHECK(gatehouse_row->line == "Needed by Gatehouse Keep");
     OA_CHECK(gatehouse_row->tone == picker::Tone::warn);
     OA_CHECK(gatehouse_row->number == 2);
+
+    const picker::Row* keep_row = row_of(listed, "gatehouse-keep");
+    OA_CHECK(keep_row != nullptr && keep_row->on && keep_row->to_download);
 
     const picker::Row* bad_row = row_of(listed, "bad-fit");
     OA_CHECK(bad_row != nullptr && bad_row->tone == picker::Tone::bad && !bad_row->locked);
@@ -882,7 +886,7 @@ void row_lines() {
     OA_CHECK(picker::filter_count(model, picker::Filter::installed) == installed_count);
     OA_CHECK(picker::filter_count(model, picker::Filter::downloads) == downloads);
     OA_CHECK(all == model.inputs.mutators.size());
-    OA_CHECK(downloads == 3);
+    OA_CHECK(downloads == 4);
     model.tag.clear();
     model.query.clear();
     model.filter = picker::Filter::all;

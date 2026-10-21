@@ -4,24 +4,32 @@
 // --check-mutator-picker: the mutator picker over the main menu, on a feed of
 // made-up mutators. At 640x480, 1280x720, 1920x1080 and 2560x1440 it requires
 // the size class, the mended On order, every row's grip and switch, one
-// download with the waiting words, the turn-off question, a drag to the top
-// of the On list, the set USE THESE hands back, CANCEL handing nothing, the
-// verdict chip from the checking words to the incompatible ones, and the
-// search taking the controller's Y. Each size's opening frame is written as
-// mutator-picker-<w>x<h>.png in the working folder. The feed's check records
-// a call and does not move the generation: the opening frame can still read
-// the checking words. Publishing the canned verdicts moves the generation,
-// and the next list carries them.
+// download with the waiting words, switching that download off (one cancel)
+// and on again, one more check when it installs, the turn-off question, a
+// drag to the top of the On list, the set USE THESE hands back, CANCEL
+// handing nothing, the verdict chip from the checking words to the
+// incompatible ones, and the search taking the controller's Y. At 1280x720
+// it also switches an installed mutator on (one check) and has USE THESE
+// fetch Gatehouse Keep. At 2560x1440 the runtime's own feed shows a mutator
+// written into the check's Mutators folder, in English and in German. Each
+// size's opening frame is written as mutator-picker-<w>x<h>.png in the
+// working folder. The feed's check records a call and does not move the
+// generation: the opening frame can still read the checking words.
+// Publishing the canned verdicts moves the generation, and the next list
+// carries them.
 
 #include "oa_layer.hpp"
 #include "oa_layer_check.hpp"
 
+#include "oa/app/content/downloads.hpp"
 #include "oa/app/content/service.hpp"
 #include "oa/app/game_directory.hpp"
 #include "oa/app/runtime.hpp"
 #include "oa/data/languages/interface_text.hpp"
+#include "oa/data/mutator_library/library.hpp"
 #include "oa/data/registry/player_registries.hpp"
 #include "oa/data/registry/trust.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/formats/png.hpp"
 #include "oa/ui/frontend_dialogs.hpp"
 #include "oa/ui/library/library.hpp"
@@ -45,6 +53,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace oa::app {
@@ -83,13 +92,13 @@ struct RecordedCheck {
     std::vector<std::pair<std::string, std::string>> options{};
 };
 
-/// One package the fixture was asked to queue.
+/// One package the fixture was asked to queue or to cancel.
 struct RecordedEnqueue {
     std::string registry{};
     std::string key{};
 };
 
-/// The feed's stand-in: five made-up mutators, and what the picker asked.
+/// The feed's stand-in: six made-up mutators, and what the picker asked.
 struct Fixture {
     uint64_t generation{1};
     bool published{false};
@@ -97,7 +106,10 @@ struct Fixture {
     std::vector<std::string> installed{};
     std::vector<RecordedCheck> checks{};
     std::vector<RecordedEnqueue> enqueues{};
+    std::vector<RecordedEnqueue> cancels{};
     uint64_t next_id{1};
+    /// Beacon joins the list only for the step that switches it on.
+    bool include_beacon{false};
 };
 
 /// The one fixture. The feed's functions and the check's methods share it.
@@ -143,6 +155,58 @@ void write_png(const fs::path& file, const renderer::Surface& frame) {
         "could not encode " + path_to_utf8(file)
     );
     write_text(file, std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+}
+
+/// Writes Lantern's icon: a 2 by 2 square the own feed can decode.
+///
+/// @param file the PNG
+void write_lantern_icon(const fs::path& file) {
+    const oa::formats::png::Header header{2, 2, 8, oa::formats::png::ColorType::rgb, {}};
+    const std::array<uint8_t, 12> rows{
+        0xE0, 0x90, 0x20, 0xE0, 0x90, 0x20, 0xC0, 0x70, 0x10, 0xC0, 0x70, 0x10
+    };
+    std::vector<uint8_t> bytes;
+    require(
+        oa::formats::png::write(oa::formats::png::Image{header, {}, rows}, &bytes),
+        "could not encode the lantern icon"
+    );
+    write_text(file, std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+}
+
+/// Writes Lantern into a Mutators folder: a choice, a German name, an icon,
+/// and a works-with line for a mod that is not played.
+///
+/// @param folder the mutator's folder
+void write_lantern(const fs::path& folder) {
+    oa::formats::oamut::Manifest manifest;
+    manifest.format = oa::formats::oamut::format_version;
+    manifest.id = "lantern";
+    manifest.name = "Lantern";
+    manifest.version.major = 1;
+    manifest.version.parts = 1;
+    manifest.author.name = "Ridge";
+    manifest.description = "A light on the ridge.";
+    manifest.icon = "icon.png";
+    manifest.tags = {"economy"};
+    manifest.works_with.push_back(oa::formats::oamut::Condition{"ridge", {}, {}});
+    manifest.layers = {oa::formats::oamut::Layer::files};
+    oa::formats::oamut::Option glow;
+    glow.id = "glow";
+    glow.type = oa::formats::oamut::OptionType::choice;
+    glow.label = "Glow";
+    glow.values.push_back(oa::formats::oamut::ChoiceValue{false, {}, "dim"});
+    glow.values.push_back(oa::formats::oamut::ChoiceValue{false, {}, "bright"});
+    glow.value_labels = {"Dim", "Bright"};
+    glow.default_index = 0;
+    manifest.options.push_back(std::move(glow));
+    oa::formats::oamut::Translation german;
+    german.language = "de";
+    german.name = "Laterne";
+    german.options.push_back(oa::formats::oamut::OptionLabel{"glow", "Leuchten"});
+    manifest.strings.push_back(std::move(german));
+    write_text(folder / "oamut.yaml", oa::formats::oamut::write_manifest(manifest));
+    write_text(folder / "mutator.lua", "return {}\n");
+    write_lantern_icon(folder / "icon.png");
 }
 
 /// Looks an interface word up in the language the game shows.
@@ -194,9 +258,11 @@ void reset_fixture() {
     Fixture& held = fixture();
     held.checks.clear();
     held.enqueues.clear();
+    held.cancels.clear();
     held.installed.clear();
     held.published = false;
     held.check_enabled = true;
+    held.include_beacon = false;
     ++held.generation;
 }
 
@@ -236,7 +302,7 @@ picker::Mutator gatehouse() {
     return mutator;
 }
 
-/// Gatehouse Keep, listed and not installed, needing Gatehouse.
+/// Gatehouse Keep, listed and not installed until the check marks it, needing Gatehouse.
 ///
 /// @return the mutator
 picker::Mutator gatehouse_keep() {
@@ -245,7 +311,7 @@ picker::Mutator gatehouse_keep() {
     mutator.name = "Gatehouse Keep";
     mutator.version = "1";
     mutator.summary = "The keep above the gate.";
-    mutator.installed = false;
+    mutator.installed = marked_installed("gatehouse-keep");
     mutator.needs.push_back(library::Prerequisite{"gatehouse", {}, "Gatehouse"});
     mutator.listing = {std::string(kRegistry), library::Kind::mutator, "gatehouse-keep"};
     return mutator;
@@ -262,6 +328,20 @@ picker::Mutator grounded() {
     mutator.summary = "Units stay on the ground.";
     mutator.installed = marked_installed("grounded");
     mutator.listing = {std::string(kRegistry), library::Kind::mutator, "grounded"};
+    return mutator;
+}
+
+/// Beacon, installed, with no works-with line, and not in the opening set.
+/// Its verdict stays unchecked, so switching it on is the check the feed is asked for.
+///
+/// @return the mutator
+picker::Mutator beacon() {
+    picker::Mutator mutator;
+    mutator.id = "beacon";
+    mutator.name = "Beacon";
+    mutator.version = "1";
+    mutator.summary = "A light on the ridge.";
+    mutator.installed = true;
     return mutator;
 }
 
@@ -314,6 +394,8 @@ picker::Inputs fixture_inputs(void* /*context*/, picker::Setup /*setup*/) {
     inputs.mutators.push_back(gatehouse_keep());
     inputs.mutators.push_back(grounded());
     inputs.mutators.push_back(ridge_walls(hooks));
+    if (fixture().include_beacon)
+        inputs.mutators.push_back(beacon());
     for (picker::Mutator& mutator : inputs.mutators)
         apply_verdict(mutator);
     return inputs;
@@ -340,8 +422,9 @@ std::optional<uint64_t> fixture_enqueue(
     return fixture().next_id++;
 }
 
-/// A waiting download the fixture never started.
-void fixture_cancel(void* /*context*/, std::string_view /*registry*/, std::string_view /*key*/) {
+/// Records a cancel. The fixture never started the download.
+void fixture_cancel(void* /*context*/, std::string_view registry, std::string_view key) {
+    fixture().cancels.push_back(RecordedEnqueue{std::string(registry), std::string(key)});
 }
 
 /// Records a check. The verdict arrives later, when the check publishes it.
@@ -456,9 +539,13 @@ void Runtime::check_mutator_picker() {
         LayerScreen* screen = picker_screen();
         require(screen != nullptr, "the mutator picker is not open");
         const kit::DisplayList list = screen->display_list();
-        for (const kit::Item& item : list.items)
+        for (const kit::Item& item : list.items) {
             if (item.text.find(needle) != std::string::npos)
                 return true;
+            for (const std::string& line : item.lines)
+                if (line.find(needle) != std::string::npos)
+                    return true;
+        }
         return false;
     };
     const auto close_covering = [&] {
@@ -502,6 +589,36 @@ void Runtime::check_mutator_picker() {
         );
         frames(1);
         require(picker_screen() != nullptr, "the picker is not on the layer" + std::string(on));
+    };
+    const auto open_empty = [&](std::string_view on) {
+        used = false;
+        cancelled = false;
+        handed.clear();
+        MutatorPickerRequest request;
+        request.setup = picker::Setup::skirmish;
+        request.used = [&](std::vector<picker::Chosen> set) {
+            handed = std::move(set);
+            used = true;
+        };
+        request.cancelled = [&] { cancelled = true; };
+        require(
+            open_mutator_picker(std::move(request)), "the picker did not open" + std::string(on)
+        );
+        frames(1);
+        require(picker_screen() != nullptr, "the picker is not on the layer" + std::string(on));
+    };
+    const auto package_picture = [&] {
+        LayerScreen* screen = picker_screen();
+        require(screen != nullptr, "the mutator picker is not open");
+        const kit::DisplayList list = screen->display_list();
+        for (const kit::Item& item : list.items) {
+            if (item.role != kit::Role::package_badge)
+                continue;
+            const auto* look = std::get_if<kit::BadgeLook>(&item.look);
+            if (look != nullptr && look->picture.width > 0 && !look->picture.pixels.empty())
+                return true;
+        }
+        return false;
     };
 
     for (const CheckWindow& window : kWindows) {
@@ -671,12 +788,42 @@ void Runtime::check_mutator_picker() {
         std::cout << "mutator picker check: Fast Builders' option 1 asked for another check" << on
                   << "\n";
 
+        const std::size_t checks_before_grounded = fixture().checks.size();
         click_named("oa.mutators.row.grounded.switch.on");
         require(fixture().enqueues.size() == 1, "Grounded did not queue exactly one package" + on);
         require(
             fixture().enqueues.front().registry == kRegistry &&
                 fixture().enqueues.front().key == "grounded",
             "the queued package is not grounded from " + std::string(kRegistry) + on
+        );
+        require(
+            fixture().checks.size() == checks_before_grounded + 1 &&
+                fixture().checks.back().id == "grounded",
+            "switching Grounded on did not ask for one check" + on
+        );
+        frames(1);
+        require(
+            fixture().checks.size() == checks_before_grounded + 1,
+            "switching Grounded on asked for a second check" + on
+        );
+        click_named("oa.mutators.row.grounded.switch.off");
+        require(fixture().cancels.size() == 1, "switching Grounded off did not cancel once" + on);
+        require(
+            fixture().cancels.front().registry == kRegistry &&
+                fixture().cancels.front().key == "grounded",
+            "the cancel is not grounded from " + std::string(kRegistry) + on
+        );
+        std::cout << "mutator picker check: switching Grounded off cancelled its waiting download"
+                  << on << "\n";
+        click_named("oa.mutators.row.grounded.switch.on");
+        require(fixture().enqueues.size() == 2, "Grounded did not queue again" + on);
+        require(
+            fixture().enqueues[1].registry == kRegistry && fixture().enqueues[1].key == "grounded",
+            "the second package is not grounded from " + std::string(kRegistry) + on
+        );
+        require(
+            fixture().checks.size() == checks_before_grounded + 1,
+            "switching Grounded on again asked for another check" + on
         );
         require(enqueued_key("gatehouse-keep") == 0, "Gatehouse Keep was queued" + on);
         const AutomationControl use_waiting =
@@ -693,8 +840,21 @@ void Runtime::check_mutator_picker() {
         std::cout << "mutator picker check: queued grounded from " << kRegistry
                   << " and USE THESE reads \"" << summary.text << "\"" << on << "\n";
 
+        const std::size_t checks_before_install = fixture().checks.size();
         mark_mutator_picker_check_installed("grounded");
         frames(1);
+        require(
+            fixture().checks.size() == checks_before_install + 1 &&
+                fixture().checks.back().id == "grounded",
+            "installing Grounded did not ask for one check" + on
+        );
+        frames(1);
+        require(
+            fixture().checks.size() == checks_before_install + 1,
+            "installing Grounded asked for a second check" + on
+        );
+        std::cout << "mutator picker check: installing Grounded asked for one more check" << on
+                  << "\n";
         const AutomationControl use_ready =
             require_named("oa.mutators.use", "USE THESE left after the install" + on);
         require(use_ready.enabled, "USE THESE stayed disabled after Grounded was installed" + on);
@@ -774,7 +934,10 @@ void Runtime::check_mutator_picker() {
         );
         std::cout << "mutator picker check: the drag put Grounded first" << on << "\n";
 
-        require(fixture().enqueues.size() == 1, "something else was queued before USE THESE" + on);
+        require(fixture().enqueues.size() == 2, "something else was queued before USE THESE" + on);
+        require(
+            fixture().cancels.size() == 1, "something else was cancelled before USE THESE" + on
+        );
         click_named("oa.mutators.use");
         require(used && !cancelled, "USE THESE did not hand the set" + on);
         require(picker_screen() == nullptr, "USE THESE left the picker open" + on);
@@ -797,6 +960,71 @@ void Runtime::check_mutator_picker() {
         require(picker_screen() == nullptr, "CANCEL left the picker open" + on);
         std::cout << "mutator picker check: CANCEL hands nothing" << on << "\n";
 
+        if (window.width == 1280) {
+            fixture().include_beacon = true;
+            const std::size_t checks_before_beacon = fixture().checks.size();
+            open_picker(on);
+            click_named("oa.mutators.row.beacon.switch.on");
+            require(
+                fixture().checks.size() == checks_before_beacon + 1 &&
+                    fixture().checks.back().id == "beacon",
+                "switching Beacon on did not ask for one check" + on
+            );
+            frames(1);
+            require(
+                fixture().checks.size() == checks_before_beacon + 1,
+                "switching Beacon on asked for a second check" + on
+            );
+            std::cout << "mutator picker check: switching Beacon on asked for one check" << on
+                      << "\n";
+            click_named("oa.mutators.cancel");
+            require(picker_screen() == nullptr, "CANCEL left the picker open after Beacon" + on);
+            fixture().include_beacon = false;
+
+            const std::size_t keep_before = enqueued_key("gatehouse-keep");
+            open_picker(on);
+            click_named("oa.mutators.use");
+            require(
+                enqueued_key("gatehouse-keep") == keep_before + 1,
+                "USE THESE did not queue Gatehouse Keep" + on
+            );
+            require(
+                picker_screen() != nullptr, "USE THESE closed the picker while Keep waited" + on
+            );
+            const AutomationControl use_keep =
+                require_named("oa.mutators.use", "USE THESE left while Keep waited" + on);
+            require(
+                !use_keep.enabled, "USE THESE is enabled while Gatehouse Keep is downloading" + on
+            );
+            const AutomationControl keep_summary =
+                require_named("oa.mutators.summary", "the summary left while Keep waited" + on);
+            require(
+                keep_summary.text.find("Getting") != std::string::npos &&
+                    keep_summary.text.find("Gatehouse Keep") != std::string::npos,
+                "the summary does not say Gatehouse Keep is being fetched" + on
+            );
+            std::cout << "mutator picker check: USE THESE queued Gatehouse Keep" << on << "\n";
+            mark_mutator_picker_check_installed("gatehouse-keep");
+            frames(1);
+            click_named("oa.mutators.use");
+            require(used && !cancelled, "USE THESE did not hand the set after Keep installed" + on);
+            require(picker_screen() == nullptr, "USE THESE left the picker open after Keep" + on);
+            require(handed.size() == 3, "USE THESE did not hand three mutators" + on);
+            require(
+                handed[0].id == "gatehouse" && handed[1].id == "gatehouse-keep" &&
+                    handed[2].id == "fast-builders",
+                "USE THESE did not hand Gatehouse, Gatehouse Keep, Fast Builders" + on
+            );
+            std::string keep_speed;
+            for (const auto& named_option : handed[2].options)
+                if (named_option.first == "build-speed")
+                    keep_speed = named_option.second;
+            require(keep_speed == "4", "Fast Builders was not handed at 4" + on);
+            std::cout << "mutator picker check: USE THESE handed Gatehouse, Gatehouse Keep, "
+                         "Fast Builders build-speed=4"
+                      << on << "\n";
+        }
+
         silence_mutator_picker_check();
         open_picker(on);
         require(
@@ -815,6 +1043,46 @@ void Runtime::check_mutator_picker() {
         click_named("oa.mutators.cancel");
         require(picker_screen() == nullptr, "the picker stayed open" + on);
     }
+
+    const fs::path lantern_folder =
+        user_folder() / std::string(oa::data::mutator_library::mutators_folder_name) / "lantern";
+    write_lantern(lantern_folder);
+    restore_mutator_picker_feed();
+    const std::string own = " on the runtime's own feed";
+    open_empty(own);
+    const AutomationControl lantern =
+        require_named("oa.mutators.row.lantern", "Lantern's row is not shown" + own);
+    require(
+        lantern.text.find("Lantern") != std::string::npos, "Lantern's row does not name it" + own
+    );
+    require(list_has("Glow"), "Lantern's option label is not shown" + own);
+    require(package_picture(), "Lantern's icon is not shown" + own);
+    require(list_has("Not compatible"), "Lantern does not read that it is not compatible" + own);
+    require(list_has("it works with"), "Lantern does not read that it works with a mod" + own);
+    require(list_has("ridge"), "Lantern does not name ridge" + own);
+    require(!list_has("Getting"), "Lantern was queued" + own);
+    {
+        const std::vector<content::DownloadView> downloads = content_downloads().view();
+        bool queued_lantern = false;
+        for (const content::DownloadView& item : downloads)
+            if (item.target.key == "lantern")
+                queued_lantern = true;
+        require(!queued_lantern, "a download is queued for lantern" + own);
+    }
+    std::cout << "mutator picker check: the own feed shows Lantern\n";
+    click_named("oa.mutators.cancel");
+    require(picker_screen() == nullptr, "CANCEL left the own feed's picker open");
+
+    set_language_choice("de");
+    close_covering();
+    open_empty(" in German");
+    const AutomationControl laterne =
+        require_named("oa.mutators.row.lantern", "Laterne's row is not shown");
+    require(laterne.text.find("Laterne") != std::string::npos, "the own feed did not show Laterne");
+    std::cout << "mutator picker check: the own feed shows Laterne in German\n";
+    click_named("oa.mutators.cancel");
+    set_language_choice("en");
+    close_covering();
 
     std::cout << "mutator picker check: the picker held at 640x480, 1280x720, 1920x1080 and "
                  "2560x1440\n";
