@@ -4285,6 +4285,28 @@ other's players carry no presence bytes.
 [docs/development/testing.md](../../docs/development/testing.md#network-play)
 lists its tests.
 
+The battle room builds the host's mutator list on each machine
+(`follow_room_mutators` in `runtime_room_mutators.cpp`). The host's list
+starts as the run's `--mutator` choice. A guest uses the list the host's
+records have carried, and only once every mutator of it has arrived; it
+never builds from a list of its own. The build runs on the calling thread
+when the wanted digest changes, on the live mod data, with no map. The
+room's layer is not the match's: leaving the multiplayer screens releases
+it, and at the start the match takes the same resolved list and mounts its
+own layer. The presence record's mutators field says what this machine
+built. The host's names every mutator and says it has each one. A guest's
+carries the host's digest, how much of the list it holds and whether each
+package is installed here, and it names no mutator. While a guest is
+behind, the host's record still leaves room for the map pack, and one
+continued part of the list follows the pack. A guest that has not built
+the host's list keeps READY off. START stays unavailable while mutators
+are on and an OA player of another machine lacks one, failed one, is still
+receiving the list, built another layer or plays another sim hash. When
+the layer is built or cleared, the battle room reads its unit headers
+again and restarts unit sync: the host keeps a 3.1c peer that had finished
+and greets the OA peers again, and the first time a peer's record says it
+built the host's current list the host greets that peer once more.
+
 ### GET MAP in the battle room
 
 A joiner whose host is an OA machine playing a pack map gets the host's

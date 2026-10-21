@@ -42,7 +42,10 @@ keyed with the challenge:
 
 - one over a digest of its program, and
 - one over a digest of its game data: the profile's sim hash and the
-  match's map name.
+  match's map name. While the match holds a mutator digest, that digest
+  is folded into the profile hash first, which is the hash the match
+  plays. Without a mutator digest the bytes stay the profile hash and
+  the map.
 
 The challenger computes the answers it expects from its own digests and
 notes for each player whether both answers arrived and matched.
@@ -115,11 +118,14 @@ same `revision`, which is part of the profile hash.
     `netgame-wire-rules` (`src/app/netgame/tests/wire_rules_test.cpp`).
 
 **Known limit:** the answers cover the engine's own identity: its program
-line, the profile's sim hash and the map name. They are not computed over
+line, the profile's sim hash and the map name. While the match holds a
+mutator digest, that digest is folded into the profile hash as well;
+without one, the game-data bytes stay the profile hash and the map (and
+the bundles a managed copy already appends). They are not computed over
 the game's files, modules and unit tables. Two machines running this
-engine with the same rules and map agree. A machine running another
-program, one that hashes those files, reports a mismatch with this
-engine, and this engine reports one with it.
+engine with the same rules, the same mutators and the same map agree.
+A machine running another program, one that hashes those files, reports
+a mismatch with this engine, and this engine reports one with it.
 
 ## Full configuration schema
 

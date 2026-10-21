@@ -273,6 +273,14 @@ if(BUILD_TESTING AND TARGET oa-game AND IS_DIRECTORY "${OA_GAME_DIR}")
       --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
       --scratch-root "${oa_netgame_checks}")
     set_tests_properties(native-net-options PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
+    # The battle room's mutator layer, on two programs: a joiner without the
+    # package holds START, and one who has it builds the same layer.
+    add_test(NAME native-net-room-mutators COMMAND ${Python3_EXECUTABLE}
+      "${PROJECT_SOURCE_DIR}/tools/check_native_room_mutators.py"
+      --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+      --scratch-root "${oa_netgame_checks}"
+      --source "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(native-net-room-mutators PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
     # A launch file, TA Forever's or this game's, opens the battle room on
     # the file's map and rules. A file the game cannot use, or a map or mod
     # it names that is not installed, ends before a window with the status

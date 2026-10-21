@@ -1153,7 +1153,9 @@ Network play is part of the engine, and reads its rules from the profile:
   ([`network.vercheck`](standard-hacks/network.vercheck.md)), a machine's
   answer about its game data is a digest of its profile's sim hash and the
   map, so two machines agree exactly when they play the same rules on the
-  same map.
+  same map. While the match holds a mutator digest, that digest is folded
+  into the profile hash first. Without one, the bytes stay the profile
+  hash and the map.
 
 Without a profile, network play uses 3.1c's rules.
 
