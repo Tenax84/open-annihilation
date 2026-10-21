@@ -1844,6 +1844,7 @@ void plan_mutator(
     options_for_open.sources.context = &listing;
     options_for_open.sources.read = source_read;
     options_for_open.random_seed = mutator_seed(input.seed, result.id);
+    options_for_open.time_limit = input.time_limit;
     host::ScriptError error;
     std::optional<host::Sandbox> opened;
     try {

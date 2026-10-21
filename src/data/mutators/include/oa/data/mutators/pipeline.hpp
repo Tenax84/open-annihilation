@@ -16,6 +16,7 @@
 #include "oa/formats/hpi.hpp"
 #include "oa/formats/oamut/manifest.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -118,6 +119,9 @@ struct PipelineInput {
     uint64_t seed{};
     /// Instruction and memory allowances. The default is the mutator profile's.
     oa::data::script_host::Budget budget{};
+    /// Real time each phase of a mutator's script may run. The default is the
+    /// script host's `default_time_limit`.
+    std::chrono::milliseconds time_limit{oa::data::script_host::default_time_limit};
     /// The map the match will play. None on a dry run, and then no maps hook runs.
     std::optional<ChosenMap> map{};
     /// Called after every plan is read and before files, rules and hooks.

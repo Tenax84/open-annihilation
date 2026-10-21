@@ -161,8 +161,9 @@ through `run_pipeline` over a scratch store: a unit's copied definition,
 the files the layer serves under the new name, a weapon's free id, and a
 clone that a later error rolls back. A loop of clones, a loop of clones
 whose source script is 1 MiB, and a `pcall` loop of weapon clones that are
-refused, each stop on the work budget inside the real-time limit. A clone whose build page collides with an existing screen
-is refused and the layer serves nothing.
+refused, each stop on the work budget, not on the long real-time limit the
+cases give it, within 60 s of processor time. A clone whose build page
+collides with an existing screen is refused and the layer serves nothing.
 
 `data-mutators-choice` (`tests/choice_test.cpp`) checks the choice text,
 including drive paths, which read the same on every platform, the round
@@ -246,7 +247,8 @@ placed units and features, `glob` and `pattern`, two mutators on one
 field, a write that then errors, and the session loader reading the
 served text. It also runs refused writes in a `pcall` loop, loops of
 long-key reads, writes, `:set` calls and unit lookups that stop on a
-small instruction allowance, a write count past the limit, and placed
+small instruction allowance under a long real-time limit, within 20 s of
+processor time, a write count past the limit, and placed
 names that an earlier hook cloned or removed. `data-mutators-maps-data`
 is the same program with `--data`: it reads every installed map and
 writes nothing, then points every map whose schemas name a profile at
@@ -1004,10 +1006,13 @@ writer, at the path the store listed it under. A document a hook removed
 is hidden. A scenario is served only when its bytes differ from the map
 the caller passed.
 
-The plan is read inside the plan phase, with the mutator's allowances and
-real-time limit in force, and by raw access only, so no metamethod of the
-script runs. The plan, its `files` table, the `mask` and `add` lists and the
-`rules` list must be plain tables. One with a metatable refuses the plan,
+Each phase of a mutator's script may run for `PipelineInput::time_limit` of
+real time, the script host's `default_time_limit` unless the caller names
+another. The plan is read inside the plan phase, with the mutator's
+allowances and real-time limit in force, and by raw access only, so no
+metamethod of the script runs. The plan, its `files` table, the `mask` and
+`add` lists and the `rules` list must be plain tables. One with a metatable
+refuses the plan,
 because its raw contents need not be what the script meant. A plan key the
 engine does not support yet (`sides` and `tables`) refuses the plan
 instead of being ignored. A `hacks` table sets match parameters of
