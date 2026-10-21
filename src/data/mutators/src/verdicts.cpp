@@ -4,6 +4,7 @@
 #include "oa/data/mutators/verdicts.hpp"
 
 #include <cstddef>
+#include <map>
 #include <utility>
 
 namespace oa::data::mutators {
@@ -321,6 +322,7 @@ std::string_view verdict_word(Verdict verdict) noexcept {
     case Verdict::failed:
         return "failed";
     }
+    return "failed";
 }
 
 std::optional<Verdict> parse_verdict_word(std::string_view word) noexcept {
@@ -386,6 +388,8 @@ std::string one_line_reason(std::string_view text) {
         end += need;
     }
     collapsed.resize(end);
+    while (!collapsed.empty() && collapsed.back() == ' ')
+        collapsed.pop_back();
     return collapsed;
 }
 
@@ -393,6 +397,7 @@ std::vector<RememberedVerdict> read_verdicts(std::span<const uint8_t> bytes) {
     std::vector<RememberedVerdict> verdicts;
     if (bytes.size() > verdicts_file_most_bytes)
         return verdicts;
+    std::map<VerdictKey, std::size_t> place;
     std::size_t start = 0;
     while (start < bytes.size()) {
         std::size_t end = start;
@@ -402,19 +407,20 @@ std::vector<RememberedVerdict> read_verdicts(std::span<const uint8_t> bytes) {
         if (length <= verdict_line_most_bytes && length > 0) {
             const auto* data = reinterpret_cast<const char*>(bytes.data() + start);
             if (auto parsed = parse_line(std::string_view{data, length})) {
-                bool replaced = false;
-                for (RememberedVerdict& kept : verdicts) {
-                    if (kept.key == parsed->key) {
-                        kept.record = std::move(parsed->record);
-                        replaced = true;
-                        break;
-                    }
-                }
-                if (!replaced)
+                const auto found = place.find(parsed->key);
+                if (found != place.end()) {
+                    verdicts[found->second].record = std::move(parsed->record);
+                } else {
+                    place.emplace(parsed->key, verdicts.size());
                     verdicts.push_back(std::move(*parsed));
+                }
             }
         }
         start = end < bytes.size() ? end + 1 : end;
+    }
+    if (verdicts.size() > verdicts_most_lines) {
+        const auto drop = verdicts.size() - verdicts_most_lines;
+        verdicts.erase(verdicts.begin(), verdicts.begin() + static_cast<std::ptrdiff_t>(drop));
     }
     return verdicts;
 }
@@ -438,8 +444,10 @@ void remember_verdict(std::vector<RememberedVerdict>& verdicts, RememberedVerdic
         }
     }
     verdicts.push_back(std::move(verdict));
-    while (verdicts.size() > verdicts_most_lines)
-        verdicts.erase(verdicts.begin());
+    if (verdicts.size() > verdicts_most_lines) {
+        const auto extra = verdicts.size() - verdicts_most_lines;
+        verdicts.erase(verdicts.begin(), verdicts.begin() + static_cast<std::ptrdiff_t>(extra));
+    }
 }
 
 const VerdictRecord*

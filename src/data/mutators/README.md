@@ -309,7 +309,8 @@ features changed, added and removed, then menu entries, files added and
 files hidden). `any` says whether one of them is above zero. `incompatible`
 and `failed` carry a reason; the other two do not. `mod_label` is the
 mod's name and version, empty for the base game. `one_line_reason` turns
-a reason or a label into one line of at most 200 bytes.
+a reason or a label into one line of at most 200 bytes, with the ends
+trimmed again when the cut lands on a space.
 
 A verdict is remembered under a `VerdictKey`: the loadout digest of the
 whole checked list (prerequisites included), the mod key, and the engine
@@ -327,8 +328,10 @@ bad engine version, an unknown verdict word, a count that is not a
 decimal within `uint32_t`, a reason on a compatible or no-effect verdict,
 more than 2048 bytes, a carriage return, or bytes that are not UTF-8.
 When two lines share a key, the later record wins and keeps the earlier
-line's place. The file holds at most 1024 verdicts and 4 MiB. Past 1024,
-the oldest goes. A longer span reads as empty.
+line's place. `read_verdicts` then keeps at most the newest 1024 of those
+verdicts; the oldest past that are dropped. The file is at most 4 MiB. A
+longer span reads as empty. `remember_verdict` drops every excess oldest
+verdict in one step.
 
 `read_verdicts` and `write_verdicts` are the codec. `remember_verdict`
 replaces a key and moves it to the newest place. `find_verdict` looks a

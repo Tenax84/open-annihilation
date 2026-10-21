@@ -87,6 +87,11 @@ int main() {
     const std::string cut = std::string(198, 'a') + "\xe2\x82\xac";
     OA_CHECK(mutators::one_line_reason(cut) == std::string(198, 'a'));
     OA_CHECK(mutators::one_line_reason(cut).size() == 198);
+    const std::string space_cut = std::string(199, 'a') + " bcd";
+    const auto space_once = mutators::one_line_reason(space_cut);
+    OA_CHECK(space_once == std::string(199, 'a'));
+    OA_CHECK(space_once.size() == 199);
+    OA_CHECK(mutators::one_line_reason(space_once) == space_once);
 
     mutators::ChangeCounts full;
     full.units_changed = 53;
@@ -191,50 +196,94 @@ int main() {
     OA_CHECK(dup[1].record.verdict == mutators::Verdict::no_effect);
     OA_CHECK(hex_of(dup[0].key.loadout) == kLoad);
 
-    std::vector<uint8_t> too_big(mutators::verdicts_file_most_bytes + 1, std::uint8_t{'a'});
+    std::vector<uint8_t> too_big(mutators::verdicts_file_most_bytes + 1, uint8_t{'a'});
     OA_CHECK(mutators::read_verdicts(too_big).empty());
     OA_CHECK(mutators::verdicts_file_name == "mutator-verdicts.tsv");
 
     const std::string kept_before = good_line(kLoad, "no-effect");
     const std::string kept_after = good_line(kOther, "failed");
-    const std::string digest_upper =
+    const auto keepers_only = [&](const std::string& bad) {
+        const auto got = mutators::read_verdicts(bytes_of(kept_before + bad + kept_after));
+        OA_CHECK(got.size() == 2);
+        OA_CHECK(got[0].key == key_of(kLoad, kMod, "1.0.0"));
+        OA_CHECK(got[0].record.verdict == mutators::Verdict::no_effect);
+        OA_CHECK(got[0].record.reason.empty());
+        OA_CHECK(got[0].record.mod_label.empty());
+        OA_CHECK(!mutators::any(got[0].record.counts));
+        OA_CHECK(got[1].key == key_of(kOther, kMod, "1.0.0"));
+        OA_CHECK(got[1].record.verdict == mutators::Verdict::failed);
+        OA_CHECK(got[1].record.reason == "because");
+        OA_CHECK(got[1].record.mod_label.empty());
+    };
+    keepers_only(
         std::string{"1\t"} + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
-        "\t" + std::string{kMod} + "\t1.0.0\tno-effect\t0,0,0,0,0,0,0,0,0,0,0,0\t\t\n";
-    const std::string short_digest =
-        "1\tabc\t" + std::string{kMod} + "\t1.0.0\tno-effect\t0,0,0,0,0,0,0,0,0,0,0,0\t\t\n";
-    const std::string bad_engine = "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
-                                   "\thas space\tno-effect\t0,0,0,0,0,0,0,0,0,0,0,0\t\t\n";
-    const std::string unknown_word = "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
-                                     "\t1.0.0\tnope\t0,0,0,0,0,0,0,0,0,0,0,0\t\t\n";
-    const std::string leading_zero = "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
-                                     "\t1.0.0\tno-effect\t01,0,0,0,0,0,0,0,0,0,0,0\t\t\n";
-    const std::string overflow = "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
-                                 "\t1.0.0\tno-effect\t4294967296,0,0,0,0,0,0,0,0,0,0,0\t\t\n";
-    const std::string reason_on_compatible =
+        "\t" + std::string{kMod} + "\tupper.1\tfailed\t7,0,0,0,0,0,0,0,0,0,0,0\t\tZZ\n"
+    );
+    keepers_only(
+        "1\tabc\t" + std::string{kMod} + "\tshort.1\tfailed\t0,0,0,0,0,0,0,0,0,0,0,0\t\tZZ\n"
+    );
+    keepers_only(
         "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
-        "\t1.0.0\tcompatible\t0,0,0,0,0,0,0,0,0,0,0,0\t\tnope\n";
-    const std::string reason_on_quiet = "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
-                                        "\t1.0.0\tno-effect\t0,0,0,0,0,0,0,0,0,0,0,0\t\tnope\n";
-    const std::string with_cr = good_line(kLoad, "failed");
-    const std::string cr_line = with_cr.substr(0, with_cr.size() - 1) + "\r\n";
-    const std::string bad_utf8 = "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
-                                 "\t1.0.0\tfailed\t0,0,0,0,0,0,0,0,0,0,0,0\t\tbad\xff\n";
-    const std::string extra_field = good_line(kLoad, "failed");
-    const std::string nine = extra_field.substr(0, extra_field.size() - 1) + "\tmore\n";
-    const std::string other_form = "2\t" + std::string{kLoad} + "\t" + std::string{kMod} +
-                                   "\t1.0.0\tfailed\t0,0,0,0,0,0,0,0,0,0,0,0\t\tbecause\n";
-    const std::string long_line(mutators::verdict_line_most_bytes + 1, 'x');
+        "\thas space\tfailed\t0,0,0,0,0,0,0,0,0,0,0,0\t\tZZ\n"
+    );
+    keepers_only(
+        "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
+        "\tword.1\tnope\t0,0,0,0,0,0,0,0,0,0,0,0\t\tZZ\n"
+    );
+    keepers_only(
+        "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
+        "\tzero.1\tno-effect\t01,0,0,0,0,0,0,0,0,0,0,0\t\t\n"
+    );
+    keepers_only(
+        "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
+        "\tover.1\tno-effect\t4294967296,0,0,0,0,0,0,0,0,0,0,0\t\t\n"
+    );
+    keepers_only(
+        "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
+        "\tcomp.1\tcompatible\t0,0,0,0,0,0,0,0,0,0,0,0\t\tnope\n"
+    );
+    keepers_only(
+        "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
+        "\tquiet.1\tno-effect\t0,0,0,0,0,0,0,0,0,0,0,0\t\tnope\n"
+    );
+    keepers_only(
+        good_line(kLoad, "failed").substr(0, good_line(kLoad, "failed").size() - 1) + "\r\n"
+    );
+    keepers_only(
+        "1\t" + std::string{kLoad} + "\t" + std::string{kMod} +
+        "\tutf.1\tfailed\t0,0,0,0,0,0,0,0,0,0,0,0\t\tbad\xff\n"
+    );
+    const std::string nine = good_line(kLoad, "failed");
+    keepers_only(nine.substr(0, nine.size() - 1) + "\tmore\n");
+    keepers_only(
+        "2\t" + std::string{kLoad} + "\t" + std::string{kMod} +
+        "\tform.1\tfailed\t0,0,0,0,0,0,0,0,0,0,0,0\t\tbecause\n"
+    );
+    keepers_only(std::string(mutators::verdict_line_most_bytes + 1, 'x') + "\n");
 
-    const std::string broken = kept_before + "\n" + nine + other_form + digest_upper +
-                               short_digest + bad_engine + unknown_word + leading_zero + overflow +
-                               reason_on_compatible + reason_on_quiet + cr_line + bad_utf8 + "\n" +
-                               long_line + "\n" + kept_after;
-    const auto survivors = mutators::read_verdicts(bytes_of(broken));
-    OA_CHECK(survivors.size() == 2);
-    OA_CHECK(survivors[0].record.verdict == mutators::Verdict::no_effect);
-    OA_CHECK(survivors[1].record.verdict == mutators::Verdict::failed);
-    OA_CHECK(hex_of(survivors[0].key.loadout) == kLoad);
-    OA_CHECK(hex_of(survivors[1].key.loadout) == kOther);
+    std::string many_lines;
+    sha::Digest first_load{};
+    sha::Digest second_load{};
+    for (uint32_t index = 0; index < mutators::verdicts_most_lines + 1; ++index) {
+        sha::Digest load{};
+        load[0] = static_cast<uint8_t>(index & 0xffu);
+        load[1] = static_cast<uint8_t>((index >> 8) & 0xffu);
+        load[2] = 9;
+        if (index == 0)
+            first_load = load;
+        if (index == 1)
+            second_load = load;
+        many_lines += good_line(hex_of(load), "no-effect");
+    }
+    const auto newest = mutators::read_verdicts(bytes_of(many_lines));
+    OA_CHECK(newest.size() == mutators::verdicts_most_lines);
+    sha::Digest last_load{};
+    last_load[0] = static_cast<uint8_t>(mutators::verdicts_most_lines & 0xffu);
+    last_load[1] = static_cast<uint8_t>((mutators::verdicts_most_lines >> 8) & 0xffu);
+    last_load[2] = 9;
+    OA_CHECK(newest.front().key.loadout == second_load);
+    OA_CHECK(newest.back().key.loadout == last_load);
+    OA_CHECK(mutators::find_verdict(newest, key_of(hex_of(first_load), kMod, "1.0.0")) == nullptr);
 
     const auto* hit = mutators::find_verdict(four, four[2].key);
     OA_CHECK(hit != nullptr);

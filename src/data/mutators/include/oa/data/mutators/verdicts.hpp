@@ -88,8 +88,10 @@ inline constexpr std::size_t verdict_reason_most_bytes = 200;
 ///
 /// Line feeds, carriage returns and tabs become spaces. A run of spaces
 /// becomes one space, and the ends are trimmed. The cut is at 200 bytes
-/// and always on a whole UTF-8 character. Bytes that are not UTF-8 are
-/// dropped, so the result is text a verdict line can hold.
+/// and always on a whole UTF-8 character, and a space left at the end by
+/// that cut is trimmed again. Bytes that are not UTF-8 are dropped, so
+/// the result is text a verdict line can hold. The same text a second
+/// time is unchanged.
 ///
 /// @param text the text a check or a mod name supplied
 /// @return the line, possibly empty
@@ -178,10 +180,11 @@ inline constexpr std::string_view verdicts_file_name = "mutator-verdicts.tsv";
 /// `uint32_t`, a reason on a compatible or no-effect verdict, more than
 /// `verdict_line_most_bytes` bytes, a carriage return, or bytes that are
 /// not UTF-8. When two lines share a key, the later record replaces the
-/// earlier and keeps the earlier line's place in age.
+/// earlier and keeps the earlier line's place in age. At most the newest
+/// `verdicts_most_lines` are kept; the oldest past that are dropped.
 ///
 /// @param bytes the file contents
-/// @return the verdicts kept, oldest first
+/// @return the verdicts kept, oldest first, at most `verdicts_most_lines`
 [[nodiscard]] std::vector<RememberedVerdict> read_verdicts(std::span<const uint8_t> bytes);
 
 /// Writes remembered verdicts as file bytes.
