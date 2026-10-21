@@ -445,8 +445,8 @@ bool read_listed(const Listing& listing, std::string_view path, std::vector<uint
         const auto found = std::lower_bound(listing.paths.begin(), listing.paths.end(), path);
         if (found == listing.paths.end() || *found != path)
             return false;
-        const std::filesystem::path host = listing.root / std::filesystem::path{*found};
-        std::ifstream in(host, std::ios::binary);
+        const std::filesystem::path on_disk = listing.root / std::filesystem::path{*found};
+        std::ifstream in(on_disk, std::ios::binary);
         if (!in)
             return false;
         in.seekg(0, std::ios::end);
@@ -1255,17 +1255,17 @@ bool fits_engine(const oamut::Manifest& manifest, const std::string& engine_vers
 /// Drops mutators whose requirements are failed, incompatible or excluded.
 void exclude_blocked(
     std::vector<MutatorResult>& results,
-    const std::vector<PipelineMutator>& mutators,
+    const std::vector<PipelineMutator>& listed,
     const std::vector<std::string>& versions
 ) {
     bool changed = true;
     while (changed) {
         changed = false;
-        for (std::size_t slot = 0; slot < mutators.size(); ++slot) {
+        for (std::size_t slot = 0; slot < listed.size(); ++slot) {
             if (results[slot].outcome != Outcome::applied)
                 continue;
-            for (const oamut::Condition& condition : mutators[slot].manifest.requires_mutators) {
-                for (std::size_t other = 0; other < mutators.size(); ++other) {
+            for (const oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
+                for (std::size_t other = 0; other < listed.size(); ++other) {
                     if (other == slot)
                         continue;
                     if (!oamut::condition_met(condition, results[other].id, versions[other]))
@@ -1290,30 +1290,27 @@ void exclude_blocked(
 }
 
 /// The first list problem, or an empty string when the list may run.
-std::string list_refusal(
-    const std::vector<PipelineMutator>& mutators, const std::vector<std::string>& versions
-) {
-    if (mutators.size() > max_mutators) {
-        return "a loadout lists " + std::to_string(mutators.size()) + " mutators, and " +
+std::string
+list_refusal(const std::vector<PipelineMutator>& listed, const std::vector<std::string>& versions) {
+    if (listed.size() > max_mutators) {
+        return "a loadout lists " + std::to_string(listed.size()) + " mutators, and " +
                std::to_string(max_mutators) + " is the most";
     }
-    for (std::size_t slot = 0; slot < mutators.size(); ++slot) {
+    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
         for (std::size_t earlier = 0; earlier < slot; ++earlier) {
-            if (mutators[slot].manifest.id == mutators[earlier].manifest.id)
-                return mutators[slot].manifest.id + " is listed twice";
+            if (listed[slot].manifest.id == listed[earlier].manifest.id)
+                return listed[slot].manifest.id + " is listed twice";
         }
     }
-    for (std::size_t slot = 0; slot < mutators.size(); ++slot) {
-        for (const oamut::Condition& condition : mutators[slot].manifest.requires_mutators) {
+    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
+        for (const oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
             bool met = false;
             for (std::size_t earlier = 0; earlier < slot; ++earlier) {
-                if (oamut::condition_met(
-                        condition, mutators[earlier].manifest.id, versions[earlier]
-                    ))
+                if (oamut::condition_met(condition, listed[earlier].manifest.id, versions[earlier]))
                     met = true;
             }
             if (!met) {
-                std::string message = mutators[slot].manifest.id + " needs " + condition.id;
+                std::string message = listed[slot].manifest.id + " needs " + condition.id;
                 if (!condition.range_text.empty()) {
                     message += " ";
                     message += condition.range_text;
@@ -1323,14 +1320,14 @@ std::string list_refusal(
             }
         }
     }
-    for (std::size_t slot = 0; slot < mutators.size(); ++slot) {
-        for (const oamut::Condition& condition : mutators[slot].manifest.conflicts_with) {
-            for (std::size_t other = 0; other < mutators.size(); ++other) {
+    for (std::size_t slot = 0; slot < listed.size(); ++slot) {
+        for (const oamut::Condition& condition : listed[slot].manifest.conflicts_with) {
+            for (std::size_t other = 0; other < listed.size(); ++other) {
                 if (other == slot)
                     continue;
-                if (oamut::condition_met(condition, mutators[other].manifest.id, versions[other]))
-                    return mutators[slot].manifest.id + " conflicts with " +
-                           mutators[other].manifest.id;
+                if (oamut::condition_met(condition, listed[other].manifest.id, versions[other]))
+                    return listed[slot].manifest.id + " conflicts with " +
+                           listed[other].manifest.id;
             }
         }
     }

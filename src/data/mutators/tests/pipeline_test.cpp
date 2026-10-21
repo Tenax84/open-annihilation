@@ -80,9 +80,9 @@ mutators::PipelineMutator load_id(std::string_view id) {
     return load_mutator(k_data / "packages" / std::string{id});
 }
 
-mutators::PipelineInput make_input(std::vector<mutators::PipelineMutator> mutators) {
+mutators::PipelineInput make_input(std::vector<mutators::PipelineMutator> list) {
     mutators::PipelineInput input;
-    input.mutators = std::move(mutators);
+    input.mutators = std::move(list);
     input.mod.id = "ridge";
     input.mod.version = "1.0";
     input.mod.game = "ridge";
@@ -93,10 +93,10 @@ mutators::PipelineInput make_input(std::vector<mutators::PipelineMutator> mutato
 }
 
 mutators::PipelineInput input_of(std::vector<std::string_view> ids) {
-    std::vector<mutators::PipelineMutator> mutators;
+    std::vector<mutators::PipelineMutator> list;
     for (const std::string_view id : ids)
-        mutators.push_back(load_id(id));
-    return make_input(std::move(mutators));
+        list.push_back(load_id(id));
+    return make_input(std::move(list));
 }
 
 oa::AssetStore open_ridge() {
