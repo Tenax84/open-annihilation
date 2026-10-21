@@ -315,23 +315,6 @@ bool divides_exactly(std::string span, const std::string& step) {
     return remainder == "0";
 }
 
-/// Tells whether an option id is a Lua name of 1 to 32 bytes.
-bool option_id_text(std::string_view text) noexcept {
-    constexpr std::size_t most_option_id_bytes = 32;
-    if (text.empty() || text.size() > most_option_id_bytes)
-        return false;
-    if (text.front() < 'a' || text.front() > 'z')
-        return false;
-    for (std::size_t slot = 1; slot < text.size(); ++slot) {
-        const char character = text[slot];
-        const bool word = (character >= 'a' && character <= 'z') ||
-                          (character >= '0' && character <= '9') || character == '_';
-        if (!word)
-            return false;
-    }
-    return true;
-}
-
 /// Reads a JSON number into a profile number and keeps its text.
 bool read_json_number(const json::Json& value, oamod::Number& number, std::string& written) {
     const std::string* text = value.number_text();
@@ -672,8 +655,11 @@ bool read_known_option(
     summary.type = type;
     const json::Json* id_value = object.find("id");
     const std::string* id_text = id_value == nullptr ? nullptr : id_value->string();
-    if (id_text == nullptr || !option_id_text(*id_text)) {
-        reason = std::string(where) + ".id is not an option id";
+    if (id_text == nullptr || !oamut::option_id(*id_text)) {
+        if (id_text != nullptr && oamut::lua_reserved_word(*id_text))
+            reason = std::string(where) + ".id is a word Lua reserves";
+        else
+            reason = std::string(where) + ".id is not an option id";
         return false;
     }
     summary.id = *id_text;

@@ -10,6 +10,7 @@
 #include "oa/formats/oamod.hpp"
 #include "oa/test/check.hpp"
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -1783,6 +1784,56 @@ void test_document_and_summary() {
 
 } // namespace
 
+/// Refuses each word Lua reserves, and keeps a name that only resembles one.
+void test_reserved_option_ids() {
+    constexpr std::array<std::string_view, 22> reserved{
+        "and",      "break",  "do",   "else", "elseif", "end",   "false", "for",
+        "function", "goto",   "if",   "in",   "local",  "nil",   "not",   "or",
+        "repeat",   "return", "then", "true", "until",  "while",
+    };
+    for (const std::string_view word : reserved) {
+        const std::string quoted = "\"" + std::string{word} + "\":";
+        const std::string yaml = with_options(
+            "options:\n  " + quoted +
+            "\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+        );
+        const std::string key = "options." + std::string{word};
+        const std::string marker = "\n  " + quoted;
+        expect_one(yaml, key, marker, "is a word Lua reserves", 0, 3);
+    }
+
+    expect_one(
+        with_options(
+            "options:\n  true:\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+        ),
+        "document",
+        "true:",
+        "mapping keys must be strings or integers"
+    );
+    expect_one(
+        with_options(
+            "options:\n  For:\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+        ),
+        "options.For",
+        "For",
+        "Lua name"
+    );
+
+    for (const char* name : {"format", "ends", "for_"}) {
+        Manifest manifest;
+        OA_CHECK(read_ok(
+            with_options(
+                "options:\n  " + std::string{name} +
+                ":\n    type: toggle\n    label: \"Announce\"\n    default: true\n"
+            ),
+            manifest
+        ));
+        OA_CHECK(manifest.options.size() == 1);
+        if (manifest.options.size() == 1)
+            OA_CHECK(manifest.options[0].id == name);
+    }
+}
+
 /// Reads string identifiers and number choices whose text stays within 32 bytes.
 void test_choice_values() {
     OA_CHECK(mut::most_choice_value_bytes == 32);
@@ -1848,5 +1899,6 @@ int main() {
     test_several();
     test_document_and_summary();
     test_choice_values();
+    test_reserved_option_ids();
     return oa::test::check_exit_status();
 }

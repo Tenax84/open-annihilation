@@ -99,7 +99,15 @@ Optional:
 - `conflicts-with`: 1 to 32 conditions on mutator ids, none repeated, not
   this mutator's own id, and not an id `requires.mutators` names.
 - `options`: a mapping of at most 16 option ids. An id is a Lua name,
-  `[a-z][a-z0-9_]*`, of 1 to 32 bytes, so a script reads `ctx.options.<id>`.
+  `[a-z][a-z0-9_]*`, of 1 to 32 bytes, so a script reads
+  `ctx.options.<id>`. Lua 5.4's reserved words are refused (`and`, `break`,
+  `do`, `else`, `elseif`, `end`, `false`, `for`, `function`, `goto`, `if`,
+  `in`, `local`, `nil`, `not`, `or`, `repeat`, `return`, `then`, `true`,
+  `until`, `while`). The message is `is a word Lua reserves`, on the
+  option's path, for example `options.for`. A word that only contains a
+  reserved word (`format`, `ends`, `for_`) is a name. A different case
+  (`For`) is not a name. Write `true` and `false` in quotes: an unquoted
+  `true:` is a boolean key, which the document reader refuses.
   Each option is a mapping of `type` (`toggle`, `choice` or `number`),
   `label` (1 to 64 bytes, no control character) and `default`, plus the
   keys of its type. Any other key is refused.

@@ -1,0 +1,9 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+[*All*]
+{
+MaxDamage=^2.5;
+MaxVelocity=*0.75;
+WorkerTime=*1.5(0.25,4);
+}
