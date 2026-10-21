@@ -1423,13 +1423,9 @@ struct NetworkPlay::NetHost {
         setup.recorder_text = kProgramLine;
         setup.date_text = local_time_text("%Y-%m-%d %H:%M");
         setup.compress = profile != nullptr && profile->recorder.ta_demo_recorder.compress_files;
-        // One sector chunk holds the length word, the type word and the text.
         // Empty text writes no sector, so a game without mutators is unchanged.
-        constexpr std::size_t loadout_room = oa::formats::tad::limit::chunk_bytes -
-                                             oa::formats::tad::layout::chunk_length_bytes -
-                                             oa::formats::tad::layout::sector_type_bytes;
         const std::string loadout_text = runtime.played_loadout_text();
-        if (loadout_text.size() > loadout_room) {
+        if (loadout_text.size() > oa::session::demo::recording_loadout_most_bytes) {
             std::cerr
                 << "demo mutators: the loadout is too long for the recording and is left out\n";
         } else {

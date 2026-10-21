@@ -1333,6 +1333,8 @@ if(OA_BUILD_PLATFORM)
       OBJECT_DEPENDS "${oa_windows_manifest}")
   endif()
   target_link_libraries(oa-game PRIVATE oa-ui-display-layout oa-ui-gadget-render)
+  # The recorded mutators compare a loadout with the text one recording holds.
+  target_link_libraries(oa-game PRIVATE oa-session-demo)
   target_link_libraries(oa-game PRIVATE oa-media-director oa-media-director-planner oa-audio-offline-mix
     oa-formats-oascript oa-formats-zip oa-app-director-output)
   target_link_libraries(oa-game PRIVATE ${oa_game_intro_player} SDL3::SDL3 ${oa_game_libraries}

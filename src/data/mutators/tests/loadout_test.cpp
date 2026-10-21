@@ -433,7 +433,9 @@ void refusals() {
         many.entries.push_back(std::move(entry));
     }
     const std::string too_many = mutators::canonical_loadout(many);
-    expect(too_many.size() <= mutators::loadout_text_most_bytes, "33 entries fit in 64 KiB");
+    expect(
+        too_many.size() <= mutators::loadout_text_most_bytes, "33 entries fit in the text limit"
+    );
     refuses(too_many, "32");
     many.entries.pop_back();
     std::string limit_error;
@@ -442,13 +444,14 @@ void refusals() {
     expect(thirty_two.has_value() && thirty_two->entries.size() == 32, "32 entries are read");
 
     const std::string over(mutators::loadout_text_most_bytes + 1, 'x');
-    refuses(over, "65536");
+    refuses(over, "65529");
     std::string boundary_error;
     const std::string boundary(mutators::loadout_text_most_bytes, 'x');
     expect(
-        !mutators::parse_loadout(boundary, &boundary_error).has_value(), "64 KiB of junk is refused"
+        !mutators::parse_loadout(boundary, &boundary_error).has_value(),
+        "the limit of junk is refused"
     );
-    expect(boundary_error.find("65536") == std::string::npos, "64 KiB is inside the size limit");
+    expect(boundary_error.find("65529") == std::string::npos, "the limit is inside the size limit");
 }
 
 /// Checks default_option for a toggle, a choice and a number.

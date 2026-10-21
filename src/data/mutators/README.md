@@ -877,8 +877,9 @@ order in the record does not change the text and none is left out. A
 toggle is a boolean, a number is a number, and a choice is a number or a
 string as the manifest types it. `parse_loadout` accepts only that text.
 The limits are `loadout_most_entries` (32) and `loadout_text_most_bytes`
-(64 KiB). A wrong `oaloadout`, an unknown key, upper-case hex, a 33rd
-mutator, 64 KiB plus one byte, trailing text and any spacing or key order
+(65,529 bytes, the most a recording's mutators sector holds). A wrong
+`oaloadout`, an unknown key, upper-case hex, a 33rd mutator, one byte past
+that limit, trailing text and any spacing or key order
 the writer would not produce are refused, and the error names what.
 A JSON number reads back as a number option. A numeric choice is written
 as a JSON number too, so it reads back as a number option with that
