@@ -15,4 +15,10 @@ if(BUILD_TESTING)
   add_executable(oa-data-mutation-rules-test tests/mutation_rules_test.cpp)
   target_link_libraries(oa-data-mutation-rules-test PRIVATE oa-data-mutation-rules oa-test-support)
   add_test(NAME data-mutation-rules COMMAND oa-data-mutation-rules-test)
+
+  add_executable(oa-data-mutation-rules-apply-test tests/apply_test.cpp)
+  target_link_libraries(
+    oa-data-mutation-rules-apply-test PRIVATE oa-data-mutation-rules oa-test-support
+  )
+  add_test(NAME data-mutation-rules-apply COMMAND oa-data-mutation-rules-apply-test)
 endif()

@@ -152,9 +152,10 @@ bool less_text(std::string_view left, std::string_view right) {
 
 /// Reports whether a field text starts as a TDF number.
 ///
-/// After spaces and tabs, an optional sign and at least one digit. A leading
-/// point is not a number here, and an exponent after the digits is allowed
-/// because the TDF reader accepts it.
+/// After spaces and tabs, an optional sign, then either a digit or a point
+/// and at least one digit. A lone point or a sign with nothing after it is
+/// not a number. An exponent after the digits is allowed because the TDF
+/// reader accepts it.
 ///
 /// @param text a field value, or null
 /// @return true when a factor can read the text
@@ -166,6 +167,10 @@ bool starts_as_number(const char* text) {
         ++cursor;
     if (*cursor == '+' || *cursor == '-')
         ++cursor;
+    if (*cursor == '.') {
+        ++cursor;
+        return *cursor >= '0' && *cursor <= '9';
+    }
     return *cursor >= '0' && *cursor <= '9';
 }
 
