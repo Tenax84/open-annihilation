@@ -1,0 +1,15 @@
+[*All*]
+{
+marker=1;
+}
+[*Group*]
+{
+[Needs]
+{
+builder=1,1;
+}
+[Changes]
+{
+workertime=4;
+}
+}

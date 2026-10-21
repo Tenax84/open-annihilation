@@ -1,0 +1,10 @@
+folder=weapons;
+extension=tdf;
+[*All*]
+{
+<AllDepth2>=*2;
+}
+[*All*]
+{
+<alldepth2>=*2;
+}
