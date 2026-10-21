@@ -93,6 +93,66 @@ inline constexpr std::string_view cancel = "CANCEL";
 /// The question's button that switches the prerequisite and its dependants off.
 inline constexpr std::string_view turn_off = "TURN OFF";
 
+/// The window's title.
+inline constexpr std::string_view title_mutators = "Mutators";
+/// The skirmish setup, in the header's context.
+inline constexpr std::string_view setup_skirmish = "Skirmish";
+/// The battle room setup, in the header's context.
+inline constexpr std::string_view setup_battle = "Battle room";
+/// The campaign setup, in the header's context.
+inline constexpr std::string_view setup_campaign = "Campaign";
+/// The header's context when no mod is being played.
+inline constexpr std::string_view no_mod = "No Mod";
+/// The header's context: the setup and the mod, or No Mod.
+inline constexpr std::string_view context_setup = "{setup} · {mod}";
+/// The filter that keeps every mutator.
+inline constexpr std::string_view filter_all = "All";
+/// The filter that keeps installed mutators.
+inline constexpr std::string_view filter_installed = "Installed";
+/// The filter that keeps mutators that are not installed.
+inline constexpr std::string_view filter_downloads = "Downloads";
+/// A filter pill or the compact drop-down: the filter and how many it keeps.
+inline constexpr std::string_view filter_with_count = "{filter} ({count})";
+/// The button that holds the tags that do not fit as pills.
+inline constexpr std::string_view tags_menu = "TAGS";
+/// One tag in the compact drop-down or the tags menu, with how many it keeps.
+inline constexpr std::string_view tag_with_count = "Tag: {tag} ({count})";
+/// The search field's placeholder.
+inline constexpr std::string_view search_mutators = "Search mutators";
+/// The heading over the On rows.
+inline constexpr std::string_view heading_on = "ON · APPLIED TOP TO BOTTOM";
+/// The heading over the Off rows. Not a switch's Off half.
+inline constexpr std::string_view heading_off = "OFF · NOT APPLIED";
+/// A switch's Off half. The catalogue's shared OFF, which every switch uses.
+inline constexpr std::string_view switch_off = "OFF";
+/// A switch's On half. The catalogue's shared ON.
+inline constexpr std::string_view switch_on = "ON";
+/// The clash strip's Add caption, on a mutator that brings units or weapons.
+inline constexpr std::string_view clash_mode_add = "ADD";
+/// The clash strip's Replace caption.
+inline constexpr std::string_view clash_mode_replace = "REPLACE";
+/// The details' order label.
+inline constexpr std::string_view order_label = "Order";
+/// The button that moves the selected mutator up.
+inline constexpr std::string_view order_up = "▲ UP";
+/// The button that moves the selected mutator down.
+inline constexpr std::string_view order_down = "▼ DOWN";
+/// The details' version and author under the name.
+inline constexpr std::string_view version_author = "{version} · {author}";
+/// Compact's button that opens the details page.
+inline constexpr std::string_view details_button = "DETAILS";
+/// The details page's button that returns to the list.
+inline constexpr std::string_view back_button = "BACK";
+/// The button that keeps the set.
+inline constexpr std::string_view use_these = "USE THESE";
+/// The read-only footer's button, and the header's close mark.
+inline constexpr std::string_view close_button = "CLOSE";
+/// The list when the host gave no mutators.
+inline constexpr std::string_view empty_none =
+    "No mutators here yet. The Library on the main menu gets them.";
+/// The list when the filters keep nothing.
+inline constexpr std::string_view empty_filtered = "No mutator matches these filters";
+
 } // namespace words
 
 } // namespace oa::ui::mutator_picker

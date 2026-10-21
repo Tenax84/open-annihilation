@@ -216,6 +216,24 @@ inline void drop_came_with(Picker& picker, std::string_view id) {
     picker.came_with = std::move(kept);
 }
 
+/// The clash mode a mutator uses when none has been chosen yet.
+///
+/// Empty when it brings no units or weapons. Otherwise the manifest's mode,
+/// or the inputs' default when the manifest names none. The same rule
+/// `open` uses once a chosen mode is set aside.
+///
+/// @param mutator the mutator
+/// @param inputs the host's inputs
+/// @return the mode, or empty when the mutator brings nothing
+[[nodiscard]] inline std::optional<Clash>
+default_clash(const Mutator& mutator, const Inputs& inputs) {
+    if (!mutator.brings)
+        return std::nullopt;
+    if (mutator.clashes)
+        return mutator.clashes;
+    return inputs.clash_default;
+}
+
 /// Tells whether `id` is one of `ids`.
 ///
 /// @param ids the ids
