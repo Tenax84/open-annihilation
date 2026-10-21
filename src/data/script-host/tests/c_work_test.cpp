@@ -473,6 +473,60 @@ void review_and_replaced_calls_stop() {
         "local s = string.rep(\"x\", 65536)\nwhile true do\n  for position, code in "
         "utf8.codes(s) do end\nend\n"
     );
+    expect_budget(
+        "local big = string.rep(\"x\", 65536)\n"
+        "while true do\n"
+        "  pcall(function()\n"
+        "    for i = 1, 1000 do\n"
+        "      local u = big:upper()\n"
+        "    end\n"
+        "  end)\n"
+        "end\n"
+    );
+    expect_budget(
+        "while true do\n"
+        "  (\"a\"):rep(65536):find((\"a\"):rep(32767) .. \"b\", 1, true)\n"
+        "end\n"
+    );
+    expect_budget(
+        "local s = \"a\" .. string.rep(\"\\x80\", 65000)\n"
+        "local f = utf8.codes(\"a\")\n"
+        "while true do\n"
+        "  f(s, 1)\n"
+        "end\n"
+    );
+    expect_budget(
+        "local t = {}\n"
+        "for i = 1, 1000000 do\n"
+        "  t[i] = i\n"
+        "end\n"
+        "while true do\n"
+        "  table.sort(t, rawequal)\n"
+        "end\n"
+    );
+    expect_budget(
+        "local t = {}\n"
+        "for i = 1, 400 do\n"
+        "  t[i] = string.rep(\"\\0\", 65535)\n"
+        "end\n"
+        "while true do\n"
+        "  table.sort(t)\n"
+        "end\n"
+    );
+}
+
+void utf8_codes_is_one_function() {
+    Package package;
+    host::ScriptError error;
+    auto sandbox = open_with(package, error, host::mutator_profile());
+    if (!sandbox)
+        return;
+    put(package, "mutator.lua", "same = utf8.codes(\"a\") == utf8.codes(\"b\")\n");
+    const bool ran = sandbox->run_file("mutator.lua", "tick", nullptr, error);
+    OA_CHECK(ran);
+    lua_State* state = sandbox->state();
+    lua_getglobal(state, "same");
+    OA_CHECK(lua_toboolean(state, -1) == 1);
 }
 
 struct TextResult {
@@ -533,6 +587,7 @@ int main() {
     add_cases(cases);
     compare_cases(cases);
     review_and_replaced_calls_stop();
+    utf8_codes_is_one_function();
     a_mutator_rewrites_tables();
     return oa::test::check_exit_status();
 }

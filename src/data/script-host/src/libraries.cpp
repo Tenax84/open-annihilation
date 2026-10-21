@@ -11,8 +11,9 @@
 // Copyright (C) 1994-2026 Lua.org, PUC-Rio.
 // The licence is the MIT licence; the text is licenses/lua-LICENSE.txt.
 // Each copy counts its work against the phase allowance and refuses a table
-// range no table can hold. string.char and utf8.char stay Lua's own: the
-// string cap refuses a result that would pass it.
+// range no table can hold. string.char stays Lua's own: the string cap
+// refuses a result that would pass it. utf8.char, string.format and the
+// pack calls stay Lua's own too, and are charged before that call.
 
 #include "internal.hpp"
 
@@ -30,6 +31,14 @@ namespace {
 using Control = HostDetail::Control;
 
 const char string_rep_key = 0;
+const char format_key = 0;
+const char pack_key = 0;
+const char packsize_key = 0;
+const char unpack_key = 0;
+const char utf8_char_key = 0;
+const char next_key = 0;
+const char tonumber_key = 0;
+const char warn_key = 0;
 const char setmetatable_key = 0;
 const char rawset_key = 0;
 const char xpcall_key = 0;
@@ -273,10 +282,10 @@ void set_pair(lua_State* state, SortIndex first, SortIndex second) {
 }
 
 int sort_less(lua_State* state, int left, int right) {
-    if (lua_isnil(state, 2)) {
-        charge(state, 1);
+    // Charged before the comparison, including when the comparator is C.
+    charge(state, comparison_charge(state, left, right));
+    if (lua_isnil(state, 2))
         return lua_compare(state, left, right, LUA_OPLT);
-    }
     lua_pushvalue(state, 2);
     lua_pushvalue(state, left - 1);
     lua_pushvalue(state, right - 2);
@@ -387,9 +396,16 @@ static int host_print(lua_State* state) {
         const char* text = lua_tolstring(state, -1, &length);
         const std::size_t room = ceiling - kept;
         const std::size_t take = length < room ? length : room;
-        if (take > 0)
-            luaL_addlstring(&buffer, text != nullptr ? text : "", take);
-        lua_pop(state, 1);
+        // The text sits above the buffer. addlstring would treat that slot
+        // as the buffer's box the first time the line grows past its first
+        // block, and the pop would free the box the buffer still uses.
+        if (take == length) {
+            luaL_addvalue(&buffer);
+        } else {
+            lua_pushlstring(state, text != nullptr ? text : "", take);
+            lua_remove(state, -2);
+            luaL_addvalue(&buffer);
+        }
         kept += take;
     }
     luaL_pushresult(&buffer);
@@ -836,36 +852,135 @@ static int host_utf8_offset(lua_State* state) {
     return 1;
 }
 
-static int host_utf8_codes_next(lua_State* state) {
-    const int strict = lua_toboolean(state, lua_upvalueindex(1));
+static int host_utf8_codes_aux(lua_State* state, int strict) {
     std::size_t length = 0;
     const char* text = luaL_checklstring(state, 1, &length);
-    lua_Unsigned index = static_cast<lua_Unsigned>(lua_tointeger(state, 2));
+    const lua_Unsigned start = static_cast<lua_Unsigned>(lua_tointeger(state, 2));
+    lua_Unsigned index = start;
     if (index < length) {
         while (utf8_continuation(static_cast<unsigned char>(text[index])))
             ++index;
     }
-    if (index >= length)
+    if (index >= length) {
+        std::size_t scanned = 0;
+        if (start < length && index > start)
+            scanned = static_cast<std::size_t>(index - start);
+        charge(state, units_for_bytes(scanned));
         return 0;
+    }
     unsigned code = 0;
     const char* next = utf8_decode(text + index, &code, strict != 0);
-    if (next == nullptr || utf8_continuation(static_cast<unsigned char>(*next)))
+    if (next == nullptr || utf8_continuation(static_cast<unsigned char>(*next))) {
+        std::size_t scanned = 1;
+        if (index > start)
+            scanned = static_cast<std::size_t>(index - start) + 1;
+        charge(state, units_for_bytes(scanned));
         return luaL_error(state, utf8_invalid);
+    }
+    charge(state, units_for_bytes(static_cast<std::size_t>(next - (text + start))));
     lua_pushinteger(state, static_cast<lua_Integer>(index) + 1);
     lua_pushinteger(state, static_cast<lua_Integer>(code));
-    charge(state, 1);
     return 2;
+}
+
+// Two light functions, as Lua's own utf8.codes does. A new closure each
+// call would not compare equal to the next one.
+static int host_utf8_codes_strict(lua_State* state) {
+    return host_utf8_codes_aux(state, 1);
+}
+
+static int host_utf8_codes_lax(lua_State* state) {
+    return host_utf8_codes_aux(state, 0);
 }
 
 static int host_utf8_codes(lua_State* state) {
     const int lax = lua_toboolean(state, 2);
     const char* text = luaL_checkstring(state, 1);
     luaL_argcheck(state, !utf8_continuation(static_cast<unsigned char>(text[0])), 1, utf8_invalid);
-    lua_pushboolean(state, lax == 0);
-    lua_pushcclosure(state, host_utf8_codes_next, 1);
+    lua_pushcfunction(state, lax != 0 ? host_utf8_codes_lax : host_utf8_codes_strict);
     lua_pushvalue(state, 1);
     lua_pushinteger(state, 0);
     return 3;
+}
+
+static int call_saved(lua_State* state, const void* key) {
+    const int arguments = lua_gettop(state);
+    lua_rawgetp(state, LUA_REGISTRYINDEX, key);
+    lua_insert(state, 1);
+    lua_call(state, arguments, LUA_MULTRET);
+    return lua_gettop(state);
+}
+
+static int host_next(lua_State* state) {
+    charge(state, scan_call_charge);
+    return call_saved(state, &next_key);
+}
+
+static int host_tonumber(lua_State* state) {
+    std::size_t length = 0;
+    if (lua_type(state, 1) == LUA_TSTRING)
+        lua_tolstring(state, 1, &length);
+    charge(state, length == 0 ? 1 : units_for_bytes(length));
+    return call_saved(state, &tonumber_key);
+}
+
+static int host_warn(lua_State* state) {
+    const int count = lua_gettop(state);
+    uint64_t units = comparison_unit;
+    if (count > 1)
+        units = comparison_unit * static_cast<uint64_t>(count);
+    charge(state, units);
+    return call_saved(state, &warn_key);
+}
+
+static uint64_t format_units(lua_State* state) {
+    std::size_t format_length = 0;
+    if (lua_type(state, 1) == LUA_TSTRING)
+        lua_tolstring(state, 1, &format_length);
+    uint64_t units = static_cast<uint64_t>(format_length);
+    const int count = lua_gettop(state);
+    for (int index = 2; index <= count; ++index) {
+        units += comparison_unit;
+        if (lua_type(state, index) == LUA_TSTRING) {
+            std::size_t argument_length = 0;
+            lua_tolstring(state, index, &argument_length);
+            units += static_cast<uint64_t>(argument_length);
+        }
+    }
+    return units == 0 ? 1 : units;
+}
+
+static int host_string_format(lua_State* state) {
+    charge(state, format_units(state));
+    return call_saved(state, &format_key);
+}
+
+// One unit per format byte. One per 64 bytes left a long format running
+// past five seconds at the default allowance.
+static int host_charged_format(lua_State* state, const void* key) {
+    std::size_t length = 0;
+    if (lua_type(state, 1) == LUA_TSTRING)
+        lua_tolstring(state, 1, &length);
+    charge(state, length == 0 ? 1 : static_cast<uint64_t>(length));
+    return call_saved(state, key);
+}
+
+static int host_string_pack(lua_State* state) {
+    return host_charged_format(state, &pack_key);
+}
+
+static int host_string_packsize(lua_State* state) {
+    return host_charged_format(state, &packsize_key);
+}
+
+static int host_string_unpack(lua_State* state) {
+    return host_charged_format(state, &unpack_key);
+}
+
+static int host_utf8_char(lua_State* state) {
+    const int count = lua_gettop(state);
+    charge(state, count <= 0 ? 1 : static_cast<uint64_t>(count));
+    return call_saved(state, &utf8_char_key);
 }
 } // extern "C"
 
@@ -891,6 +1006,10 @@ void install_c_work(lua_State* state) {
     lua_pop(state, 1);
 
     lua_getglobal(state, "utf8");
+    lua_getfield(state, -1, "char");
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &utf8_char_key);
+    lua_pushcfunction(state, host_utf8_char);
+    lua_setfield(state, -2, "char");
     lua_pushcfunction(state, host_utf8_offset);
     lua_setfield(state, -2, "offset");
     lua_pushcfunction(state, host_utf8_codepoint);
@@ -902,11 +1021,28 @@ void install_c_work(lua_State* state) {
     lua_pop(state, 1);
 }
 
+void replace_global(lua_State* state, const char* name, const void* key, lua_CFunction host) {
+    lua_getglobal(state, name);
+    lua_rawsetp(state, LUA_REGISTRYINDEX, key);
+    lua_pushcfunction(state, host);
+    lua_setglobal(state, name);
+}
+
+void replace_field(lua_State* state, const char* name, const void* key, lua_CFunction host) {
+    lua_getfield(state, -1, name);
+    lua_rawsetp(state, LUA_REGISTRYINDEX, key);
+    lua_pushcfunction(state, host);
+    lua_setfield(state, -2, name);
+}
+
 } // namespace
 
 void open_libraries(lua_State* state) {
     luaL_requiref(state, "_G", luaopen_base, 1);
     lua_pop(state, 1);
+    replace_global(state, "next", &next_key, host_next);
+    replace_global(state, "tonumber", &tonumber_key, host_tonumber);
+    replace_global(state, "warn", &warn_key, host_warn);
     luaL_requiref(state, "string", luaopen_string, 1);
     lua_pop(state, 1);
     luaL_requiref(state, "table", luaopen_table, 1);
@@ -928,6 +1064,10 @@ void open_libraries(lua_State* state) {
     lua_setfield(state, -2, "dump");
     lua_pushcfunction(state, host_string_rep);
     lua_setfield(state, -2, "rep");
+    replace_field(state, "format", &format_key, host_string_format);
+    replace_field(state, "pack", &pack_key, host_string_pack);
+    replace_field(state, "packsize", &packsize_key, host_string_packsize);
+    replace_field(state, "unpack", &unpack_key, host_string_unpack);
     // The string metatable's __index is this table, so ("x"):find uses these.
     install_patterns(state);
     lua_pop(state, 1);

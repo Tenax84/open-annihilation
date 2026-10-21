@@ -109,6 +109,42 @@ void a_full_string_is_kept() {
     OA_CHECK(number.value == 65536 * 3);
 }
 
+void each_full_route_is_kept() {
+    Package package;
+    host::ScriptError error;
+    auto sandbox = open_with(package, error);
+    if (!sandbox)
+        return;
+    Number number;
+    host::CallHooks hooks;
+    hooks.context = &number;
+    hooks.read = read_number;
+    const char* source = "local a = string.rep(\"x\", 30000)\n"
+                         "local b = string.rep(\"y\", 35536)\n"
+                         "local joined = a .. b\n"
+                         "local formatted = string.format(\"%s%s\", a, b)\n"
+                         "local concatenated = table.concat({a, b})\n"
+                         "local codes = {}\n"
+                         "for i = 1, 65536 do\n"
+                         "  codes[i] = 120\n"
+                         "end\n"
+                         "local from_char = string.char(table.unpack(codes))\n"
+                         "local from_utf = utf8.char(table.unpack(codes))\n"
+                         "local replaced = string.rep(\"x\", 65536):gsub(\"z\", \"y\")\n"
+                         "local shown = tostring(setmetatable({}, {\n"
+                         "  __tostring = function()\n"
+                         "    return string.rep(\"q\", 65536)\n"
+                         "  end\n"
+                         "}))\n"
+                         "return #joined + #formatted + #concatenated + #from_char + #from_utf +"
+                         " #replaced + #shown\n";
+    put(package, "mutator.lua", source);
+    const bool ran = sandbox->run_file("mutator.lua", "tick", &hooks, error);
+    OA_CHECK(ran);
+    OA_CHECK(number.saw);
+    OA_CHECK(number.value == 65536 * 7);
+}
+
 void each_route_is_refused() {
     expect_refused(
         "local a = string.rep(\"x\", 40000)\n"
@@ -321,6 +357,7 @@ void two_sandboxes_measure_one_header() {
 int main() {
     two_sandboxes_measure_one_header();
     a_full_string_is_kept();
+    each_full_route_is_kept();
     each_route_is_refused();
     a_literal_is_refused();
     a_required_literal_is_refused();

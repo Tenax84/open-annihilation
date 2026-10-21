@@ -421,7 +421,10 @@ init:
 }
 
 /// Finds `s2` inside `s1`, or returns null.
-const char* lmemfind(const char* s1, size_t l1, const char* s2, size_t l2) {
+///
+/// Charges each `memchr` scan and each `memcmp` as it goes. An empty pattern
+/// does not scan. `charge` may raise, so nothing here has a destructor.
+const char* lmemfind(lua_State* state, const char* s1, size_t l1, const char* s2, size_t l2) {
     if (l2 == 0)
         return s1;
     if (l2 > l1)
@@ -430,10 +433,17 @@ const char* lmemfind(const char* s1, size_t l1, const char* s2, size_t l2) {
     l1 = l1 - l2;
     while (l1 > 0) {
         const void* found = std::memchr(s1, byte_of(*s2), l1);
+        std::size_t looked = l1;
+        if (found != nullptr) {
+            const auto* hit = static_cast<const char*>(found);
+            looked = static_cast<std::size_t>(hit - s1) + 1;
+        }
+        charge(state, units_for_bytes(looked));
         if (found == nullptr)
             return nullptr;
         const auto* init = static_cast<const char*>(found);
         init++;
+        charge(state, units_for_bytes(l2));
         if (std::memcmp(init, s2 + 1, l2) == 0)
             return init - 1;
         l1 -= static_cast<size_t>(init - s1);
@@ -526,14 +536,7 @@ int str_find_aux(lua_State* L, int finding) {
     if (finding != 0 && (lua_toboolean(L, 4) != 0 || nospecials(p, lp) != 0)) {
         const char* const haystack = s + init;
         const std::size_t haystack_length = ls - init;
-        const char* s2 = lmemfind(haystack, haystack_length, p, lp);
-        std::size_t scanned = haystack_length;
-        if (s2 != nullptr) {
-            scanned = static_cast<std::size_t>(s2 - haystack) + lp;
-            if (scanned > haystack_length)
-                scanned = haystack_length;
-        }
-        charge(L, units_for_bytes(scanned));
+        const char* s2 = lmemfind(L, haystack, haystack_length, p, lp);
         if (s2 != nullptr) {
             lua_pushinteger(L, static_cast<lua_Integer>(s2 - s) + 1);
             lua_pushinteger(L, static_cast<lua_Integer>(s2 - s) + static_cast<lua_Integer>(lp));

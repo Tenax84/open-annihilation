@@ -22,14 +22,28 @@ inline constexpr std::size_t chunk_buffer_bytes = 160;
 inline constexpr std::size_t scratch_buffer_bytes = 3072;
 inline constexpr std::size_t budget_message_bytes = 160;
 
-/// Bytes of allocation or of a scan that count as one instruction.
+/// Bytes of a string's length, or of a scan, that count as one instruction.
 inline constexpr std::size_t bytes_per_charge = 64;
 
-/// One Lua value, laid out as the interpreter's own value.
+/// Units for one comparison that is not two long strings.
+///
+/// Sorting hundreds of thousands of numbers is work in proportion to the
+/// comparisons. 128 units each spends the default allowance before that
+/// sort runs for long.
+inline constexpr uint64_t comparison_unit = 128;
+
+/// Units for one `next` call, or one walk that collects keys for `pairs`.
+///
+/// An emptied table can make that call visit every slot it used to hold.
+/// 4096 units spends the default allowance before a loop of those calls
+/// runs for long.
+inline constexpr uint64_t scan_call_charge = 4096;
+
+/// One Lua value, laid out as the interpreter's own value, plus its tag.
 ///
 /// The header that names that value is private to the interpreter, so the
 /// sandbox keeps this copy. `table_range_limit` is
-/// `default_memory_budget / sizeof(TValue)` from it.
+/// `default_memory_budget / sizeof(TableSlot)`.
 union ValueSlot {
     void* pointer;
     lua_CFunction function;
@@ -40,7 +54,7 @@ union ValueSlot {
 
 struct TableSlot {
     ValueSlot value;
-    unsigned char tag;
+    unsigned char tag{};
 };
 
 /// Most elements one table call may move or visit.
@@ -244,8 +258,14 @@ void install_require(lua_State* state);
 /// @param state the state, with the loader's message at the top
 void remember_load_error(HostDetail::Control* control, lua_State* state);
 
-/// The instruction hook. Library code re-arms it when a charge spends the allowance.
-extern "C" void script_count_hook(lua_State* state, lua_Debug* activation);
+/// Arms the count hook so the next instruction raises a spent allowance.
+///
+/// A `pcall` can catch the raise. With the hook set to one instruction, the
+/// next check fires outside that `pcall` and the phase ends. The hook itself
+/// stays in the state file.
+///
+/// @param state the sandbox state
+void rearm_count_hook(lua_State* state);
 
 /// How many instruction units `bytes` cost, one per `bytes_per_charge`, rounded up.
 ///
@@ -274,24 +294,53 @@ inline void add_charge(HostDetail::Control* control, uint64_t units) {
         control->allowance_spent = true;
 }
 
+/// Units for ordering the values at `left` and `right`.
+///
+/// Two strings cost one unit per byte of the two lengths, and at least
+/// `comparison_unit`. Ordering a string full of zero bytes walks a segment
+/// per byte, so one unit per 64 bytes would let that sort run for too long.
+/// Any other pair costs `comparison_unit`. Reading the lengths does not
+/// allocate.
+///
+/// @param state the sandbox state
+/// @param left stack index of the first value
+/// @param right stack index of the second value
+/// @return the units to charge before the comparison
+inline uint64_t comparison_charge(lua_State* state, int left, int right) {
+    if (lua_type(state, left) == LUA_TSTRING && lua_type(state, right) == LUA_TSTRING) {
+        std::size_t left_length = 0;
+        std::size_t right_length = 0;
+        lua_tolstring(state, left, &left_length);
+        lua_tolstring(state, right, &right_length);
+        const uint64_t bytes =
+            static_cast<uint64_t>(left_length) + static_cast<uint64_t>(right_length);
+        if (bytes > comparison_unit)
+            return bytes;
+    }
+    return comparison_unit;
+}
+
 /// Adds `units` and raises, as the count hook does, when the allowance is spent.
 ///
-/// A string refusal raises the string message instead. No object with a
-/// destructor may be alive across this call.
+/// A string refusal raises the string message instead. Each raise arms the
+/// count hook at one instruction first, so a `pcall` cannot keep the phase
+/// alive. No object with a destructor may be alive across this call.
 ///
 /// @param state the sandbox state
 /// @param units instruction units to add
 inline void charge(lua_State* state, uint64_t units) {
     HostDetail::Control* control = control_from(state);
     if (control->string_refused) {
-        lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
+        rearm_count_hook(state);
         luaL_error(state, "%s", control->string_message);
     }
-    if (control->allowance_spent)
+    if (control->allowance_spent) {
+        rearm_count_hook(state);
         luaL_error(state, "%s", control->instruction_message);
+    }
     add_charge(control, units);
     if (control->allowance_spent) {
-        lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
+        rearm_count_hook(state);
         luaL_error(state, "%s", control->instruction_message);
     }
 }

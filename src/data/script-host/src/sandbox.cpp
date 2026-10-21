@@ -15,15 +15,20 @@
 #include <utility>
 
 namespace oa::data::script_host {
+namespace {
 
-extern "C" void script_count_hook(lua_State* state, lua_Debug* /*activation*/) {
+// File-local. Other files re-arm it through rearm_count_hook.
+extern "C" {
+static void script_count_hook(lua_State* state, lua_Debug* /*activation*/) {
     HostDetail::Control* control = control_from(state);
     if (control->string_refused) {
         lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
         luaL_error(state, "%s", control->string_message);
     }
-    if (control->allowance_spent)
+    if (control->allowance_spent) {
+        lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
         luaL_error(state, "%s", control->instruction_message);
+    }
     control->instructions_used += static_cast<uint64_t>(budget_check_interval);
     if (control->instructions_used >= control->instruction_allowance) {
         control->allowance_spent = true;
@@ -31,8 +36,7 @@ extern "C" void script_count_hook(lua_State* state, lua_Debug* /*activation*/) {
         luaL_error(state, "%s", control->instruction_message);
     }
 }
-
-namespace {
+} // extern "C"
 
 using Control = HostDetail::Control;
 
@@ -235,18 +239,27 @@ static void* allocate(void* user, void* pointer, size_t old_size, size_t new_siz
     // A new string object arrives as a null block tagged LUA_TSTRING. The
     // size is the header plus the bytes plus one. The header was measured
     // at open, so the length compared with the cap is the same on every build.
+    // The charge is that length, not the block: the header differs by build,
+    // and a table's block differs from run to run.
+    bool charge_new_string = false;
+    std::size_t new_string_length = 0;
     if (pointer == nullptr && old_size == LUA_TSTRING) {
         if (control->measuring_string_header) {
-            if (new_size >= 201)
+            if (new_size >= 201) {
                 control->string_header = new_size - 201;
+                charge_new_string = true;
+                new_string_length = 200;
+            }
         } else if (control->string_refused) {
             return nullptr;
-        } else if (control->string_header != 0 && new_size > control->string_header + 1) {
+        } else if (control->string_header != 0 && new_size >= control->string_header + 1) {
             const std::size_t length = new_size - control->string_header - 1;
             if (length > string_length_limit) {
                 record_string_limit(control, static_cast<uint64_t>(length), nullptr);
                 return nullptr;
             }
+            charge_new_string = length > 0;
+            new_string_length = length;
         }
     }
     const std::size_t previous = pointer == nullptr ? 0 : old_size;
@@ -269,8 +282,8 @@ static void* allocate(void* user, void* pointer, size_t old_size, size_t new_siz
         control->memory_in_use = new_size;
     else
         control->memory_in_use = control->memory_in_use - previous + new_size;
-    if (new_size > previous)
-        add_charge(control, units_for_bytes(new_size - previous));
+    if (charge_new_string)
+        add_charge(control, units_for_bytes(new_string_length));
     return block;
 }
 
@@ -365,8 +378,6 @@ static int trampoline(lua_State* state) {
 }
 } // extern "C"
 
-} // namespace
-
 void keep_string_place(HostDetail::Control* control, const char* source, int line) {
     const char* chunk = source;
     if (chunk == nullptr || chunk[0] == '\0')
@@ -413,6 +424,12 @@ void note_string_place(HostDetail::Control* control) {
     control->error_chunk[0] = '\0';
     control->error_line = 0;
     control->location_locked = true;
+}
+
+} // namespace
+
+void rearm_count_hook(lua_State* state) {
+    lua_sethook(state, script_count_hook, LUA_MASKCOUNT, 1);
 }
 
 void record_string_limit(HostDetail::Control* control, uint64_t length, const char* message) {
@@ -476,7 +493,7 @@ void Sandbox::close() noexcept {
     if (control_ != nullptr) {
         control_->allowance_spent = true;
         control_->sandbox_failed = true;
-        lua_sethook(state_, script_count_hook, LUA_MASKCOUNT, 1);
+        rearm_count_hook(state_);
     }
     lua_close(state_);
     state_ = nullptr;

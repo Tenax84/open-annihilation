@@ -252,6 +252,7 @@ static int math_min(lua_State* state) {
     int chosen = 1;
     luaL_argcheck(state, count >= 1, 1, "value expected");
     for (int index = 2; index <= count; ++index) {
+        charge(state, comparison_charge(state, index, chosen));
         if (lua_compare(state, index, chosen, LUA_OPLT))
             chosen = index;
     }
@@ -264,6 +265,7 @@ static int math_max(lua_State* state) {
     int chosen = 1;
     luaL_argcheck(state, count >= 1, 1, "value expected");
     for (int index = 2; index <= count; ++index) {
+        charge(state, comparison_charge(state, chosen, index));
         if (lua_compare(state, chosen, index, LUA_OPLT))
             chosen = index;
     }
