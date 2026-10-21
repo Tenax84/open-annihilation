@@ -468,6 +468,10 @@ void charge_visits(lua_State* state, uint64_t visits) {
     host::charge_work(state, visits * host::element_charge);
 }
 
+/// Elements charged for one field read or write of a record, for the lookup
+/// and the field check around it.
+constexpr uint64_t record_access_charge = 8;
+
 /// Charges the bytes of one key or name. May raise. No C++ destructor is alive.
 void charge_text(lua_State* state, std::size_t bytes) {
     host::charge_work(state, host::units_for_bytes(bytes));
@@ -762,9 +766,11 @@ IndexBill measure_index(
 /// The records of one collection, each with its slot.
 ///
 /// The first visit of a document indexes it in linear time and charges one
-/// unit per new section plus the name bytes. A later visit indexes only a
-/// section list that grew. `state` null builds without charging. May raise
-/// when `state` is set, and only before the new records are allocated.
+/// unit per new section plus the name bytes. Every visit checks each document
+/// for growth and charges one unit per document for that check. A later visit
+/// indexes only a section list that grew. `state` null builds without
+/// charging. May raise when `state` is set, and only before the new records
+/// are allocated.
 const std::vector<Rec>& ensure_index(Collections& self, Kind kind, lua_State* state) {
     CollectionsState::Index& index = working(self).indexes[static_cast<std::size_t>(kind)];
     rules::DocumentSet& documents = CollectionsAccess::documents(self);
@@ -774,6 +780,8 @@ const std::vector<Rec>& ensure_index(Collections& self, Kind kind, lua_State* st
         index.listed_children.clear();
         index.names.clear();
     }
+    if (state != nullptr)
+        charge_visits(state, static_cast<uint64_t>(documents.size()));
     const IndexBill bill = measure_index(documents, layout, kind, index);
     if (!bill.grew) {
         index.ready = true;
@@ -2064,6 +2072,7 @@ void assign_fixed_error(Collections& owner, const char* shown, bool finite) {
 /// Present text is read with `fixed_from_text`. A key the block leaves out uses
 /// `default_value`, then `fixed_from_number` (or `fixed_from_text` for text).
 int prepare_fixed(lua_State* state, const RecordBox* box, std::string_view key, int64_t* count) {
+    charge_visits(state, record_access_charge);
     const char* text = nullptr;
     std::optional<fields::RecordKind> schema;
     const tdf::Block* block = nullptr;
@@ -2132,6 +2141,7 @@ int prepare_fixed(lua_State* state, const RecordBox* box, std::string_view key, 
 
 /// Fills the prepared read. The trampoline pushes it after this returns.
 int prepare_read(lua_State* state, const RecordBox* box, std::string_view key) {
+    charge_visits(state, record_access_charge);
     const char* text = nullptr;
     const fields::FieldSpec* spec = nullptr;
     {
@@ -2161,6 +2171,7 @@ int prepare_read(lua_State* state, const RecordBox* box, std::string_view key) {
 
 /// Assigns one field. The value is already on the stack at index 3.
 int assign_record(lua_State* state, const RecordBox* box, std::string_view key) {
+    charge_visits(state, record_access_charge);
     {
         std::string reason;
         if (!ensure_grant(*box->owner, box->kind, reason)) {
