@@ -1493,6 +1493,127 @@ class NoticeScreen final : public LayerScreen {
     bool any_menu_{};            ///< shows on any menu, never in a match
 };
 
+/// A work dialog of Open Annihilation's own (kit::WorkDialog) as a screen of
+/// the OA layer: modal over a backdrop, centred in the window at its scale
+/// over one screen of the game, its spinner turning. It has no buttons and
+/// takes every input, doing nothing with it, until its host closes it.
+class WorkScreen final : public LayerScreen {
+  public:
+
+    /// The name a work dialog has on the layer.
+    static constexpr std::string_view screen_name = "work";
+
+    /// What the work dialog's host does.
+    struct Host {
+        /// Tells, once a frame, whether the dialog must close, as when the
+        /// work is done; unset, it never must.
+        std::function<bool()> tick{};
+    };
+
+    /// Makes the screen of a work dialog.
+    ///
+    /// @param layer the layer it shows on, whose fonts it is placed in
+    /// @param shown_over the screen of the game it shows over; it shows on no other
+    /// @param title the header, as shown
+    /// @param line the one line, as shown
+    /// @param answers what its host does
+    WorkScreen(
+        OaLayer& layer, Screen shown_over, std::string title, std::string line, Host answers
+    );
+
+    /// Returns the dialog's name.
+    ///
+    /// @return screen_name
+    [[nodiscard]] std::string_view name() const override { return screen_name; }
+
+    /// Returns where the dialog shows: centred in the view's room at its
+    /// scale, its size class's notice width wide and as tall as its line
+    /// makes it, over its own screen of the game.
+    ///
+    /// @param view what the screen is placed on
+    /// @return its place; empty in a match, over another screen, or without fonts
+    [[nodiscard]] LayerPlacement placement(const LayerView& view) const override;
+
+    /// Lays the dialog out at the view's size class.
+    ///
+    /// @param view what the screen is placed on
+    void lay_out(const LayerView& view) override;
+
+    /// Tells that the dialog takes every input.
+    ///
+    /// @return true
+    [[nodiscard]] bool modal() const override { return true; }
+
+    /// Tells that what lies under the dialog darkens.
+    ///
+    /// @return true
+    [[nodiscard]] bool backdrop() const override { return true; }
+
+    /// Draws the dialog (kit::draw_work_dialog).
+    ///
+    /// @param canvas where it draws
+    void draw(const oa::ui::kit::Canvas& canvas) const override;
+
+    /// Takes a pointer, which does nothing under the dialog.
+    ///
+    /// @return none
+    LayerAnswer pointer(
+        ScreenInputKind /*kind*/,
+        uint8_t /*button*/,
+        oa::ui::kit::Point /*at*/,
+        int32_t /*finger_reach*/
+    ) override {
+        return LayerAnswer::none;
+    }
+
+    /// Takes a key, which does nothing under the dialog.
+    ///
+    /// @return none
+    LayerAnswer key(oa::ui::kit::Key /*pressed*/, uint32_t /*sdl_key*/) override {
+        return LayerAnswer::none;
+    }
+
+    /// Takes a turn of the wheel, which does nothing under the dialog.
+    ///
+    /// @return none
+    LayerAnswer wheel(oa::ui::kit::Point /*at*/, float /*notches*/) override {
+        return LayerAnswer::none;
+    }
+
+    /// Returns the dialog's display list (kit::work_dialog_list).
+    ///
+    /// @return the list
+    [[nodiscard]] oa::ui::kit::DisplayList display_list() const override;
+
+    /// Returns the dialog's interaction: nothing hovered, pressed or focused.
+    ///
+    /// @return the interaction
+    [[nodiscard]] oa::ui::kit::Interaction interaction() const override { return {}; }
+
+    /// Turns the spinner with the time it has shown, and asks the host
+    /// whether the dialog must close.
+    ///
+    /// @return close when it must; redraw when the spinner turned; otherwise none
+    LayerAnswer tick() override;
+
+    /// Returns the dialog's revision, which counts the changes to its look.
+    ///
+    /// @return the revision
+    [[nodiscard]] uint64_t revision() const override { return revision_; }
+
+    /// Has nothing of its own to close.
+    void close(bool /*by_key*/) override {}
+
+  private:
+
+    OaLayer& layer_;                  ///< the layer it shows on
+    Screen over_{};                   ///< the screen of the game it shows over
+    oa::ui::kit::WorkDialog dialog_;  ///< the dialog
+    Host host_;                       ///< what its host does
+    uint32_t began_ms_{};             ///< when it was made, on the platform's clock
+    uint64_t revision_{};             ///< counts the changes to its look
+};
+
 /// A question of Open Annihilation's own (kit::Question) as a screen of the
 /// OA layer: modal over a backdrop, laid out at the view's size class and
 /// centred in the window at its scale over one screen of the game, its

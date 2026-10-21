@@ -881,9 +881,40 @@ void Runtime::LibraryHost::look_again(Runtime& runtime) {
         work.wake.notify_all();
 }
 
+void Runtime::LibraryHost::select_kept() {
+    if (!kept_selection)
+        return;
+    const auto visible = [this](const library::EntryId& id) {
+        for (const std::size_t index : model.visible)
+            if (model.entries[index].id == id)
+                return true;
+        return false;
+    };
+    if (visible(*kept_selection)) {
+        library::select(model, *kept_selection);
+        kept_selection.reset();
+        kept_selection_shown.reset();
+        return;
+    }
+    for (const std::size_t index : model.visible) {
+        const library::EntryId& id = model.entries[index].id;
+        if (id.kind == kept_selection->kind && id.key == kept_selection->key) {
+            library::select(model, id);
+            break;
+        }
+    }
+    kept_selection_shown = model.selected;
+}
+
 void Runtime::LibraryHost::rebuild(Runtime& runtime) {
     shown_checked = false;
     shown_maps.clear();
+    // A selection the player made since the kept one was applied stays.
+    const bool keeping = kept_selection && model.selected == kept_selection_shown;
+    if (!keeping) {
+        kept_selection.reset();
+        kept_selection_shown.reset();
+    }
     library::Inputs inputs = feed.inputs != nullptr ? feed.inputs(feed.context) : library::Inputs{};
     // What the installer noted of the mods chosen here: a refused item fails
     // with the installer's reason, and an item whose change waits for the
@@ -991,6 +1022,8 @@ void Runtime::LibraryHost::rebuild(Runtime& runtime) {
         }
     }
     library::refresh(model, std::move(inputs));
+    if (keeping)
+        select_kept();
     const std::size_t offered = library::update_count(model);
     if (offered != update_count)
         std::cerr << "open-annihilation: library: updates offered: " << offered << '\n';
@@ -3340,6 +3373,8 @@ void Runtime::open_library(std::optional<library::Tab> tab) {
         library::set_tab(host.model, shown);
     } else {
         host.state = {};
+        host.kept_selection.reset();
+        host.kept_selection_shown.reset();
         library::set_query(host.model, {});
         library::close_details(host.model);
         library::set_tab(host.model, shown);
@@ -3369,6 +3404,94 @@ std::size_t Runtime::library_update_count() {
 bool Runtime::library_registry_built_in(std::string_view registry) {
     const LibraryHost& host = library_host();
     return host.feed.built_in != nullptr && host.feed.built_in(host.feed.context, registry);
+}
+
+/// The longest a run a switch of the mod in the Library began waits for the
+/// Library's worker to list the installed packages before it opens the
+/// Library again anyway, in milliseconds.
+constexpr uint32_t kept_library_wait_ms = 5000;
+
+void Runtime::take_library_return(std::shared_ptr<const LibraryReturn> shown) noexcept {
+    library_return_ = std::move(shown);
+}
+
+void Runtime::keep_library_for_restart() {
+    library_return_.reset();
+    if (!library_ || oa_layer().find(library_screen_name) == nullptr)
+        return;
+    const LibraryHost& host = *library_;
+    auto shown = std::make_shared<LibraryReturn>();
+    shown->tab = host.model.tab;
+    shown->filters = host.model.filters;
+    shown->tag = host.model.tag;
+    shown->query = host.model.query;
+    shown->selected = host.model.selected;
+    shown->details_open = host.model.details_open;
+    shown->details_page = host.state.details_page;
+    library_return_ = std::move(shown);
+}
+
+void Runtime::reopen_kept_library() {
+    LibraryHost& host = library_host();
+    OaLayer& layer = oa_layer();
+    const uint32_t now = oa::platform::tick_ms();
+    // The first try asks the worker to list them.
+    if (!library_return_since_) {
+        library_return_since_ = now;
+        host.look_again(*this);
+    }
+    // The worker lists the installed packages once the run starts. Until it
+    // has, the mods would show as not installed and move as they arrive.
+    bool listed = !host.own_feed;
+    if (!listed) {
+        base::threads::LockGuard guard(host.work.mutex);
+        listed = host.work.searches > 0;
+    }
+    if (!listed && now - *library_return_since_ < kept_library_wait_ms) {
+        // The switch's work dialog says what is being done meanwhile.
+        if (!options_.restart_line.empty() && layer.find(WorkScreen::screen_name) == nullptr) {
+            WorkScreen::Host waiting;
+            waiting.tick = [this] { return !library_return_ || screen_ != Screen::main_menu; };
+            layer.push(
+                std::make_unique<WorkScreen>(
+                    layer,
+                    Screen::main_menu,
+                    std::string(oa::data::languages::interface_text("Open Annihilation")),
+                    options_.restart_line,
+                    waiting
+                )
+            );
+        }
+        return;
+    }
+    if (const LayerScreen* work = layer.find(WorkScreen::screen_name))
+        layer.close(work);
+    if (listed)
+        host.rebuild(*this);
+    // Until the Library opens, as it does once the main menu is free, it is
+    // tried again each frame.
+    open_library(library_return_->tab);
+    if (layer.find(library_screen_name) == nullptr)
+        return;
+    const LibraryReturn shown = *library_return_;
+    library_return_.reset();
+    for (std::size_t index = 0; index < library::tab_total; ++index) {
+        library::set_tab(host.model, static_cast<library::Tab>(index));
+        library::set_filter(host.model, shown.filters[index]);
+    }
+    library::set_tab(host.model, shown.tab);
+    library::set_tag(host.model, shown.tag);
+    library::set_query(host.model, shown.query);
+    host.state.search = {host.model.query, host.model.query.size()};
+    // An entry its feed does not list yet is selected once it does.
+    host.kept_selection = shown.selected;
+    host.kept_selection_shown = host.model.selected;
+    host.select_kept();
+    if (shown.details_open && host.model.selected == shown.selected) {
+        library::open_details(host.model);
+        host.state.details_page = shown.details_page;
+    }
+    ++host.model_revision;
 }
 
 void Runtime::tick_library() {
@@ -3407,6 +3530,9 @@ void Runtime::tick_library() {
     // The Library and its dot are the main menu's.
     if (screen_ != Screen::main_menu)
         return;
+    // A run a switch of the mod from the Library began shows it again.
+    if (library_return_ && !soft_restart_requested_)
+        reopen_kept_library();
     if (host.own_feed) {
         // A catalogue that moved on, or a package the queue installed,
         // sends the worker to search for updates again.

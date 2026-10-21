@@ -534,6 +534,27 @@ class Runtime final : public menu::Host,
         return full_screen_switch_;
     }
 
+    /// What the Library showed when a switch of the mod from it ended the
+    /// run: its tab, filters, tag, search, selection and details.
+    struct LibraryReturn;
+
+    /// Returns what the Library showed when a switch of the mod from it
+    /// ended the run, which a runtime built after the soft restart takes
+    /// over (take_library_return).
+    ///
+    /// @return the Library's tab, search and selection; null when the switch
+    ///     was not made from the Library, or the run did not end for one
+    [[nodiscard]] std::shared_ptr<const LibraryReturn> library_return() const {
+        return library_return_;
+    }
+
+    /// Returns what the progress dialog says while the switch of the mod in
+    /// the Library that ended the run applies, in the language shown.
+    ///
+    /// @return the line, such as "Switching on Ridge…"; empty when the run
+    ///     did not end for such a switch
+    [[nodiscard]] const std::string& restart_line() const noexcept { return restart_line_; }
+
     /// Frees what the runtime made on the renderer it borrows: its streamed
     /// textures and the match's layers. A runtime that ends for a soft
     /// restart calls it, so that the next one on the same renderer starts
@@ -951,6 +972,13 @@ class Runtime final : public menu::Host,
     ///
     /// @param full_screen the switch the movies used
     void take_full_screen_switch(const FullScreenSwitch& full_screen) noexcept;
+
+    /// Hands the runtime the Library a switch of the mod from it left in the
+    /// run before: once the main menu shows, the Library opens again on the
+    /// same tab, filter, tag and search, with the same entry selected.
+    ///
+    /// @param shown what the Library showed; null opens nothing
+    void take_library_return(std::shared_ptr<const LibraryReturn> shown) noexcept;
 
     /// Points the remembered window place at this runtime's preferences, so a
     /// change is written into the file the runtime flushes.
@@ -5932,9 +5960,11 @@ class Runtime final : public menu::Host,
     /// told in a note over the Library
     /// (oa::ui::library::switch_refused_note). SWITCH OFF asks the Switch
     /// Mod question for no mod (oa::ui::library::switch_off_question), whose
-    /// SWITCH plays the game with no mod and whose CANCEL leaves it. PLAY
-    /// NOW and SWITCH OFF do nothing during a game, or while the command
-    /// line chose the mod. A refusal also shows in the status line. CHECK
+    /// SWITCH plays the game with no mod and whose CANCEL leaves it. A switch
+    /// made while the Library shows opens it again after the soft restart,
+    /// as it showed (keep_library_for_restart). PLAY NOW and SWITCH OFF do
+    /// nothing during a game, or while the command line chose the mod. A
+    /// refusal also shows in the status line. CHECK
     /// NOW asks the registries for their lists again. UPDATE asks
     /// request_update, and UNINSTALL library_uninstall. UPDATE ALL asks it at once for
     /// each update that can be installed and asks nothing first
@@ -6006,6 +6036,18 @@ class Runtime final : public menu::Host,
     /// install, its model follows its feed, and its pictures wait while a
     /// match runs.
     void tick_library();
+
+    /// Notes what the Library shows, for the run after the soft restart a
+    /// switch of the mod from it asks for to open it again the same
+    /// (library_return). Without the Library on the OA layer, nothing.
+    void keep_library_for_restart();
+
+    /// Opens the Library again as the run before left it
+    /// (take_library_return), once the main menu lets it open and its
+    /// worker has found the installed packages, so that no entry moves as
+    /// they arrive; at most kept_library_wait_ms after the first try. Until
+    /// then the switch's work dialog shows over the main menu.
+    void reopen_kept_library();
 
     /// Runs --check-library: the main menu's OA button, its dot and the
     /// Library over a feed of fixtures, its actions, Settings over it and it
@@ -18140,6 +18182,16 @@ class Runtime final : public menu::Host,
         void* context, std::string_view id, const oa::ui::mutator_picker::Chosen& chosen
     );
 
+    // What the Library showed as a switch of the mod from it ended this run,
+    // or the run before while this run has not opened it again yet; null
+    // for none.
+    std::shared_ptr<const LibraryReturn> library_return_{};
+    // When this run first tried to open the kept Library again, in
+    // milliseconds of the platform's clock; none before.
+    std::optional<uint32_t> library_return_since_{};
+    // What the progress dialog says while a switch of the mod in the Library
+    // applies (restart_line); empty for none.
+    std::string restart_line_{};
     // The player's own folder for this run (start_user_folder); empty
     // before it is chosen.
     fs::path user_folder_;

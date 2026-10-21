@@ -128,6 +128,24 @@ void paint_progress_frame(
     const oa::ui::frontend_renderer::Surface* under
 );
 
+/// Shows the progress dialog once, its spinner still, over the quiet colour,
+/// and leaves it on the window until the next picture replaces it: for work
+/// on the thread that draws, such as a soft restart's. The texts are shown
+/// as given. With no window, nothing is drawn.
+///
+/// @param window the window; null draws nothing
+/// @param renderer the window's renderer; null draws nothing
+/// @param host told of the presented frame; null is left untold
+/// @param title the header, as shown
+/// @param line the one line, as shown
+void show_work_frame(
+    SDL_Window* window,
+    SDL_Renderer* renderer,
+    RendererHost* host,
+    std::string_view title,
+    std::string_view line
+);
+
 /// Runs `job` off the thread that draws, and shows the progress dialog while
 /// it lasts longer than long_work_show_after_ms.
 ///

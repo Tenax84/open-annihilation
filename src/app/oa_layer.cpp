@@ -1103,6 +1103,55 @@ void Runtime::take_settings_screen_action(settings::DialogAction action) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// A work dialog as a screen of the layer
+
+WorkScreen::WorkScreen(
+    OaLayer& layer, Screen shown_over, std::string title, std::string line, Host answers
+)
+    : layer_(layer), over_(shown_over), host_(std::move(answers)),
+      began_ms_(oa::platform::tick_ms()) {
+    dialog_.title = std::move(title);
+    dialog_.line = std::move(line);
+}
+
+LayerPlacement WorkScreen::placement(const LayerView& view) const {
+    if (view.match || layer_.screen_fonts() == nullptr || view.game_screen != over_)
+        return {};
+    kit::WorkDialog sized = dialog_;
+    sized.size_class = front_class(view);
+    return centred_box(view, kit::place_work_dialog(sized, layer_.screen_fonts()).height);
+}
+
+void WorkScreen::lay_out(const LayerView& view) {
+    const kit::SizeClass size_class = front_class(view);
+    if (dialog_.size_class == size_class)
+        return;
+    dialog_.size_class = size_class;
+    ++revision_;
+}
+
+void WorkScreen::draw(const kit::Canvas& canvas) const {
+    if (!kit::can_draw(canvas) || canvas.fonts == nullptr)
+        return;
+    kit::draw_work_dialog(canvas, dialog_);
+}
+
+kit::DisplayList WorkScreen::display_list() const {
+    return kit::work_dialog_list(dialog_, layer_.screen_fonts());
+}
+
+LayerAnswer WorkScreen::tick() {
+    if (host_.tick && host_.tick())
+        return LayerAnswer::close;
+    const uint32_t turn = kit::refresh_eighth(oa::platform::tick_ms() - began_ms_);
+    if (turn == dialog_.turn)
+        return LayerAnswer::none;
+    dialog_.turn = turn;
+    ++revision_;
+    return LayerAnswer::redraw;
+}
+
+// ---------------------------------------------------------------------------------------------
 // A notice as a screen of the layer
 
 NoticeScreen::NoticeScreen(OaLayer& layer, Screen shown_over, kit::Notice told, Host answers)
