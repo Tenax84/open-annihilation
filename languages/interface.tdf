@@ -602,6 +602,14 @@
 	it=Attivo;
 	}
 
+[Add]
+	{
+	de=Hinzufügen;
+	fr=Ajouter;
+	es=Añadir;
+	it=Aggiungi;
+	}
+
 [Add files]
 	{
 	de=Dateien hinzufügen;
@@ -816,6 +824,14 @@
 	fr=Aide seule;
 	es=Solo asistir;
 	it=Solo assistenza;
+	}
+
+[At most {count} mutators can be on]
+	{
+	de=Höchstens {count} Mutatoren können an sein;
+	fr=Au plus {count} mutateurs peuvent être actifs;
+	es=Como mucho {count} mutadores pueden estar activos;
+	it=Al massimo {count} mutatori possono essere attivi;
 	}
 
 [Attack Wave Size]
@@ -1136,6 +1152,14 @@
 	fr=Les deux;
 	es=Ambos;
 	it=Entrambi;
+	}
+
+[Both stay installed. Turn {dependant} on again and {name} comes back with it.]
+	{
+	de=Beide bleiben installiert. Schalte {dependant} wieder ein, und {name} kommt damit zurück.;
+	fr=Les deux restent installés. Rallume {dependant} et {name} revient avec.;
+	es=Los dos siguen instalados. Vuelve a activar {dependant} y {name} vuelve con él.;
+	it=Entrambi restano installati. Riaccendi {dependant} e {name} torna con lui.;
 	}
 
 [Bottles]
@@ -1546,6 +1570,14 @@
 	it=Annulla il download;
 	}
 
+[Cannot run beside {name}]
+	{
+	de=Kann nicht neben {name} laufen;
+	fr=Ne peut pas fonctionner à côté de {name};
+	es=No puede funcionar junto a {name};
+	it=Non può funzionare accanto a {name};
+	}
+
 [Cavedog tilesets]
 	{
 	de=Cavedog-Tilesets;
@@ -1656,6 +1688,14 @@
 	fr=Vérifié entièrement une fois copié.;
 	es=Comprobado por completo una vez copiado.;
 	it=Controllato per intero una volta copiato.;
+	}
+
+[Checked with {mod} ✓]
+	{
+	de=Geprüft mit {mod} ✓;
+	fr=Vérifié avec {mod} ✓;
+	es=Comprobado con {mod} ✓;
+	it=Controllato con {mod} ✓;
 	}
 
 [Checked: the game can start from these files.]
@@ -5002,6 +5042,14 @@
 	it=Lasciato fuori;
 	}
 
+[Left out of your last set: {names}]
+	{
+	de=Nicht in deinem letzten Set: {names};
+	fr=Laissés de côté dans ta dernière sélection : {names};
+	es=Fuera de tu última selección: {names};
+	it=Fuori dalla tua ultima selezione: {names};
+	}
+
 [Left-handed]
 	{
 	de=Linkshändig;
@@ -5698,6 +5746,14 @@
 	it=Densità di pixel nativa;
 	}
 
+[Needed by {name}]
+	{
+	de=Benötigt von {name};
+	fr=Requis par {name};
+	es=Requerido por {name};
+	it=Richiesto da {name};
+	}
+
 [Needs]
 	{
 	de=Braucht;
@@ -5802,6 +5858,14 @@
 	it=Serve {name}, ed è disattivata.;
 	}
 
+[Needs {name}, which no registry offers]
+	{
+	de=Braucht {name}, das keine Registrierung anbietet;
+	fr=Requiert {name}, qu'aucun registre n'offre;
+	es=Necesita {name}, que ningún registro ofrece;
+	it=Richiede {name}, che nessun registro offre;
+	}
+
 [Network]
 	{
 	de=Netzwerk;
@@ -5872,6 +5936,22 @@
 	fr=Pas de repli pour réparation;
 	es=Sin retirada para reparar;
 	it=Nessun ripiegamento per riparare;
+	}
+
+[No effect with this mod]
+	{
+	de=Keine Wirkung mit diesem Mod;
+	fr=Aucun effet avec ce mod;
+	es=Sin efecto con este mod;
+	it=Nessun effetto con questo mod;
+	}
+
+[No effect with {mod}: {name}]
+	{
+	de=Keine Wirkung mit {mod}: {name};
+	fr=Aucun effet avec {mod} : {name};
+	es=Sin efecto con {mod}: {name};
+	it=Nessun effetto con {mod}: {name};
 	}
 
 [No file manager is there to open it.]
@@ -5994,6 +6074,14 @@
 	it=Non è stata trovata nessuna unità di questo mod.;
 	}
 
+[None on]
+	{
+	de=Keiner an;
+	fr=Aucun actif;
+	es=Ninguno activo;
+	it=Nessuno attivo;
+	}
+
 [Normal]
 	{
 	de=Normal;
@@ -6040,6 +6128,22 @@
 	fr=Pas compatible avec ce mod : il marche avec {names};
 	es=No es compatible con este mod: funciona con {names};
 	it=Non è compatibile con questo mod: funziona con {names};
+	}
+
+[Not compatible with this mod: {reason}]
+	{
+	de=Passt nicht zu diesem Mod: {reason};
+	fr=Pas compatible avec ce mod : {reason};
+	es=No es compatible con este mod: {reason};
+	it=Non è compatibile con questo mod: {reason};
+	}
+
+[Not compatible with {mod}: {name}]
+	{
+	de=Passt nicht zu {mod}: {name};
+	fr=Pas compatible avec {mod} : {name};
+	es=No es compatible con {mod}: {name};
+	it=Non è compatibile con {mod}: {name};
 	}
 
 [Not during a game]
@@ -6160,6 +6264,14 @@
 	fr=Non installé · {version};
 	es=No instalado · {version};
 	it=Non installato · {version};
+	}
+
+[Not installed: switching it on downloads it]
+	{
+	de=Nicht installiert: Einschalten lädt es herunter;
+	fr=Pas installé : l'activer le télécharge;
+	es=No instalado: activarlo lo descarga;
+	it=Non installato: accenderlo lo scarica;
 	}
 
 [Not now]
@@ -7442,6 +7554,14 @@
 	it=Tasso di riparazione;
 	}
 
+[Replace]
+	{
+	de=Ersetzen;
+	fr=Remplacer;
+	es=Reemplazar;
+	it=Sostituisci;
+	}
+
 [Replace the game files?]
 	{
 	de=Die Spieldateien ersetzen?;
@@ -8426,6 +8546,14 @@
 	it=Fermare la copia?;
 	}
 
+[Stopped with this mod: {reason}]
+	{
+	de=Mit diesem Mod abgebrochen: {reason};
+	fr=Arrêté avec ce mod : {reason};
+	es=Se detuvo con este mod: {reason};
+	it=Interrotto con questo mod: {reason};
+	}
+
 [Strong]
 	{
 	de=Stark;
@@ -9114,6 +9242,14 @@
 	it=La scheda grafica non ha potuto disegnare il campo di battaglia, quindi ora lo scala soltanto. Puoi riprovare Completo in Grafica, nelle impostazioni di OA.;
 	}
 
+[The host's mutators. Only the host can change them.]
+	{
+	de=Die Mutatoren des Gastgebers. Nur der Gastgeber kann sie ändern.;
+	fr=Les mutateurs de l'hôte. Seul l'hôte peut les changer.;
+	es=Los mutadores del anfitrión. Solo el anfitrión puede cambiarlos.;
+	it=I mutatori dell'host. Solo l'host può cambiarli.;
+	}
+
 [The host's release of {pack} is no longer offered by {registry}.]
 	{
 	de=Die Version des Gastgebers von {pack} wird von {registry} nicht mehr angeboten.;
@@ -9322,6 +9458,14 @@
 	it=Il trackpad destro punta e il sinistro muove la mappa. Un pad senza trackpad gioca Sticks.;
 	}
 
+[The set holds for every mission of this campaign, and is saved with it.]
+	{
+	de=Das Set gilt für jede Mission dieser Kampagne und wird mit ihr gespeichert.;
+	fr=La sélection vaut pour chaque mission de cette campagne, et elle est sauvegardée avec elle.;
+	es=La selección vale para cada misión de esta campaña y se guarda con ella.;
+	it=La selezione vale per ogni missione di questa campagna, ed è salvata con essa.;
+	}
+
 [The side panel and bars grow with the window, up to twice the original game's size.]
 	{
 	de=Seitenleiste und Balken wachsen mit dem Fenster, bis zum Doppelten der Größe des ursprünglichen Spiels.;
@@ -9504,6 +9648,14 @@
 	fr=Ces mutateurs ont besoin les uns des autres : {ids};
 	es=Estos mutadores se necesitan entre sí: {ids};
 	it=Questi mutatori hanno bisogno l'uno dell'altro: {ids};
+	}
+
+[They all stay installed. Turn one on again and {name} comes back with it.]
+	{
+	de=Alle bleiben installiert. Schalte einen wieder ein, und {name} kommt damit zurück.;
+	fr=Ils restent tous installés. Rallumes-en un et {name} revient avec.;
+	es=Todos siguen instalados. Vuelve a activar uno y {name} vuelve con él.;
+	it=Restano tutti installati. Riaccendine uno e {name} torna con lui.;
 	}
 
 [This base game is used when the Library closes.]
@@ -10096,6 +10248,14 @@
 	fr=Les unités et les tirs bougent 30 fois par seconde, comme le jeu les a dessinés. Les rotations rapides peuvent scintiller.;
 	es=Las unidades y los disparos se mueven 30 veces por segundo, como el juego los dibujó. Los giros rápidos pueden parpadear.;
 	it=Unità e colpi si muovono 30 volte al secondo, come il gioco li ha disegnati. Le rotazioni veloci possono sfarfallare.;
+	}
+
+[Units and weapons]
+	{
+	de=Einheiten und Waffen;
+	fr=Unités et armes;
+	es=Unidades y armas;
+	it=Unità e armi;
 	}
 
 [Units are drawn as models at every zoom. Far out on a large map, needs a fast CPU.]
@@ -10864,6 +11024,30 @@
 	fr=Ton identifiant d'installation;
 	es=Tu ID de instalación;
 	it=Il tuo ID di installazione;
+	}
+
+[Your last campaign set, ready to use. CANCEL plays without mutators.]
+	{
+	de=Dein letztes Kampagnen-Set, bereit zum Spielen. ABBRECHEN spielt ohne Mutatoren.;
+	fr=Ta dernière sélection de campagne, prête à jouer. ANNULER joue sans mutateurs.;
+	es=Tu última selección de campaña, lista para jugar. CANCELAR juega sin mutadores.;
+	it=La tua ultima selezione di campagna, pronta da giocare. ANNULLA gioca senza mutatori.;
+	}
+
+[Your last multiplayer set, ready to use. CANCEL plays without mutators.]
+	{
+	de=Dein letztes Mehrspieler-Set, bereit zum Spielen. ABBRECHEN spielt ohne Mutatoren.;
+	fr=Ta dernière sélection multijoueur, prête à jouer. ANNULER joue sans mutateurs.;
+	es=Tu última selección multijugador, lista para jugar. CANCELAR juega sin mutadores.;
+	it=La tua ultima selezione multigiocatore, pronta da giocare. ANNULLA gioca senza mutatori.;
+	}
+
+[Your last skirmish set, ready to use. CANCEL plays without mutators.]
+	{
+	de=Dein letztes Gefecht-Set, bereit zum Spielen. ABBRECHEN spielt ohne Mutatoren.;
+	fr=Ta dernière sélection d'escarmouche, prête à jouer. ANNULER joue sans mutateurs.;
+	es=Tu última selección de escaramuza, lista para jugar. CANCELAR juega sin mutadores.;
+	it=La tua ultima selezione di schermaglia, pronta da giocare. ANNULLA gioca senza mutatori.;
 	}
 
 [Your own copy]
@@ -12178,6 +12362,14 @@
 	it={count} di {total} file sono diversi;
 	}
 
+[{count} on]
+	{
+	de={count} an;
+	fr={count} actifs;
+	es={count} activos;
+	it={count} attivi;
+	}
+
 [{count} package]
 	{
 	de={count} Paket;
@@ -12586,6 +12778,30 @@
 	it={names} ne hanno bisogno: restano installati e non si possono attivare finché questo non torna.;
 	}
 
+[{names} turn off too: they need {name}.]
+	{
+	de={names} schalten sich auch aus: sie brauchen {name}.;
+	fr={names} s'éteignent aussi : ils ont besoin de {name}.;
+	es={names} también se apagan: necesitan {name}.;
+	it={names} si spengono anche: hanno bisogno di {name}.;
+	}
+
+[{names} turns off too: it needs {name}.]
+	{
+	de={names} schaltet sich auch aus: er braucht {name}.;
+	fr={names} s'éteint aussi : il a besoin de {name}.;
+	es={names} también se apaga: necesita {name}.;
+	it={names} si spegne anche: ha bisogno di {name}.;
+	}
+
+[{name} came with {dependant}]
+	{
+	de={name} kam mit {dependant};
+	fr={name} ajouté pour {dependant};
+	es={name} se añadió para {dependant};
+	it={name} aggiunto per {dependant};
+	}
+
 [{name} from {installed} is installed. Replace it with {name} from {new}? The one from {installed} is kept, and ROLL BACK brings it back.]
 	{
 	de={name} von {installed} ist installiert. Durch {name} von {new} ersetzen? Das von {installed} bleibt erhalten, und ZURÜCKROLLEN holt es zurück.;
@@ -12672,6 +12888,14 @@
 	fr={name} seulement;
 	es=solo {name};
 	it=solo {name};
+	}
+
+[{name} stopped with {mod}]
+	{
+	de={name} wurde mit {mod} abgebrochen;
+	fr={name} s'est arrêté avec {mod};
+	es={name} se detuvo con {mod};
+	it={name} si è fermato con {mod};
 	}
 
 [{name} turns off too: it needs {need}.]
