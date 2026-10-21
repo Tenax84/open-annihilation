@@ -6,16 +6,22 @@
 // allowance is spent. A small plan stays inside a fixed bound and spends
 // the same count on every run. The units are the made-up mod Ridge.
 
+#include "collections_sides.hpp"
+
+#include "oa/data/defs/layout.hpp"
 #include "oa/data/mutators/collections.hpp"
 #include "oa/data/mutators/rules_lua.hpp"
 #include "oa/data/script_host/script_host.hpp"
+#include "oa/formats/hpi.hpp"
 #include "oa/test/check.hpp"
+#include "oa/test/scratch_directory.hpp"
 
 #include "lua.hpp"
 
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -86,6 +92,60 @@ for _ in pairs(weapons) do
   n = n + 1
 end
 return n == 2 and #picked == 2
+)";
+
+/// The review's uncharged 200,000 reads fit in this allowance. Charging each
+/// side or table access stops the loop.
+constexpr uint64_t k_field_allowance = 3'000'000;
+
+constexpr std::string_view k_side_reads = R"(
+for i = 1, 200000 do
+  if sides[1].commander == nil then
+    error("commander")
+  end
+end
+return true
+)";
+
+constexpr std::string_view k_table_reads = R"(
+for i = 1, 200000 do
+  if tables.los.TABLE2.line1 == nil then
+    error("line")
+  end
+end
+return true
+)";
+
+constexpr std::string_view k_side_pairs = R"(
+local n = 0
+for i = 1, 40 do
+  for _ in pairs(sides) do
+    n = n + 1
+  end
+end
+return n
+)";
+
+constexpr std::string_view k_charge_sides = R"([SIDE0]
+{
+name=Ridge;
+commander=RGCOM;
+}
+[SIDE1]
+{
+name=Other;
+commander=RGLAB;
+}
+)";
+
+constexpr std::string_view k_charge_los = R"([TABLE2]
+{
+line1=kept;
+}
+[RADAR]
+{
+range=1;
+}
 )";
 
 struct Package {
@@ -413,6 +473,121 @@ range=2;
     OA_CHECK(first.used == second.used);
 }
 
+struct SidesBind {
+    mutators::Collections* collections{nullptr};
+    const oa::AssetStore* store{nullptr};
+    const oa::data::defs::DataLayout* layout{nullptr};
+    const std::string* variant{nullptr};
+};
+
+void install_sides(void* context, lua_State* state) {
+    auto* bind = static_cast<SidesBind*>(context);
+    bind->collections->begin_mutator("ridge", {});
+    lua_newtable(state);
+    mutators::set_context_sides(
+        state, -1, *bind->collections, *bind->store, *bind->layout, *bind->variant
+    );
+    lua_getfield(state, -1, "sides");
+    lua_setglobal(state, "sides");
+    lua_getfield(state, -1, "tables");
+    lua_setglobal(state, "tables");
+    lua_pop(state, 1);
+}
+
+struct SidesWorld {
+    std::filesystem::path scratch;
+    oa::AssetStore store;
+    std::string variant;
+    oa::data::mutation_rules::DocumentSet documents;
+    mutators::Collections collections;
+    std::optional<host::Sandbox> sandbox;
+
+    SidesWorld()
+        : scratch(oa::test::make_scratch_directory("D04-charge")), store(scratch),
+          collections(documents, &oa::data::defs::data_layout()) {}
+};
+
+struct SidesRun {
+    bool opened{false};
+    bool ok{false};
+    host::ScriptError error;
+};
+
+SidesRun run_sides(std::string_view source, uint64_t allowance) {
+    SidesRun run;
+    SidesWorld world;
+    std::string failure;
+    if (!world.documents.add("gamedata/sidedata.tdf", k_charge_sides, &failure) ||
+        !world.documents.add("gamedata/los.tdf", k_charge_los, &failure)) {
+        std::fprintf(stderr, "sides documents: %s\n", failure.c_str());
+        std::error_code remove_error;
+        std::filesystem::remove_all(world.scratch, remove_error);
+        return run;
+    }
+    Package package;
+    put(package, source);
+    SidesBind bind;
+    bind.collections = &world.collections;
+    bind.store = &world.store;
+    bind.layout = &oa::data::defs::data_layout();
+    bind.variant = &world.variant;
+    host::OpenOptions options;
+    options.package_id = "ridge";
+    options.random_seed = 0;
+    options.time_limit = k_long_limit;
+    options.profile = host::mutator_profile();
+    options.profile.budget.instructions = allowance;
+    options.profile.context = &bind;
+    options.profile.install = install_sides;
+    options.sources.context = &package;
+    options.sources.read = read_package;
+    host::ScriptError open_error;
+    world.sandbox = host::Sandbox::open(options, open_error);
+    if (!world.sandbox.has_value()) {
+        std::fprintf(stderr, "open: %s\n", open_error.message.c_str());
+        run.error = open_error;
+        std::error_code remove_error;
+        std::filesystem::remove_all(world.scratch, remove_error);
+        return run;
+    }
+    run.opened = true;
+    run.ok = world.sandbox->run_file("mutator.lua", "apply", nullptr, run.error);
+    std::error_code remove_error;
+    std::filesystem::remove_all(world.scratch, remove_error);
+    return run;
+}
+
+void expect_sides_budget(const SidesRun& run, uint64_t allowance, const char* label) {
+    const std::string message =
+        "the script ran past its budget of " + std::to_string(allowance) + " instructions";
+    if (!run.opened || run.ok || run.error.kind != host::ErrorKind::instruction_budget ||
+        run.error.message != message) {
+        std::fprintf(
+            stderr,
+            "%s: opened %d ok %d kind %d message %s\n",
+            label,
+            run.opened ? 1 : 0,
+            run.ok ? 1 : 0,
+            static_cast<int>(run.error.kind),
+            run.error.message.c_str()
+        );
+    }
+    OA_CHECK(run.opened);
+    OA_CHECK(!run.ok);
+    OA_CHECK(run.error.kind == host::ErrorKind::instruction_budget);
+    OA_CHECK(run.error.message == message);
+}
+
+void side_and_table_walks_stop() {
+    expect_sides_budget(
+        run_sides(k_side_reads, k_field_allowance), k_field_allowance, "side reads"
+    );
+    expect_sides_budget(
+        run_sides(k_table_reads, k_field_allowance), k_field_allowance, "table reads"
+    );
+    expect_sides_budget(run_sides(k_side_pairs, k_walk_allowance), k_walk_allowance, "side pairs");
+}
+
 } // namespace
 
 int main() {
@@ -422,5 +597,6 @@ int main() {
     legitimate_collection_stays_small_and_matches();
     trimmed_fields_are_refused(k_trimmed_where, "trimmed where");
     trimmed_fields_are_refused(k_trimmed_change, "trimmed change");
+    side_and_table_walks_stop();
     return oa::test::check_exit_status();
 }

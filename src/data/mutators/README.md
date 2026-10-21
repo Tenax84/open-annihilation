@@ -34,6 +34,22 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
   conflict. Empty when the list may run.
 - `Journal::entries_of` returns one mutator's changes, and `describe` writes
   one conflict as a single English line.
+- `units:clone(source, name, fields)` and `weapons:clone(source, name, fields)`
+  add a copy of one record. A unit clone keeps the source model by writing
+  `Objectname` and serves the source script, picture and build pages under
+  the new name. A weapon clone takes the lowest free id from 1 to 255.
+- A hook's `ctx.sides` is the side table and the build lists. `ctx.sides[1]`
+  is the first side, `ctx.sides.ARM` finds a side by name, ignoring case,
+  and `ctx.sides:each` walks the sides in that order. `canbuild`,
+  `set_canbuild`, `add_canbuild` and `remove_canbuild` are methods of the
+  collection.
+- A hook's `ctx.tables` opens a `.tdf` directly in the layout's `gamedata`
+  folder, other than `sidedata.tdf`. A bare name such as `los` is that
+  file. Variant folders are not opened. Any other request is refused, and
+  the message names the request. `ctx.tables["los"]` and
+  `ctx.tables["gamedata/los.tdf"]` are the same table. `sections` lists
+  section names in file order. Walks of sides and of these tables are
+  charged against the hook's instruction allowance.
 - `parse_choice` reads one `--mutator` value, `format_choice` writes it
   back, and `resolve_choice` finds the package and types its options. See
   [Choice text](#choice-text).
@@ -90,6 +106,18 @@ it reads the packages and the store it is given, and mounts its layer there.
   that unit. `guis/` is refused as a whole: build pages and screens
   change only through a mutator's menus. `maps/` changes only through a
   mutator's maps hook. `sounds/` is read once per run.
+- Side fields are read from the language variant of `sidedata.tdf` when
+  that file is present, because that is the file the side loader reads.
+  Build lists are read from the plain `gamedata/sidedata.tdf`, because
+  that loader passes no variant. A change is written back to the file its
+  reader opens.
+- A build list is written back as `canbuild1` through `canbuildN` with no
+  gap. A list the builder did not have is created under the one
+  `[CANBUILD]` section.
+- A protected game-data file is refused with the allow-list's own message.
+  `sidedata` is not opened here: the error is `use ctx.sides`. A table
+  request that is not a `.tdf` directly in `gamedata` is refused with the
+  request named in the message. `gamedata-<variant>/` is not a table path.
 
 ## Tests
 
@@ -98,6 +126,14 @@ allowed and refused form, including mixed case, backslashes and a variant
 folder; a layout that renames directories; every invalid path; the masks;
 and that every message starts with the path and every rule has its own name.
 
+`data-mutators-clone` (`tests/clone_test.cpp`) runs made-up packages
+through `run_pipeline` over a scratch store: a unit's copied definition,
+the files the layer serves under the new name, a weapon's free id, and a
+clone that a later error rolls back. A loop of clones, a loop of clones
+whose source script is 1 MiB, and a `pcall` loop of weapon clones that are
+refused, each stop on the work budget inside the real-time limit. A clone whose build page collides with an existing screen
+is refused and the layer serves nothing.
+
 `data-mutators-choice` (`tests/choice_test.cpp`) checks the choice text,
 including a Windows drive path, the round trip of `format_choice`, and
 `resolve_choice` for each option kind, against an installed mutator and
@@ -105,7 +141,10 @@ against a package folder.
 
 `data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
 Ridge packages under `tests/data/mutators` through `run_pipeline`: rules in
-either order, hooks in list order, each kind of failure, and a run with a
+either order, a later assignment replacing an earlier one, a rule that
+reads a hook's write from the mutator above it, a hook that replaces a
+rule's value, a lock that holds against a later mutator's rules but not
+its hook, hooks in list order, each kind of failure, and a run with a
 failing mutator against the run of the mutators that remain, whether its
 hook, its rules or its files would have reached the mutators below it, and
 with the mutators that require it. It also covers plans whose tables have
@@ -115,14 +154,36 @@ player's option, the list checks and two identical runs.
 `data-mutators-journal` (`tests/journal_test.cpp`) checks the entry order,
 `entries_of`, each note conversion and the sentences `describe` writes.
 
+`data-mutators-sides` (`tests/collections_sides_test.cpp`) runs made-up
+Ridge packages through `run_pipeline` and checks side fields, build lists,
+the language variant against the plain file, the other game-data tables,
+a failed mutator and the layer grants. `data-mutators-sides-data` is the
+same program with `--data`: it reads every side and every build list of
+the installed game and serves no game-data file.
+
 ## Limitations
 
 The checks do not look at a mutator's files and do not apply a verdict.
-Build pages stay refused, because they change through the menus hook; only
-a named unit's build picture and its download-button art are files a
-mutator may add under `anims/`, and only as those files. `sounds/` stays
-refused until a later ticket shows the game
-reads it again for every match, or changes the game so that it does.
+Build pages stay refused for the files layer, because they change through
+the menus hook. A unit clone may serve `guis/<new><digits>.gui` when that
+path is not already in the store or the layer; every path a clone serves
+still goes through `check_mutable_path`, and the new name counts as a unit
+for `anims/`. A clone is refused, naming the path, when the script, the
+picture, a build page or that page's art already exists. Only a named
+unit's build picture and its download-button art are files a mutator may
+add under `anims/`, and only as those files. `sounds/` stays refused until
+a later ticket shows the game reads it again for every match, or changes
+the game so that it does.
+
+A clone does not copy a download entry, and it does not copy
+download-linked button art (`anims/<unit>_gadget.gaf`). A download-linked
+button for a clone draws with no picture. A weapon clone never takes slot
+0, which is the default weapon.
+
+A mutator cannot add or remove a side. Rectangle sub-sections of a side
+are neither shown nor changed. A build list keeps at most 1024 names. When
+the written list is longer than 30, the journal notes that the AI keeps
+only the profile's `limits.build-list-entries` count (30 by default).
 
 ## Moving a path to the allowed side
 
@@ -265,6 +326,25 @@ state it is pushed into, and the document set must outlive the object.
 `set_context_collections` sets those collections on a context table as
 `units`, `weapons` and `features`. `begin_mutator` names whose turn it is
 and which layers that mutator may change. `end_mutator` ends the turn.
+`units:clone` and `weapons:clone` add a record to that collection at once.
+The new unit's file is `units/<name>.<extension>` with `UnitName` set to
+the new name. `Objectname` is the source's model, or the source's own
+name when the source leaves the model out, so the clone shares that model
+instead of shipping another one. The layer serves `scripts/<name>.COB`,
+`unitpics/<name>.PCX`, the build pages `guis/<name><n>.GUI` from page 0
+and then 1, 2, … until one is missing, and `anims/<name><n>.GAF` for each
+page it served, each with the source's bytes. A field in the clone's
+table is a typed write, in sorted key order, and a bad field adds nothing.
+A weapon clone copies the source section, including `[DAMAGE]`, into
+`Weapons/<name>.tdf` (or `Weapons/<name>-<k>.tdf` when that path is taken,
+`k` from 2) and sets `ID` to the lowest free id from 1 to 255. When several
+sections share a name, the copy is the first in collection order (name,
+then path, then position), which may not be the lowest slot the game fires.
+A field named `ID` is refused. The journal records each clone and each
+served copy. A unit clone is refused, naming the path, when any path it
+would serve already exists. A clone's work (its name lookups, the bytes it
+reads and writes and, for a weapon, each section the id search visits) is
+charged in one step when the clone returns, so a refused clone pays too.
 
 `install_selection_forms` publishes `range`, `is`, `has`, `absent` and
 `not_`. `need_from_lua` reads one need: a number `n` is `range(n, n)`,
@@ -610,12 +690,12 @@ Each manifest is then checked against the mod and the engine version. A
 mutator that does not fit is incompatible and left out. The rest go through
 passes. A pass plans every mutator by calling its `mutate(ctx)` in a
 sandbox of its own, builds and mounts the files layer, parses every
-document the match will load from the layered store, applies each
-mutator's rules as a step of its own in list order, each on the documents
-the one above it left, and then runs each mutator's hooks in list order,
-its units hook and then its weapons hook. Only a document the pass changed
-is written back, whole, with the text writer, at the path the store listed
-it under. A document a hook removed is hidden.
+document the match will load from the layered store, then takes each
+mutator in list order and applies its rules and then its hooks, on the
+documents the mutators above it left. Its units hook runs, then its
+weapons hook. A plan that returns map hooks is refused, so none run. Only
+a document the pass changed is written back, whole, with the text writer,
+at the path the store listed it under. A document a hook removed is hidden.
 
 The plan is read inside the plan phase, with the mutator's allowances and
 real-time limit in force, and by raw access only, so no metamethod of the
@@ -630,7 +710,7 @@ change, depends on nothing but the mutator itself, so every such failure is
 kept. Any later failure can depend on the mutators above it: a mask or a
 layer-wide limit in the files layer, or the documents a hook reads. So the
 pass keeps only the failure nearest the top of the list, and it stops at the
-first hook that fails. No later hook runs on what a failed mutator left. The
+first hook that fails. No later mutator runs on what a failed mutator left. The
 mutator that failed, and every mutator that requires it, is dropped, and the
 next pass starts again from the store. A mutator dropped for what it
 requires is `excluded`, in the phase `loadout`. Each pass drops at least one
@@ -640,15 +720,22 @@ no file, rule, journal entry or note.
 
 The journal keeps every change of the last pass: each rule write, naming
 the mutator that made it, each hook write and removal, each file a mutator
-added, and each file of the mod a mask hides. It is sorted by phase, then
-by the first mutator, then by path, record, block and field. The conflict
-report holds the stacking notes, and the paths a parse left out, one
-warning each. Among the notes, `value_replaced` is a value a later
-mutator's rule replaced, and `field_locked` is a field an earlier mutator
-locked, so a later mutator's rule left it alone. Each names both mutators,
-the earlier first. A script stopped by an allowance, the real-time limit or
-the string cap has a cause of its own (`instruction_budget`,
-`memory_budget`, `time_limit` or `string_length`), never `script_error`.
+added, and each file of the mod a mask hides. It is sorted by the first
+mutator, then by phase, so one mutator's rules come before its hooks, then
+by path, record, block and field. The conflict report holds the stacking
+notes, and the paths a parse left out, one warning each. Among the notes,
+`value_replaced` is a value a later mutator's rule replaced. One such note
+is kept for each field name and pair of mutators, so a stack that rewrites
+the same field on many records does not flood the report. `field_locked`
+is a field an earlier mutator locked, so a later mutator's rule left it
+alone. A later hook that writes a field names the mutator who last wrote
+it, which may be a rule rather than an earlier hook, and then itself. One
+such note is kept for each field name and pair, including a hook's set
+over every unit. A write over a lock is that one note, naming the locker.
+Each of these names both mutators, the earlier first. A script stopped by
+an allowance, the real-time limit or the string cap has a cause of its own
+(`instruction_budget`, `memory_budget`, `time_limit` or `string_length`),
+never `script_error`.
 
 The pipeline prints nothing and keeps nothing between calls. The same input
 gives the same layer bytes, journal and report. The store must hold no

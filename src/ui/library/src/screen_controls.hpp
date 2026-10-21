@@ -319,8 +319,8 @@ struct MenuItem {
 [[nodiscard]] std::vector<MenuItem>
 menu_items(const Library& library, MenuKind menu, const std::vector<bool>& tag_shown);
 
-/// Returns what a row's state icon is pressed as: GET or UPDATE, as the
-/// entry's first button asks for it, and only while that button is
+/// Returns what a row's state icon is pressed as: GET, GET WITH or UPDATE,
+/// as the entry's first button asks for it, and only while that button is
 /// enabled, so the icon keeps that button's rules and blocked state. A row
 /// that is queued (CANCEL), that failed (RETRY), or that is installed and
 /// up to date has none.

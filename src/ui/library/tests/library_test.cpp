@@ -4782,8 +4782,9 @@ void test_mutator_details() {
             rules != nullptr && rules->long_value == "Changes the game: unranked on Core Prime" &&
             rules->short_value == rules->long_value
         );
+        // Gatehouse is not listed, so GET WITH is off: nothing offers it in range.
         const std::vector<std::pair<Action, bool>> expected = {
-            {Action::get, true},
+            {Action::get_with, false},
             {Action::homepage, true},
         };
         OA_CHECK(actions_of(listed_library, *fast) == expected);
