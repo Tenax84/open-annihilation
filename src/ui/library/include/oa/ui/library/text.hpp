@@ -19,6 +19,10 @@
 #include <utility>
 #include <vector>
 
+namespace oa::data::mutators {
+struct VerdictRecord;
+}
+
 namespace oa::ui::library {
 
 namespace words {
@@ -70,6 +74,9 @@ inline constexpr std::string_view action_switch_off = "SWITCH OFF";
 inline constexpr std::string_view action_unload_mod = "UNLOAD MOD";
 inline constexpr std::string_view action_open_folder = "OPEN FOLDER";
 inline constexpr std::string_view action_homepage = "HOMEPAGE";
+/// On an installed mutator whose verdict is set. It checks that copy, with
+/// its default options, against the mod being played.
+inline constexpr std::string_view action_check_with_mod = "CHECK WITH THIS MOD";
 inline constexpr std::string_view action_details = "DETAILS";
 /// BACK on Compact's details page. It returns to the list, which keeps its place.
 inline constexpr std::string_view action_back = "BACK";
@@ -205,6 +212,41 @@ inline constexpr std::string_view change_old_copy_short = "old";
 inline constexpr std::string_view change_new_copy_short = "new";
 inline constexpr std::string_view map_count_one = "{count} map";
 inline constexpr std::string_view map_count = "{count} maps";
+// What a compatible verdict changed, one collection at a time. A count of
+// one uses the singular, as the other counted words do.
+inline constexpr std::string_view changes_units_one = "changes {count} unit";
+inline constexpr std::string_view changes_units = "changes {count} units";
+inline constexpr std::string_view adds_units_one = "adds {count} unit";
+inline constexpr std::string_view adds_units = "adds {count} units";
+inline constexpr std::string_view removes_units_one = "removes {count} unit";
+inline constexpr std::string_view removes_units = "removes {count} units";
+inline constexpr std::string_view changes_weapons_one = "changes {count} weapon";
+inline constexpr std::string_view changes_weapons = "changes {count} weapons";
+inline constexpr std::string_view adds_weapons_one = "adds {count} weapon";
+inline constexpr std::string_view adds_weapons = "adds {count} weapons";
+inline constexpr std::string_view removes_weapons_one = "removes {count} weapon";
+inline constexpr std::string_view removes_weapons = "removes {count} weapons";
+inline constexpr std::string_view changes_features_one = "changes {count} feature";
+inline constexpr std::string_view changes_features = "changes {count} features";
+inline constexpr std::string_view adds_features_one = "adds {count} feature";
+inline constexpr std::string_view adds_features = "adds {count} features";
+inline constexpr std::string_view removes_features_one = "removes {count} feature";
+inline constexpr std::string_view removes_features = "removes {count} features";
+inline constexpr std::string_view changes_menus_one = "changes {count} menu entry";
+inline constexpr std::string_view changes_menus = "changes {count} menu entries";
+inline constexpr std::string_view adds_files_one = "adds {count} file";
+inline constexpr std::string_view adds_files = "adds {count} files";
+inline constexpr std::string_view hides_files_one = "hides {count} file";
+inline constexpr std::string_view hides_files = "hides {count} files";
+/// The nine layers, in the order a manifest names them. Units, Weapons,
+/// Maps and Hacks reuse words the catalogue already has.
+inline constexpr std::string_view layer_files = "Files";
+inline constexpr std::string_view layer_units = "Units";
+inline constexpr std::string_view layer_weapons = "Weapons";
+inline constexpr std::string_view layer_features = "Features";
+inline constexpr std::string_view layer_sides = "Sides";
+inline constexpr std::string_view layer_tables = "Game tables";
+inline constexpr std::string_view layer_menus = "Build menus";
 
 // Engine requirements, one comparison each, joined with list_separator.
 inline constexpr std::string_view engine_at_least = "{version} or later";
@@ -230,12 +272,23 @@ inline constexpr std::string_view fact_rules = "Rules";
 inline constexpr std::string_view fact_maps = "Maps";
 inline constexpr std::string_view fact_coverage = "Coverage";
 inline constexpr std::string_view fact_from = "From";
+inline constexpr std::string_view fact_works_with = "Works with";
+inline constexpr std::string_view fact_checked = "Checked";
+inline constexpr std::string_view fact_options = "Options";
+inline constexpr std::string_view fact_changes = "Changes";
+/// Works with, when the mutator names no mod or names any mod.
+inline constexpr std::string_view works_with_any = "Any mod";
 inline constexpr std::string_view size_with_download = "{size} · {download} to download";
 inline constexpr std::string_view size_download_short = "{download} to download";
 inline constexpr std::string_view base_supported = "Total Annihilation 3.1c";
 inline constexpr std::string_view base_supported_short = "TA 3.1c";
 inline constexpr std::string_view needs_engine = "Open Annihilation {range}";
 inline constexpr std::string_view needs_engine_short = "OA {range}";
+/// A prerequisite no installed mutator meets. `{range}` is the version range
+/// in the engine's comparison words, empty when the prerequisite names none.
+inline constexpr std::string_view needs_mutator_missing = "{name} {range}: not installed";
+/// A prerequisite an installed mutator meets.
+inline constexpr std::string_view needs_mutator_met = "{name} {range} ✓";
 inline constexpr std::string_view hacks_counts = "{game} change the game · {view} view only";
 inline constexpr std::string_view hacks_counts_short = "{game} game · {view} view";
 inline constexpr std::string_view hacks_none = "none";
@@ -254,6 +307,22 @@ inline constexpr std::string_view coverage_percent = "{percent}%";
 inline constexpr std::string_view not_reviewed = "Not reviewed by the OA team";
 inline constexpr std::string_view from_not_reviewed = "{registry} · Not reviewed by the OA team";
 inline constexpr std::string_view from_own = "Your own copy";
+/// A mutator's Rules fact, shown whole at every size class.
+inline constexpr std::string_view rules_mutator = "Changes the game: unranked on Core Prime";
+/// Checked, when the verdict is compatible. `{summary}` is the counts in words.
+inline constexpr std::string_view checked_good = "With {mod}: {summary}";
+/// Checked, when the mutator applies and changes nothing.
+inline constexpr std::string_view checked_no_effect = "With {mod}: no effect";
+/// Checked, when the mutator cannot run with this mod.
+inline constexpr std::string_view checked_incompatible = "With {mod}: {reason}";
+/// Checked, when the check itself did not finish.
+inline constexpr std::string_view checked_failed = "With {mod}: it stopped: {reason}";
+/// Checked, while a check is running.
+inline constexpr std::string_view checked_running = "Checking with {mod}…";
+/// Checked, when the host can check and has not yet.
+inline constexpr std::string_view checked_not_yet = "Not checked with {mod}";
+/// One option's label and its value captions.
+inline constexpr std::string_view option_values = "{label}: {values}";
 
 // The line under an entry's name.
 /// An update to a revision above 0 of the version installed.
@@ -268,6 +337,8 @@ inline constexpr std::string_view status_playing = "Playing";
 /// The status of a mod folder with no oamod.yaml, installed or played.
 inline constexpr std::string_view status_without_manifest = "No oamod.yaml present";
 inline constexpr std::string_view status_not_installed = "Not installed · {size}";
+/// A mutator that is not installed. `{version}` includes a revision of 1.
+inline constexpr std::string_view status_not_installed_version = "Not installed · {version}";
 inline constexpr std::string_view status_waiting = "Waiting to download";
 inline constexpr std::string_view status_downloading = "Downloading · {progress}";
 inline constexpr std::string_view status_downloading_unsized = "Downloading";
@@ -542,6 +613,7 @@ inline constexpr std::string_view roll_back_reload =
 inline constexpr std::string_view fact_games = "Games";
 inline constexpr std::string_view names_and = "{left} and {right}";
 inline constexpr std::string_view names_comma = "{left}, {right}";
+inline constexpr std::string_view names_or = "{left} or {right}";
 inline constexpr std::string_view fact_join = "{left} · {right}";
 inline constexpr std::string_view name_met = "{name} ✓";
 inline constexpr std::string_view name_off = "{name} off";
@@ -756,6 +828,18 @@ engine_short_text(const formats::oamod::EngineRange& range, const TextHooks& tex
 /// @param text how texts are looked up
 /// @return the button's words
 [[nodiscard]] std::string_view action_text(Action action, const TextHooks& text = {});
+
+/// Maps a dry-run verdict onto the Library's verdict.
+///
+/// The state follows the record. The reason is copied as given. A compatible
+/// verdict's summary is its non-zero counts, in `ChangeCounts` order, joined
+/// with `names_comma` and `names_and`. A count of one uses the singular.
+///
+/// @param record the dry-run verdict
+/// @param text how texts are looked up
+/// @return the Library's verdict
+[[nodiscard]] Verdict
+verdict_of_record(const oa::data::mutators::VerdictRecord& record, const TextHooks& text = {});
 
 /// Returns a registry's avatar: the first letters of its first three words
 /// when its name has two or more, or the first two letters of its one word,

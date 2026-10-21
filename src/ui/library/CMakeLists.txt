@@ -19,7 +19,8 @@ target_sources(oa-ui-library PRIVATE src/layout.cpp src/draw.cpp src/input.cpp)
 add_library(oa::ui::library ALIAS oa-ui-library)
 target_include_directories(oa-ui-library PUBLIC include)
 target_compile_features(oa-ui-library PUBLIC cxx_std_20)
-target_link_libraries(oa-ui-library PUBLIC oa-formats-oamod oa-base-sha256 oa-ui-kit PRIVATE
+target_link_libraries(oa-ui-library PUBLIC oa-formats-oamod oa-base-sha256 oa-ui-kit
+  oa-data-mutators PRIVATE
   oa-base-text oa-data-mod-profile oa-data-content-bundles oa-data-languages oa-formats-oamut
   oa-options)
 

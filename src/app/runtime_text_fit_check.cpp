@@ -258,6 +258,113 @@ void Runtime::check_text_fit() {
         keep();
     };
 
+    /// Keeps a model the check built from being replaced by the feed.
+    const auto hold_library = [&] {
+        LibraryHost& host = library_host();
+        host.refreshed = true;
+        host.feed_generation =
+            host.feed.generation != nullptr ? host.feed.generation(host.feed.context) : 0;
+    };
+
+    /// Paints one screen without letting the feed rebuild the Library.
+    const auto paint_held = [&](std::string_view screen) {
+        hold_library();
+        paint(screen);
+    };
+
+    /// Two made-up mutators, one not installed and one installed, on the
+    /// Mutators tab. The host's check stays unset, so there is no Checked fact.
+    const auto inject_mutators = [&] {
+        LibraryHost& host = library_host();
+        library::Inputs inputs = host.model.inputs;
+        bool listed = false;
+        for (const library::Registry& registry : inputs.registries)
+            if (registry.id == "fit-core")
+                listed = true;
+        if (!listed) {
+            library::Registry registry;
+            registry.id = "fit-core";
+            registry.name = "Fit Core";
+            registry.built_in = true;
+            inputs.registries.push_back(std::move(registry));
+        }
+        library::Listing missing;
+        missing.registry = "fit-core";
+        missing.kind = library::Kind::mutator;
+        missing.key = "fast-builders";
+        missing.name = "Fast Builders";
+        missing.version = "2.0";
+        missing.revision = 1;
+        missing.release = 1;
+        missing.author = "Ada";
+        missing.summary = "Builds faster.";
+        missing.homepage = "https://example.test/fast";
+        missing.size = 1024;
+        missing.requires_engine = ">= 0.8.0";
+        library::MutatorFacts missing_facts;
+        missing_facts.works_with.push_back({"*", {}, {}});
+        missing_facts.layers.push_back("units");
+        missing_facts.tags.push_back("economy");
+        missing.mutator = missing_facts;
+        inputs.listings.push_back(std::move(missing));
+
+        library::Listing steady_listing;
+        steady_listing.registry = "fit-core";
+        steady_listing.kind = library::Kind::mutator;
+        steady_listing.key = "steady";
+        steady_listing.name = "Steady Hands";
+        steady_listing.version = "1.0";
+        steady_listing.release = 1;
+        steady_listing.author = "Ada";
+        steady_listing.summary = "Hands stay steady.";
+        steady_listing.homepage = "https://example.test/steady";
+        steady_listing.size = 1024;
+        steady_listing.requires_engine = ">= 0.8.0";
+        library::MutatorFacts steady_facts;
+        steady_facts.works_with.push_back({"*", {}, {}});
+        steady_facts.layers.push_back("units");
+        library::OptionLine option;
+        option.label = "Speed";
+        option.values.push_back("slow");
+        option.values.push_back("fast");
+        steady_facts.options.push_back(std::move(option));
+        steady_listing.mutator = steady_facts;
+        library::Installed steady;
+        steady.kind = library::Kind::mutator;
+        steady.key = "steady";
+        steady.registry = "fit-core";
+        steady.release = 1;
+        steady.folder = "steady";
+        steady.name = "Steady Hands";
+        steady.version = "1.0";
+        steady.author = "Ada";
+        steady.description = "Hands stay steady.";
+        steady.mutator = std::move(steady_facts);
+        inputs.listings.push_back(std::move(steady_listing));
+        inputs.installed.push_back(std::move(steady));
+
+        library::refresh(host.model, std::move(inputs));
+        library::set_tab(host.model, library::Tab::mutators);
+        hold_library();
+    };
+
+    /// The details of one injected mutator, scrolled, at the window's size.
+    /// Compact shows the details page. Regular and Large show the pane.
+    const auto show_mutator = [&](std::string_view key) {
+        LibraryHost& host = library_host();
+        library::select(host.model, {"fit-core", library::Kind::mutator, std::string(key)});
+        library::open_details(host.model);
+        host.state.details_page = width <= 640;
+        host.state.menu = library::MenuKind::none;
+        const std::string screen = std::string("library/mutators/") + std::string(key);
+        for (const int32_t scroll : kScrolls) {
+            host.state.details_scroll = scroll;
+            host.state.list_scroll = 0;
+            ++host.model_revision;
+            paint_held(screen);
+        }
+    };
+
     const auto close_covering = [&] {
         dialogs::reset_dialogs();
         if (LayerScreen* notice = oa_layer().find(NoticeScreen::screen_name))
@@ -420,6 +527,37 @@ void Runtime::check_text_fit() {
                     host.state.details_page = false;
                 }
             }
+            // Made-up mutators, installed and not, at this size. At 640 the
+            // same pair is also drawn at 960x540, Regular, then the window
+            // returns to 640x480 for the screens that follow.
+            require(
+                oa_layer().find(library_screen_name) != nullptr,
+                "the Library did not stay open for the mutator details"
+            );
+            inject_mutators();
+            show_mutator("fast-builders");
+            show_mutator("steady");
+            if (size_at == 0) {
+                const int32_t saved_width = width;
+                const int32_t saved_height = height;
+                width = 960;
+                height = 540;
+                require(
+                    SDL_SetWindowSize(sdl_.window, width, height) && SDL_SyncWindow(sdl_.window),
+                    "the window did not take 960x540"
+                );
+                apply_output_mode();
+                show_mutator("fast-builders");
+                show_mutator("steady");
+                width = saved_width;
+                height = saved_height;
+                require(
+                    SDL_SetWindowSize(sdl_.window, width, height) && SDL_SyncWindow(sdl_.window),
+                    "the window did not return to 640x480"
+                );
+                apply_output_mode();
+            }
+            library_host().refreshed = false;
             if (oa_layer().find(library_screen_name) != nullptr) {
                 kit::Question asked;
                 asked.title = "Remove";
@@ -543,6 +681,8 @@ void Runtime::check_text_fit() {
     if (failures.empty()) {
         std::cout << "text-fit check: every screen fits in " << joined_languages(languages)
                   << " at 640x480 and 1280x720\n";
+        std::cout << "text-fit check: mutator details fit in " << joined_languages(languages)
+                  << " at 640x480, 960x540 and 1280x720\n";
         return;
     }
     std::string report = "text-fit check: text does not fit:\n";

@@ -195,6 +195,8 @@ std::string_view action_word(Action action) {
         return "turn-off";
     case Action::turn_on:
         return "turn-on";
+    case Action::check_with_mod:
+        return "check-with-mod";
     }
     return "action";
 }
@@ -2518,7 +2520,8 @@ bool from_fact(const Library& library, const Fact& fact) {
 ///
 /// Rules and From show their whole value; the others take at most a number
 /// of lines, the last cut with "...". A value that is met ends with the
-/// kit's check in the accent, and a warning is drawn in the lock colour.
+/// kit's check in the accent, a warning is drawn in the lock colour, and a
+/// bad mark in the danger colour.
 ///
 /// @param[in,out] building the layout
 /// @param entry the entry
@@ -2593,7 +2596,11 @@ int32_t add_facts(
             kit::colour::hint,
             clip
         );
-        const kit::Colour ink = fact.mark == Mark::warn ? kit::colour::lock : kit::colour::text;
+        kit::Colour ink = kit::colour::text;
+        if (fact.mark == Mark::warn)
+            ink = kit::colour::lock;
+        else if (fact.mark == Mark::bad)
+            ink = kit::colour::danger;
         int32_t line_top = top;
         for (const std::string& line : lines) {
             add_text(
@@ -6259,7 +6266,23 @@ kit::DisplayList details_page_layout(
         add_library_header(building, window, shown(library.text, words::title_library), {}, {});
         return finish(building, window);
     }
-    add_library_header(building, window, entry_name(*entry), {}, entry_version(library, *entry));
+    // A mutator's name sits beside its 40-point badge in the body, so the
+    // header keeps the Library title and the Mutators tab. Every other kind
+    // keeps its name in the header and no badge on this page.
+    const bool mutator_page = entry->id.kind == Kind::mutator;
+    if (mutator_page) {
+        add_library_header(
+            building,
+            window,
+            shown(library.text, words::title_library),
+            shown(library.text, words::tab_mutators),
+            library.inputs.version_text
+        );
+    } else {
+        add_library_header(
+            building, window, entry_name(*entry), {}, entry_version(library, *entry)
+        );
+    }
 
     // The body scrolls between the header and the footer.
     const int32_t content_width = window.right - window.left;
@@ -6271,9 +6294,28 @@ kit::DisplayList details_page_layout(
         const int32_t first = view.y - offset;
         const std::size_t first_item = into.list.items.size();
         int32_t top = first;
+        int32_t status_width = width;
+        int32_t status_left = view.x;
+        if (mutator_page) {
+            add_badge(into, *entry, {view.x, top, details_badge_side, details_badge_side}, view);
+            status_left = view.x + details_badge_side + metrics.list_row_gap;
+            status_width = std::max(view.x + width - status_left, int32_t{0});
+            const std::string name =
+                cut(into, kit::FontRole::regular, entry_name(*entry), status_width);
+            add_text(
+                into,
+                kit::FontRole::regular,
+                name,
+                {status_left, top, status_width, metrics.regular_line},
+                kit::Align::left,
+                kit::colour::text,
+                view
+            );
+            top += metrics.regular_line;
+        }
         const std::string status =
-            cut(into, kit::FontRole::small, status_line(library, *entry), width);
-        const kit::Rect status_box{view.x, top, width, metrics.small_line};
+            cut(into, kit::FontRole::small, status_line(library, *entry), status_width);
+        const kit::Rect status_box{status_left, top, status_width, metrics.small_line};
         add_text(
             into,
             kit::FontRole::small,
@@ -6293,6 +6335,8 @@ kit::DisplayList details_page_layout(
             controls::details_group
         );
         top += metrics.small_line;
+        if (mutator_page)
+            top = std::max(top, first + details_badge_side);
         const std::string by = byline(*entry, library.text);
         if (!by.empty()) {
             add_text(

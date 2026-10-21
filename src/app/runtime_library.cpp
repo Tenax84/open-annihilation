@@ -672,11 +672,13 @@ void library_worker(void* argument) {
         bool search = false;
         bool pictures = false;
         bool match = false;
+        std::optional<MutatorCheck> check;
         std::shared_ptr<const content::Snapshot> snapshot;
         std::filesystem::path folder;
         {
             base::threads::LockGuard guard(work.mutex);
-            while (!work.stop && !work.updates_due && !(work.pictures_due && !work.match_running))
+            while (!work.stop && !work.updates_due && !(work.pictures_due && !work.match_running) &&
+                   !work.check_due)
                 work.wake.wait(work.mutex);
             if (work.stop)
                 return;
@@ -688,6 +690,11 @@ void library_worker(void* argument) {
             pictures = work.pictures_due && !match;
             if (pictures)
                 work.pictures_due = false;
+            if (work.check_due) {
+                work.check_due = false;
+                check = std::move(work.check_job);
+                work.check_job.reset();
+            }
         }
         if (search && snapshot)
             search_updates(work, *snapshot, folder);
@@ -698,6 +705,27 @@ void library_worker(void* argument) {
                 std::cerr << "open-annihilation: library: a picture could not be read: "
                           << error.what() << '\n';
             }
+        }
+        if (check) {
+            MutatorCheckOutcome outcome;
+            outcome.id = check->id;
+            const bool stopped = match || work.check_cancel.load();
+            if (stopped || !check->work) {
+                outcome.cancelled = true;
+            } else {
+                try {
+                    outcome.record = check->work(work.check_cancel);
+                    outcome.cancelled = !outcome.record.has_value() || work.check_cancel.load();
+                    if (outcome.cancelled)
+                        outcome.record.reset();
+                } catch (const std::exception& error) {
+                    std::cerr << "open-annihilation: library: the check failed: " << error.what()
+                              << '\n';
+                    outcome.cancelled = true;
+                }
+            }
+            base::threads::LockGuard guard(work.mutex);
+            work.check_outcome = std::move(outcome);
         }
     }
 }
@@ -914,6 +942,7 @@ Runtime::LibraryHost::~LibraryHost() {
         join = work.started;
     }
     work.cancel.store(true);
+    work.check_cancel.store(true);
     work.wake.notify_all();
     if (join)
         base::threads::join_thread(work.thread);
@@ -1008,6 +1037,29 @@ void Runtime::LibraryHost::rebuild(Runtime& runtime) {
             still.push_back(kept);
     }
     kept_updates = std::move(still);
+    // A check that is running is `checking`. Otherwise a remembered verdict
+    // is mapped, and a mutator with none remembered is unchecked. With
+    // start_check null every verdict stays unset. An installed mutator with
+    // no facts is not given empty ones.
+    if (feed.start_check != nullptr) {
+        for (library::Installed& installed : inputs.installed) {
+            if (installed.kind != library::Kind::mutator || !installed.mutator)
+                continue;
+            library::Verdict verdict;
+            if (!checking_id.empty() && installed.key == checking_id) {
+                verdict.state = library::Verdict::State::checking;
+            } else if (feed.remembered_verdict != nullptr) {
+                if (const std::optional<oa::data::mutators::VerdictRecord> record =
+                        feed.remembered_verdict(feed.context, installed.key))
+                    verdict = library::verdict_of_record(*record, model.text);
+                else
+                    verdict.state = library::Verdict::State::unchecked;
+            } else {
+                verdict.state = library::Verdict::State::unchecked;
+            }
+            installed.mutator->verdict = std::move(verdict);
+        }
+    }
     library::refresh(model, std::move(inputs));
     const std::size_t offered = library::update_count(model);
     if (offered != update_count)
@@ -1015,6 +1067,73 @@ void Runtime::LibraryHost::rebuild(Runtime& runtime) {
     update_count = offered;
     refreshed = true;
     ++model_revision;
+}
+
+void Runtime::LibraryHost::begin_mutator_check(Runtime& runtime, std::string_view id) {
+    if (feed.start_check == nullptr || id.empty())
+        return;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        if (check_open) {
+            work.check_waiting = std::string(id);
+            return;
+        }
+    }
+    auto job = feed.start_check(feed.context, id);
+    if (!job)
+        return;
+    checking_id = std::string(id);
+    check_open = true;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        work.check_cancel.store(false);
+        work.check_job = MutatorCheck{checking_id, std::move(job)};
+        work.check_due = true;
+    }
+    if (ensure_worker())
+        work.wake.notify_all();
+    rebuild(runtime);
+}
+
+bool Runtime::LibraryHost::finish_mutator_check() {
+    std::optional<MutatorCheckOutcome> outcome;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        if (!work.check_outcome)
+            return false;
+        outcome = std::move(*work.check_outcome);
+        work.check_outcome.reset();
+    }
+    if (!outcome->cancelled && outcome->record && feed.keep_verdict != nullptr)
+        feed.keep_verdict(feed.context, outcome->id, *outcome->record);
+
+    std::optional<std::string> next;
+    bool drop_waiting = false;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        drop_waiting = work.match_running || work.check_cancel.load();
+        if (!drop_waiting && work.check_waiting)
+            next = std::move(work.check_waiting);
+        work.check_waiting.reset();
+    }
+    check_open = false;
+    checking_id.clear();
+    if (next && feed.start_check != nullptr) {
+        auto job = feed.start_check(feed.context, *next);
+        if (job) {
+            checking_id = *next;
+            check_open = true;
+            {
+                base::threads::LockGuard guard(work.mutex);
+                work.check_cancel.store(false);
+                work.check_job = MutatorCheck{checking_id, std::move(job)};
+                work.check_due = true;
+            }
+            if (ensure_worker())
+                work.wake.notify_all();
+        }
+    }
+    return true;
 }
 
 bool Runtime::LibraryHost::picture_known(void* context, const library::Entry& entry) {
@@ -2794,6 +2913,10 @@ struct Runtime::LibraryScreen final : LayerScreen {
                 library::turn_on_required(host.model, *entry);
             ++host.model_revision;
             return false;
+        case library::Action::check_with_mod:
+            if (entry != nullptr)
+                host.begin_mutator_check(runtime_, entry->id.key);
+            return false;
         case library::Action::add_expansion:
             // G22 opens the locator. This press does not.
             return false;
@@ -2924,6 +3047,15 @@ void Runtime::tick_library() {
         base::threads::LockGuard guard(host.work.mutex);
         const bool was_running = host.work.match_running;
         host.work.match_running = in_match;
+        // A match cancels a check the way it stops a picture fetch. The
+        // running work sees check_cancel; a check that has not started is
+        // recorded as cancelled without running, and one that was waiting
+        // is dropped.
+        if (in_match) {
+            host.work.check_cancel.store(true);
+            host.work.check_waiting.reset();
+            host.work.wake.notify_all();
+        }
         // Pictures held for a match are fetched once it ends.
         if (was_running && !in_match && host.work.pictures && host.work.pictures->waiting()) {
             host.work.pictures_due = true;
@@ -2958,10 +3090,14 @@ void Runtime::tick_library() {
                 host.look_again(*this);
         }
     }
+    // A check that ended is kept, and a waiting one started, before the
+    // rebuild that shows the verdict. This runs even when the feed's
+    // generation has not moved.
+    const bool check_ended = host.finish_mutator_check();
     // The model follows its feed, at most once a frame.
     const uint64_t generation =
         host.feed.generation != nullptr ? host.feed.generation(host.feed.context) : 0;
-    if (!host.refreshed || generation != host.feed_generation) {
+    if (check_ended || !host.refreshed || generation != host.feed_generation) {
         host.feed_generation = generation;
         host.rebuild(*this);
     }

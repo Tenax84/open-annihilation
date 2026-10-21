@@ -11,6 +11,7 @@
 // the queue lines and every text.
 #include "oa/data/languages.hpp"
 #include "oa/data/mod_profile/registry.hpp"
+#include "oa/data/mutators/verdicts.hpp"
 #include "oa/test/check.hpp"
 #include "oa/ui/library/library.hpp"
 #include "oa/ui/library/mod_questions.hpp"
@@ -4574,6 +4575,410 @@ void test_lookup() {
     }
 }
 
+/// The long labels of an entry's facts, in order.
+///
+/// @param library the Library
+/// @param entry the entry
+/// @return the labels
+std::vector<std::string> fact_labels(const lib::Library& library, const lib::Entry& entry) {
+    std::vector<std::string> labels;
+    for (const lib::Fact& item : lib::facts(library, entry))
+        labels.push_back(item.long_label);
+    return labels;
+}
+
+/// One installed mutator's facts, with a verdict put on the copy.
+///
+/// @param verdict the verdict; unset leaves the fact and the button out
+/// @param update_it offer an update
+/// @param in_match a game is being played
+/// @return the Library, on the Mutators tab, with the entry selected
+lib::Library mutator_library(std::optional<lib::Verdict> verdict, bool update_it, bool in_match) {
+    lib::Inputs inputs = base_inputs();
+    inputs.in_match = in_match;
+    lib::Listing made = listing(core, Kind::mutator, "fast-builders", "Fast Builders");
+    made.version = "2.0";
+    made.revision = 1;
+    made.author = "Ada";
+    made.summary = "Builds faster.";
+    made.homepage = "https://example.test/fast";
+    made.requires_engine = ">= 0.8.0";
+    lib::MutatorFacts facts;
+    facts.works_with.push_back({"*", {}, {}});
+    facts.needs.push_back({"gatehouse", ">= 4.0", "Gatehouse"});
+    facts.options.push_back({"Income", {"frugal", "moderate", "wealthy"}});
+    facts.layers = {"units", "files"};
+    made.mutator = facts;
+    inputs.listings.push_back(std::move(made));
+
+    lib::Installed copy = installed(core, Kind::mutator, "fast-builders", "Fast Builders");
+    copy.version = "1.0";
+    copy.revision = 1;
+    copy.author = "Ada";
+    copy.description = "Builds faster.";
+    copy.kept = lib::Kept{"0.9", 1};
+    if (verdict)
+        facts.verdict = std::move(verdict);
+    copy.mutator = facts;
+    inputs.installed.push_back(std::move(copy));
+    lib::Installed gatehouse = installed(core, Kind::mutator, "gatehouse", "Gatehouse");
+    gatehouse.version = "4.0";
+    inputs.installed.push_back(std::move(gatehouse));
+    if (update_it) {
+        lib::UpdateNote note = update(core, Kind::mutator, "fast-builders");
+        note.to_version = "2.0";
+        note.to_revision = 1;
+        inputs.updates.push_back(std::move(note));
+    }
+    lib::Library library = built(std::move(inputs));
+    lib::set_tab(library, lib::Tab::mutators);
+    return library;
+}
+
+/// A mutator's details: facts in order, each verdict, the status and the actions.
+void test_mutator_details() {
+    using Record = oa::data::mutators::VerdictRecord;
+    using Dry = oa::data::mutators::Verdict;
+
+    Record one;
+    one.verdict = Dry::compatible;
+    one.counts.units_changed = 1;
+    one.reason = "ignored";
+    const lib::Verdict one_verdict = lib::verdict_of_record(one);
+    OA_CHECK(one_verdict.state == lib::Verdict::State::compatible);
+    OA_CHECK(one_verdict.reason == "ignored");
+    OA_CHECK(one_verdict.summary == "changes 1 unit");
+
+    Record several;
+    several.verdict = Dry::compatible;
+    several.counts.units_changed = 2;
+    several.counts.weapons_added = 1;
+    several.counts.files_hidden = 3;
+    OA_CHECK(
+        lib::verdict_of_record(several).summary ==
+        "changes 2 units, adds 1 weapon and hides 3 files"
+    );
+
+    Record every;
+    every.verdict = Dry::compatible;
+    every.counts.units_changed = 2;
+    every.counts.units_added = 1;
+    every.counts.units_removed = 3;
+    every.counts.weapons_changed = 4;
+    every.counts.weapons_added = 5;
+    every.counts.weapons_removed = 6;
+    every.counts.features_changed = 7;
+    every.counts.features_added = 8;
+    every.counts.features_removed = 9;
+    every.counts.menu_entries_changed = 1;
+    every.counts.files_added = 2;
+    every.counts.files_hidden = 1;
+    OA_CHECK(
+        lib::verdict_of_record(every).summary ==
+        "changes 2 units, adds 1 unit, removes 3 units, changes 4 weapons, adds 5 weapons, "
+        "removes 6 weapons, changes 7 features, adds 8 features, removes 9 features, "
+        "changes 1 menu entry, adds 2 files and hides 1 file"
+    );
+
+    Record no_effect;
+    no_effect.verdict = Dry::no_effect;
+    no_effect.reason = "kept";
+    const lib::Verdict no_effect_verdict = lib::verdict_of_record(no_effect);
+    OA_CHECK(no_effect_verdict.state == lib::Verdict::State::no_effect);
+    OA_CHECK(no_effect_verdict.reason == "kept");
+    OA_CHECK(no_effect_verdict.summary.empty());
+
+    Record incompatible;
+    incompatible.verdict = Dry::incompatible;
+    incompatible.reason = "needs a unit";
+    const lib::Verdict incompatible_verdict = lib::verdict_of_record(incompatible);
+    OA_CHECK(incompatible_verdict.state == lib::Verdict::State::incompatible);
+    OA_CHECK(incompatible_verdict.reason == "needs a unit");
+
+    Record failed;
+    failed.verdict = Dry::failed;
+    failed.reason = "the dry run stopped";
+    const lib::Verdict failed_verdict = lib::verdict_of_record(failed);
+    OA_CHECK(failed_verdict.state == lib::Verdict::State::failed);
+    OA_CHECK(failed_verdict.reason == "the dry run stopped");
+
+    // Listed, not installed. No verdict, so no Checked fact and no CHECK.
+    lib::Inputs listed_inputs = base_inputs();
+    lib::Listing listed = listing(core, Kind::mutator, "fast-builders", "Fast Builders");
+    listed.version = "2.0";
+    listed.revision = 1;
+    listed.author = "Ada";
+    listed.summary = "Builds faster.";
+    listed.homepage = "https://example.test/fast";
+    listed.requires_engine = ">= 0.8.0";
+    lib::MutatorFacts listed_facts;
+    listed_facts.works_with.push_back({"ridge", {}, "Ridge"});
+    listed_facts.needs.push_back({"gatehouse", ">= 4.0", "Gatehouse"});
+    listed_facts.options.push_back({"Income", {"frugal", "moderate", "wealthy"}});
+    listed_facts.layers = {"files", "units"};
+    listed.mutator = listed_facts;
+    listed_inputs.listings.push_back(std::move(listed));
+    lib::Listing walls = listing(core, Kind::mutator, "ridge-walls", "Ridge Walls");
+    walls.mutator = lib::MutatorFacts{};
+    walls.mutator->works_with.push_back({"ridge", {}, "Ridge"});
+    listed_inputs.listings.push_back(std::move(walls));
+    lib::Listing bare = listing(core, Kind::mutator, "bare", "Bare");
+    bare.homepage.clear();
+    bare.requires_engine.clear();
+    bare.mutator = lib::MutatorFacts{};
+    listed_inputs.listings.push_back(std::move(bare));
+    lib::Library listed_library = built(std::move(listed_inputs));
+    lib::set_tab(listed_library, lib::Tab::mutators);
+
+    const lib::Entry* fast = at(listed_library, core, Kind::mutator, "fast-builders");
+    OA_CHECK(fast != nullptr);
+    if (fast != nullptr) {
+        OA_CHECK(lib::status_line(listed_library, *fast) == "Not installed · 2.0 · rev 1");
+        OA_CHECK(fast->not_compatible);
+        OA_CHECK(fast->can_act);
+        const std::vector<lib::Fact> facts = lib::facts(listed_library, *fast);
+        OA_CHECK(
+            fact_labels(listed_library, *fast) == std::vector<std::string>(
+                                                      {"Latest",
+                                                       "Author",
+                                                       "Works with",
+                                                       "Needs",
+                                                       "Needs",
+                                                       "Options",
+                                                       "Changes",
+                                                       "Rules",
+                                                       "From"}
+                                                  )
+        );
+        OA_CHECK(fact(facts, "Checked") == nullptr);
+        OA_CHECK(fact(facts, "Size") == nullptr);
+        OA_CHECK(fact(facts, "Installed") == nullptr);
+        const lib::Fact* works = fact(facts, "Works with");
+        OA_CHECK(works != nullptr && works->long_value == "Ridge" && works->mark == Mark::warn);
+        OA_CHECK(works != nullptr && works->short_value == works->long_value);
+        const lib::Fact* needs = fact(facts, "Needs");
+        OA_CHECK(
+            needs != nullptr && needs->long_value == "Gatehouse 4.0 or later: not installed" &&
+            needs->mark == Mark::warn
+        );
+        OA_CHECK(facts.size() >= 5);
+        if (facts.size() >= 5) {
+            OA_CHECK(facts[4].long_value == "Open Annihilation 0.8.0 or later");
+            OA_CHECK(facts[4].short_value == "OA 0.8.0+");
+            OA_CHECK(facts[4].mark == Mark::good);
+        }
+        const lib::Fact* options = fact(facts, "Options");
+        OA_CHECK(
+            options != nullptr && options->long_value == "Income: frugal, moderate or wealthy" &&
+            options->short_value == options->long_value
+        );
+        const lib::Fact* changes = fact(facts, "Changes");
+        OA_CHECK(
+            changes != nullptr && changes->long_value == "Files and Units" &&
+            changes->short_value == changes->long_value
+        );
+        const lib::Fact* rules = fact(facts, "Rules");
+        OA_CHECK(
+            rules != nullptr && rules->long_value == "Changes the game: unranked on Core Prime" &&
+            rules->short_value == rules->long_value
+        );
+        const std::vector<std::pair<Action, bool>> expected = {
+            {Action::get, true},
+            {Action::homepage, true},
+        };
+        OA_CHECK(actions_of(listed_library, *fast) == expected);
+    }
+
+    const lib::Entry* ridge_walls = at(listed_library, core, Kind::mutator, "ridge-walls");
+    OA_CHECK(ridge_walls != nullptr && ridge_walls->not_compatible && ridge_walls->can_act);
+    if (ridge_walls != nullptr) {
+        const lib::Fact* works = fact(lib::facts(listed_library, *ridge_walls), "Works with");
+        OA_CHECK(works != nullptr && works->long_value == "Ridge" && works->mark == Mark::warn);
+        OA_CHECK(actions_of(listed_library, *ridge_walls).front().first == Action::get);
+        OA_CHECK(actions_of(listed_library, *ridge_walls).front().second);
+    }
+
+    const lib::Entry* bare_entry = at(listed_library, core, Kind::mutator, "bare");
+    OA_CHECK(bare_entry != nullptr);
+    if (bare_entry != nullptr) {
+        const std::vector<std::string> labels = fact_labels(listed_library, *bare_entry);
+        OA_CHECK(fact(lib::facts(listed_library, *bare_entry), "Options") == nullptr);
+        OA_CHECK(fact(lib::facts(listed_library, *bare_entry), "Changes") == nullptr);
+        OA_CHECK(fact(lib::facts(listed_library, *bare_entry), "Checked") == nullptr);
+        OA_CHECK(fact(lib::facts(listed_library, *bare_entry), "Needs") == nullptr);
+        for (const std::string& label : labels)
+            OA_CHECK(
+                label != "Size" && label != "Base" && label != "Games" && label != "Hacks" &&
+                label != "Maps" && label != "Coverage"
+            );
+    }
+
+    const auto checked_of = [](const lib::Verdict& verdict) {
+        const lib::Library library = mutator_library(verdict, false, false);
+        const lib::Entry* entry = at(library, core, Kind::mutator, "fast-builders");
+        OA_CHECK(entry != nullptr);
+        if (entry == nullptr)
+            return lib::Fact{};
+        const std::vector<lib::Fact> facts = lib::facts(library, *entry);
+        OA_CHECK(facts.size() >= 2 && facts[0].long_label == "Installed");
+        OA_CHECK(facts.size() >= 2 && facts[0].long_value == "1.0 (rev 1)");
+        OA_CHECK(facts.size() >= 2 && facts[1].long_label == "Latest");
+        OA_CHECK(facts.size() >= 2 && facts[1].long_value == "2.0 (rev 1)");
+        const lib::Fact* checked = fact(facts, "Checked");
+        OA_CHECK(checked != nullptr);
+        if (checked == nullptr)
+            return lib::Fact{};
+        OA_CHECK(checked->short_value == checked->long_value);
+        return *checked;
+    };
+
+    lib::Verdict compatible;
+    compatible.state = lib::Verdict::State::compatible;
+    compatible.summary = "changes 2 units";
+    const lib::Fact good = checked_of(compatible);
+    OA_CHECK(good.long_value == "With No Mod: changes 2 units" && good.mark == Mark::good);
+
+    lib::Verdict none = no_effect_verdict;
+    const lib::Fact quiet = checked_of(none);
+    OA_CHECK(quiet.long_value == "With No Mod: no effect" && quiet.mark == Mark::warn);
+
+    const lib::Fact blocked = checked_of(incompatible_verdict);
+    OA_CHECK(blocked.long_value == "With No Mod: needs a unit" && blocked.mark == Mark::bad);
+
+    const lib::Fact stopped = checked_of(failed_verdict);
+    OA_CHECK(
+        stopped.long_value == "With No Mod: it stopped: the dry run stopped" &&
+        stopped.mark == Mark::bad
+    );
+
+    lib::Verdict running;
+    running.state = lib::Verdict::State::checking;
+    const lib::Fact checking = checked_of(running);
+    OA_CHECK(checking.long_value == "Checking with No Mod…" && checking.mark == Mark::none);
+
+    lib::Verdict not_yet;
+    not_yet.state = lib::Verdict::State::unchecked;
+    const lib::Fact waiting = checked_of(not_yet);
+    OA_CHECK(waiting.long_value == "Not checked with No Mod" && waiting.mark == Mark::none);
+
+    // Unset verdict: no Checked fact and no CHECK WITH THIS MOD.
+    {
+        const lib::Library library = mutator_library(std::nullopt, false, false);
+        const lib::Entry* entry = at(library, core, Kind::mutator, "fast-builders");
+        OA_CHECK(entry != nullptr);
+        if (entry != nullptr) {
+            OA_CHECK(fact(lib::facts(library, *entry), "Checked") == nullptr);
+            for (const auto& [action, enabled] : actions_of(library, *entry)) {
+                static_cast<void>(enabled);
+                OA_CHECK(action != Action::check_with_mod);
+            }
+        }
+    }
+
+    // Incompatible, with an update and a kept copy: still UPDATE and CHECK, no ROLL BACK.
+    {
+        const lib::Library library = mutator_library(incompatible_verdict, true, false);
+        const lib::Entry* entry = at(library, core, Kind::mutator, "fast-builders");
+        OA_CHECK(entry != nullptr && entry->not_compatible && entry->can_act);
+        if (entry != nullptr) {
+            const std::vector<std::pair<Action, bool>> expected = {
+                {Action::update, true},
+                {Action::check_with_mod, true},
+                {Action::uninstall, true},
+                {Action::open_folder, true},
+                {Action::homepage, true},
+            };
+            OA_CHECK(actions_of(library, *entry) == expected);
+        }
+    }
+
+    // Listed actions, a queue, a failure, an install, and CHECK off in a game and while checking.
+    {
+        lib::Inputs inputs = base_inputs();
+        lib::Listing made = listing(core, Kind::mutator, "queued-one", "Queued One");
+        made.homepage = "https://example.test/queued";
+        made.mutator = lib::MutatorFacts{};
+        inputs.listings.push_back(made);
+        lib::QueueItem waiting_item = queued(core, "queued-one", "Queued One", Phase::waiting);
+        waiting_item.kind = Kind::mutator;
+        inputs.queue.push_back(waiting_item);
+        lib::Listing failed_listing = listing(core, Kind::mutator, "failed-one", "Failed One");
+        failed_listing.mutator = lib::MutatorFacts{};
+        inputs.listings.push_back(failed_listing);
+        lib::QueueItem failed_item = queued(core, "failed-one", "Failed One", Phase::failed);
+        failed_item.kind = Kind::mutator;
+        failed_item.retryable = true;
+        inputs.queue.push_back(failed_item);
+        lib::Library library = built(std::move(inputs));
+        const lib::Entry* queued_entry = at(library, core, Kind::mutator, "queued-one");
+        const lib::Entry* failed_entry = at(library, core, Kind::mutator, "failed-one");
+        OA_CHECK(queued_entry != nullptr && failed_entry != nullptr);
+        if (queued_entry != nullptr) {
+            const std::vector<std::pair<Action, bool>> expected = {
+                {Action::cancel, true},
+                {Action::homepage, true},
+            };
+            OA_CHECK(actions_of(library, *queued_entry) == expected);
+        }
+        if (failed_entry != nullptr) {
+            const std::vector<std::pair<Action, bool>> expected = {{Action::retry, true}};
+            OA_CHECK(actions_of(library, *failed_entry) == expected);
+        }
+    }
+    {
+        const lib::Library library = mutator_library(compatible, false, false);
+        const lib::Entry* entry = at(library, core, Kind::mutator, "fast-builders");
+        OA_CHECK(entry != nullptr);
+        if (entry != nullptr) {
+            const std::vector<std::pair<Action, bool>> expected = {
+                {Action::check_with_mod, true},
+                {Action::uninstall, true},
+                {Action::open_folder, true},
+                {Action::homepage, true},
+            };
+            OA_CHECK(actions_of(library, *entry) == expected);
+        }
+    }
+    {
+        const lib::Library library = mutator_library(compatible, false, true);
+        const lib::Entry* entry = at(library, core, Kind::mutator, "fast-builders");
+        OA_CHECK(entry != nullptr);
+        if (entry != nullptr) {
+            const std::vector<std::pair<Action, bool>> actions = actions_of(library, *entry);
+            bool saw_check = false;
+            for (const auto& [action, enabled] : actions) {
+                if (action == Action::check_with_mod) {
+                    saw_check = true;
+                    OA_CHECK(!enabled);
+                }
+                OA_CHECK(
+                    action != Action::roll_back && action != Action::play_now &&
+                    action != Action::switch_off && action != Action::use_now &&
+                    action != Action::turn_on
+                );
+            }
+            OA_CHECK(saw_check);
+        }
+    }
+    {
+        lib::Verdict checking_verdict;
+        checking_verdict.state = lib::Verdict::State::checking;
+        const lib::Library library = mutator_library(checking_verdict, false, false);
+        const lib::Entry* entry = at(library, core, Kind::mutator, "fast-builders");
+        OA_CHECK(entry != nullptr);
+        if (entry != nullptr) {
+            bool saw_check = false;
+            for (const auto& [action, enabled] : actions_of(library, *entry)) {
+                if (action == Action::check_with_mod) {
+                    saw_check = true;
+                    OA_CHECK(!enabled);
+                }
+            }
+            OA_CHECK(saw_check);
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -4617,6 +5022,7 @@ int main() {
     test_registry_texts();
     test_package_needs();
     test_mutators();
+    test_mutator_details();
     test_lookup();
     return oa::test::check_exit_status();
 }
