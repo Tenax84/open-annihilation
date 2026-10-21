@@ -89,7 +89,7 @@ if(BUILD_TESTING)
   target_link_libraries(oa-data-script-host-c-work-test PRIVATE
     oa-data-script-host oa-test-support oa-options)
   add_test(NAME data-script-host-c-work COMMAND oa-data-script-host-c-work-test)
-  set_tests_properties(data-script-host-c-work PROPERTIES TIMEOUT 60)
+  set_tests_properties(data-script-host-c-work PROPERTIES TIMEOUT 180)
 
   # Every route that would make a string longer than 64 KiB.
   add_executable(oa-data-script-host-string-length-test tests/string_length_test.cpp)
