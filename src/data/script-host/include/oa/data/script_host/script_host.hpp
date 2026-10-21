@@ -68,6 +68,14 @@ enum class ErrorKind : uint8_t {
     syntax,
     runtime,
     instruction_budget,
+    memory_budget,
+    precompiled,
+    source_too_large,
+    module_name,
+    module_missing,
+    module_loop,
+    /// A string would have passed `string_length_limit`.
+    string_length,
     /// The phase ran longer than its real-time limit.
     ///
     /// The limit is `default_time_limit` unless `OpenOptions::time_limit`
@@ -78,15 +86,7 @@ enum class ErrorKind : uint8_t {
     /// In multiplayer the loadout digest refuses a match whose machines
     /// disagree, so the two outcomes cannot run as one match. A dry run
     /// records this failure like any other.
-    time_limit,
-    memory_budget,
-    precompiled,
-    source_too_large,
-    module_name,
-    module_missing,
-    module_loop,
-    /// A string would have passed `string_length_limit`.
-    string_length
+    time_limit
 };
 
 /// A phase that stopped, naming the package and where in its source.
