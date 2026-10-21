@@ -124,7 +124,9 @@ class NetworkPlay {
     /// told when the record's bytes change. The full mutator list is bound
     /// even when those bytes are cut to the same record, so a part can still
     /// be drawn from it. The room's layer is followed first, including on
-    /// the way out of the multiplayer screens. No setup block carries any of it.
+    /// the way out of the multiplayer screens; a change to its field while
+    /// the screens are hidden is written when they show again. No setup
+    /// block carries any of it.
     void follow_presence();
 
     /// Runs one frame of the network match; nothing without an active match.

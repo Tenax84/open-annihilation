@@ -2287,6 +2287,11 @@ void NetworkPlay::follow_unicode_chat() {
 
 void NetworkPlay::follow_presence() {
     runtime_.follow_room_mutators();
+    // A change to the mutator field while the screens are hidden, such as
+    // the release at a match's start, stays pending until they show again:
+    // taking its generation here would skip writing it into the record.
+    if (presence_taken_ && !mp::multiplayer_showing())
+        return;
     const uint32_t generation = runtime_.room_mutators_generation();
     const bool mutators_changed =
         !presence_mutators_seen_ || generation != presence_mutator_generation_;
@@ -2306,8 +2311,6 @@ void NetworkPlay::follow_presence() {
             presence_mutators_held_ ? &presence_mutators_ : nullptr
         );
     }
-    if (presence_taken_ && !mp::multiplayer_showing())
-        return;
     const bool first = !presence_taken_;
     presence_taken_ = true;
     auto facts = presence_facts(runtime_);
