@@ -288,31 +288,35 @@ void c_collation_orders_strings() {
     OA_CHECK(!before.value);
 }
 
-struct CollationRestore {
+/// Puts one locale category back as it was when the case began.
+struct LocaleRestore {
+    int category;
     std::string saved;
 
-    CollationRestore() {
-        const char* now = std::setlocale(LC_COLLATE, nullptr);
+    explicit LocaleRestore(int which) : category(which) {
+        const char* now = std::setlocale(category, nullptr);
         saved = now != nullptr ? now : "C";
     }
 
-    ~CollationRestore() { std::setlocale(LC_COLLATE, saved.c_str()); }
+    ~LocaleRestore() { std::setlocale(category, saved.c_str()); }
 };
 
-void another_collation_is_refused() {
-    CollationRestore restore;
-    const char* names[] = {"en_US.UTF-8", "de_DE.UTF-8", "fr_FR.UTF-8", "en_GB.UTF-8"};
+/// Sets `category` to the first of a few common locales the system has, and
+/// checks that a sandbox then refuses to open, naming `words` and the locale.
+void another_locale_is_refused(int category, const char* words) {
+    LocaleRestore restore(category);
+    const char* names[] = {"de_DE.UTF-8", "fr_FR.UTF-8", "en_US.UTF-8", "en_GB.UTF-8"};
     const char* applied = nullptr;
     for (const char* name : names) {
-        applied = std::setlocale(LC_COLLATE, name);
+        applied = std::setlocale(category, name);
         if (applied != nullptr)
             break;
     }
     if (applied == nullptr) {
         std::fprintf(
             stderr,
-            "data-script-host-text: no collation locale other than C is installed; skipping that "
-            "case\n"
+            "data-script-host-text: no %s locale other than C is installed; skipping that case\n",
+            words
         );
         return;
     }
@@ -329,10 +333,51 @@ void another_collation_is_refused() {
     OA_CHECK(error.kind == host::ErrorKind::runtime);
     OA_CHECK(error.phase == "open");
     OA_CHECK(error.package_id == "sample");
-    const std::string expected = "the C library's collation locale is " + name + "; scripts need C";
+    const std::string expected =
+        std::string("the C library's ") + words + " locale is " + name + "; scripts need C";
     OA_CHECK(error.message == expected);
     if (error.message != expected)
-        std::fprintf(stderr, "collation: [%s]\n", error.message.c_str());
+        std::fprintf(stderr, "%s: [%s]\n", words, error.message.c_str());
+}
+
+// String order follows the collation locale.
+void another_collation_is_refused() {
+    another_locale_is_refused(LC_COLLATE, "collation");
+}
+
+// Reading and writing number text follows the numeric locale: in de_DE,
+// 0.5 would not read as a number.
+void another_numeric_locale_is_refused() {
+    another_locale_is_refused(LC_NUMERIC, "numeric");
+}
+
+// upper, lower and the pattern classes follow the character-type locale for
+// bytes past 127.
+void another_character_type_locale_is_refused() {
+    another_locale_is_refused(LC_CTYPE, "character-type");
+}
+
+/// Once each category is C again, the same options open a sandbox.
+void c_locales_open_again() {
+    Package package;
+    host::ScriptError error;
+    auto sandbox = open_box(package, error);
+    OA_CHECK(sandbox.has_value());
+    if (!sandbox)
+        return;
+    Flag half;
+    host::CallHooks hooks;
+    hooks.context = &half;
+    hooks.read = read_flag;
+    OA_CHECK(run_source(
+        *sandbox,
+        package,
+        "return tonumber('0.5') == 0.5 and tostring(0.5) == '0.5'\n",
+        error,
+        &hooks
+    ));
+    OA_CHECK(half.present);
+    OA_CHECK(half.value);
 }
 
 int count_entries(lua_State* state) {
@@ -489,6 +534,9 @@ int main() {
     direct_number_text_truncates_like_snprintf();
     c_collation_orders_strings();
     another_collation_is_refused();
+    another_numeric_locale_is_refused();
+    another_character_type_locale_is_refused();
+    c_locales_open_again();
     no_route_makes_a_weak_table();
     return oa::test::check_exit_status();
 }
