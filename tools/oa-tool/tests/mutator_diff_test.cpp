@@ -198,7 +198,10 @@ fs::path write_game(const Scratch& scratch, const std::string& copyright) {
          bytes_of(fbi("CHARLIE", "Builder=1;\nBMcode=1;\nWorkerTime=50;\n", copyright)),
          0},
         {"weapons/test.tdf",
-         bytes_of("[GUN]\n{\nID=1;\nrange=300;\n[DAMAGE]\n{\ndefault=10;\n}\n}\n"),
+         bytes_of(
+             "[GUN]\n{\nID=1;\nrange=300;\n[DAMAGE]\n{\ndefault=10;\n}\n}\n"
+             "[CANNON]\n{\nID=2;\nrange=400;\n}\n"
+         ),
          0},
         {"download/alpha.tdf",
          bytes_of(
@@ -206,7 +209,13 @@ fs::path write_game(const Scratch& scratch, const std::string& copyright) {
              "[MENU1]\n{\nUNITMENU=ALPHA;\nMENU=1;\nBUTTON=2;\nUNITNAME=CHARLIE;\n}\n"
          ),
          0},
-        {"guis/ALPHA1.gui", bytes_of("[GADGET0]\n{\nname=BRAVO;\n}\n"), 0},
+        {"guis/ALPHA1.gui",
+         bytes_of(
+             "[GADGET0]\n{\n[COMMON]\n{\nid=0;\nname=ALPHA1;\nactive=1;\n}\n}\n"
+             "[GADGET1]\n{\n[COMMON]\n{\nid=1;\nname=BRAVO;\nactive=1;\ncommonattribs=4;\n}\n"
+             "grayedout=0;\n}\n"
+         ),
+         0},
         {"gamedata/sidedata.tdf", bytes_of("[SIDE0]\n{\nname=Arm;\n}\n"), 0},
         {"maps/isle.ota",
          bytes_of("[GlobalHeader]\n{\n[Schema 0]\n{\ntype=Network 1;\naiprofile=DEFAULT;\n}\n}\n"),
@@ -225,7 +234,7 @@ void folded_removal() {
     report::Dump right_after;
     report::DumpedFile gui;
     gui.parsed = true;
-    gui.fields["[gadget0] name"] = "BRAVO";
+    gui.fields["[gadget0][common] name"] = "BRAVO";
     left_after.files["guis/alpha1.gui"] = gui;
     right_after.files["guis/alpha1.gui"] = gui;
     left_after.hidden.insert("units/bravo.fbi");
@@ -237,7 +246,7 @@ void folded_removal() {
         "unit dropped BRAVO hidden",
         "file hidden units/bravo.fbi",
         "menu removed ALPHA 1 1 BRAVO",
-        "field guis/alpha1.gui [gadget0] name: BRAVO -> BRAVO",
+        "field guis/alpha1.gui [gadget0] grayedout: 0 -> 1",
         "field download/alpha.tdf [menu0] unitname: BRAVO -> (absent)",
         "field units/alpha.fbi [unitinfo] workertime: 1 -> 2",
     };
@@ -246,7 +255,7 @@ void folded_removal() {
         "field units/bravo.fbi [unitinfo] copyright: old -> ",
         "field units/bravo.fbi [unitinfo] version: 1 -> 4",
         "menu removed ALPHA 1 1 BRAVO",
-        "field guis/alpha1.gui [gadget0] common: 1 -> 2",
+        "field guis/alpha1.gui [gadget0][common] commonattribs: 4 -> 0",
         "field units/alpha.fbi [unitinfo] workertime: 1 -> 2",
     };
     const report::Comparison compared = report::compare(left, right, left_after, right_after, {});
@@ -260,9 +269,12 @@ void allow_file_reason() {
     std::string error;
     OA_CHECK(!report::parse_allowed("left only *\n", &error));
     OA_CHECK(error == "1: a pattern needs a reason above it");
-    const std::optional<report::AllowList> allowed =
-        report::parse_allowed("# a reason\nleft only *\n\nright only *\n", &error);
-    OA_CHECK(allowed.has_value() && allowed->patterns.size() == 1);
+    OA_CHECK(!report::parse_allowed("# a reason\nleft only *\n\nright only *\n", &error));
+    OA_CHECK(error == "4: a pattern needs a reason above it");
+    const std::optional<report::AllowList> allowed = report::parse_allowed(
+        "# a reason\nleft only *\nright only *\n\n# another\nleft only x\n", &error
+    );
+    OA_CHECK(allowed.has_value() && allowed->patterns.size() == 3);
 }
 
 std::string package_arg(const fs::path& folder) {
@@ -503,6 +515,17 @@ void fixture_cases() {
     expect_status(flyers, oa::tool::exit_done);
     expect_has(flyers, "mutator diff: 0 differences, 0 allowed, 0 unused allowances");
 
+    const Captured flyers_alone = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        package_arg(no_flyers),
+    });
+    expect_status(flyers_alone, oa::tool::exit_done);
+    expect_has(flyers_alone, "field guis/alpha1.gui [gadget1] grayedout: 0 -> 1");
+
     const Captured flyers_name = run({
         "mutator",
         "diff",
@@ -530,7 +553,8 @@ void fixture_cases() {
     expect_has(dropped, "[unitinfo] version:");
 
     const sha256::Digest digest = sha256::digest_of(delta);
-    const std::string hash(sha256::to_hex(digest).begin(), sha256::to_hex(digest).end());
+    const auto hex = sha256::to_hex(digest);
+    const std::string hash(hex.begin(), hex.end());
     const Captured masked = run({
         "mutator",
         "diff",
@@ -540,10 +564,10 @@ void fixture_cases() {
         package_arg(extra),
     });
     expect_status(masked, oa::tool::exit_done);
-    expect_has(masked, "file added objects3d/delta.3do " + hash);
-    expect_has(masked, "file hidden units/charlie.fbi");
-    expect_has(masked, "unit dropped CHARLIE hidden");
-    expect_has(masked, "menu removed ALPHA 1 2 CHARLIE");
+    expect_has(masked, "file added objects3d/delta.3do " + hash + "\tby extra-model\n");
+    expect_has(masked, "file hidden units/charlie.fbi\tby extra-model\n");
+    expect_has(masked, "unit dropped CHARLIE hidden\tby extra-model\n");
+    expect_has(masked, "menu removed ALPHA 1 2 CHARLIE\n");
 
     const Captured mapped = run({
         "mutator",
@@ -743,6 +767,210 @@ void fixture_cases() {
     expect_status(file_game, oa::tool::exit_failed);
     OA_CHECK(!file_game.err.empty());
 
+    const Captured stacked = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        boost_arg,
+        "--mutator",
+        package_arg(turbo),
+    });
+    expect_status(stacked, oa::tool::exit_done);
+    expect_has(stacked, "# loadout: builder-boost 1; ai-turbo 1\n");
+
+    const fs::path paced = scratch.path / "packages" / "paced";
+    write_text(
+        paced / "oamut.yaml",
+        manifest("paced", "[\"units\"]") +
+            "options:\n  factor:\n    type: choice\n    label: \"Build speed\"\n"
+            "    values: [2, 4, 8]\n    default: 2\n"
+    );
+    write_text(
+        paced / "mutator.lua",
+        "function mutate(ctx)\n"
+        "  return { rules = { where { workertime = range(0, 0) }:change { workertime = 1 } } }\n"
+        "end\n"
+    );
+    const Captured paced_run = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        package_arg(paced) + ":factor=8",
+    });
+    expect_status(paced_run, oa::tool::exit_done);
+    expect_has(paced_run, "# loadout: paced 1 factor=8\n");
+
+    const Captured two_versus = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        boost_arg,
+        "--versus",
+        package_arg(boost_sm),
+        "--versus",
+        package_arg(turbo),
+    });
+    expect_status(two_versus, oa::tool::exit_done);
+    expect_has(two_versus, "# versus: builder-boost-sm 1; ai-turbo 1\n");
+    expect_has(two_versus, "mutator diff: 0 differences, 0 allowed, 0 unused allowances");
+
+    const fs::path too_new = write_package(
+        scratch,
+        "too-new",
+        "[\"units\"]",
+        "function mutate(ctx)\n"
+        "  return { rules = { where { canfly = true }:change { version = 4 } } }\n"
+        "end\n"
+    );
+    const Captured versioned = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        package_arg(too_new),
+    });
+    expect_status(versioned, oa::tool::exit_done);
+    expect_has(versioned, "unit dropped BRAVO version");
+
+    const fs::path range_a = write_package(
+        scratch,
+        "range-a",
+        "[\"weapons\"]",
+        "function mutate(ctx)\n"
+        "  return { rules = { on(\"weapons\", \"tdf\"):where { id = 1 }:change { range = 600 } } "
+        "}\n"
+        "end\n"
+    );
+    const fs::path range_b = write_package(
+        scratch,
+        "range-b",
+        "[\"weapons\"]",
+        "function mutate(ctx)\n"
+        "  return { rules = { on(\"weapons\", \"tdf\"):where { id = 2 }:change { range = 800 } } "
+        "}\n"
+        "end\n"
+    );
+    const Captured ranges = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        package_arg(range_a),
+        "--mutator",
+        package_arg(range_b),
+    });
+    expect_status(ranges, oa::tool::exit_done);
+    expect_has(ranges, "field weapons/test.tdf [gun] range: 300 -> 600\tby range-a\n");
+    expect_has(ranges, "field weapons/test.tdf [cannon] range: 400 -> 800\tby range-b\n");
+    expect_has_not(ranges, "by range-a,range-b");
+    expect_has_not(ranges, "by range-b,range-a");
+
+    const std::string left_note = "x\tLEFT\r\nMORE";
+    const std::string right_note = "x\tRIGHT\r\nMORE";
+    const fs::path odd_left = write_package(
+        scratch,
+        "odd-left",
+        "[\"files\"]",
+        "function mutate(ctx)\n  return { files = { add = { \"files\" } } }\nend\n"
+    );
+    const fs::path odd_right = write_package(
+        scratch,
+        "odd-right",
+        "[\"files\"]",
+        "function mutate(ctx)\n  return { files = { add = { \"files\" } } }\nend\n"
+    );
+    write_text(
+        odd_left / "files" / "weapons" / "note.tdf", "[NOTE]\n{\ntext=" + left_note + ";\n}\n"
+    );
+    write_text(
+        odd_right / "files" / "weapons" / "note.tdf", "[NOTE]\n{\ntext=" + right_note + ";\n}\n"
+    );
+    const Captured odd = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        package_arg(odd_left),
+        "--versus",
+        package_arg(odd_right),
+    });
+    expect_status(odd, oa::tool::exit_failed);
+    expect_has(odd, "x\\x09LEFT\\x0D\\x0AMORE");
+    expect_has(odd, "x\\x09RIGHT\\x0D\\x0AMORE");
+
+    const std::vector<uint8_t> replaced{4, 5, 6};
+    const fs::path new_model = write_package(
+        scratch,
+        "new-model",
+        "[\"files\"]",
+        "function mutate(ctx)\n  return { files = { add = { \"files\" } } }\nend\n"
+    );
+    write_bytes(new_model / "files" / "objects3d" / "bravo.3do", replaced);
+    const sha256::Digest old_digest = sha256::digest_of(std::vector<uint8_t>{9, 8, 7});
+    const sha256::Digest new_digest = sha256::digest_of(replaced);
+    const auto old_hex = sha256::to_hex(old_digest);
+    const auto new_hex = sha256::to_hex(new_digest);
+    const std::string old_hash(old_hex.begin(), old_hex.end());
+    const std::string new_hash(new_hex.begin(), new_hex.end());
+    const Captured replaced_run = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        package_arg(new_model),
+    });
+    expect_status(replaced_run, oa::tool::exit_done);
+    expect_has(
+        replaced_run,
+        "file replaced objects3d/bravo.3do " + old_hash + " " + new_hash + "\tby new-model\n"
+    );
+
+    const fs::path new_unit = write_package(
+        scratch,
+        "new-unit",
+        "[\"files\"]",
+        "function mutate(ctx)\n  return { files = { add = { \"files\" } } }\nend\n"
+    );
+    write_text(
+        new_unit / "files" / "units" / "DELTA.fbi", fbi("DELTA", "MaxDamage=10;\n", copyright)
+    );
+    write_text(
+        new_unit / "files" / "download" / "delta.tdf",
+        "[MENU0]\n{\nUNITMENU=ALPHA;\nMENU=1;\nBUTTON=0;\nUNITNAME=DELTA;\n}\n"
+    );
+    const Captured added = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--mutator",
+        package_arg(new_unit),
+    });
+    expect_status(added, oa::tool::exit_done);
+    expect_has(added, "unit added DELTA");
+    expect_has(added, "menu added ALPHA 1 0 DELTA");
+
+    const Captured missing_map = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game_arg,
+        "--map",
+        "No Such Map",
+    });
+    expect_status(missing_map, oa::tool::exit_usage);
+    expect_err(missing_map, "map No Such Map is not in this game");
+
     const Captured help = run({"help", "mutator", "diff"});
     expect_status(help, oa::tool::exit_done);
     OA_CHECK(help.out.find("--versus") != std::string::npos);
@@ -918,6 +1146,44 @@ void installed_case() {
     });
     expect_status(compared, oa::tool::exit_done);
     expect_has(compared, "mutator diff: 0 differences, 0 allowed, 0 unused allowances");
+
+    const fs::path drop_hook = write_package(
+        scratch,
+        "drop-metal",
+        "[\"units\"]",
+        "function mutate(ctx)\n"
+        "  return {\n"
+        "    units = function(units, ctx)\n"
+        "      units:where { makesmetal = range(1, 127) }:remove()\n"
+        "    end\n"
+        "  }\n"
+        "end\n"
+    );
+    const fs::path drop_sm = write_package(
+        scratch,
+        "drop-metal-sm",
+        "[\"units\"]",
+        "function mutate(ctx)\n"
+        "  return { rules = { sm \"rules/drop.sm\" } }\n"
+        "end\n"
+    );
+    write_text(
+        drop_sm / "rules" / "drop.sm",
+        "[*group*]\n{\n[Needs]\n{\nmakesmetal=1,127;\n}\n[Changes]\n{\nCopyright=\"\";\n"
+        "Version=4;\n}\n}\n"
+    );
+    const Captured metal = run({
+        "mutator",
+        "diff",
+        "--game-dir",
+        game.string(),
+        "--mutator",
+        drop_hook.string(),
+        "--versus",
+        drop_sm.string(),
+    });
+    expect_status(metal, oa::tool::exit_done);
+    expect_has(metal, "mutator diff: 0 differences, 0 allowed, 0 unused allowances");
 }
 
 } // namespace
