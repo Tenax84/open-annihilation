@@ -366,6 +366,7 @@ std::unique_ptr<OutputStream> SoftwareMixer::open_stream(
     }
     lock();
     streams_.push_back(stream.get());
+    mixing_.reserve(streams_.size());
     unlock();
     return stream;
 }
@@ -374,10 +375,14 @@ void SoftwareMixer::mix(int16_t* out, uint32_t frames) {
     lock();
     sum_.assign(static_cast<std::size_t>(frames) * mixer_output_channels, 0);
     // A feed may open or close streams; mix the ones open when the call began.
-    const std::vector<MixerStream*> streams = streams_;
-    for (MixerStream* stream : streams)
+    // A stream a feed opens may move the list's room, so it is read by index.
+    mixing_.assign(streams_.begin(), streams_.end());
+    const std::size_t count = mixing_.size();
+    for (std::size_t index = 0; index < count; ++index) {
+        MixerStream* stream = mixing_[index];
         if (std::find(streams_.begin(), streams_.end(), stream) != streams_.end())
             stream->add_to(sum_.data(), frames);
+    }
     unlock();
     // An arithmetic shift rounds toward negative infinity; with the half
     // added first, the sum rounds to nearest.
