@@ -4373,11 +4373,12 @@ class Runtime final : public menu::Host,
 
     /// Builds the battle room's mutator layer when its list changes.
     ///
-    /// The host's list is its own. A guest's is the host's once every
-    /// mutator of that list has arrived, resolved from this machine's
-    /// Mutators folder. The build runs on the calling thread, once per
-    /// change of the wanted digest, with no map. Leaving the multiplayer
-    /// screens while no match runs releases the layer.
+    /// The host's list is its own, and its loadout digest includes each
+    /// mutator's clash mode. A guest's is the host's once every mutator of
+    /// that list has arrived, resolved from this machine's Mutators folder
+    /// and built with the modes the host sent. The build runs on the calling
+    /// thread, once per change of the wanted digest, with no map. Leaving
+    /// the multiplayer screens while no match runs releases the layer.
     void follow_room_mutators();
 
     /// Returns the mutators field this machine sends, or null when it plays none.
@@ -4387,6 +4388,14 @@ class Runtime final : public menu::Host,
     ///
     /// @return the field, or null when the room plays no mutators
     [[nodiscard]] const oa::netgame::PresenceMutators* room_mutators_presence() const noexcept;
+
+    /// The clash modes the host sends with its mutator field.
+    ///
+    /// One bit per mutator: set means Add, clear means Replace. Nothing when
+    /// this machine sends no mutator field, or sends one as a guest.
+    ///
+    /// @return the mask, or nothing when no mask is sent
+    [[nodiscard]] std::optional<uint32_t> room_mutator_modes() const noexcept;
 
     /// How many times the mutators field this machine sends has changed.
     ///
@@ -4728,13 +4737,19 @@ class Runtime final : public menu::Host,
 
     /// Resolves a guest's whole copy of the host's list.
     ///
+    /// Each mutator's mode is the bit in `modes`: set means Add, clear means
+    /// Replace. When `modes` is nothing, an older record, every mode is
+    /// Replace. The guest's own default is not used.
+    ///
     /// @param assembly the host's list
+    /// @param modes the host's clash-mode mask, or nothing when the record has none
     /// @param[out] resolved the packages that resolved
     /// @param[out] codes one have-code per position
     /// @param[out] wanted the digest, when every position has and it matches
     /// @return true when every position has and the digest is the host's
     bool resolve_guest_loadout(
         const oa::netgame::PresenceLoadoutAssembly& assembly,
+        std::optional<uint32_t> modes,
         std::vector<oa::data::mutators::ResolvedMutator>& resolved,
         std::vector<uint8_t>& codes,
         oa::base::sha256::Digest& wanted

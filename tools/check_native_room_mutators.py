@@ -16,6 +16,10 @@ mutator logs a different digest, the same on both machines. A mutator that
 changes nothing is built once. A hacks-only mutator the plain game refuses
 stays built, names the dropped position, and allows START. An installed
 copy named by id, with an origin record, builds the same layer on both.
+Two machines whose mutators.clash-default differ, with ridge-commander-copy
+(its manifest names no clash mode, and it clones onto ARMCOM), build the
+same layer and play the host's mode: Add on the host reaches the guest as
+Add, and a guest whose own default is Add still plays the host's Replace.
 """
 import argparse
 import hashlib
@@ -70,6 +74,9 @@ NOOP_LUA = (
 # min 15 and max 5 break the profile's min <= max rule, so the hack is refused
 # and the mutator fails alone. A game without a mod still resolves hacks
 # against the base profile, so a value the profile accepts would apply.
+# ridge-commander-copy names no clash mode and clones onto an existing unit.
+RENAMED_NOTE = "ridge-commander-copy renamed ARMCOM to ARMCOM_2"
+REPLACED_NOTE = "ridge-commander-copy replaced ARMCOM from the game"
 HACKS_LUA = (
     "-- SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT\n"
     "-- SPDX-License-Identifier: GPL-3.0-only\n"
@@ -262,9 +269,21 @@ def copy_package(folder, user_folder, package_id):
     shutil.copytree(folder, destination)
 
 
-def host_game(native, game_dir, workdir, name, user_folder, port, mutator, fark_file=None):
+def write_clash_default(path, mode):
+    """Writes mutators.clash-default before the game reads its preferences."""
+    path.write_text(
+        "open-annihilation-preferences 1\n"
+        f'"mutators.clash-default" "{mode}"\n',
+        encoding="utf-8",
+    )
+
+
+def host_game(native, game_dir, workdir, name, user_folder, port, mutator, fark_file=None,
+              clash=None):
     """Starts a host. mutator is a --mutator value, or None for a plain room."""
     user_folder.mkdir(parents=True, exist_ok=True)
+    if clash is not None:
+        write_clash_default(workdir / f"{name}.conf", clash)
     arguments = ["--dplay-port", str(port), "--host", "--player-name", "Hoster",
                  "--game-name", "Open Room"]
     if mutator is not None:
@@ -273,9 +292,11 @@ def host_game(native, game_dir, workdir, name, user_folder, port, mutator, fark_
 
 
 def joiner_game(native, game_dir, workdir, name, user_folder, port, frames=JOIN_FRAMES,
-                fark_file=None):
+                fark_file=None, clash=None):
     """Starts a joiner. frames None keeps it until the check quits it."""
     user_folder.mkdir(parents=True, exist_ok=True)
+    if clash is not None:
+        write_clash_default(workdir / f"{name}.conf", clash)
     arguments = ["--dplay-port", str(port), "--join", ADDRESS, "--player-name", "Visitor"]
     if frames is not None:
         arguments.extend(["--frames", frames])
@@ -426,6 +447,42 @@ def require_same_build(host, visitor):
             "the host and the joiner did not log the same loadout, layer and mutator digests"
         )
     return host_built, guest_built
+
+
+def confirm_clash_mode(host, visitor, note, other):
+    """Starts the match and waits until both machines log the host's clash mode.
+
+    `note` is the line the host's mode writes. `other` is the line the other
+    mode would write. Both machines must log `note` and neither may log `other`.
+    """
+    host_client = open_client(host)
+    guest_client = open_client(visitor)
+    try:
+        automation.wait_screen(guest_client, "mp_battleroom")
+        automation.wait_screen(host_client, "mp_battleroom")
+        click_ready(guest_client)
+        click_ready(host_client)
+        wait_enabled(host_client, "START", "mp_battleroom")
+        automation.click_control(host_client, "START", "mp_battleroom")
+        deadline = time.monotonic() + LINE_TIMEOUT
+        while time.monotonic() < deadline:
+            host.drain()
+            visitor.drain()
+            if any(other in line for line in host.lines + visitor.lines):
+                raise RoomMutatorsFailure(f"a machine played the other clash mode: {other}")
+            if (any(note in line for line in host.lines) and
+                    any(note in line for line in visitor.lines)):
+                host_client.request("quit")
+                guest_client.request("quit")
+                break
+            time.sleep(0.2)
+        else:
+            raise RoomMutatorsFailure(f"the match did not log the host's clash mode: {note}")
+    finally:
+        host_client.close()
+        guest_client.close()
+    host.wait_end()
+    visitor.wait_end()
 
 
 def require_same_integrity(host, visitor):
@@ -618,6 +675,44 @@ def check(native, game_dir, workdir, source):
         host.stop()
         evidence.append(host_built.group(0))
         evidence.append(guest_built.group(0))
+
+        commander = source / "tests" / "data" / "mutators" / "packages" / "ridge-commander-copy"
+        for name, host_mode, guest_mode, note, other in (
+            ("clash-add", "add", "replace", RENAMED_NOTE, REPLACED_NOTE),
+            ("clash-replace", "replace", "add", REPLACED_NOTE, RENAMED_NOTE),
+        ):
+            port = free_port()
+            host_user = workdir / f"{name}-host-user"
+            guest_user = workdir / f"{name}-joiner-user"
+            copy_package(commander, host_user, "ridge-commander-copy")
+            copy_package(commander, guest_user, "ridge-commander-copy")
+            host = host_game(
+                native, game_dir, workdir, f"{name}-host", host_user, port,
+                "ridge-commander-copy", workdir / f"{name}-host-fark" / "automation.json",
+                clash=host_mode)
+            games.append(host)
+            host.wait_for('multiplayer: in the battle room of "Open Room" as Hoster')
+            host.wait_until("room built", lambda lines: last_match(lines, BUILT) is not None)
+            visitor = joiner_game(
+                native, game_dir, workdir, f"{name}-joiner", guest_user, port, frames=None,
+                fark_file=workdir / f"{name}-joiner-fark" / "automation.json", clash=guest_mode)
+            games.append(visitor)
+            visitor.wait_for('multiplayer: in the battle room of "Open Room" as Visitor')
+            visitor.wait_until("room built", lambda lines: last_match(lines, BUILT) is not None)
+            host.wait_until(
+                f"START allowed when the host's clash mode is {host_mode}",
+                lambda lines: (
+                    (mutator_lines := [
+                        line for line in lines if line.startswith("multiplayer: mutators ")
+                    ]) and mutator_lines[-1] == "multiplayer: mutators allow START"
+                ),
+            )
+            host_built, guest_built = require_same_build(host, visitor)
+            evidence.append(host_built.group(0))
+            evidence.append(guest_built.group(0))
+            confirm_clash_mode(host, visitor, note, other)
+            evidence.append(note)
+            evidence.append(note)
     except RoomMutatorsFailure:
         for game in games:
             game.stop()
@@ -651,7 +746,9 @@ def main():
         print(line)
     print("room mutators check: a joiner without ridge-tough held START at position 0, and a "
           "joiner with it built the same loadout and layer; the host then allowed START, both "
-          "integrity lines matched, and a match with no mutator logged a different digest")
+          "integrity lines matched, and a match with no mutator logged a different digest; "
+          "two machines whose clash defaults differ played the host's mode, and a host set "
+          "to Add reached the guest as Add")
     return 0
 
 

@@ -4364,8 +4364,16 @@ later skirmish plays that choice. A network start that never showed the
 battle room, such as `--net-loopback-check`, has no room list and plays
 the run's own choice, as a single-player start does. The presence
 record's mutators field says what this machine
-built. The host's names every mutator and says it has each one. A guest's
-carries the host's digest, how much of the list it holds and whether each
+built. The host's names every mutator and says it has each one. Whenever
+that field goes out, the host's record also carries each mutator's clash
+mode, one bit a position: set means Add and clear means Replace. The mode
+is the player's choice for that mutator, or the manifest's `clashes` when
+the player left it unset, or the host's `mutators.clash-default`. The
+loadout digest includes those modes. A guest builds the layer, and the
+match start plays it, with the modes the host sent, never with its own
+default. A record that leaves the modes out is built all Replace; when the
+host's mode was Add the digests differ and START stays unavailable. A guest's
+mutators field carries the host's digest, how much of the list it holds and whether each
 package is installed here, and it names no mutator. While a guest is
 behind, the host's record still leaves room for the map pack, and one
 continued part of the list follows the pack. A guest that has not built

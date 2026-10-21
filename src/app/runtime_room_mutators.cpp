@@ -12,6 +12,7 @@
 #include "oa/base/sha256.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/clashes.hpp"
 #include "oa/data/mutators/loadout.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamut/manifest.hpp"
@@ -20,12 +21,14 @@
 #include "oa/ui/frontend_multiplayer/lobby.hpp"
 #include "oa/ui/frontend_multiplayer/screens.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -213,6 +216,91 @@ std::filesystem::file_time_type mutators_stamp(
     return latest;
 }
 
+/// The clash mode a mutator plays when the player and its manifest name none.
+///
+/// The same preference the match start reads, so the room's digest is the
+/// one that start makes.
+///
+/// @param values the preferences
+/// @return the mode
+oamut::ClashMode clash_default_of(const std::map<std::string, std::string>& values) {
+    const auto stored = values.find(std::string{mutators::clash_default_preference});
+    return stored == values.end() ? mutators::clash_setting_default
+                                  : mutators::clash_from_setting(stored->second);
+}
+
+/// One bit per mutator: set means Add, clear means Replace.
+///
+/// Bits at or past the wire's list length stay clear.
+///
+/// @param loadout the loadout, modes already in force
+/// @return the mask
+uint32_t clash_mask(const mutators::Loadout& loadout) noexcept {
+    uint32_t mask = 0;
+    const std::size_t count = loadout.entries.size() < netgame::presence_mutators_max
+                                  ? loadout.entries.size()
+                                  : netgame::presence_mutators_max;
+    for (std::size_t at = 0; at < count; ++at) {
+        if (loadout.entries[at].clashes != oamut::ClashMode::add)
+            continue;
+        mask |= uint32_t{1} << static_cast<unsigned>(at);
+    }
+    return mask;
+}
+
+/// Writes the host's clash mode onto each resolved mutator.
+///
+/// A mask that names the list sets Add where its bit is set and Replace
+/// where it is clear. No mask, or one the wire refuses, sets every mode to
+/// Replace. The player's choice then wins over the manifest and over this
+/// machine's default.
+///
+/// @param[in,out] resolved the mutators, top first
+/// @param modes the host's mask, or nothing when the record has none
+void apply_host_modes(
+    std::vector<mutators::ResolvedMutator>& resolved, std::optional<uint32_t> modes
+) noexcept {
+    std::array<netgame::PresenceClashMode, netgame::presence_mutators_max> decoded{};
+    const auto count = static_cast<uint8_t>(
+        resolved.size() < netgame::presence_mutators_max ? resolved.size()
+                                                         : netgame::presence_mutators_max
+    );
+    const bool named =
+        modes.has_value() && count >= 1 &&
+        netgame::presence_clash_modes(*modes, count, decoded.data()) == netgame::WireError::ok;
+    for (std::size_t at = 0; at < resolved.size() && at < netgame::presence_mutators_max; ++at) {
+        const bool add = named && decoded[at] == netgame::PresenceClashMode::add;
+        resolved[at].clashes = add ? oamut::ClashMode::add : oamut::ClashMode::replace;
+    }
+}
+
+/// The clash-mode mask on the host's current presence record.
+///
+/// Nothing when the record was not sent, could not be read, or carries no
+/// mask. An older host leaves the mask out.
+///
+/// @return the mask, or nothing
+std::optional<uint32_t> host_clash_modes() {
+    mp::Lobby& lobby = mp::multiplayer_lobby();
+    if (lobby.game == nullptr)
+        return std::nullopt;
+    const auto host = mp::lobby_host_slot(lobby);
+    if (host == mp::kNoSlot)
+        return std::nullopt;
+    const auto bytes = mp::lobby_presence_record(lobby, static_cast<int32_t>(host));
+    if (bytes.empty())
+        return std::nullopt;
+    try {
+        netgame::PresenceRecord decoded;
+        if (netgame::decode_presence(bytes.data(), bytes.size(), &decoded) !=
+            netgame::WireError::ok)
+            return std::nullopt;
+        return decoded.mutator_modes;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 /// The first position whose outcome is not applied.
 ///
 /// @param result the pipeline's result
@@ -244,6 +332,7 @@ struct ResolveCache {
     std::filesystem::file_time_type stamp{};
     std::chrono::steady_clock::time_point at{};
     bool ok = false;
+    std::optional<uint32_t> modes{};
     std::vector<mutators::ResolvedMutator> list{};
     std::vector<uint8_t> codes{};
     oa::base::sha256::Digest wanted{};
@@ -255,6 +344,7 @@ struct Runtime::RoomMutatorState {
     bool mounted = false;
     bool send = false;
     bool wanted_set = false;
+    bool have_modes = false;
     bool have_folded = false;
     bool assembly_known = false;
     bool over_logged = false;
@@ -262,6 +352,8 @@ struct Runtime::RoomMutatorState {
     oa::base::sha256::Digest for_digest{};
     oa::base::sha256::Digest folded{};
     oa::base::sha256::Digest wanted{};
+    uint32_t modes = 0;
+    std::optional<uint32_t> outgoing_modes{};
     std::string built_sim{};
     std::string wanted_sim{};
     uint8_t index = netgame::presence_mutator_index_none;
@@ -371,6 +463,12 @@ const netgame::PresenceMutators* Runtime::room_mutators_presence() const noexcep
     return &room_mutator_state_->outgoing;
 }
 
+std::optional<uint32_t> Runtime::room_mutator_modes() const noexcept {
+    if (room_mutator_state_ == nullptr || !room_mutator_state_->send)
+        return std::nullopt;
+    return room_mutator_state_->outgoing_modes;
+}
+
 uint32_t Runtime::room_mutators_generation() const noexcept {
     if (room_mutator_state_ == nullptr)
         return 0;
@@ -400,10 +498,11 @@ void Runtime::release_room_mutators() noexcept {
     state->greets.clear();
     state->sync_logged = false;
     state->resolved.clear();
-    if (!state->send)
+    if (!state->send && !state->outgoing_modes)
         return;
     state->send = false;
     state->outgoing = {};
+    state->outgoing_modes.reset();
     ++state->outgoing_generation;
 }
 
@@ -446,9 +545,10 @@ void Runtime::release_empty_room() {
     state.built_sim.clear();
     state.resolved.clear();
     state.sync_logged = false;
-    if (state.send) {
+    if (state.send || state.outgoing_modes) {
         state.send = false;
         state.outgoing = {};
+        state.outgoing_modes.reset();
         ++state.outgoing_generation;
     }
     if (!reload)
@@ -522,7 +622,9 @@ bool Runtime::build_room_layer(
             fail(mutator_failure_text(resolved, result), position);
             return true;
         }
-        // The match start's clash default, so the digest is the one it makes.
+        // The mode in force is the player's choice, already the host's on a
+        // guest, else the manifest, else this machine's clash default. The
+        // digest is the one the match start makes.
         const mutators::Loadout applied =
             mutators::applied_loadout(mutators::loadout_of(resolved, input.clash_default), result);
         const oa::base::sha256::Digest layer =
@@ -577,6 +679,7 @@ bool Runtime::build_room_layer(
 
 bool Runtime::resolve_guest_loadout(
     const netgame::PresenceLoadoutAssembly& assembly,
+    std::optional<uint32_t> modes,
     std::vector<mutators::ResolvedMutator>& resolved,
     std::vector<uint8_t>& codes,
     oa::base::sha256::Digest& wanted
@@ -615,6 +718,7 @@ bool Runtime::resolve_guest_loadout(
     }
     if (!all_has)
         return false;
+    apply_host_modes(resolved, modes);
     wanted = mutators::loadout_digest(mutators::loadout_of(resolved));
     if (wanted == assembly.digest)
         return true;
@@ -626,10 +730,11 @@ bool Runtime::resolve_guest_loadout(
 void Runtime::publish_current(bool include_items) {
     RoomMutatorState& state = ensure_room_mutators();
     if (state.phase == mp::RoomMutatorPhase::none) {
-        if (!state.send)
+        if (!state.send && !state.outgoing_modes)
             return;
         state.send = false;
         state.outgoing = {};
+        state.outgoing_modes.reset();
         ++state.outgoing_generation;
         return;
     }
@@ -644,18 +749,22 @@ void Runtime::publish_current(bool include_items) {
             state.codes,
             &field
         )) {
-        if (!state.send)
+        if (!state.send && !state.outgoing_modes)
             return;
         state.send = false;
         state.outgoing = {};
+        state.outgoing_modes.reset();
         ++state.outgoing_generation;
         return;
     }
     if (include_items)
         fill_host_items(field, state.chosen);
-    if (state.send && state.outgoing == field)
+    const std::optional<uint32_t> modes =
+        room_hosting() && state.have_modes ? std::optional<uint32_t>{state.modes} : std::nullopt;
+    if (state.send && state.outgoing == field && state.outgoing_modes == modes)
         return;
     state.outgoing = std::move(field);
+    state.outgoing_modes = modes;
     state.send = true;
     ++state.outgoing_generation;
 }
@@ -729,9 +838,16 @@ void Runtime::greet_room_peers() {
 void Runtime::remember_wanted() {
     RoomMutatorState& state = ensure_room_mutators();
     const std::string sim = simulation_hash(*this);
-    if (state.wanted_set && state.wanted_stamp == state.chosen_stamp && state.wanted_sim == sim)
+    const mutators::Loadout loadout =
+        mutators::loadout_of(state.chosen, clash_default_of(preference_values_));
+    const oa::base::sha256::Digest digest = mutators::loadout_digest(loadout);
+    const uint32_t modes = clash_mask(loadout);
+    if (state.wanted_set && state.wanted_stamp == state.chosen_stamp && state.wanted_sim == sim &&
+        state.wanted == digest && state.have_modes && state.modes == modes)
         return;
-    state.wanted = mutators::loadout_digest(mutators::loadout_of(state.chosen));
+    state.wanted = digest;
+    state.modes = modes;
+    state.have_modes = true;
     state.wanted_sim = std::move(sim);
     state.wanted_stamp = state.chosen_stamp;
     state.wanted_set = true;
@@ -853,8 +969,9 @@ void Runtime::follow_room_mutators() {
             user_folder_ / std::string(oa::data::mutator_library::mutators_folder_name);
         const auto stamp = mutators_stamp(folder, state.assembly);
         const auto now = std::chrono::steady_clock::now();
+        const std::optional<uint32_t> modes = host_clash_modes();
         const bool cached = state.resolve.valid && state.resolve.digest == state.assembly.digest &&
-                            state.resolve.stamp == stamp &&
+                            state.resolve.stamp == stamp && state.resolve.modes == modes &&
                             now - state.resolve.at < std::chrono::seconds(1);
         if (!cached) {
             std::cerr << "open-annihilation: mutators: room resolve "
@@ -862,10 +979,11 @@ void Runtime::follow_room_mutators() {
             std::cerr.flush();
             state.resolve.digest = state.assembly.digest;
             state.resolve.stamp = stamp;
+            state.resolve.modes = modes;
             state.resolve.at = now;
             state.resolve.valid = true;
             state.resolve.ok = resolve_guest_loadout(
-                state.assembly, state.resolve.list, state.resolve.codes, state.resolve.wanted
+                state.assembly, modes, state.resolve.list, state.resolve.codes, state.resolve.wanted
             );
         }
         if (!state.resolve.ok) {
