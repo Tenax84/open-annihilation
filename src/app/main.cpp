@@ -36,6 +36,7 @@
 #include "oa/data/content_bundles.hpp"
 #include "oa/data/mutator_library/library.hpp"
 #include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/json.hpp"
 #include "oa/formats/ota.hpp"
 #include "oa/app/platform_hooks.hpp"
@@ -1577,27 +1578,49 @@ void take_launch_opened_at_start(Options& options) {
 /// Refuses a --mutator value the game cannot apply, before a window opens.
 ///
 /// A malformed value was already refused while the command line was read.
-/// An id that is not installed, an option the manifest does not have and a
-/// value outside its choices end the run with status 2. With no player
-/// folder yet, an id is looked up in a folder that is not there.
+/// An id that is not installed, an option the manifest does not have, a
+/// value outside its choices, and a list the manifests refuse (one id
+/// twice, a prerequisite that is not above it, or two that conflict) end
+/// the run with status 2. With no player folder, an id is refused the
+/// same way and is not looked up.
 ///
 /// @param options the parsed command line
 void refuse_unusable_mutators(const Options& options) {
     if (options.mutators.empty())
         return;
-    fs::path mutators_folder{"oa-no-user-folder"};
-    mutators_folder /= std::string(oa::data::mutator_library::mutators_folder_name);
-    if (const std::optional<fs::path> user = launch_user_folder(options))
-        mutators_folder = *user / std::string(oa::data::mutator_library::mutators_folder_name);
+    const std::optional<fs::path> player = launch_user_folder(options);
+    fs::path mutators_folder;
+    if (player)
+        mutators_folder = *player / std::string(oa::data::mutator_library::mutators_folder_name);
+    std::vector<oa::data::mutators::PipelineMutator> listed;
+    std::vector<std::string> versions;
+    listed.reserve(options.mutators.size());
+    versions.reserve(options.mutators.size());
     for (const std::string& value : options.mutators) {
         std::string error;
         const std::optional<oa::data::mutators::MutatorChoice> choice =
             oa::data::mutators::parse_choice(value, &error);
         if (!choice)
             throw std::runtime_error("--mutator: " + error);
-        if (!oa::data::mutators::resolve_choice(*choice, mutators_folder, &error))
+        if (!choice->by_path && !player) {
+            throw netgame::LaunchRefusal(
+                "--mutator: no player folder can be worked out for \"" + choice->target + "\""
+            );
+        }
+        const std::optional<oa::data::mutators::ResolvedMutator> resolved =
+            oa::data::mutators::resolve_choice(*choice, mutators_folder, &error);
+        if (!resolved)
             throw netgame::LaunchRefusal("--mutator: " + error);
+        oa::data::mutators::PipelineMutator entry;
+        entry.package = resolved->folder;
+        entry.manifest = resolved->manifest;
+        entry.options = resolved->options;
+        versions.push_back(oa::formats::oamut::version_text(resolved->manifest.version));
+        listed.push_back(std::move(entry));
     }
+    const std::string refusal = oa::data::mutators::list_refusal(listed, versions);
+    if (!refusal.empty())
+        throw netgame::LaunchRefusal("--mutator: " + refusal);
 }
 
 /// Runs the game once: finds the game folders and their profile, with the

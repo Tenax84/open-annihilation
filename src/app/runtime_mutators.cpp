@@ -133,13 +133,39 @@ std::string failure_text(
     return "the mutators did not apply";
 }
 
+/// The outcome word a log line uses when a mutator left no message.
+///
+/// @param outcome the outcome
+/// @return its name
+const char* outcome_word(mutators::Outcome outcome) {
+    switch (outcome) {
+    case mutators::Outcome::applied:
+        return "applied";
+    case mutators::Outcome::failed:
+        return "failed";
+    case mutators::Outcome::incompatible:
+        return "incompatible";
+    case mutators::Outcome::excluded:
+        return "excluded";
+    }
+    return "excluded";
+}
+
 /// Logs what one run applied, each conflict and each mutator that did not.
+///
+/// A refused list is one line and nothing about each mutator. The applied
+/// line is written only when a mutator applied. A mutator with no message
+/// is named by its outcome.
 ///
 /// @param chosen the mutators, in the order they were run
 /// @param result the pipeline's result
 void log_applied(
     const std::vector<mutators::ResolvedMutator>& chosen, const mutators::PipelineResult& result
 ) {
+    if (!result.refusal.empty()) {
+        std::cerr << "open-annihilation: mutators: refused: " << one_line(result.refusal) << '\n';
+        return;
+    }
     std::string names;
     for (const mutators::MutatorResult& one : result.mutators) {
         if (one.outcome != mutators::Outcome::applied)
@@ -150,35 +176,34 @@ void log_applied(
         names += ' ';
         names += one.version;
     }
-    std::size_t added = 0;
-    std::size_t hidden = 0;
-    std::set<std::string> rewritten;
-    for (const mutators::JournalEntry& entry : result.journal.entries) {
-        if (entry.change == mutators::Change::added) {
-            ++added;
-        } else if (entry.change == mutators::Change::hidden) {
-            ++hidden;
-        } else if (
-            entry.change == mutators::Change::set ||
-            entry.change == mutators::Change::removed_field ||
-            entry.change == mutators::Change::removed
-        ) {
-            rewritten.insert(entry.path.empty() ? entry.record : entry.path);
-        }
-    }
-    std::string line = "open-annihilation: mutators: applied";
     if (!names.empty()) {
-        line += ' ';
+        std::size_t added = 0;
+        std::size_t hidden = 0;
+        std::set<std::string> rewritten;
+        for (const mutators::JournalEntry& entry : result.journal.entries) {
+            if (entry.change == mutators::Change::added) {
+                ++added;
+            } else if (entry.change == mutators::Change::hidden) {
+                ++hidden;
+            } else if (
+                entry.change == mutators::Change::set ||
+                entry.change == mutators::Change::removed_field ||
+                entry.change == mutators::Change::removed
+            ) {
+                rewritten.insert(entry.path.empty() ? entry.record : entry.path);
+            }
+        }
+        std::string line = "open-annihilation: mutators: applied ";
         line += names;
+        line += " (";
+        line += std::to_string(added);
+        line += " files added, ";
+        line += std::to_string(hidden);
+        line += " hidden, ";
+        line += std::to_string(rewritten.size());
+        line += " rewritten)";
+        std::cerr << line << '\n';
     }
-    line += " (";
-    line += std::to_string(added);
-    line += " files added, ";
-    line += std::to_string(hidden);
-    line += " hidden, ";
-    line += std::to_string(rewritten.size());
-    line += " rewritten)";
-    std::cerr << line << '\n';
 
     std::vector<std::string> ids;
     ids.reserve(chosen.size());
@@ -192,8 +217,11 @@ void log_applied(
     for (const mutators::MutatorResult& one : result.mutators) {
         if (one.outcome == mutators::Outcome::applied)
             continue;
+        std::string message = one_line(one.message);
+        if (message.empty())
+            message = outcome_word(one.outcome);
         std::cerr << "open-annihilation: mutator " << one.id << ": " << phase_name(one.phase)
-                  << ": " << one_line(one.message) << '\n';
+                  << ": " << message << '\n';
     }
 }
 
