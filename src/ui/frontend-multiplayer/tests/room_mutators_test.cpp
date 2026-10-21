@@ -1144,6 +1144,8 @@ void test_classic_joiner() {
     {
         Room room(true);
         room.seat(1, 0x200, false, false);
+        // as a join does (presence_forget)
+        room.lobby.presence_records.block_player[1] = 0;
         std::snprintf(
             mp::slot_player(room.lobby, 1).name, sizeof mp::slot_player(room.lobby, 1).name, "Bo"
         );
@@ -1159,6 +1161,8 @@ void test_classic_joiner() {
     {
         Room room = hosted(host_ready());
         room.seat(1, 0x200, false, false);
+        // as a join does (presence_forget)
+        room.lobby.presence_records.block_player[1] = 0;
         std::snprintf(
             mp::slot_player(room.lobby, 1).name, sizeof mp::slot_player(room.lobby, 1).name, "Bo"
         );
@@ -1183,6 +1187,8 @@ void test_classic_joiner() {
     {
         Room room = hosted(host_ready());
         room.seat(2, 0x300, false, false);
+        // as a join does (presence_forget)
+        room.lobby.presence_records.block_player[2] = 0;
         expect(apply_block(room, 0x300, false, true), "a 3.1c watcher block applies");
         const auto& watcher = mp::slot_player(room.lobby, 2);
         expect(
@@ -1193,6 +1199,8 @@ void test_classic_joiner() {
     {
         Room room = hosted(host_ready());
         room.seat(1, 0x200, true, false);
+        // as a join does (presence_forget)
+        room.lobby.presence_records.block_player[1] = 0;
         expect(apply_block(room, 0x200, true, false), "an OA block applies");
         expect(
             mp::slot_player(room.lobby, 1).status == mp::kSlotRemote &&

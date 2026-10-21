@@ -4633,10 +4633,13 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
         std::memcpy(
             bytes + netgame::player_info_tail_offset, record.info_tail, sizeof(record.info_tail)
         );
+        // A block from a player this machine has had none from: the player arrives.
+        const bool arriving = lobby.presence_records.block_player[slot] != record.player_id;
         lobby.presence_records.block_player[slot] = record.player_id;
         // A 3.1c joiner cannot play a mutator room. Reason 8 is the text
         // that machine already shows. The line stays on this machine.
-        if (host_is_local(lobby)) {
+        // A later block (ready, side, colour) is not an arrival.
+        if (arriving && host_is_local(lobby)) {
             const auto host = lobby_host_slot(lobby);
             const auto host_record = host == kNoSlot
                                          ? std::span<const uint8_t>{}
@@ -4659,6 +4662,8 @@ bool lobby_apply_event(Lobby& lobby, const LobbyEvent& event) noexcept {
                     line.replace(mark, 8, who);
                 lobby_post_chat(lobby, line.c_str());
                 lobby_reject(lobby, record.player_id, kRejectVersion);
+                flush(lobby);
+                return true;
             }
         }
         if (const auto* echoed = slot_info(lobby, slot)) {
