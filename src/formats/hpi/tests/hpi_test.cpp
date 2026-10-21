@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -1037,6 +1038,34 @@ void asset_store_loose_listings() {
     );
 }
 
+/// A folder junction that leads outside the loose folder is not read, and
+/// one that stays inside is, on systems that make junctions.
+void asset_store_loose_junctions() {
+#ifdef _WIN32
+    TempDir dir;
+    dir.write("game/Units/inside.fbi", text("inside"));
+    dir.write("outside/maps/far.tnt", text("far"));
+    const auto game = dir.path() / "game";
+    const auto junction = [](const fs::path& link, const fs::path& target) {
+        const std::string command =
+            "mklink /J \"" + link.string() + "\" \"" + target.string() + "\" >nul 2>nul";
+        return std::system(command.c_str()) == 0;
+    };
+    if (!junction(game / "maps", dir.path() / "outside" / "maps") ||
+        !junction(game / "units2", game / "Units")) {
+        std::cout << "skipped the loose junction cases: no junction made\n";
+        return;
+    }
+    oa::AssetStore store(game);
+    check(
+        throws([&] { (void)store.read("maps/far.tnt"); }, "asset not found"),
+        "a junction outside is not read"
+    );
+    check(store.read("units2/inside.fbi").bytes == text("inside"), "a junction inside is read");
+    check(store.read("units/inside.fbi").bytes == text("inside"), "a plain folder is read");
+#endif
+}
+
 /// Folds a resource path as the store's listings do: '\\' as '/', empty
 /// parts and a trailing separator dropped, ASCII letters in lower case.
 ///
@@ -1355,6 +1384,7 @@ int main(int argc, char** argv) {
         hpi_lookups_follow_the_records();
         asset_store_names_in_any_script();
         asset_store_loose_links();
+        asset_store_loose_junctions();
         asset_store_refuses_files_over_the_entry_limit();
         resource_file_semantics();
     } catch (const std::exception& error) {
