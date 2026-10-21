@@ -1604,6 +1604,13 @@ bool Runtime::MutatorPickerScreen::enqueue_one(
         if (feed.enqueue != nullptr)
             queued = feed.enqueue(feed.context, step.registry, step.key, &why);
         if (!queued) {
+            // The queue refuses a package it is already fetching, such as one
+            // the Library queued. A row that shows that download is on its way.
+            if (const picker::Mutator* row = find_mutator(picker_.inputs.mutators, step.key);
+                row != nullptr && row->queued &&
+                row->queued->phase != library::QueueItem::Phase::failed &&
+                row->queued->phase != library::QueueItem::Phase::installed)
+                continue;
             if (why.empty())
                 why = std::string(kCouldNotQueue);
             refuse(id, std::move(why));

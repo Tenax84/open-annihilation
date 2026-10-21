@@ -883,18 +883,19 @@ match starts.
   here. That list is rebuilt when the catalogues change, when the picture
   cache changes, or when a download ends, fails or is cancelled. Byte
   progress does not rebuild it: each frame reads the queue and updates the
-  rows already shown. An icon that failed to decode is remembered for the
-  rest of the opening and is not read again. Every verdict stays unchecked
-  and `check` stays null, so no chip shows. A check replaces the feed with
-  `set_mutator_picker_feed` and puts the runtime's back with
-  `restore_mutator_picker_feed`. Switching on a mutator that is not
-  installed queues it and the prerequisites it lacks (`get_plan` on the
-  runtime's own catalogue; the listing itself when a check's feed has
-  none). USE THESE does the same for every On mutator that is not installed
-  yet, and hands the set back once they are. A refusal switches it off and
-  the row reads why. Becoming On, changing an option, or a download
-  finishing asks `check` again, and the row reads the checking words until
-  a later list brings the verdict.
+  rows of the downloads the picker queued. An icon that failed to decode is
+  remembered for the rest of the opening and is not read again. Every
+  verdict stays unchecked and `check` stays null, so no chip shows. A check
+  replaces the feed with `set_mutator_picker_feed` and puts the runtime's
+  back with `restore_mutator_picker_feed`. Switching on a mutator that is
+  not installed queues it and the prerequisites it lacks (`get_plan` on the
+  runtime's own catalogue; the listing itself when a check's feed has none).
+  USE THESE does the same for every On mutator that is not installed yet,
+  and hands the set back once they are. A refusal switches it off and the
+  row reads why. A package whose download is already under way, such as one
+  the Library queued, is not refused: its row shows that download. Becoming
+  On, changing an option, or a download finishing asks `check` again, and
+  the row reads the checking words until a later list brings the verdict.
 - **Turn off.** Switching off a prerequisite asks "Turn off X?" over the
   picker, pushed at once. TURN OFF turns it and what needs it off. Switching
   a mutator off, by its switch or by that question, cancels a download the
