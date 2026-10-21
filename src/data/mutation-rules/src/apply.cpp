@@ -1073,19 +1073,4 @@ ApplyResult apply_step(
     return result;
 }
 
-ApplyResult apply_rules(
-    std::span<const MutatorRules> mutators, DocumentSet& documents, const ApplyOptions& options
-) {
-    ApplyState state;
-    ApplyResult all;
-    for (const MutatorRules& rules : mutators) {
-        ApplyResult step = apply_step(rules, documents, state, options);
-        for (FieldWrite& write : step.writes)
-            all.writes.push_back(std::move(write));
-        for (RuleNote& note : step.notes)
-            all.notes.push_back(std::move(note));
-    }
-    return all;
-}
-
 } // namespace oa::data::mutation_rules
