@@ -8,6 +8,7 @@
 #include "oa/data/defs/unit_records.hpp"
 #include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/oamut/manifest.hpp"
+#include "oa/formats/tdf.hpp"
 #include "oa/test/check.hpp"
 #include "oa/test/game_assets.hpp"
 #include "oa/test/scratch_directory.hpp"
@@ -15,6 +16,8 @@
 #include "oa/ui/hud/order_panel.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -1217,6 +1220,450 @@ void test_unknown(const fs::path& game, const fs::path& packages) {
     );
 }
 
+/// The script of a package with a units hook and a menus hook.
+std::string two_hooks(std::string_view units_body, std::string_view menus_body) {
+    std::string lua = "function mutate(ctx)\n  return {\n    units = function(units, ctx)\n";
+    lua.append(units_body);
+    lua += "\n    end,\n    menus = function(menus, ctx)\n";
+    lua.append(menus_body);
+    lua += "\n    end\n  }\nend\n";
+    return lua;
+}
+
+/// A menus hook that adds `unit` to `builder` at an exact place and checks where it landed.
+std::string add_lands(
+    std::string_view builder,
+    std::string_view unit,
+    int page,
+    int slot,
+    int want_page,
+    int want_slot
+) {
+    std::string lua = "local place = collection:add(\"";
+    lua.append(builder);
+    lua += "\", \"";
+    lua.append(unit);
+    lua += "\", { page = " + std::to_string(page) + ", slot = " + std::to_string(slot) + " })\n";
+    lua += "      if place.page ~= " + std::to_string(want_page) +
+           " or place.slot ~= " + std::to_string(want_slot) +
+           " then error(\"landed \"..place.page..\" \"..place.slot) end";
+    return lua;
+}
+
+bool all_applied(const mutators::PipelineResult& run, std::size_t count) {
+    bool ok = run.refusal.empty() && run.mutators.size() == count;
+    for (const mutators::MutatorResult& one : run.mutators)
+        ok = ok && one.outcome == mutators::Outcome::applied;
+    if (!ok)
+        show_failure(run);
+    OA_CHECK(ok);
+    return ok;
+}
+
+/// The top-level sections of a served text, with the key asked for.
+std::vector<std::pair<std::string, std::string>>
+sections_of(const std::string& text, const char* key) {
+    std::vector<std::pair<std::string, std::string>> sections;
+    oa::formats::tdf::OwnedDocument parsed;
+    if (!parsed.parse(text)) {
+        OA_CHECK(false);
+        return sections;
+    }
+    const oa::formats::tdf::Block* root = parsed.root();
+    for (uint32_t index = 0; index < oa::formats::tdf::child_count(root); ++index) {
+        const oa::formats::tdf::Block* section = oa::formats::tdf::child_at(root, index);
+        const char* value = oa::formats::tdf::find_value(section, key);
+        sections.emplace_back(
+            section->name != nullptr ? section->name : "", value != nullptr ? value : ""
+        );
+    }
+    return sections;
+}
+
+/// Q64: a slot an earlier mutator emptied is taken exactly by a later one,
+/// whether the earlier one emptied it with menus:remove or by removing the
+/// unit. Without the removal the later add moves.
+void test_reuse(const fs::path& game, const fs::path& packages) {
+    write_package(
+        packages,
+        "ridge-take-slot",
+        "\"menus\"",
+        hook_script("menus", add_lands("RGALT", "RGPLANT", 1, 1, 1, 1))
+    );
+    write_package(
+        packages,
+        "ridge-free-slot",
+        "\"menus\"",
+        hook_script("menus", "collection:remove(\"RGALT\", \"RGSHARED\")")
+    );
+    mutators::PipelineResult freed =
+        run_packages(game, packages, {"ridge-free-slot", "ridge-take-slot"});
+    if (all_applied(freed, 2)) {
+        OA_CHECK(find_note(freed, "moved from") == nullptr);
+        const std::string shared = served_text(find_served(freed, "shared.tdf"));
+        OA_CHECK(text_has(shared, "RGBLDR") && !text_has(shared, "RGALT"));
+    }
+
+    write_package(
+        packages,
+        "ridge-drop-shared",
+        "\"units\"",
+        hook_script("units", "collection.RGSHARED:remove()")
+    );
+    mutators::PipelineResult gone =
+        run_packages(game, packages, {"ridge-drop-shared", "ridge-take-slot"});
+    if (all_applied(gone, 2))
+        OA_CHECK(find_note(gone, "moved from") == nullptr);
+
+    write_package(
+        packages,
+        "ridge-bumped-slot",
+        "\"menus\"",
+        hook_script("menus", add_lands("RGALT", "RGPLANT", 1, 1, 1, 2))
+    );
+    mutators::PipelineResult kept = run_packages(game, packages, {"ridge-bumped-slot"});
+    if (applied(kept))
+        check_note(
+            kept, "RGPLANT moved from page 1 slot 1 to page 1 slot 2: taken by the page itself"
+        );
+
+    // The same mutator: its menus hook sees the slot its units hook emptied.
+    write_package(
+        packages,
+        "ridge-same-step",
+        "\"units\", \"menus\"",
+        two_hooks(
+            "units.RGSHARED:remove()",
+            "local place = menus:add(\"RGALT\", \"RGPLANT\", { page = 1, slot = 1 })\n"
+            "      if place.page ~= 1 or place.slot ~= 1 then error(\"same \"..place.page..\" "
+            "\"..place.slot) end"
+        )
+    );
+    mutators::PipelineResult same = run_packages(game, packages, {"ridge-same-step"});
+    if (applied(same))
+        OA_CHECK(find_note(same, "moved from") == nullptr);
+
+    // And through ctx.menus in the units hook itself, right after the removal.
+    write_package(
+        packages,
+        "ridge-same-hook",
+        "\"units\", \"menus\"",
+        hook_script(
+            "units",
+            "collection.RGSHARED:remove()\n"
+            "      local place = ctx.menus:add(\"RGALT\", \"RGPLANT\", { page = 1, slot = 1 })\n"
+            "      if place.page ~= 1 or place.slot ~= 1 then error(\"hook \"..place.page..\" "
+            "\"..place.slot) end"
+        )
+    );
+    applied(run_packages(game, packages, {"ridge-same-hook"}));
+}
+
+/// A rule's change to a download entry stays when a later mutator edits the
+/// same file, and a slot the rule freed is free.
+void test_rule_then_menus(const fs::path& game, const fs::path& packages) {
+    write_package(
+        packages,
+        "ridge-rule-button",
+        "\"tables\"",
+        "function mutate(ctx)\n  return {\n    rules = {\n"
+        "      where { unitname = is(\"RGSHARED\"), unitmenu = is(\"RGALT\") }\n"
+        "        :on(\"download\", \"tdf\"):change { button = 4 }\n"
+        "    }\n  }\nend\n"
+    );
+    write_package(
+        packages,
+        "ridge-after-rule",
+        "\"menus\"",
+        hook_script("menus", add_lands("RGALT", "RGPLANT", 1, 1, 1, 1))
+    );
+    mutators::PipelineResult moved =
+        run_packages(game, packages, {"ridge-rule-button", "ridge-after-rule"});
+    if (all_applied(moved, 2))
+        OA_CHECK(find_note(moved, "moved from") == nullptr);
+
+    write_package(
+        packages,
+        "ridge-drop-builder",
+        "\"menus\"",
+        hook_script("menus", "collection:remove(\"RGBLDR\", \"RGSHARED\")")
+    );
+    mutators::PipelineResult kept =
+        run_packages(game, packages, {"ridge-rule-button", "ridge-drop-builder"});
+    if (!all_applied(kept, 2))
+        return;
+    const std::string shared = served_text(find_served(kept, "shared.tdf"));
+    const std::vector<std::pair<std::string, std::string>> buttons = sections_of(shared, "BUTTON");
+    OA_CHECK(buttons.size() == 1);
+    if (buttons.size() == 1) {
+        OA_CHECK(buttons[0].first == "B");
+        OA_CHECK(buttons[0].second == "4");
+    }
+    OA_CHECK(text_has(shared, "UNITMENU=RGALT") && !text_has(shared, "RGBLDR"));
+    bool rule_kept = false;
+    for (const mutators::JournalEntry& entry : kept.journal.entries) {
+        if (entry.phase == mutators::Phase::rules && entry.record == "B" &&
+            entry.new_text == std::optional<std::string>{"4"})
+            rule_kept = true;
+    }
+    OA_CHECK(rule_kept);
+}
+
+/// A unit or a builder a hook clones can be put in a menu, from the same
+/// hook, the same mutator's menus hook or a later mutator. A cloned builder
+/// keeps its source's pages, so their slots stay taken.
+void test_clones(const fs::path& game, const fs::path& packages) {
+    write_package(
+        packages,
+        "ridge-clone-add",
+        "\"units\", \"menus\"",
+        hook_script(
+            "units",
+            "collection:clone(\"RGPLANT\", \"RGCLONE\", {})\n"
+            "      ctx.menus:add(\"RGEMPTY\", \"RGCLONE\")"
+        )
+    );
+    mutators::PipelineResult hook = run_packages(game, packages, {"ridge-clone-add"});
+    if (applied(hook)) {
+        const std::string text = served_text(find_served(hook, "download/rgclone.tdf"));
+        OA_CHECK(text_has(text, "UNITNAME=RGCLONE") && text_has(text, "UNITMENU=RGEMPTY"));
+    }
+
+    write_package(
+        packages,
+        "ridge-clone-step",
+        "\"units\", \"menus\"",
+        two_hooks(
+            "units:clone(\"RGPLANT\", \"RGCLONE\", {})",
+            "menus:add(\"RGEMPTY\", \"RGCLONE\")\n"
+            "      local list = menus:builds(\"RGEMPTY\")\n"
+            "      if list[1] ~= \"RGCLONE\" then error(\"builds \"..tostring(list[1])) end"
+        )
+    );
+    applied(run_packages(game, packages, {"ridge-clone-step"}));
+
+    write_package(
+        packages,
+        "ridge-clone-only",
+        "\"units\"",
+        hook_script(
+            "units",
+            "collection:clone(\"RGPLANT\", \"RGCLONE\", {})\n"
+            "      collection:clone(\"RGALT\", \"RGALT2\", {})\n"
+            "      collection:clone(\"RGBLDR\", \"RGBLDR2\", {})"
+        )
+    );
+    write_package(
+        packages,
+        "ridge-clone-later",
+        "\"menus\"",
+        hook_script(
+            "menus",
+            "collection:add(\"RGEMPTY\", \"RGCLONE\")\n"
+            "      collection:add(\"RGALT2\", \"RGPLANT\")\n" +
+                add_lands("RGBLDR2", "RGBASE", 1, 1, 2, 1) +
+                "\n      collection:grey(\"RGBLDR2\", \"RGONE\")\n"
+                "      local list = collection:builds(\"RGBLDR2\")\n"
+                "      if list[1] ~= \"RGTWO\" then error(\"clone page \"..tostring(list[1])) end"
+        )
+    );
+    mutators::PipelineResult later =
+        run_packages(game, packages, {"ridge-clone-only", "ridge-clone-later"});
+    if (!all_applied(later, 2))
+        return;
+    OA_CHECK(text_has(served_text(find_served(later, "download/rgclone.tdf")), "RGEMPTY"));
+    OA_CHECK(text_has(served_text(find_served(later, "download/rgplant.tdf")), "RGALT2"));
+    check_note(later, "RGBASE moved from page 1 slot 1 to page 2 slot 1: taken by the page itself");
+    const std::string page = served_text(find_served(later, "guis/rgbldr21.gui"));
+    OA_CHECK(text_has(page, "grayedout=1"));
+    OA_CHECK(served_text(find_served(later, "guis/rgbldr1.gui")).empty());
+}
+
+/// Removing an entry from a file of more than five sections leaves the
+/// sections past the fifth unread: a placeholder takes the entry's place.
+void test_six_sections(const fs::path& game, const fs::path& packages, const UnitTable& table) {
+    write_package(
+        packages,
+        "ridge-drop-other",
+        "\"menus\"",
+        hook_script("menus", "collection:remove(\"RGBLDR\", \"RGOTHER\")")
+    );
+    mutators::PipelineResult marked = run_packages(game, packages, {"ridge-drop-other"});
+    if (applied(marked)) {
+        const std::string text = served_text(find_served(marked, "marked.tdf"));
+        const std::vector<std::pair<std::string, std::string>> units =
+            sections_of(text, "UNITNAME");
+        OA_CHECK(units.size() == 6);
+        if (units.size() == 6) {
+            OA_CHECK(units[0].second == "RGMARK");
+            OA_CHECK(units[1].first == "PLACEHOLDER" && units[1].second.empty());
+            OA_CHECK(units[5].first == "TAIL");
+        }
+        OA_CHECK(marks_match(disk_downloads(game), overlay_downloads(game, marked), table, ""));
+    }
+
+    write_bytes(
+        game / "download" / "six.tdf",
+        "[E1]\r\n{\r\nUNITMENU=RGALT;\r\nMENU=3;\r\nBUTTON=0;\r\nUNITNAME=RGONE;\r\n}\r\n"
+        "[E2]\r\n{\r\nUNITMENU=RGALT;\r\nMENU=3;\r\nBUTTON=1;\r\nUNITNAME=RGTWO;\r\n}\r\n"
+        "[E3]\r\n{\r\nUNITMENU=RGALT;\r\nMENU=3;\r\nBUTTON=2;\r\nUNITNAME=RGTHREE;\r\n}\r\n"
+        "[E4]\r\n{\r\nUNITMENU=RGALT;\r\nMENU=3;\r\nBUTTON=3;\r\nUNITNAME=RGFOUR;\r\n}\r\n"
+        "[E5]\r\n{\r\nUNITMENU=RGALT;\r\nMENU=3;\r\nBUTTON=4;\r\nUNITNAME=RGFIVE;\r\n}\r\n"
+        "[E6]\r\n{\r\nUNITMENU=RGALT;\r\nMENU=3;\r\nBUTTON=5;\r\nUNITNAME=RGEXTRA2;\r\n}\r\n"
+    );
+    write_package(
+        packages,
+        "ridge-drop-two",
+        "\"menus\"",
+        hook_script("menus", "collection:remove(\"RGALT\", \"RGTWO\")")
+    );
+    const std::vector<MemoryFile> before = disk_downloads(game);
+    OA_CHECK(!builder_lists(before, table, "RGALT", "RGEXTRA2"));
+    OA_CHECK(builder_lists(before, table, "RGALT", "RGTWO"));
+    mutators::PipelineResult six = run_packages(game, packages, {"ridge-drop-two"});
+    if (applied(six)) {
+        const std::vector<MemoryFile> after = overlay_downloads(game, six);
+        OA_CHECK(!builder_lists(after, table, "RGALT", "RGEXTRA2"));
+        OA_CHECK(!builder_lists(after, table, "RGALT", "RGTWO"));
+        OA_CHECK(builder_lists(after, table, "RGALT", "RGFIVE"));
+        OA_CHECK(marks_match(before, after, table, ""));
+        const std::vector<std::pair<std::string, std::string>> units =
+            sections_of(served_text(find_served(six, "six.tdf")), "UNITNAME");
+        OA_CHECK(units.size() == 6 && units[5].second == "RGEXTRA2");
+    }
+
+    // The first entry goes and no other entry of that unit is in the file:
+    // a placeholder takes the first place, so RGTWO is not marked.
+    write_package(
+        packages,
+        "ridge-drop-first",
+        "\"menus\"",
+        hook_script("menus", "collection:remove(\"RGALT\", \"RGONE\")")
+    );
+    mutators::PipelineResult first = run_packages(game, packages, {"ridge-drop-first"});
+    if (applied(first)) {
+        const std::vector<MemoryFile> after = overlay_downloads(game, first);
+        OA_CHECK(!builder_lists(after, table, "RGALT", "RGEXTRA2"));
+        OA_CHECK(marks_match(before, after, table, "RGONE"));
+        const std::vector<std::pair<std::string, std::string>> units =
+            sections_of(served_text(find_served(first, "six.tdf")), "UNITNAME");
+        OA_CHECK(units.size() == 6 && units[0].first == "PLACEHOLDER");
+    }
+    std::error_code error;
+    fs::remove(game / "download" / "six.tdf", error);
+}
+
+/// A download file the menus create is journaled as a file added.
+void test_added_file(const fs::path& game, const fs::path& packages) {
+    write_package(
+        packages,
+        "ridge-new-file",
+        "\"menus\"",
+        hook_script("menus", "collection:add(\"RGEMPTY\", \"RGPLANT\")")
+    );
+    mutators::PipelineResult run = run_packages(game, packages, {"ridge-new-file"});
+    if (!applied(run))
+        return;
+    bool added = false;
+    for (const mutators::JournalEntry& entry : run.journal.entries) {
+        if (entry.change == mutators::Change::added &&
+            entry.collection == mutators::Collection::files &&
+            fold_copy(entry.path) == "download/rgplant.tdf")
+            added = true;
+    }
+    OA_CHECK(added);
+}
+
+/// Refused calls inside pcall leave nothing behind and do not stop the hook.
+void test_refusals(const fs::path& game, const fs::path& packages) {
+    write_package(
+        packages,
+        "ridge-refusals",
+        "\"menus\"",
+        hook_script(
+            "menus",
+            "local refused = 0\n"
+            "      local tries = {\n"
+            "        function() return collection:frobnicate_everything_please() end,\n"
+            "        function() return collection:add(\"RGEMPTY\", \"NOPE\") end,\n"
+            "        function() return collection:add(\"NOPE\", \"RGPLANT\") end,\n"
+            "        function() return collection:add(\"RGONE\", \"RGPLANT\") end,\n"
+            "        function() return collection:add(\"RGEMPTY\", \"RGPLANT\", { page = 9, slot = "
+            "1 }) end,\n"
+            "        function() return collection:add(\"RGEMPTY\", \"RGPLANT\", { page = 1, slot = "
+            "9 }) end,\n"
+            "        function() return collection:add(\"RGEMPTY\", \"RGPLANT\", { page = \"new\" "
+            "}) end,\n"
+            "        function() return collection:move(\"RGBLDR\", \"RGONE\", { page = 2, slot = 1 "
+            "}) end,\n"
+            "        function() return collection:move(\"RGBLDR\", \"RGEXTRA1\", { page = 2, slot "
+            "= 1 }) end,\n"
+            "        function() return collection:grey(\"RGBLDR\", \"RGMARK\") end,\n"
+            "        function() return collection:hide(\"RGBLDR\", \"RGEXTRA1\") end,\n"
+            "        function() return collection:builds(42) end,\n"
+            "        function() return collection:remove() end,\n"
+            "        function() collection.add = 1 end,\n"
+            "      }\n"
+            "      for round = 1, 200 do\n"
+            "        for i = 1, #tries do\n"
+            "          if not pcall(tries[i]) then refused = refused + 1 end\n"
+            "        end\n"
+            "      end\n"
+            "      if refused ~= 200 * #tries then error(\"refused \"..refused) end"
+        )
+    );
+    mutators::PipelineResult run = run_packages(game, packages, {"ridge-refusals"});
+    if (applied(run))
+        OA_CHECK(run.layer.entries.empty());
+}
+
+/// Runs one package and reports the processor time it took, which a busy
+/// machine does not stretch the way it stretches the real time.
+mutators::PipelineResult
+run_timed(const fs::path& game, const fs::path& packages, const char* id, long& cpu_ms) {
+    const std::clock_t cpu = std::clock();
+    const auto started = std::chrono::steady_clock::now();
+    mutators::PipelineResult run = run_packages(game, packages, {id});
+    cpu_ms = static_cast<long>((std::clock() - cpu) * 1000 / CLOCKS_PER_SEC);
+    const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started
+    );
+    std::fprintf(
+        stderr,
+        "%s: %ld ms of processor time, %lld ms real\n",
+        id,
+        cpu_ms,
+        static_cast<long long>(spent.count())
+    );
+    return run;
+}
+
+/// A loop of builds or of removals stops on the instruction allowance, at a
+/// small part of the real-time limit's worth of work.
+void test_budget(const fs::path& game, const fs::path& packages) {
+    write_package(
+        packages,
+        "ridge-builds-loop",
+        "\"menus\"",
+        hook_script("menus", "for i = 1, 50000000 do collection:builds(\"RGBLDR\") end")
+    );
+    write_package(
+        packages,
+        "ridge-remove-loop",
+        "\"menus\"",
+        hook_script("menus", "for i = 1, 50000000 do collection:remove(\"RGPLANT\") end")
+    );
+    for (const char* id : {"ridge-builds-loop", "ridge-remove-loop"}) {
+        long cpu_ms = 0;
+        const mutators::PipelineResult run = run_timed(game, packages, id, cpu_ms);
+        OA_CHECK(!run.mutators.empty());
+        if (run.mutators.empty())
+            continue;
+        OA_CHECK(run.mutators.front().cause == mutators::Cause::instruction_budget);
+        OA_CHECK(cpu_ms < 3000);
+    }
+}
+
 bool path_is_armck_gui(std::string_view path) {
     std::string folded = fold_copy(path);
     for (char& letter : folded) {
@@ -1248,6 +1695,42 @@ void test_game_data() {
         )
     );
     applied(run_on(store, packages, {"ridge-armcom"}));
+
+    // A loop of builds, or of removals, stops on the instruction allowance
+    // at a small part of the real-time limit's worth of work.
+    write_package(
+        packages,
+        "ridge-armcom-loop",
+        "\"menus\"",
+        hook_script("menus", "for i = 1, 50000000 do collection:builds(\"ARMCOM\") end")
+    );
+    write_package(
+        packages,
+        "ridge-armsolar-loop",
+        "\"menus\"",
+        hook_script("menus", "for i = 1, 50000000 do collection:remove(\"ARMSOLAR\") end")
+    );
+    for (const char* id : {"ridge-armcom-loop", "ridge-armsolar-loop"}) {
+        const std::clock_t cpu = std::clock();
+        const auto started = std::chrono::steady_clock::now();
+        const mutators::PipelineResult loop = run_on(store, packages, {id});
+        const long cpu_ms = static_cast<long>((std::clock() - cpu) * 1000 / CLOCKS_PER_SEC);
+        const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started
+        );
+        std::fprintf(
+            stderr,
+            "%s: %ld ms of processor time, %lld ms real\n",
+            id,
+            cpu_ms,
+            static_cast<long long>(spent.count())
+        );
+        OA_CHECK(!loop.mutators.empty());
+        if (loop.mutators.empty())
+            continue;
+        OA_CHECK(loop.mutators.front().cause == mutators::Cause::instruction_budget);
+        OA_CHECK(cpu_ms < 3000);
+    }
 
     write_package(
         packages, "ridge-read", "\"units\"", hook_script("units", "ctx.menus:builds(\"ARMCOM\")")
@@ -1291,5 +1774,12 @@ int main(int argc, char** argv) {
     test_layers(game, packages);
     test_unknown(game, packages);
     test_entry_identity(game, packages);
+    test_reuse(game, packages);
+    test_rule_then_menus(game, packages);
+    test_clones(game, packages);
+    test_six_sections(game, packages, table);
+    test_added_file(game, packages);
+    test_refusals(game, packages);
+    test_budget(game, packages);
     return oa::test::check_exit_status();
 }

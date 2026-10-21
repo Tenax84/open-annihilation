@@ -105,7 +105,12 @@ if(BUILD_TESTING)
   add_executable(oa-data-mutators-menus-test tests/menus_test.cpp)
   target_link_libraries(
     oa-data-mutators-menus-test
-    PRIVATE oa-data-mutators oa-test-support oa-ui-hud oa-ui-gui-layout oa-test-game-data
+    PRIVATE oa-data-mutators
+            oa-formats-tdf
+            oa-test-support
+            oa-ui-hud
+            oa-ui-gui-layout
+            oa-test-game-data
   )
   add_test(NAME data-mutators-menus COMMAND oa-data-mutators-menus-test)
   set_tests_properties(data-mutators-menus PROPERTIES TIMEOUT 30)
