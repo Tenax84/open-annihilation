@@ -14,7 +14,9 @@
 #include "oa/test/game_data.hpp"
 #include "oa/test/scratch_directory.hpp"
 
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -920,6 +922,269 @@ end
     OA_CHECK(ruled.mutators.front().cause == mutators::Cause::unreadable_rules);
 }
 
+void test_refusal_loops(
+    oa::AssetStore& store, const fs::path& scratch, const mutators::ChosenMap& valley
+) {
+    // Every refusal is an error the script's own pcall catches. Nothing of a
+    // refused write stays behind, and the hook still writes afterwards.
+    const char* lua = R"(function mutate(ctx)
+  return { maps = function(map, ctx)
+    local long = ("x"):rep(1000)
+    local schema = map.schemas[1]
+    local unit = schema.units[1]
+    local feature = schema.features[1]
+    local refusals = {
+      function() map.header.planet = "Lava" end,
+      function() map.header[long] = 1 end,
+      function() map.header.gravity = "high" end,
+      function() schema.surfacemetal = "not a number at all" end,
+      function() schema.type = "Easy" end,
+      function() schema[long] = 1 end,
+      function() unit.unitname = "A:B" end,
+      function() unit.unitname = ("A"):rep(60000) end,
+      function() unit.unitname = "NO_SUCH_UNIT" end,
+      function() unit.xpos = -1 end,
+      function() unit[long] = 1 end,
+      function() feature.featurename = "Moss" end,
+      function() map.schemas:set { foo = 1 } end,
+      function() map.schemas:set { aiprofile = "MISSING" } end,
+      function() map.schemas[3] = { } end,
+    }
+    for round = 1, 200 do
+      for _, refused in ipairs(refusals) do
+        if pcall(refused) then error("a refused write was kept") end
+      end
+    end
+    local ok, message = pcall(function() unit.unitname = "A:B" end)
+    if ok or not string.find(message, "the unit A:B is not there", 1, true) then
+      error("unexpected: " .. tostring(message))
+    end
+    map.header.gravity = 33
+  end }
+end
+)";
+    const mutators::PipelineResult result =
+        run_one(store, scratch, "ridge-refusals", "[\"maps\"]", lua, valley);
+    OA_CHECK(result.playable());
+    if (!result.playable() && !result.mutators.empty())
+        std::fprintf(stderr, "refusals: %s\n", result.mutators.front().message.c_str());
+    tdf::OwnedDocument document;
+    OA_CHECK(document.parse(served_text(result, valley.ota_path), nullptr));
+    OA_CHECK(
+        std::string(
+            field_of(header_of(document), "gravity") ? field_of(header_of(document), "gravity") : ""
+        ) == "33"
+    );
+    const tdf::Block* unit = tdf::child_at(
+        tdf::find_child(tdf::find_child(header_of(document), "Schema 0"), "units"), 0
+    );
+    OA_CHECK(std::string(field_of(unit, "Unitname") ? field_of(unit, "Unitname") : "") == "RGCOM");
+    OA_CHECK(result.journal.entries.size() == 1);
+}
+
+/// Runs one maps script with a small instruction allowance. The allowance
+/// is large enough that the loop's own Lua does not spend it, and small
+/// enough that the charged map work does, well inside the ten-second clock.
+void expect_budget_stop(
+    oa::AssetStore& store,
+    const fs::path& scratch,
+    std::string_view id,
+    std::string_view body,
+    const mutators::ChosenMap& valley
+) {
+    release(store);
+    std::string lua = "function mutate(ctx)\n  return { maps = function(map, ctx)\n";
+    lua += body;
+    lua += "\n  end }\nend\n";
+    const fs::path package = scratch / ("pkg-budget-" + std::string(id));
+    write_package(package, id, "[\"maps\"]", lua);
+    mutators::PipelineInput input = make_input({load_mutator(package)});
+    input.map = valley;
+    input.budget.instructions = 1000000;
+    const auto started = std::chrono::steady_clock::now();
+    const mutators::PipelineResult result = mutators::run_pipeline(store, input);
+    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - started
+    )
+                                  .count();
+    OA_CHECK(!result.playable());
+    OA_CHECK(!result.mutators.empty());
+    if (!result.mutators.empty()) {
+        const bool budget = result.mutators.front().cause == mutators::Cause::instruction_budget;
+        OA_CHECK(budget);
+        if (!budget)
+            std::fprintf(
+                stderr,
+                "%.*s: %s\n",
+                static_cast<int>(id.size()),
+                id.data(),
+                result.mutators.front().message.c_str()
+            );
+    }
+    OA_CHECK(milliseconds < 5000);
+    OA_CHECK(served_entry(result, valley.ota_path) == nullptr);
+    release(store);
+}
+
+void test_budgets(
+    oa::AssetStore& store, const fs::path& scratch, const mutators::ChosenMap& valley
+) {
+    // A field access costs the lookup and its key's bytes, so a loop of long
+    // keys spends the allowance after a few hundred reads.
+    expect_budget_stop(
+        store,
+        scratch,
+        "ridge-budget-read",
+        "    local key = (\"x\"):rep(65536)\n"
+        "    for i = 1, 20000 do local value = map.header[key] end",
+        valley
+    );
+    expect_budget_stop(
+        store,
+        scratch,
+        "ridge-budget-refuse",
+        "    local key = (\"x\"):rep(65536)\n"
+        "    for i = 1, 20000 do pcall(function() map.header[key] = 1 end) end",
+        valley
+    );
+    expect_budget_stop(
+        store,
+        scratch,
+        "ridge-budget-write",
+        "    for i = 1, 1000000 do map.header.gravity = 5 end",
+        valley
+    );
+    expect_budget_stop(
+        store,
+        scratch,
+        "ridge-budget-set",
+        "    for i = 1, 1000000 do\n"
+        "      map.schemas:set { humanmetal = 5, humanenergy = 5, computermetal = 5,\n"
+        "        computerenergy = 5, surfacemetal = 5 }\n"
+        "    end",
+        valley
+    );
+    expect_budget_stop(
+        store,
+        scratch,
+        "ridge-budget-unit",
+        "    local unit = map.schemas[1].units[1]\n"
+        "    for i = 1, 1000000 do pcall(function() unit.unitname = \"NOPE\" end) end",
+        valley
+    );
+
+    // Each write is journalled in constant time, so many writes stay quick.
+    const char* many = R"(function mutate(ctx)
+  return { maps = function(map, ctx)
+    for i = 1, 40000 do map.header.gravity = i % 2 end
+  end }
+end
+)";
+    const auto started = std::chrono::steady_clock::now();
+    const mutators::PipelineResult written =
+        run_one(store, scratch, "ridge-many-writes", "[\"maps\"]", many, valley);
+    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - started
+    )
+                                  .count();
+    OA_CHECK(written.playable());
+    OA_CHECK(milliseconds < 5000);
+    std::size_t rows = 0;
+    for (const mutators::JournalEntry& entry : written.journal.entries) {
+        if (entry.field == "gravity")
+            ++rows;
+    }
+    OA_CHECK(rows == 40000);
+
+    // Past the write limit the mutator fails, even when the script catches
+    // the error.
+    const char* too_many = R"(function mutate(ctx)
+  return { maps = function(map, ctx)
+    for i = 1, 70000 do map.header.gravity = i % 2 end
+  end }
+end
+)";
+    const mutators::PipelineResult over =
+        run_one(store, scratch, "ridge-too-many", "[\"maps\"]", too_many, valley);
+    expect_refused(over, "this mutator has changed too many fields");
+    const char* caught = R"(function mutate(ctx)
+  return { maps = function(map, ctx)
+    for i = 1, 70000 do pcall(function() map.header.gravity = i % 2 end) end
+  end }
+end
+)";
+    const mutators::PipelineResult kept =
+        run_one(store, scratch, "ridge-too-many-caught", "[\"maps\"]", caught, valley);
+    expect_refused(kept, "this mutator has changed too many fields");
+}
+
+void test_hook_changed_names(
+    oa::AssetStore& store, const fs::path& scratch, const mutators::ChosenMap& valley
+) {
+    // A placed name is checked against the data the mutators above left.
+    const char* cloned = R"(function mutate(ctx)
+  return {
+    units = function(units, ctx)
+      units:clone("RGCOM", "RGNEW", { })
+    end,
+    maps = function(map, ctx)
+      map.schemas[1].units[1].unitname = "RGNEW"
+    end
+  }
+end
+)";
+    const mutators::PipelineResult placed =
+        run_one(store, scratch, "ridge-clone-place", "[\"units\", \"maps\"]", cloned, valley);
+    OA_CHECK(placed.playable());
+    if (!placed.playable() && !placed.mutators.empty())
+        std::fprintf(stderr, "clone-place: %s\n", placed.mutators.front().message.c_str());
+    tdf::OwnedDocument document;
+    OA_CHECK(document.parse(served_text(placed, valley.ota_path), nullptr));
+    const tdf::Block* unit = tdf::child_at(
+        tdf::find_child(tdf::find_child(header_of(document), "Schema 0"), "units"), 0
+    );
+    OA_CHECK(std::string(field_of(unit, "Unitname") ? field_of(unit, "Unitname") : "") == "RGNEW");
+
+    const char* removed = R"(function mutate(ctx)
+  return {
+    units = function(units, ctx)
+      units.RGBOT:remove()
+    end,
+    maps = function(map, ctx)
+      map.schemas[1].units[1].unitname = "RGBOT"
+    end
+  }
+end
+)";
+    expect_refused(
+        run_one(store, scratch, "ridge-remove-place", "[\"units\", \"maps\"]", removed, valley),
+        "the unit RGBOT is not there"
+    );
+
+    const char* gone = R"(function mutate(ctx)
+  return {
+    units = function(units, ctx)
+      ctx.features.Rock:remove()
+    end,
+    maps = function(map, ctx)
+      map.schemas[1].features[1].featurename = "Rock"
+    end
+  }
+end
+)";
+    expect_refused(
+        run_one(
+            store,
+            scratch,
+            "ridge-feature-gone",
+            "[\"units\", \"features\", \"maps\"]",
+            gone,
+            valley
+        ),
+        "the feature Rock is not there"
+    );
+}
+
 void test_order_and_failure(
     oa::AssetStore& store, const fs::path& scratch, const mutators::ChosenMap& valley
 ) {
@@ -1175,25 +1440,32 @@ end
         if (profile_stem(stem))
             profiles.push_back(stem);
     }
-    bool rewritten = false;
+    OA_CHECK(profiles.size() >= 2);
+
+    // Every map whose schemas name a profile is given another profile and
+    // new resources. A refused or unserved rewrite fails. A map whose
+    // installed text loads as a skirmish session must load the rewrite too,
+    // with the new profile; a campaign mission does not load as one.
+    int rewritten = 0;
+    int loaded = 0;
     for (const std::string& path : maps) {
-        if (rewritten || profiles.size() < 2)
+        if (profiles.size() < 2)
             break;
         oa::AssetData data = store.read(path);
         const std::string text(data.bytes.begin(), data.bytes.end());
         tdf::OwnedDocument document;
-        if (!document.parse(text, nullptr))
+        if (text.empty() || !document.parse(text, nullptr) || header_of(document) == nullptr)
             continue;
         const std::string current = schema_profile(header_of(document));
+        if (current.empty())
+            continue;
         std::string replacement;
         for (const std::string& stem : profiles) {
-            if (!current.empty() && stem == fold_path(current))
+            if (fold_path(stem) == fold_path(current))
                 continue;
             replacement = stem;
             break;
         }
-        if (replacement.empty() || current.empty())
-            continue;
         const std::string key = stem_of(path);
         std::string lua = "function mutate(ctx)\n  return { maps = function(map, ctx)\n";
         lua += "    map.schemas:set { aiprofile = \"" + replacement + "\", humanmetal = 4242 }\n";
@@ -1204,11 +1476,36 @@ end
         input.map = chosen_from(key, "", std::move(data.bytes));
         const mutators::PipelineResult result = mutators::run_pipeline(store, input);
         release(store);
-        if (!result.playable())
+        OA_CHECK(result.playable());
+        if (!result.playable()) {
+            if (!result.mutators.empty())
+                std::fprintf(
+                    stderr, "%s: %s\n", key.c_str(), result.mutators.front().message.c_str()
+                );
             continue;
+        }
         const std::string served = served_text(result, "maps/" + key + ".ota");
-        if (served.empty())
+        OA_CHECK(!served.empty());
+        if (served.empty()) {
+            std::fprintf(stderr, "%s: the rewrite was not served\n", key.c_str());
             continue;
+        }
+        ++rewritten;
+
+        MemoryFiles installed;
+        installed.files[fold_path("maps/" + key + ".ota")] = text;
+        installed.files[fold_path("ai/" + current + ".txt")] = "profile=installed\n";
+        installed.files["ai/default.txt"] = "profile=default\n";
+        missions::CampaignFile before{};
+        const missions::CampaignFiles before_services = memory_services(installed);
+        missions::CampaignEnv before_env{&before_services, nullptr, 0, 0};
+        missions::campaign_file_construct(&before, missions::SessionKind::skirmish, &before_env);
+        const bool skirmish =
+            missions::campaign_load_mission_info(&before, &before_env, key.c_str());
+        missions::campaign_file_free(&before);
+        if (!skirmish)
+            continue;
+
         MemoryFiles files;
         files.files[fold_path("maps/" + key + ".ota")] = served;
         files.files[fold_path("ai/" + replacement + ".txt")] = "profile=rewrite\n";
@@ -1216,8 +1513,10 @@ end
         const missions::CampaignFiles services = memory_services(files);
         missions::CampaignEnv env{&services, nullptr, 0, 0};
         missions::campaign_file_construct(&session, missions::SessionKind::skirmish, &env);
-        const bool loaded = missions::campaign_load_mission_info(&session, &env, key.c_str());
-        if (!loaded) {
+        const bool read_back = missions::campaign_load_mission_info(&session, &env, key.c_str());
+        OA_CHECK(read_back);
+        if (!read_back) {
+            std::fprintf(stderr, "%s: the rewrite does not load\n", key.c_str());
             missions::campaign_file_free(&session);
             continue;
         }
@@ -1226,10 +1525,15 @@ end
                            fold_path(profile).find(fold_path(replacement)) != std::string::npos;
         OA_CHECK(named);
         OA_CHECK(session.metal[0] == 4242.f);
-        rewritten = named && session.metal[0] == 4242.f;
+        if (!named || session.metal[0] != 4242.f)
+            std::fprintf(stderr, "%s: the rewrite reads back wrong\n", key.c_str());
+        else
+            ++loaded;
         missions::campaign_file_free(&session);
     }
-    OA_CHECK(rewritten);
+    std::printf("maps-data: %d rewritten, %d read back as a session\n", rewritten, loaded);
+    OA_CHECK(rewritten >= 1);
+    OA_CHECK(loaded >= 1);
 }
 
 void synthetic_tests() {
@@ -1243,6 +1547,9 @@ void synthetic_tests() {
     test_schemas(store, scratch.path, valley);
     test_placed(store, scratch.path, valley);
     test_table(store, scratch.path);
+    test_refusal_loops(store, scratch.path, valley);
+    test_budgets(store, scratch.path, valley);
+    test_hook_changed_names(store, scratch.path, valley);
     test_order_and_failure(store, scratch.path, valley);
     test_output(store, scratch.path, valley);
     test_session(store, scratch.path, valley);

@@ -192,9 +192,14 @@ the installed game and serves no game-data file.
 made-up Ridge scenario: header and schema writes and their refusals,
 placed units and features, `glob` and `pattern`, two mutators on one
 field, a write that then errors, and the session loader reading the
-served text. `data-mutators-maps-data` is the same program with `--data`:
-it reads every installed map and writes nothing, then points one map at
-another profile and reads that text back through the session loader.
+served text. It also runs refused writes in a `pcall` loop, loops of
+long-key reads, writes, `:set` calls and unit lookups that stop on a
+small instruction allowance, a write count past the limit, and placed
+names that an earlier hook cloned or removed. `data-mutators-maps-data`
+is the same program with `--data`: it reads every installed map and
+writes nothing, then points every map whose schemas name a profile at
+another profile. Each rewrite must be served, and each map that loads as
+a skirmish session must read its rewrite back through the session loader.
 
 ## Limitations
 
