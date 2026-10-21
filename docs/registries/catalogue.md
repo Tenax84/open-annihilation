@@ -154,6 +154,7 @@ members are read only on a mutator. On any other kind they are ignored.
 | `conflicts_with` | no | At most 32 objects of the same shape as `requires.mutators`. None is this entry's id or one of its prerequisites. |
 | `works_with` | no | At most 32 strings. Each is a condition: `*`, `ta-3.1c`, or a mod id with an optional version range. `*` stands only alone. |
 | `layers` | no | At most 16 strings. A known layer name is kept once, in the order written. An unknown name is skipped. |
+| `clashes` | no | `add` or `replace`. Absent stays absent; the game's default then applies. Any other value, including `Add` and a number, skips the entry. |
 | `options` | no | At most 16 objects, below. An option of an unknown type is skipped. Other members of an object are ignored. |
 
 The layer names are `files`, `units`, `weapons`, `features`, `sides`,
