@@ -4114,6 +4114,10 @@ bool multiplayer_room_mutators(netgame::PresenceLoadoutAssembly* out) {
     return true;
 }
 
+uint32_t multiplayer_room_mutators_generation() noexcept {
+    return ui().lobby.presence_records.host_loadout_generation;
+}
+
 void multiplayer_bind_map_pack(
     void* context, bool (*pack)(void* context, netgame::PresenceMapPack* out)
 ) noexcept {

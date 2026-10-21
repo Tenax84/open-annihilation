@@ -25,7 +25,6 @@
 #include "oa/audio/sdl_audio.hpp"
 #include "oa/base/game_loop.hpp"
 #include "oa/base/sha256.hpp"
-#include "oa/netgame/presence.hpp"
 #include "oa/data/defs/locale.hpp"
 #include "oa/data/defs/rule_keys.hpp"
 #include "oa/data/defs/sides.hpp"
@@ -170,6 +169,11 @@ struct PipelineInput;
 struct PipelineResult;
 struct ResolvedMutator;
 } // namespace oa::data::mutators
+
+namespace oa::netgame {
+struct PresenceLoadoutAssembly;
+struct PresenceMutators;
+} // namespace oa::netgame
 
 namespace oa::platform::text_font {
 class FontStack;
@@ -4327,7 +4331,26 @@ class Runtime final : public menu::Host,
     /// resolved here. Empty when this room plays none.
     ///
     /// @return the list, top first
-    [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator> room_mutators() const noexcept;
+    [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator>
+    room_mutators() const noexcept;
+
+    /// Returns the list a network start applies.
+    ///
+    /// On the host, the chosen list while it is built for that list and for
+    /// this machine's sim hash. On a guest, the host's list while it is
+    /// built for the host's current digest, and empty when the host names
+    /// none. Empty when a named list is not built yet. The battle room stops
+    /// counting as showing before the start asks, and this still answers.
+    ///
+    /// @return the list, top first
+    [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator> room_match_mutators() const;
+
+    /// Tells whether a mutator list is named and not built for the start.
+    ///
+    /// A network start refuses that list instead of playing another one.
+    ///
+    /// @return true when the room has named a list this machine has not built
+    [[nodiscard]] bool room_match_unbuilt() const;
 
     /// Builds the battle room's mutator layer when its list changes.
     ///
@@ -4338,13 +4361,18 @@ class Runtime final : public menu::Host,
     /// screens while no match runs releases the layer.
     void follow_room_mutators();
 
-    /// Returns the mutators field this machine sends, or nothing when it plays none.
+    /// Returns the mutators field this machine sends, or null when it plays none.
     ///
     /// The host's names every mutator. A guest's carries the host's digest
-    /// and no mutators.
+    /// and no mutators. The pointer stays valid until the next follow or release.
     ///
-    /// @return the field, or nothing when the room plays no mutators
-    [[nodiscard]] std::optional<oa::netgame::PresenceMutators> room_mutators_presence() const;
+    /// @return the field, or null when the room plays no mutators
+    [[nodiscard]] const oa::netgame::PresenceMutators* room_mutators_presence() const noexcept;
+
+    /// How many times the mutators field this machine sends has changed.
+    ///
+    /// @return the generation, starting at 0
+    [[nodiscard]] uint32_t room_mutators_generation() const noexcept;
 
     /// Unmounts the battle room's mutator layer.
     ///
@@ -4516,15 +4544,14 @@ class Runtime final : public menu::Host,
     /// @param state state to free; null is allowed
     static void destroy_room_mutator_state(RoomMutatorState* state) noexcept;
 
-    /// The pipeline input V02 uses for one resolved list, with no map.
+    /// The pipeline input a match start uses, without the map.
     ///
     /// @param chosen the mutators, top first
     /// @return the input
-    [[nodiscard]] oa::data::mutators::PipelineInput mutator_pipeline_input(
-        const std::vector<oa::data::mutators::ResolvedMutator>& chosen
-    ) const;
+    [[nodiscard]] oa::data::mutators::PipelineInput
+    mutator_pipeline_input(const std::vector<oa::data::mutators::ResolvedMutator>& chosen) const;
 
-    /// Why a pipeline result cannot be played, in V01's words.
+    /// Why a pipeline result cannot be played, as the match start says it.
     ///
     /// @param chosen the mutators, in the order they were run
     /// @param result the pipeline's result
@@ -4571,27 +4598,22 @@ class Runtime final : public menu::Host,
         oa::base::sha256::Digest& wanted
     );
 
-    /// Remembers the host's mutators field.
+    /// Publishes the field the room's phase describes.
     ///
-    /// @param digest the loadout digest
-    void publish_host_mutators(const oa::base::sha256::Digest& digest);
+    /// @param include_items true on the host, so the field names each mutator
+    void publish_current(bool include_items);
 
-    /// Remembers a guest's mutators field, with no mutators in it.
-    ///
-    /// @param digest the host's loadout digest
-    /// @param total how many mutators the loadout names
-    /// @param held how many of them have arrived
-    /// @param codes one code per position; empty marks every position unknown
-    /// @param lacking true when a position is not has
-    /// @param lacking_at the first such position
-    void publish_guest_mutators(
-        const oa::base::sha256::Digest& digest,
-        uint8_t total,
-        uint8_t held,
-        const std::vector<uint8_t>& codes,
-        bool lacking,
-        uint8_t lacking_at
-    );
+    /// Greets an OA peer again when the list it was greeted for has changed.
+    void greet_room_peers();
+
+    /// Caches the host list's loadout digest until the list or the sim hash changes.
+    void remember_wanted();
+
+    /// Copies the guest's assembly when its generation changes.
+    void refresh_room_assembly();
+
+    /// Logs once when the host's unit sync has finished for this build.
+    void note_unit_sync();
 
     /// The name an installed pack gives a map, for a campaign load.
     friend const char* pack_index_title(void* context, const char* map_name);

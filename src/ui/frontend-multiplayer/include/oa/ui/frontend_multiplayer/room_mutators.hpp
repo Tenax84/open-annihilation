@@ -7,6 +7,7 @@
 #include "oa/netgame/presence.hpp"
 
 #include <cstdint>
+#include <span>
 
 namespace oa::ui::frontend_multiplayer {
 
@@ -16,25 +17,75 @@ struct Lobby;
 ///
 /// The values are the two-bit codes of a presence record's mutator states.
 enum class MutatorHave : uint8_t {
-    has,            ///< installed at the list's SHA-256 and version
-    missing,        ///< not installed
-    other_release,  ///< another release is installed
-    unknown,        ///< the list is not whole yet, or the record does not say
+    has,           ///< installed at the list's SHA-256 and version
+    missing,       ///< not installed
+    other_release, ///< another release is installed
+    unknown,       ///< the list is not whole yet, or the record does not say
 };
 
 /// Why the host's START waits on mutators, or none when it does not.
 enum class MutatorsHold : uint8_t {
-    none,            ///< nothing about mutators holds START
-    host_not_built,  ///< the host's layer is not built yet
-    host_failed,     ///< the host's build stopped with an error
-    no_support,      ///< an OA player sent no mutator field
-    receiving,       ///< an OA player is still taking the list, or names another one
-    lacking,         ///< an OA player does not have a mutator of the list
-    failed,          ///< an OA player's build stopped with an error
-    building,        ///< an OA player has the list and has not built yet
-    other_result,    ///< an OA player built a different layer
-    other_sim_hash,  ///< an OA player plays another sim hash
+    none,           ///< nothing about mutators holds START
+    host_not_built, ///< the host's layer is not built yet
+    host_failed,    ///< the host's build stopped with an error
+    no_support,     ///< an OA player sent no mutator field
+    receiving,      ///< an OA player is still taking the list, or names another one
+    lacking,        ///< an OA player does not have a mutator of the list
+    failed,         ///< an OA player's build stopped with an error
+    building,       ///< an OA player has the list and has not built yet
+    other_result,   ///< an OA player built a different layer
+    other_sim_hash, ///< an OA player plays another sim hash
 };
+
+/// What the battle room last did with one mutator list.
+enum class RoomMutatorPhase : uint8_t {
+    none,      ///< this room plays no mutators
+    receiving, ///< the host's list has not all arrived
+    lacking,   ///< a mutator of the list is not installed here
+    built,     ///< the list was built
+    failed,    ///< the build stopped
+};
+
+/// Fills the mutators field one room phase sends, with no mutators in it.
+///
+/// Built carries `folded` and `index`. Any other phase leaves the layer
+/// digest zero. A code list shorter than `total` marks the rest unknown.
+///
+/// @param phase the phase
+/// @param digest the loadout digest the phase is for
+/// @param folded the mutator digest, read only while built
+/// @param index the mutator the phase names, or presence_mutator_index_none
+/// @param total how many mutators the loadout names
+/// @param held how many leading mutators the sender holds
+/// @param codes one have-code per position; empty marks every position unknown
+/// @param[out] out the field
+/// @return false for none, or when total is outside 1 to 32
+[[nodiscard]] bool lobby_room_mutator_field(
+    RoomMutatorPhase phase,
+    const netgame::PresenceDigest& digest,
+    const netgame::PresenceDigest& folded,
+    uint8_t index,
+    uint8_t total,
+    uint8_t held,
+    std::span<const uint8_t> codes,
+    netgame::PresenceMutators* out
+);
+
+/// Tells whether a slot is an Open Annihilation human or watcher of another machine.
+///
+/// Remote, playing, and carrying the engine signature. A 3.1c player and this
+/// machine's own players are not.
+///
+/// @param lobby Lobby state.
+/// @param player_slot Player slot.
+/// @return True when that slot is another machine's Open Annihilation player.
+[[nodiscard]] bool lobby_remote_oa_player(Lobby& lobby, int32_t player_slot) noexcept;
+
+/// Tells whether this machine hosts.
+///
+/// @param lobby Lobby state.
+/// @return True when the local player's block says host.
+[[nodiscard]] bool lobby_hosts(Lobby& lobby) noexcept;
 
 /// Why START waits, and the player and mutator it names.
 struct MutatorsBlock {
@@ -54,17 +105,19 @@ struct MutatorsBlock {
 /// @param slot Player slot, 0..9.
 /// @param position The mutator's position, 0 to 31.
 /// @return The two-bit code, or unknown when the record does not say.
-[[nodiscard]] MutatorHave
-lobby_mutator_have(Lobby& lobby, int32_t slot, uint8_t position) noexcept;
+[[nodiscard]] MutatorHave lobby_mutator_have(Lobby& lobby, int32_t slot, uint8_t position) noexcept;
 
 /// Returns the first reason the host's START waits on mutators.
 ///
-/// None when the host's record has no mutator field. Otherwise the host's
-/// own build, then each Open Annihilation human or watcher of another
-/// machine in slot order: no mutator field, another list or a list still
-/// arriving, a mutator they do not have, a failed build, a build not
-/// finished, another layer, another sim hash. Reads the fixed part of each
-/// mutator field and the sim hash only. Allocates nothing.
+/// None when no record carries a mutator field. When the host's record has
+/// none and an Open Annihilation peer's still does, START waits while that
+/// peer drops it. Otherwise the host's own build, then each Open
+/// Annihilation human or watcher of another machine in slot order: no
+/// mutator field, another list or a list still arriving, a mutator they do
+/// not have, a failed build, a build not finished, another layer, another
+/// sim hash. A layer digest that differs names the earlier of the two
+/// dropped positions when those positions differ. Reads the fixed part of
+/// each mutator field and the sim hash only. Allocates nothing.
 ///
 /// @param lobby Lobby state.
 /// @return The first hold, or none.

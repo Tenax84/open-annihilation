@@ -705,7 +705,7 @@ void multiplayer_reload_unit_headers(app::ScreenContext* ctx);
 /// bound, the table is cleared and sync still restarts.
 void multiplayer_units_changed();
 
-/// Drops one peer so the host greets it again on the next unit-sync tick.
+/// Drops one peer and greets it again at once.
 ///
 /// @param player_id the peer
 void multiplayer_regreet(uint32_t player_id);
@@ -718,6 +718,11 @@ void multiplayer_regreet(uint32_t player_id);
 /// @param[out] out the list; null asks only whether there is one
 /// @return true when this machine is a guest and the host has named a list
 [[nodiscard]] bool multiplayer_room_mutators(netgame::PresenceLoadoutAssembly* out);
+
+/// How many times the guest's copy of the host's list has changed.
+///
+/// @return the generation, starting at 0
+[[nodiscard]] uint32_t multiplayer_room_mutators_generation() noexcept;
 
 } // namespace oa::ui::frontend_multiplayer
 

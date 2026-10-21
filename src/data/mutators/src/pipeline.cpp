@@ -3653,6 +3653,76 @@ PipelineResult run_checked(oa::AssetStore& store, const PipelineInput& input) {
     return result;
 }
 
+/// What `hack_refusal_only` has found for one slot.
+enum class Judged : uint8_t {
+    unknown, ///< not asked yet
+    judging, ///< being judged, further up the same chain of requirements
+    yes,     ///< its failure is that mutator's alone
+    no,      ///< its failure stops the start
+};
+
+/// True when this mutator failed because its hacks were refused, or was
+/// excluded only because a mutator it requires failed that way, directly
+/// or through another exclusion.
+///
+/// Each slot's answer is kept in `judged`, so a mutator that several others
+/// require gives every one of them the same answer. A slot met again while
+/// it is being judged would be a loop of requirements, which the list check
+/// refuses before the pipeline runs; it counts as no.
+bool hack_refusal_only(
+    std::size_t slot,
+    const std::vector<MutatorResult>& results,
+    std::span<const PipelineMutator> listed,
+    std::vector<Judged>& judged
+) {
+    if (slot >= results.size() || slot >= judged.size())
+        return false;
+    if (judged[slot] != Judged::unknown)
+        return judged[slot] == Judged::yes;
+    const MutatorResult& one = results[slot];
+    if (one.outcome == Outcome::failed) {
+        const bool alone = one.cause == Cause::hack_refused;
+        judged[slot] = alone ? Judged::yes : Judged::no;
+        return alone;
+    }
+    if (one.outcome != Outcome::excluded || one.cause != Cause::prerequisite_failed ||
+        slot >= listed.size()) {
+        judged[slot] = Judged::no;
+        return false;
+    }
+    judged[slot] = Judged::judging;
+    bool unmet = false;
+    for (const oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
+        bool satisfied = false;
+        std::vector<std::size_t> failed;
+        for (std::size_t other = 0; other < results.size() && other < listed.size(); ++other) {
+            if (other == slot)
+                continue;
+            const std::string version = oamut::version_text(listed[other].manifest.version);
+            if (!oamut::condition_met(condition, results[other].id, version))
+                continue;
+            if (results[other].outcome == Outcome::applied) {
+                satisfied = true;
+                break;
+            }
+            failed.push_back(other);
+        }
+        if (satisfied)
+            continue;
+        if (failed.empty())
+            continue;
+        unmet = true;
+        for (const std::size_t other : failed) {
+            if (!hack_refusal_only(other, results, listed, judged)) {
+                judged[slot] = Judged::no;
+                return false;
+            }
+        }
+    }
+    judged[slot] = unmet ? Judged::yes : Judged::no;
+    return unmet;
+}
+
 } // namespace
 
 std::string
@@ -3707,6 +3777,18 @@ bool PipelineResult::playable() const noexcept {
             return false;
     }
     return true;
+}
+
+std::optional<std::size_t>
+first_blocking(const PipelineResult& result, std::span<const PipelineMutator> listed) {
+    std::vector<Judged> judged(result.mutators.size(), Judged::unknown);
+    for (std::size_t slot = 0; slot < result.mutators.size(); ++slot) {
+        if (result.mutators[slot].outcome == Outcome::applied)
+            continue;
+        if (!hack_refusal_only(slot, result.mutators, listed, judged))
+            return slot;
+    }
+    return std::nullopt;
 }
 
 PipelineResult run_pipeline(oa::AssetStore& store, const PipelineInput& input) {

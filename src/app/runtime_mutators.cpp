@@ -63,18 +63,6 @@ const char* phase_name(mutators::Phase phase) {
     return "loadout";
 }
 
-/// One line, with breaks turned into spaces.
-///
-/// @param text the text
-/// @return the text on one line
-std::string one_line(std::string text) {
-    for (char& byte : text) {
-        if (byte == '\n' || byte == '\r')
-            byte = ' ';
-    }
-    return text;
-}
-
 /// The seed every machine shares for one mod and one mutator list.
 ///
 /// The first eight bytes, little-endian, of the SHA-256 of the simulation
@@ -225,77 +213,6 @@ void log_applied(
         std::cerr << "open-annihilation: mutator " << one.id << ": " << phase_name(one.phase)
                   << ": " << message << '\n';
     }
-}
-
-/// What `hack_refusal_only` has found for one slot.
-enum class Judged : uint8_t {
-    unknown, ///< not asked yet
-    judging, ///< being judged, further up the same chain of requirements
-    yes,     ///< its failure is that mutator's alone
-    no,      ///< its failure stops the start
-};
-
-/// True when this mutator failed because its hacks were refused, or was
-/// excluded only because a mutator it requires failed that way, directly
-/// or through another exclusion.
-///
-/// Each slot's answer is kept in `judged`, so a mutator that several others
-/// require gives every one of them the same answer. A slot met again while
-/// it is being judged would be a loop of requirements, which the list check
-/// refuses before the pipeline runs; it counts as no.
-bool hack_refusal_only(
-    std::size_t slot,
-    const std::vector<mutators::MutatorResult>& results,
-    const std::vector<mutators::ResolvedMutator>& listed,
-    std::vector<Judged>& judged
-) {
-    if (slot >= results.size() || slot >= judged.size())
-        return false;
-    if (judged[slot] != Judged::unknown)
-        return judged[slot] == Judged::yes;
-    const mutators::MutatorResult& one = results[slot];
-    if (one.outcome == mutators::Outcome::failed) {
-        const bool alone = one.cause == mutators::Cause::hack_refused;
-        judged[slot] = alone ? Judged::yes : Judged::no;
-        return alone;
-    }
-    if (one.outcome != mutators::Outcome::excluded ||
-        one.cause != mutators::Cause::prerequisite_failed || slot >= listed.size()) {
-        judged[slot] = Judged::no;
-        return false;
-    }
-    judged[slot] = Judged::judging;
-    bool unmet = false;
-    for (const oa::formats::oamut::Condition& condition : listed[slot].manifest.requires_mutators) {
-        bool satisfied = false;
-        std::vector<std::size_t> failed;
-        for (std::size_t other = 0; other < results.size() && other < listed.size(); ++other) {
-            if (other == slot)
-                continue;
-            const std::string version =
-                oa::formats::oamut::version_text(listed[other].manifest.version);
-            if (!oa::formats::oamut::condition_met(condition, results[other].id, version))
-                continue;
-            if (results[other].outcome == mutators::Outcome::applied) {
-                satisfied = true;
-                break;
-            }
-            failed.push_back(other);
-        }
-        if (satisfied)
-            continue;
-        if (failed.empty())
-            continue;
-        unmet = true;
-        for (const std::size_t other : failed) {
-            if (!hack_refusal_only(other, results, listed, judged)) {
-                judged[slot] = Judged::no;
-                return false;
-            }
-        }
-    }
-    judged[slot] = unmet ? Judged::yes : Judged::no;
-    return unmet;
 }
 
 unsigned char folded_resource_byte(unsigned char byte) noexcept {
@@ -524,21 +441,9 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     mutator_state_->served_map = serves_chosen_ota(*mutator_state_->result, input.map);
     play_mutator_hacks();
     log_applied(listed, *mutator_state_->result);
-    bool blocking = !mutator_state_->result->refusal.empty();
-    if (!blocking) {
-        std::vector<Judged> judged(mutator_state_->result->mutators.size(), Judged::unknown);
-        for (std::size_t slot = 0; slot < mutator_state_->result->mutators.size(); ++slot) {
-            if (mutator_state_->result->mutators[slot].outcome == mutators::Outcome::applied)
-                continue;
-            // A refused hack, and a mutator excluded only because it requires
-            // one, fails that mutator alone. Anything else still refuses the
-            // start, as a plan or a rule failure does.
-            if (!hack_refusal_only(slot, mutator_state_->result->mutators, listed, judged)) {
-                blocking = true;
-                break;
-            }
-        }
-    }
+    const std::optional<std::size_t> stopper =
+        mutators::first_blocking(*mutator_state_->result, input.mutators);
+    const bool blocking = !mutator_state_->result->refusal.empty() || stopper.has_value();
     if (blocking) {
         // A hack that was copied into the played profile is undone with the
         // profile the match would have played without mutators.
@@ -568,9 +473,8 @@ void Runtime::apply_match_mutators(const MatchBootstrap&) {
     }
 }
 
-mutators::PipelineInput Runtime::mutator_pipeline_input(
-    const std::vector<mutators::ResolvedMutator>& chosen
-) const {
+mutators::PipelineInput
+Runtime::mutator_pipeline_input(const std::vector<mutators::ResolvedMutator>& chosen) const {
     mutators::PipelineInput input;
     input.mutators.reserve(chosen.size());
     for (const mutators::ResolvedMutator& one : chosen) {

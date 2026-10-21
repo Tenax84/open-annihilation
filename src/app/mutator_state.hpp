@@ -15,9 +15,34 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace oa::app {
+
+/// One line, with breaks turned into spaces.
+///
+/// @param text the text
+/// @return the text on one line
+inline std::string one_line(std::string text) {
+    for (char& byte : text) {
+        if (byte == '\n' || byte == '\r')
+            byte = ' ';
+    }
+    return text;
+}
+
+/// The first count of a digest's hexadecimal digits.
+///
+/// @param digest the digest
+/// @param count how many digits, at most 64
+/// @return the digits
+inline std::string hex_digits(const oa::base::sha256::Digest& digest, std::size_t count) {
+    const auto text = oa::base::sha256::to_hex(digest);
+    if (count > text.size())
+        count = text.size();
+    return std::string(text.data(), count);
+}
 
 struct Runtime::MutatorState {
     /// The mutators chosen for the next matches, top of the list first.

@@ -66,9 +66,11 @@
 //        loadout without an error; bit 1 lacking: a package of the loadout
 //        is not installed here at its SHA-256; bit 2 failed: a mutator
 //        stopped with an error; bits 3 to 7 sent as 0 and ignored when
-//        read); 32 bytes the loadout digest; 32 bytes the layer digest
-//        (all zero unless built); u8 index, the mutator the lacking or
-//        failed bit names (0xff for none); u8 total, the mutators in the
+//        read); 32 bytes the loadout digest; 32 bytes the mutator digest of
+//        the applied loadout and its layer (all zero unless built); u8 index,
+//        while built the first mutator dropped because its hacks were refused,
+//        and while lacking or failed the mutator that names that (0xff for
+//        none); u8 total, the mutators in the
 //        loadout, 1 to 32; u8 held, how many leading mutators of the list
 //        the sender holds, 0 to total; 8 bytes, the sender's state of each
 //        position as a little-endian 64-bit word, two bits a position
@@ -320,15 +322,21 @@ struct PresenceMutator {
 /// package is installed at the list's SHA-256 and version (always 0 from the
 /// host), 1 it is not installed, 2 another release is installed, 3 it is not
 /// known yet. Bits at or past `total` are 0. The layer digest is all zero
-/// unless `built` is set. `mutators` may be shorter than `total` when the
-/// list was cut, and a guest sends none.
+/// unless `built` is set. While built, `layer_digest` is the mutator digest
+/// of the applied loadout and its layer, and `index` is the first mutator
+/// this machine dropped because its hacks were refused, or
+/// presence_mutator_index_none when it dropped none. `mutators` may be
+/// shorter than `total` when the list was cut, and a guest sends none.
 struct PresenceMutators {
     bool built{};            ///< the layer was built for this loadout without an error
     bool lacking{};          ///< a package of the loadout is not installed here at its SHA-256
     bool failed{};           ///< a mutator stopped with an error
     PresenceDigest digest{}; ///< the loadout digest
-    PresenceDigest layer_digest{}; ///< the layer digest; all zero unless built
-    /// The mutator `lacking` or `failed` names, or presence_mutator_index_none.
+    /// The mutator digest of the applied loadout and its layer; all zero unless built.
+    PresenceDigest layer_digest{};
+    /// While built, the first mutator this machine dropped because its hacks
+    /// were refused. While lacking or failed, the mutator that names that.
+    /// presence_mutator_index_none when none of those apply.
     uint8_t index{presence_mutator_index_none};
     uint8_t total{};   ///< how many mutators the loadout names, 1 to 32
     uint8_t held{};    ///< how many leading mutators of that list the sender holds
@@ -587,15 +595,18 @@ presence_content_gap(const PresenceRecord& player, const PresenceRecord& host);
 ///
 /// The draw path and the start gate read this from a record without allocating.
 struct PresenceMutatorsState {
-    bool built{};                  ///< the layer was built for this loadout without an error
-    bool lacking{};                ///< a package is not installed here at its SHA-256
-    bool failed{};                 ///< a mutator stopped with an error
-    PresenceDigest digest{};       ///< the loadout digest
-    PresenceDigest layer_digest{}; ///< the layer digest; all zero unless built
-    uint8_t index{};               ///< the mutator lacking or failed names, or 0xff
-    uint8_t total{};               ///< how many mutators the loadout names
-    uint8_t held{};                ///< how many leading mutators the sender holds
-    uint64_t states{};             ///< two bits a position
+    bool built{};            ///< the layer was built for this loadout without an error
+    bool lacking{};          ///< a package is not installed here at its SHA-256
+    bool failed{};           ///< a mutator stopped with an error
+    PresenceDigest digest{}; ///< the loadout digest
+    /// The mutator digest of the applied loadout and its layer; all zero unless built.
+    PresenceDigest layer_digest{};
+    /// While built, the first mutator dropped because its hacks were refused.
+    /// While lacking or failed, the mutator that names that, or 0xff.
+    uint8_t index{};
+    uint8_t total{};   ///< how many mutators the loadout names
+    uint8_t held{};    ///< how many leading mutators the sender holds
+    uint64_t states{}; ///< two bits a position
 
     /// Compares two states.
     friend bool operator==(const PresenceMutatorsState&, const PresenceMutatorsState&) = default;

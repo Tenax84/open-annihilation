@@ -6,10 +6,12 @@
 
 #include "oa/netgame/records.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <ostream>
 #include <span>
+#include <utility>
 
 namespace oa::ui::frontend_multiplayer {
 
@@ -45,27 +47,6 @@ const char* hold_name(MutatorsHold hold) noexcept {
     return "none";
 }
 
-/// Tells whether a slot is an Open Annihilation human or watcher of another machine.
-///
-/// The same players lobby_content_allows_start walks, without the row badge:
-/// remote, playing, and carrying the engine signature. A 3.1c player and this
-/// machine's own players are not.
-///
-/// @param lobby Lobby state.
-/// @param player_slot Player slot.
-/// @return True when that slot would be asked before START.
-bool other_machine_oa(Lobby& lobby, int32_t player_slot) noexcept {
-    if (lobby.game == nullptr || player_slot < 0 || player_slot >= kSlotCount)
-        return false;
-    const auto& player = slot_player(lobby, player_slot);
-    if (!slot_remote_playing(lobby, player))
-        return false;
-    const auto* info = player_info(lobby, player);
-    if (info == nullptr)
-        return false;
-    return netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(info));
-}
-
 /// The first mutator of a peer that is not installed at the list's release.
 ///
 /// @param states the peer's state word
@@ -77,7 +58,7 @@ bool first_not_has(uint64_t states, uint8_t total, uint8_t* position) noexcept {
                            ? total
                            : static_cast<uint8_t>(netgame::presence_mutators_max);
     for (uint8_t at = 0; at < limit; ++at) {
-        if (netgame::presence_mutator_state(states, at) == 0)
+        if (netgame::presence_mutator_state(states, at) == static_cast<uint8_t>(MutatorHave::has))
             continue;
         *position = at;
         return true;
@@ -112,8 +93,12 @@ MutatorsBlock peer_hold(
         return {MutatorsHold::failed, player_slot, row_state->index};
     if (!row_state->built)
         return {MutatorsHold::building, player_slot, none};
-    if (row_state->layer_digest != host_state.layer_digest)
-        return {MutatorsHold::other_result, player_slot, none};
+    if (row_state->layer_digest != host_state.layer_digest) {
+        const uint8_t position = row_state->index != host_state.index
+                                     ? std::min(row_state->index, host_state.index)
+                                     : netgame::presence_mutator_index_none;
+        return {MutatorsHold::other_result, player_slot, position};
+    }
     const auto host_hash = netgame::presence_sim_hash(host_record.data(), host_record.size());
     const auto row_hash = netgame::presence_sim_hash(row_record.data(), row_record.size());
     if (host_hash && row_hash && *host_hash != *row_hash)
@@ -132,11 +117,27 @@ MutatorsBlock block_for(Lobby& lobby, int32_t only_slot) noexcept {
     const auto host = lobby_host_slot(lobby);
     if (host == kNoSlot)
         return {};
+    if (only_slot >= kSlotCount)
+        return {};
+    const int32_t first = only_slot < 0 ? 0 : only_slot;
+    const int32_t end = only_slot < 0 ? kSlotCount : only_slot + 1;
+    if (first < 0)
+        return {};
     const auto host_record = lobby_presence_record(lobby, static_cast<int32_t>(host));
     const auto host_state =
         netgame::presence_mutators_state(host_record.data(), host_record.size());
-    if (!host_state)
+    if (!host_state) {
+        for (int32_t player_slot = first; player_slot < end; ++player_slot) {
+            if (player_slot == static_cast<int32_t>(host))
+                continue;
+            if (!lobby_remote_oa_player(lobby, player_slot))
+                continue;
+            const auto row = lobby_presence_record(lobby, player_slot);
+            if (netgame::presence_mutators_state(row.data(), row.size()))
+                return {MutatorsHold::receiving, player_slot, netgame::presence_mutator_index_none};
+        }
         return {};
+    }
     // A failed build is named even when the built flag is also clear.
     if (host_state->failed)
         return {MutatorsHold::host_failed, static_cast<int32_t>(host), host_state->index};
@@ -147,16 +148,10 @@ MutatorsBlock block_for(Lobby& lobby, int32_t only_slot) noexcept {
             netgame::presence_mutator_index_none
         };
     }
-    if (only_slot >= kSlotCount)
-        return {};
-    const int32_t first = only_slot < 0 ? 0 : only_slot;
-    const int32_t end = only_slot < 0 ? kSlotCount : only_slot + 1;
-    if (first < 0)
-        return {};
     for (int32_t player_slot = first; player_slot < end; ++player_slot) {
         if (player_slot == static_cast<int32_t>(host))
             continue;
-        if (!other_machine_oa(lobby, player_slot))
+        if (!lobby_remote_oa_player(lobby, player_slot))
             continue;
         const auto row = lobby_presence_record(lobby, player_slot);
         const auto row_state = netgame::presence_mutators_state(row.data(), row.size());
@@ -169,15 +164,70 @@ MutatorsBlock block_for(Lobby& lobby, int32_t only_slot) noexcept {
     return {};
 }
 
-/// Tells whether this machine hosts.
-///
-/// @param lobby Lobby state.
-/// @return True when the local player's block says host.
-bool hosting(Lobby& lobby) noexcept {
+} // namespace
+
+bool lobby_remote_oa_player(Lobby& lobby, int32_t player_slot) noexcept {
+    if (lobby.game == nullptr || player_slot < 0 || player_slot >= kSlotCount)
+        return false;
+    const auto& player = slot_player(lobby, player_slot);
+    if (!slot_remote_playing(lobby, player))
+        return false;
+    const auto* info = player_info(lobby, player);
+    if (info == nullptr)
+        return false;
+    return netgame::sent_by_open_annihilation(reinterpret_cast<const uint8_t*>(info));
+}
+
+bool lobby_hosts(Lobby& lobby) noexcept {
     return lobby.game != nullptr && (local_info(lobby).role & kRoleHost) != 0;
 }
 
-} // namespace
+bool lobby_room_mutator_field(
+    RoomMutatorPhase phase,
+    const netgame::PresenceDigest& digest,
+    const netgame::PresenceDigest& folded,
+    uint8_t index,
+    uint8_t total,
+    uint8_t held,
+    std::span<const uint8_t> codes,
+    netgame::PresenceMutators* out
+) {
+    if (out == nullptr || phase == RoomMutatorPhase::none)
+        return false;
+    if (total < 1 || total > netgame::presence_mutators_max || held > total)
+        return false;
+    netgame::PresenceMutators field;
+    field.digest = digest;
+    field.total = total;
+    field.held = held;
+    field.index = netgame::presence_mutator_index_none;
+    switch (phase) {
+    case RoomMutatorPhase::receiving:
+        break;
+    case RoomMutatorPhase::lacking:
+        field.lacking = true;
+        field.index = index;
+        break;
+    case RoomMutatorPhase::built:
+        field.built = true;
+        field.layer_digest = folded;
+        field.index = index;
+        break;
+    case RoomMutatorPhase::failed:
+        field.failed = true;
+        field.index = index;
+        break;
+    case RoomMutatorPhase::none:
+        break;
+    }
+    for (uint8_t at = 0; at < total; ++at) {
+        const uint8_t code =
+            at < codes.size() ? codes[at] : static_cast<uint8_t>(MutatorHave::unknown);
+        netgame::presence_mutator_set_state(field.states, at, code);
+    }
+    *out = std::move(field);
+    return true;
+}
 
 MutatorHave lobby_mutator_have(Lobby& lobby, int32_t slot, uint8_t position) noexcept {
     if (position >= netgame::presence_mutators_max)
@@ -217,7 +267,7 @@ bool lobby_mutators_differ_from_host(Lobby& lobby, int32_t slot) noexcept {
 }
 
 void lobby_log_mutators_hold(Lobby& lobby) noexcept {
-    if (!hosting(lobby))
+    if (!lobby_hosts(lobby))
         return;
     const auto block = lobby_mutators_block(lobby);
     if (lobby.mutators_hold_seen && block.hold == lobby.mutators_hold_logged.hold &&
