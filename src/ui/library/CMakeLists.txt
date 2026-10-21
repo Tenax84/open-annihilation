@@ -10,7 +10,7 @@
 # the questions about the mod the game plays: SWITCH OFF's, PLAY NOW's
 # refusal and ROLL BACK's (mod_questions.hpp), UNINSTALL's rules, its
 # question and its notices (uninstall.hpp), and the order of a mutator's
-# prerequisites (prerequisites.cpp).
+# prerequisites, the download plan and GET WITH's question (prerequisites.cpp).
 add_library(oa-ui-library src/library.cpp src/search.cpp src/text.cpp
   src/content.cpp src/game_icon.cpp src/update_question.cpp src/mod_questions.cpp
   src/uninstall.cpp src/prerequisites.cpp)
@@ -58,7 +58,8 @@ if(BUILD_TESTING)
   set_tests_properties(ui-library-uninstall PROPERTIES TIMEOUT 30)
 
   # The order of mutator prerequisites: the closure, the dependants and
-  # whether a list keeps every prerequisite above what needs it.
+  # whether a list keeps every prerequisite above what needs it; and the
+  # download plan, GET WITH and its question.
   add_executable(oa-ui-library-prerequisites-test tests/prerequisites_test.cpp)
   target_link_libraries(oa-ui-library-prerequisites-test PRIVATE oa-ui-library oa-test-support
     oa-options)

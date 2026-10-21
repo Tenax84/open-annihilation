@@ -1453,6 +1453,9 @@ enum class Action : uint8_t {
     /// against the mod being played, with the mutator's default options.
     /// It never switches the mutator on.
     check_with_mod,
+    /// GET WITH on a mutator whose plan holds more than itself. The host
+    /// asks, then queues every step, prerequisites first. It takes GET's place.
+    get_with,
 };
 
 /// Returns the action an expansion's download arrow asks for.
@@ -1509,7 +1512,11 @@ struct ActionButton {
 /// does not work with the mod being played), then CHECK WITH THIS MOD for
 /// an installed copy whose verdict is set (off during a game and while that
 /// check is running), then UNINSTALL and OPEN FOLDER when installed, then
-/// HOMEPAGE when the listing has one.
+/// HOMEPAGE when the listing has one. GET WITH takes GET's place when
+/// `get_plan` holds more than the mutator, or is blocked before it can:
+/// it names the one missing prerequisite, or how many more there are, and
+/// it is off with the plan's reason. A queued step shows CANCEL on that
+/// step's own entry, as a queued GET does.
 ///
 /// @param library the Library
 /// @param entry one of its entries

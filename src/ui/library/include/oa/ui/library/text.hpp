@@ -77,6 +77,46 @@ inline constexpr std::string_view action_homepage = "HOMEPAGE";
 /// On an installed mutator whose verdict is set. It checks that copy, with
 /// its default options, against the mod being played.
 inline constexpr std::string_view action_check_with_mod = "CHECK WITH THIS MOD";
+/// GET's place when one prerequisite is missing. `{name}` is that prerequisite.
+inline constexpr std::string_view action_get_with = "GET WITH {name}";
+/// GET's place when more than one package besides the mutator will download.
+inline constexpr std::string_view action_get_with_more = "GET WITH {count} MORE";
+/// The question GET WITH asks.
+inline constexpr std::string_view get_with_title = "Get {name}?";
+/// The question's paragraph when one prerequisite is missing. `{prerequisite}`
+/// is its name and range; `{short}` is the name alone.
+inline constexpr std::string_view get_with_body_one =
+    "{name} needs {prerequisite}, which you don't have. Both download now, and {short} goes above "
+    "{name} in every list.";
+/// The question's paragraph when several prerequisites are missing.
+/// `{prerequisites}` joins their names and ranges.
+inline constexpr std::string_view get_with_body_many =
+    "{name} needs {prerequisites}, which you don't have. They download first, and go above {name} "
+    "in every list.";
+/// After a package's name and version on the question: the registry it comes from.
+inline constexpr std::string_view get_with_from = " · from {registry}";
+/// The question's button when two packages download.
+inline constexpr std::string_view action_get_both = "GET BOTH";
+/// The question's button when three or more packages download.
+inline constexpr std::string_view action_get_all = "GET ALL";
+/// The details note when one prerequisite downloads first. `{names}` is its name.
+inline constexpr std::string_view note_downloads_first =
+    "{names} downloads first, then sits above {name} in every list.";
+/// The details note when several prerequisites download first. `{names}` joins them.
+inline constexpr std::string_view note_download_first =
+    "{names} download first, then sit above {name} in every list.";
+/// Why GET WITH is off: no listing offers the prerequisite inside its range.
+inline constexpr std::string_view blocked_prerequisite =
+    "Needs {name} {range}, which no registry offers";
+/// Why GET WITH is off: the mutators name each other. `{ids}` joins the ids in the loop.
+inline constexpr std::string_view blocked_cycle = "These mutators need each other: {ids}";
+/// The uninstall question, before its last paragraph, when one other installed
+/// mutator needs this one.
+inline constexpr std::string_view uninstall_needed_by_one =
+    "{name} needs it: it stays installed, and cannot be switched on until this is back.";
+/// The same paragraph when several other installed mutators need this one.
+inline constexpr std::string_view uninstall_needed_by_many =
+    "{names} need it: they stay installed, and cannot be switched on until this is back.";
 inline constexpr std::string_view action_details = "DETAILS";
 /// BACK on Compact's details page. It returns to the list, which keeps its place.
 inline constexpr std::string_view action_back = "BACK";
