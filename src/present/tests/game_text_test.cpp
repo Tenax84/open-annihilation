@@ -530,8 +530,23 @@ void keeps_finished_layers() {
     shared.settings.style.outline = false;
     const auto bare = present::modern_text("ab", present::TextFace::label, 2, full);
     OA_CHECK(bare && same_layers(*bare, built(2, true)) && !same_layers(*bare, *changed));
+    // The advance alone is the advance of the layers, for every border and
+    // scale.
+    for (const bool outline : {false, true})
+        for (const bool shadow : {false, true})
+            for (const int32_t scale : {1, 2, 3})
+                for (const int32_t size : {present::lowest_text_size, full, 200}) {
+                    shared.settings.style.outline = outline;
+                    shared.settings.style.shadow = shadow;
+                    const auto advance =
+                        present::modern_text_advance("ab", present::TextFace::label, scale, size);
+                    const auto layers =
+                        present::modern_text("ab", present::TextFace::label, scale, size);
+                    OA_CHECK(advance && layers && *advance == layers->advance);
+                }
     present::forget_text_layers();
     present::set_game_text_hooks({});
+    OA_CHECK(!present::modern_text_advance("ab", present::TextFace::label, 1, full));
 }
 
 void sizes_text_from_the_setting() {

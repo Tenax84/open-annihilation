@@ -545,10 +545,10 @@ int Runtime::match_text_width(
     for (const auto& run :
          renderer::split_game_text(text, renderer::fnt_font_characters(font), true)) {
         if (run.modern)
-            if (const auto layers = oa::present::modern_text(
+            if (const auto advance = oa::present::modern_text_advance(
                     run.text, renderer::fnt_font_face(font), scale, painted_text_size(run)
                 )) {
-                width += layers->advance;
+                width += *advance;
                 continue;
             }
         const std::string bytes =
