@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Rules whose target is maps/*.ota are held out of the rules phase and
-// applied to the chosen map, before any maps hook. Contributions combine
-// without regard to list order: assignments and metas average, factors
-// multiply, and clamps widen.
+// applied to the chosen map, before any maps hook. Each mutator runs in
+// list order, through the same rules step the units rules use.
 #pragma once
 
 #include "oa/data/mutation_rules/apply.hpp"
@@ -44,22 +43,20 @@ split_map_rules(std::span<const oa::data::mutation_rules::MutatorRules> rules);
 /// Applies map rules to the chosen map's OTA alone.
 ///
 /// The set gains that OTA at `map.ota_path` when the path is set, otherwise
-/// at `maps/<key>.ota`, from `map.ota`, when it is not already loaded. The
-/// combination does not follow list order. An assignment replaces a factor
-/// inside one mutator and resets that mutator's clamps. Across mutators,
-/// assignments average, metas average and win over plain numbers, factors
-/// multiply after ordering by their exact bits and then their rule text,
-/// and clamps widen. A number is written only through the TDF number
-/// spelling, and only when it is finite and different.
+/// at `maps/<key>.ota`, from `map.ota`, when it is not already loaded. Each
+/// mutator is one rules step, in list order, sharing one apply state. A
+/// block's needs read the map as the rules before that block left it. A
+/// later mutator sees the earlier one's writes, including a `SurfaceMetal`
+/// copied onto the schemas.
 ///
 /// The field check uses the maps header limits and refuses every key that
 /// is not a key of `[GlobalHeader]`. A header `SurfaceMetal` is not written
 /// there: the check refuses it with `copied to every schema's SurfaceMetal`,
-/// and a kept number is then written to every schema through the schema
-/// metal check. A header `MohoMetal` is refused with `nothing in OA reads
-/// MohoMetal; skipped` and written nowhere. Both refusals are
-/// `check_refused` notes. Schema writes are `FieldWrite`s whose block is
-/// `Schema N`.
+/// and after that mutator's step a kept number is written to every schema
+/// through the schema metal check. A header `MohoMetal` is refused with
+/// `nothing in OA reads MohoMetal; skipped` and written nowhere. Both
+/// refusals are `check_refused` notes. Schema writes are `FieldWrite`s
+/// whose block is `Schema N`.
 ///
 /// @param maps map-rule mutators, in list order
 /// @param map the chosen map; its bytes are the OTA before these rules

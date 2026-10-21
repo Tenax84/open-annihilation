@@ -349,61 +349,91 @@ void test_wind_clamp() {
     OA_CHECK(field_is(header_of(tree), "minwindspeed", "4000"));
 }
 
-void test_either_order() {
+void test_wind_sequence() {
     const rules::MutatorRules still = rules_from("ridge-still", "assign0.sm");
     const rules::MutatorRules breeze = rules_from("ridge-breeze", "wind.sm");
     const mutators::ChosenMap map = chosen("ridge-metal", fixture("schemas.ota"));
     for (int order = 0; order < 2; ++order) {
         std::vector<rules::MutatorRules> list;
+        const char* expect = "4000";
         if (order == 0) {
             list.push_back(still);
             list.push_back(breeze);
         } else {
             list.push_back(breeze);
             list.push_back(still);
+            expect = "0";
         }
         rules::DocumentSet documents;
         const rules::ApplyResult result = mutators::apply_map_rules(list, map, documents);
         tdf::OwnedDocument tree;
         OA_CHECK(tree.parse(applied_text(documents)));
-        OA_CHECK(field_is(header_of(tree), "minwindspeed", "4000"));
-        bool lifted = false;
+        OA_CHECK(field_is(header_of(tree), "minwindspeed", expect));
+        std::string last;
         for (const rules::FieldWrite& write : result.writes) {
-            if (write.key == "minwindspeed") {
-                lifted = write.new_text == "4000";
-            }
+            if (write.key == "minwindspeed" && write.new_text.has_value())
+                last = *write.new_text;
         }
-        OA_CHECK(lifted);
+        OA_CHECK(last == expect);
     }
 }
 
-void test_average_metal() {
+void test_metal_sequence() {
     const rules::MutatorRules light = rules_from("ridge-light", "metal32.sm");
     const rules::MutatorRules heavy = rules_from("ridge-heavy", "metal128.sm");
-    std::vector<rules::MutatorRules> list;
-    list.push_back(light);
-    list.push_back(heavy);
+    for (int order = 0; order < 2; ++order) {
+        std::vector<rules::MutatorRules> list;
+        const char* expect = "128";
+        const char* earlier = "32";
+        if (order == 0) {
+            list.push_back(light);
+            list.push_back(heavy);
+        } else {
+            list.push_back(heavy);
+            list.push_back(light);
+            expect = "32";
+            earlier = "128";
+        }
+        rules::DocumentSet documents;
+        const rules::ApplyResult result = mutators::apply_map_rules(
+            list, chosen("ridge-metal", fixture("schemas.ota")), documents
+        );
+        tdf::OwnedDocument tree;
+        OA_CHECK(tree.parse(applied_text(documents)));
+        const tdf::Block* header = header_of(tree);
+        OA_CHECK(field_of(header, "SurfaceMetal") == nullptr);
+        OA_CHECK(field_is(tdf::find_child(header, "Schema 0"), "SurfaceMetal", expect));
+        OA_CHECK(field_is(tdf::find_child(header, "Schema 1"), "SurfaceMetal", expect));
+        std::string last0;
+        std::string last1;
+        bool saw_earlier = false;
+        for (const rules::FieldWrite& write : result.writes) {
+            if (write.key != "SurfaceMetal" || !write.new_text.has_value())
+                continue;
+            if (*write.new_text == earlier)
+                saw_earlier = true;
+            if (write.block == "Schema 0")
+                last0 = *write.new_text;
+            if (write.block == "Schema 1")
+                last1 = *write.new_text;
+        }
+        OA_CHECK(saw_earlier);
+        OA_CHECK(last0 == expect);
+        OA_CHECK(last1 == expect);
+        OA_CHECK(note_has(
+            result, rules::NoteKind::check_refused, "copied to every schema's SurfaceMetal"
+        ));
+    }
+}
+
+void test_later_block_sees_write() {
     rules::DocumentSet documents;
-    const rules::ApplyResult result =
-        mutators::apply_map_rules(list, chosen("ridge-metal", fixture("schemas.ota")), documents);
+    apply_one("sees.sm", chosen("ridge-lava", fixture("lava.ota")), documents);
     tdf::OwnedDocument tree;
     OA_CHECK(tree.parse(applied_text(documents)));
     const tdf::Block* header = header_of(tree);
-    OA_CHECK(field_of(header, "SurfaceMetal") == nullptr);
-    OA_CHECK(field_is(tdf::find_child(header, "Schema 0"), "SurfaceMetal", "80"));
-    OA_CHECK(field_is(tdf::find_child(header, "Schema 1"), "SurfaceMetal", "80"));
-    int schema_writes = 0;
-    for (const rules::FieldWrite& write : result.writes) {
-        if (write.block == "Schema 0" || write.block == "Schema 1") {
-            OA_CHECK(write.key == "SurfaceMetal");
-            OA_CHECK(write.new_text == "80");
-            ++schema_writes;
-        }
-    }
-    OA_CHECK(schema_writes == 2);
-    OA_CHECK(
-        note_has(result, rules::NoteKind::check_refused, "copied to every schema's SurfaceMetal")
-    );
+    OA_CHECK(field_is(header, "lavaworld", "0"));
+    OA_CHECK(field_is(header, "waterdamage", "30"));
 }
 
 void test_absent_factor_and_moho() {
@@ -458,7 +488,7 @@ bool journal_schema(
 ) {
     for (const mutators::JournalEntry& entry : result.journal.entries) {
         if (entry.record == record && entry.field == "surfacemetal" && entry.block.empty() &&
-            entry.new_text == text && entry.phase == mutators::Phase::hooks &&
+            entry.new_text == text && entry.phase == mutators::Phase::rules &&
             entry.collection == mutators::Collection::other)
             return true;
     }
@@ -624,8 +654,9 @@ int main() {
     test_split();
     test_lava_group();
     test_wind_clamp();
-    test_either_order();
-    test_average_metal();
+    test_wind_sequence();
+    test_metal_sequence();
+    test_later_block_sees_write();
     test_absent_factor_and_moho();
     test_fractional_whole();
     const Scratch scratch("R04-map-rules");

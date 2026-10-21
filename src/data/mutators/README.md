@@ -286,9 +286,10 @@ a skirmish session must read its rewrite back through the session loader.
 
 `data-mutators-map-rules` (`tests/map_rules_test.cpp`) applies rule
 files that name `maps/*.ota` to one made-up map. It checks the split, the
-combination, the schema copy of a header `SurfaceMetal`, a skipped
-`MohoMetal`, a maps hook that reads the rules' result, a dry run with no
-map, a refused `.tnt` target and a missing `maps` layer.
+list order, a later block reading an earlier write, the schema copy of a
+header `SurfaceMetal`, a skipped `MohoMetal`, a maps hook that reads the
+rules' result, a dry run with no map, a refused `.tnt` target and a
+missing `maps` layer.
 
 ## Limitations
 
@@ -1334,23 +1335,22 @@ mutator's manifest must declare the `maps` layer, or the plan is refused
 the same way as any other undeclared layer.
 
 Those blocks run at the start of the maps phase, before the first maps
-hook, and only on the chosen map's OTA. Needs read that file as it stands.
-Across mutators, assignments of one field average, meta values average and
-win over plain numbers, factors multiply after ordering by their exact
-value bits and then their rule text, and clamps widen to the lowest low
-and the highest high. Inside one mutator the last kind of change wins, an
-assignment resets that mutator's factors and clamps, and scales multiply
-in file order. A number is written with the TDF number spelling when it
-is finite and different from the current number. The header limits are
-the ones a maps hook uses. A whole-number header key may be left
-fractional when the result is finite and from 0 to 32,767. A key that is
-not on `[GlobalHeader]` is refused.
+hook, and only on the chosen map's OTA. Each mutator's map rules run in
+list order, and each mutator's blocks run in file order. A block's needs
+read the map as the rules before that block left it. A factor multiplies
+the current number. An assignment replaces it. A clamp bounds only that
+scale. A number is written with the TDF number spelling when it is finite
+and different from the current number. The header limits are the ones a
+maps hook uses. A whole-number header key may be left fractional when the
+result is finite and from 0 to 32,767. A key that is not on
+`[GlobalHeader]` is refused.
 
 A header `SurfaceMetal`, in any case, is not written into `[GlobalHeader]`.
 The rules note `copied to every schema's SurfaceMetal`, and a kept number
 is copied onto every `[Schema N]` through the schema check (a whole number
-from 0 to 255). A value outside that range is refused for each schema, and
-the OTA is not served. A removal, or text that is not a number, is not
+from 0 to 255) before the next mutator's rules run. A value outside that
+range is refused for each schema, and no schema is written. Other changes
+are still served. A removal, or text that is not a number, is not
 copied, and a note says so. A factor on a header that has no `SurfaceMetal`
 changes nothing. A header `MohoMetal` changes nothing and is noted with
 `nothing in OA reads MohoMetal; skipped`.

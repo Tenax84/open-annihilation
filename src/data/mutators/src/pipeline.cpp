@@ -119,8 +119,8 @@ constexpr TargetLayerRow k_target_layers[] = {
 
 /// A rule folder that needs its own layer, ahead of the kind table.
 struct FolderLayerRow {
-    const char* folder;
-    oamut::Layer layer;
+    const char* folder{};
+    oamut::Layer layer{};
 };
 
 constexpr FolderLayerRow k_folder_layers[] = {
@@ -4320,9 +4320,9 @@ struct HeldMapRules {
 
 /// Applies held `maps/*.ota` rules to the chosen map, before any maps hook.
 ///
-/// Writes join the maps journal with D07's record names. Notes join the
-/// report. A changed OTA replaces `working` so the hooks read it back. An
-/// unreadable map fails the first mutator that held map rules.
+/// Writes join the journal as rules, with D07's record names. Notes join
+/// the report. A changed OTA replaces `working` so the hooks read it back.
+/// An unreadable map fails the first mutator that held map rules.
 HeldMapRules apply_held_map_rules(
     const std::vector<Plan>& plans,
     const std::vector<uint8_t>& active,
@@ -4377,7 +4377,7 @@ HeldMapRules apply_held_map_rules(
                 owner = ids[*index];
             }
         }
-        entry.phase = Phase::hooks;
+        entry.phase = Phase::rules;
         entry.collection = Collection::other;
         entry.change = write.new_text.has_value() ? Change::set : Change::removed_field;
         if (write.block.empty())
@@ -4807,7 +4807,9 @@ bool run_pass(
             served_ota
         );
         if (!held.error.empty()) {
-            first.offer(held.slot, Phase::hooks, Cause::engine_error, held.error);
+            const Phase failed =
+                held.error == "the chosen map could not be read" ? Phase::rules : Phase::hooks;
+            first.offer(held.slot, failed, Cause::engine_error, held.error);
             maps_done = false;
         }
         for (std::size_t slot = 0; slot < count && slot < first.slot && maps_done; ++slot) {

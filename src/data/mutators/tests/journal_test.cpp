@@ -175,7 +175,7 @@ void test_rule_notes() {
         OA_CHECK(conflict.severity == mutators::Severity::note);
         OA_CHECK(
             mutators::describe(conflict, k_ids) ==
-            "ridge-tough, ridge-tougher refused a write on units/rgcom.fbi maxdamage"
+            "ridge-tough, ridge-tougher refused a write on units/rgcom.fbi maxdamage: kept"
         );
     }
 
