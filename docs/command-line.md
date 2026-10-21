@@ -180,7 +180,7 @@ finds it at the start of the output. The version line is the last line.
 
 | Option | What it does |
 |---|---|
-| `--mutator PATH\|ID[:OPTION=VALUE,...]` | Applies one mutator to every match this run starts. Repeat it for several, in the order given, each acting on the game as the ones before it left it. `PATH` is a package folder, one that holds `oamut.yaml`. `ID` is a mutator installed in the Mutators folder. Options follow the first `:` that is followed by a name and `=`, as `name=value` pairs joined by `,`. A toggle is `true` or `false`, a choice one of its values, and a number a step inside its range. |
+| `--mutator PATH\|ID[:OPTION=VALUE,...]` | Applies one mutator to every match this run starts. Repeat it for several, in the order given, each acting on the game as the ones before it left it. `PATH` is a package folder, one that holds `oamut.yaml`. `ID` is a mutator installed in the Mutators folder. Options follow the first `:` that is followed by a name and `=`, as `name=value` pairs joined by `,`. A path that starts with a drive letter, `:` and `/` or `\` keeps that `:` on every platform, so `C:\Mods\pack:factor=4` is the folder `C:\Mods\pack` with `factor` set to 4. A toggle is `true` or `false`, a choice one of its values, and a number a step inside its range. |
 
 `--mutator packages/ridge-swift:factor=4` plays the package at that path
 with `factor` set to 4. `--mutator ridge-swift --mutator ridge-tough`

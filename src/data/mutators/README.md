@@ -74,12 +74,14 @@ Target `oa-data-mutators`, alias `oa::data::mutators`, namespace
 ## Choice text
 
 An id holds no `/` and no `\`. Anything else is a path to a package folder.
-A target that holds `:` is a path only when it names an existing folder or
-file; otherwise the text is refused. Options follow the first `:` that is
-followed by a name and `=`, and every name is an option id and every value
-an identifier, so a Windows drive letter such as `C:` stays in the path.
-The text is not trimmed. An empty text, an empty name or value, a repeated
-option and a `,` or `=` inside a value are refused.
+On every platform, a text that starts with a drive letter, `:` and `/` or
+`\`, as `C:\Mods\pack:factor=4` does, keeps that `:` in the path. A target
+that holds any other `:` is a path only when it names an existing folder or
+file; otherwise the text is refused. Options follow the first `:` after any
+drive that is followed by a name and `=`, and every name is an option id
+and every value an identifier. The text is not trimmed. An empty text, an
+empty name or value, a repeated option and a `,` or `=` inside a value are
+refused.
 
 `resolve_choice` looks an id up in the installed listing. A path is the
 package folder itself, and `oamut.yaml` is matched without ASCII case. A
@@ -97,12 +99,12 @@ folder.
 
 ## State
 
-None kept. `parse_choice` asks whether a target that holds `:` names an
-existing folder or file, and keeps nothing. `format_choice` reads nothing.
-`resolve_choice`
-reads one package's `oamut.yaml`, or the installed listing of the Mutators
-folder it is given. For a path, and for an id whose origin record names no
-SHA-256, it also reads every file of that folder (`folder_digest`). It
+None kept. `parse_choice` asks whether a target that holds a `:` other than
+a drive's names an existing folder or file, and keeps nothing.
+`format_choice` reads nothing. `resolve_choice` reads one package's
+`oamut.yaml`, or the installed listing of the Mutators folder it is given.
+For a path, and for an id whose origin record names no SHA-256, it also
+reads every file of that folder (`folder_digest`). It
 keeps nothing after it returns. `resolve_loadout` reads the installed
 listing, each package's manifest and, for a folder entry, every file of
 the installed folder. `loadout_of` and `applied_loadout` read nothing.
@@ -163,9 +165,10 @@ refused, each stop on the work budget inside the real-time limit. A clone whose 
 is refused and the layer serves nothing.
 
 `data-mutators-choice` (`tests/choice_test.cpp`) checks the choice text,
-including a Windows drive path, the round trip of `format_choice`, and
-`resolve_choice` for each option kind, against an installed mutator and
-against a package folder.
+including drive paths, which read the same on every platform, the round
+trip of `format_choice`, and `resolve_choice` for each option kind, against
+an installed mutator and against a package folder, by absolute and by
+relative path.
 
 `data-mutators-pipeline` (`tests/pipeline_test.cpp`) runs the made-up
 Ridge packages under `tests/data/mutators` through `run_pipeline`: rules in
