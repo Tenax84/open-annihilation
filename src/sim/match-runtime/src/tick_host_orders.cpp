@@ -281,7 +281,7 @@ void TickHost::destroy_order(oa::Unit& unit, sim::simulation_state::Order& order
     if (!(order.flags & 1))
         match.bridge_->reset_weapon_targets(s.record, 3);
     match.unlink_target_observer(record);
-    std::erase_if(match.orders_, [&](const auto& candidate) { return candidate.get() == &record; });
+    match.drop_order(record);
 }
 
 } // namespace oa::sim::match_runtime
