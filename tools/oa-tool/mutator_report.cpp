@@ -150,6 +150,18 @@ bool split_field(std::string_view key, std::string& section, std::string& name) 
     return !name.empty();
 }
 
+/// The dump's name for a child section: `[name]` for the first child of
+/// that name, ASCII case ignored, and `[name@N]` for the N-th, from 2.
+/// 3.1c's build pages repeat [GADGET2] to [GADGET6], and the game reads
+/// every gadget in file order.
+std::string child_label(const char* name, std::map<std::string, int>& seen) {
+    const std::string lowered = lower_ascii(name);
+    const int count = ++seen[lowered];
+    if (count == 1)
+        return "[" + lowered + "]";
+    return "[" + lowered + "@" + std::to_string(count) + "]";
+}
+
 /// Copies one block's fields, then its children.
 void collect_fields(const tdf::Block* block, const std::string& prefix, DumpedFile& file) {
     if (block == nullptr)
@@ -165,11 +177,12 @@ void collect_fields(const tdf::Block* block, const std::string& prefix, DumpedFi
         file.fields.insert_or_assign(prefix + " " + lower_ascii(key), std::string(value));
     }
     const uint32_t children = tdf::child_count(block);
+    std::map<std::string, int> seen;
     for (uint32_t index = 0; index < children; ++index) {
         const tdf::Block* const child = tdf::child_at(block, index);
         if (child == nullptr || child->name == nullptr)
             continue;
-        collect_fields(child, prefix + "[" + lower_ascii(child->name) + "]", file);
+        collect_fields(child, prefix + child_label(child->name, seen), file);
     }
 }
 
@@ -183,11 +196,12 @@ void parse_fields(std::string_view text, DumpedFile& file) {
     if (parsed && document.root != nullptr) {
         file.parsed = true;
         const uint32_t children = tdf::child_count(document.root);
+        std::map<std::string, int> seen;
         for (uint32_t index = 0; index < children; ++index) {
             const tdf::Block* const child = tdf::child_at(document.root, index);
             if (child == nullptr || child->name == nullptr)
                 continue;
-            collect_fields(child, "[" + lower_ascii(child->name) + "]", file);
+            collect_fields(child, child_label(child->name, seen), file);
         }
     }
     tdf::document_free(&document);

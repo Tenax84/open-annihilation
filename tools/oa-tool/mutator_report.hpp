@@ -45,7 +45,9 @@ struct DumpedFile {
     /// True when the file is FBI, TDF, GUI or OTA text that parsed.
     bool parsed{false};
     /// Parsed fields. The key is the lower-case section path, a space and
-    /// the lower-case field name: `[unitinfo] workertime`.
+    /// the lower-case field name: `[unitinfo] workertime`. A section whose
+    /// name repeats among its siblings is `[name@N]` from its second
+    /// occurrence on: `[gadget2@2] grayedout`.
     std::map<std::string, std::string> fields;
 };
 
