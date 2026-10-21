@@ -160,7 +160,7 @@ notes, and the downloadable mark through `load_download_menu` and
 `OA_UNIT_DEF_FLAG_DOWNLOADABLE`. It also runs a greyed page through
 `update_build_button_validity`. `data-mutators-menus-data` is the same
 program with `--data` (timeout 180 seconds): it reads the installed game
-and checks `menus:builds("ARMCOM")`, a grey of `ARMALAB` on `ARMCA`, and
+and checks `menus:builds("ARMCOM")`, a grey of `ARMALAB` on `ARMCK`, and
 that a builds-only hook serves nothing.
 
 `data-mutators-sides` (`tests/collections_sides_test.cpp`) runs made-up
@@ -496,6 +496,12 @@ to the next free slot and the report records "U moved from page p slot s
 to page p' slot s': taken by <who>". `<who>` is the earlier mutator, or the
 page itself when an authored page or an original download entry holds the
 slot.
+
+A download entry is the builder and the unit it names. The section
+name is the label written in the file (`MENUENTRY1`, `MENUENTRY2`,
+and so on). Two mutators can add different units to one builder, and
+each entry stays, because the menus find an entry by that builder and
+unit.
 
 A unit stays downloadable exactly when it was before the hooks, except a
 unit a hook removed from the game and a unit whose every download entry

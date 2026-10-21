@@ -1146,6 +1146,63 @@ void test_layers(const fs::path& game, const fs::path& packages) {
     }
 }
 
+void test_entry_identity(const fs::path& game, const fs::path& packages) {
+    write_package(
+        packages,
+        "ridge-add-plant",
+        "\"menus\"",
+        hook_script("menus", "collection:add(\"RGEMPTY\", \"RGPLANT\")")
+    );
+    write_package(
+        packages,
+        "ridge-add-base",
+        "\"menus\"",
+        hook_script("menus", "collection:add(\"RGEMPTY\", \"RGBASE\")")
+    );
+    mutators::PipelineResult added =
+        run_packages(game, packages, {"ridge-add-plant", "ridge-add-base"});
+    OA_CHECK(added.mutators.size() == 2);
+    if (added.mutators.size() == 2 && added.mutators[0].outcome == mutators::Outcome::applied &&
+        added.mutators[1].outcome == mutators::Outcome::applied) {
+        const std::string plant = served_text(find_served(added, "rgplant.tdf"));
+        const std::string base = served_text(find_served(added, "rgbase.tdf"));
+        OA_CHECK(
+            text_has(plant, "UNITNAME=RGPLANT") && text_has(plant, "UNITMENU=RGEMPTY") &&
+            text_has(plant, "[MENUENTRY1]") && !text_has(plant, "RGBASE")
+        );
+        OA_CHECK(
+            text_has(base, "UNITNAME=RGBASE") && text_has(base, "UNITMENU=RGEMPTY") &&
+            text_has(base, "[MENUENTRY1]") && !text_has(base, "RGPLANT")
+        );
+        check_note(added, "RGBASE's button has no picture on RGEMPTY");
+        OA_CHECK(find_note(added, "RGPLANT's button has no picture") == nullptr);
+    } else {
+        show_failure(added);
+    }
+
+    // Both sections use the positional name. The second unit is the one removed.
+    write_bytes(
+        game / "download" / "twinned.tdf",
+        "[MENUENTRY1]\r\n{\r\nUNITMENU=RGBLDR;\r\nMENU=2;\r\nBUTTON=4;\r\nUNITNAME=RGBASE;\r\n}"
+        "\r\n"
+        "[MENUENTRY1]\r\n{\r\nUNITMENU=RGBLDR;\r\nMENU=2;\r\nBUTTON=5;\r\nUNITNAME=RGPLANT;\r\n}"
+        "\r\n"
+    );
+    write_package(
+        packages,
+        "ridge-drop-plant",
+        "\"units\"",
+        hook_script("units", "collection.RGPLANT:remove()")
+    );
+    mutators::PipelineResult dropped = run_packages(game, packages, {"ridge-drop-plant"});
+    if (!applied(dropped))
+        return;
+    const std::string twinned = served_text(find_served(dropped, "twinned.tdf"));
+    OA_CHECK(text_has(twinned, "UNITNAME=RGBASE"));
+    OA_CHECK(!text_has(twinned, "RGPLANT"));
+    OA_CHECK(!text_has(twinned, "PLACEHOLDER"));
+}
+
 void test_unknown(const fs::path& game, const fs::path& packages) {
     write_package(
         packages,
@@ -1160,13 +1217,13 @@ void test_unknown(const fs::path& game, const fs::path& packages) {
     );
 }
 
-bool path_is_armca_gui(std::string_view path) {
+bool path_is_armck_gui(std::string_view path) {
     std::string folded = fold_copy(path);
     for (char& letter : folded) {
         if (letter == '\\')
             letter = '/';
     }
-    return folded.rfind("guis/armca", 0) == 0 && folded.size() >= 4 &&
+    return folded.rfind("guis/armck", 0) == 0 && folded.size() >= 4 &&
            folded.compare(folded.size() - 4, 4, ".gui") == 0;
 }
 
@@ -1199,17 +1256,19 @@ void test_game_data() {
     if (applied(read))
         OA_CHECK(read.layer.entries.empty());
 
+    // This install's construction kbot names the advanced lab. The aircraft's
+    // pages do not.
     write_package(
         packages,
-        "ridge-armca",
+        "ridge-armck",
         "\"menus\"",
-        hook_script("menus", "collection:grey(\"ARMCA\", \"ARMALAB\")")
+        hook_script("menus", "collection:grey(\"ARMCK\", \"ARMALAB\")")
     );
-    mutators::PipelineResult painted = run_on(store, packages, {"ridge-armca"});
+    mutators::PipelineResult painted = run_on(store, packages, {"ridge-armck"});
     if (applied(painted)) {
         OA_CHECK(!painted.layer.entries.empty());
         for (const oa::MutatorLayerEntry& entry : painted.layer.entries)
-            OA_CHECK(path_is_armca_gui(entry.path));
+            OA_CHECK(path_is_armck_gui(entry.path));
     }
 }
 
@@ -1231,5 +1290,6 @@ int main(int argc, char** argv) {
     test_removal_and_marks(game, packages, table);
     test_layers(game, packages);
     test_unknown(game, packages);
+    test_entry_identity(game, packages);
     return oa::test::check_exit_status();
 }

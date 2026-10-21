@@ -180,6 +180,7 @@ struct Entry {
     bool alive{true};
     bool from_file{false};
     bool externally_removed{false};
+    bool removal_noted{false};
     std::string placer;
     std::vector<KeySnap> keys;
 };
@@ -315,7 +316,9 @@ Entry make_placeholder() {
 
 Entry make_entry(std::string builder, std::string unit, int page, int slot, std::string placer) {
     Entry entry;
-    entry.section = "ENTRY";
+    // The section name is a positional label (MENUENTRY1, MENUENTRY2, …).
+    // The entry's identity is its builder and unit, so two entries are never
+    // told apart by that label. claim_section_name fills the label in.
     entry.unit_menu = std::move(builder);
     entry.unit_name = std::move(unit);
     // The page a player calls p is written MENU=p+1. BUTTON is the slot minus one.
@@ -403,10 +406,7 @@ struct Menus::State {
     }
 
     void end(std::span<const RecordRemoval> removals_this_turn) {
-        for (const RecordRemoval& removal : removals_this_turn) {
-            if (removal.kind == RemovalKind::download_entry)
-                note_external_removal(removal);
-        }
+        note_external_entries(removals_this_turn);
         for (const RecordRemoval& removal : removals_this_turn) {
             if (removal.kind != RemovalKind::unit)
                 continue;
@@ -666,14 +666,12 @@ struct Menus::State {
         hook_notes.push_back(std::move(note));
     }
 
-    void remember_removal(const DownloadFile& file, const Entry& entry) {
-        if (!entry.from_file || entry.externally_removed)
+    void remember_removal(const DownloadFile& file, Entry& entry) {
+        if (!entry.from_file || entry.externally_removed || entry.removal_noted)
             return;
-        for (const RecordRemoval& removal : record_removals) {
-            if (removal.kind == RemovalKind::download_entry && same_path(removal.path, file.path) &&
-                same_text(removal.name, entry.section))
-                return;
-        }
+        // One journal row per entry. A repeated section name is not the same
+        // entry: third-party files label entries by position.
+        entry.removal_noted = true;
         RecordRemoval removal;
         removal.mutator = actor_name();
         removal.kind = RemovalKind::download_entry;
@@ -1200,6 +1198,7 @@ struct Menus::State {
         const std::size_t dest_index = file.sections.size();
         note_ai_if_full(unit, builder, file_index, dest_index, file.path);
         Entry entry = make_entry(builder.canonical, unit.canonical, page, slot, actor_name());
+        claim_section_name(file, entry);
         file.actor = actor_name();
         file.dirty = true;
         file.sections.push_back(std::move(entry));
@@ -1265,6 +1264,7 @@ struct Menus::State {
         note_ai_if_full(unit, builder, file_index, dest_index, file.path);
         Entry entry =
             make_entry(builder.canonical, unit.canonical, landed.page, landed.slot, actor_name());
+        claim_section_name(file, entry);
         file.actor = actor_name();
         file.dirty = true;
         file.sections.push_back(std::move(entry));
@@ -1378,18 +1378,92 @@ struct Menus::State {
         }
     }
 
-    void note_external_removal(const RecordRemoval& removal) {
+    /// Marks entries a units hook already dropped, matched by builder and unit.
+    ///
+    /// The document is the source of which pairs remain. The section name is
+    /// not: two sections can share `MENUENTRY1` and name different units.
+    void note_external_entries(std::span<const RecordRemoval> removals) {
         for (DownloadFile& file : files) {
-            if (!same_path(file.path, removal.path))
-                continue;
-            for (Entry& entry : file.sections) {
-                if (!entry.alive || !same_text(entry.section, removal.name))
-                    continue;
-                entry.alive = false;
-                entry.externally_removed = true;
-                return;
+            bool listed = false;
+            for (const RecordRemoval& removal : removals) {
+                if (removal.kind == RemovalKind::download_entry &&
+                    same_path(removal.path, file.path)) {
+                    listed = true;
+                    break;
+                }
+            }
+            if (listed)
+                mark_missing_entries(file);
+        }
+    }
+
+    void mark_missing_entries(DownloadFile& file) {
+        struct Offer {
+            std::string menu;
+            std::string unit;
+
+            bool operator==(const Offer& other) const {
+                return menu == other.menu && unit == other.unit;
+            }
+        };
+
+        std::vector<Offer> present;
+        const rules::LoadedDocument* loaded = documents->find(file.path);
+        if (loaded != nullptr && !loaded->removed) {
+            const tdf::Block* root = loaded->document.root();
+            const uint32_t count = tdf::child_count(root);
+            for (uint32_t section_index = 0; section_index < count; ++section_index) {
+                const tdf::Block* section = tdf::child_at(root, section_index);
+                const char* menu =
+                    section != nullptr ? tdf::find_value(section, "UNITMENU") : nullptr;
+                const char* unit =
+                    section != nullptr ? tdf::find_value(section, "UNITNAME") : nullptr;
+                Offer offer;
+                offer.menu =
+                    fold_text(menu != nullptr ? std::string_view{menu} : std::string_view{});
+                offer.unit =
+                    fold_text(unit != nullptr ? std::string_view{unit} : std::string_view{});
+                present.push_back(std::move(offer));
             }
         }
+        for (Entry& entry : file.sections) {
+            if (!entry.alive || !entry.from_file)
+                continue;
+            Offer offer;
+            offer.menu = fold_text(entry.unit_menu);
+            offer.unit = fold_text(entry.unit_name);
+            const auto found = std::find(present.begin(), present.end(), offer);
+            if (found == present.end()) {
+                entry.alive = false;
+                entry.externally_removed = true;
+                continue;
+            }
+            present.erase(found);
+        }
+    }
+
+    [[nodiscard]] bool section_name_taken(const DownloadFile& file, std::string_view name) const {
+        for (const Entry& entry : file.sections) {
+            if (same_text(entry.section, name))
+                return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] std::string fresh_section_name(const DownloadFile& file) const {
+        for (int number = 1; number < 10000; ++number) {
+            std::string name = "MENUENTRY";
+            name += std::to_string(number);
+            if (!section_name_taken(file, name))
+                return name;
+        }
+        fail("a build menu could not be written");
+    }
+
+    void claim_section_name(const DownloadFile& file, Entry& entry) const {
+        if (!entry.section.empty() && !section_name_taken(file, entry.section))
+            return;
+        entry.section = fresh_section_name(file);
     }
 
     void grey_button(Page& page, Button& button, std::string_view record_name) {
@@ -1663,14 +1737,25 @@ struct Menus::State {
 
     void compact() {
         for (DownloadFile& file : files) {
+            std::size_t alive = 0;
+            for (const Entry& entry : file.sections) {
+                if (entry.alive)
+                    ++alive;
+            }
+            if (alive == file.sections.size()) {
+                if (file.sections.empty() && !file.created)
+                    file.hide = true;
+                continue;
+            }
+            // Move only when a dead entry is actually dropped. Moving every
+            // entry and then discarding the copy leaves the file empty.
             std::vector<Entry> kept;
-            kept.reserve(file.sections.size());
+            kept.reserve(alive);
             for (Entry& entry : file.sections) {
                 if (entry.alive)
                     kept.push_back(std::move(entry));
             }
-            if (kept.size() != file.sections.size())
-                file.sections = std::move(kept);
+            file.sections = std::move(kept);
             if (file.sections.empty() && !file.created)
                 file.hide = true;
         }
@@ -1699,17 +1784,21 @@ struct Menus::State {
         entry.from_file = false;
         entry.alive = true;
         entry.externally_removed = false;
+        entry.removal_noted = false;
         if (marked_unit) {
             if (!file.sections.empty() && file.sections[0].placeholder) {
                 remember_removal(file, file.sections[0]);
                 file.sections.erase(file.sections.begin());
             }
+            claim_section_name(file, entry);
             file.sections.insert(file.sections.begin(), std::move(entry));
         } else if (file.sections.empty() || !file.sections[0].placeholder) {
             file.sections.insert(file.sections.begin(), make_placeholder());
             journal_new_section(file, file.sections[0]);
+            claim_section_name(file, entry);
             file.sections.insert(file.sections.begin() + 1, std::move(entry));
         } else {
+            claim_section_name(file, entry);
             file.sections.insert(file.sections.begin() + 1, std::move(entry));
         }
         journal_new_section(file, marked_unit ? file.sections[0] : file.sections[1]);
