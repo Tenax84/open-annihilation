@@ -227,6 +227,43 @@ void log_applied(
 
 } // namespace
 
+bool resolve_run_mutator(
+    std::string_view text,
+    std::string_view version,
+    const std::filesystem::path& folder,
+    mutators::ResolvedMutator* resolved,
+    std::string* error
+) {
+    const auto fail = [&](std::string message) {
+        if (error != nullptr)
+            *error = std::move(message);
+        return false;
+    };
+    std::string parse_error;
+    const std::optional<mutators::MutatorChoice> choice =
+        mutators::parse_choice(text, &parse_error);
+    if (!choice)
+        return fail(std::move(parse_error));
+    std::string resolve_error;
+    const std::optional<mutators::ResolvedMutator> found =
+        mutators::resolve_choice(*choice, folder, &resolve_error);
+    if (!found)
+        return fail(std::move(resolve_error));
+    if (!version.empty()) {
+        const std::optional<oa::formats::oamut::Version> asked =
+            oa::formats::oamut::parse_version(version);
+        if (!asked || *asked != found->manifest.version) {
+            return fail(
+                "\"" + choice->target + "\" " + std::string(version) + " is not installed; " +
+                oa::formats::oamut::version_text(found->manifest.version) + " is"
+            );
+        }
+    }
+    if (resolved != nullptr)
+        *resolved = *found;
+    return true;
+}
+
 struct Runtime::MutatorState {
     std::vector<mutators::ResolvedMutator> chosen{};
     std::optional<mutators::PipelineResult> result{};
@@ -274,18 +311,81 @@ void Runtime::take_command_line_mutators() {
         user_folder_ / std::string(oa::data::mutator_library::mutators_folder_name);
     std::vector<mutators::ResolvedMutator> chosen;
     chosen.reserve(options_.mutators.size());
-    for (const std::string& value : options_.mutators) {
+    for (std::size_t index = 0; index < options_.mutators.size(); ++index) {
+        const std::string& value = options_.mutators[index];
+        const std::string version = index < options_.mutator_versions.size()
+                                        ? options_.mutator_versions[index]
+                                        : std::string{};
+        mutators::ResolvedMutator resolved;
         std::string error;
-        const std::optional<mutators::MutatorChoice> choice = mutators::parse_choice(value, &error);
-        if (!choice)
+        if (!resolve_run_mutator(value, version, folder, &resolved, &error)) {
+            if (index < options_.mutator_fields.size() && !options_.mutator_fields[index].empty())
+                throw std::runtime_error(options_.mutator_fields[index] + ": " + error);
             throw std::runtime_error("--mutator: " + value + ": " + error);
-        const std::optional<mutators::ResolvedMutator> resolved =
-            mutators::resolve_choice(*choice, folder, &error);
-        if (!resolved)
-            throw std::runtime_error("--mutator: " + value + ": " + error);
-        chosen.push_back(*resolved);
+        }
+        chosen.push_back(std::move(resolved));
     }
     choose_match_mutators(std::move(chosen));
+}
+
+std::string Runtime::launch_mutator_refusal(
+    std::string_view source,
+    const std::vector<std::string>& texts,
+    const std::vector<std::string>& versions,
+    const std::vector<std::string>& fields
+) const {
+    const fs::path folder =
+        user_folder_ / std::string(oa::data::mutator_library::mutators_folder_name);
+    std::vector<mutators::PipelineMutator> listed;
+    std::vector<std::string> installed;
+    listed.reserve(texts.size());
+    installed.reserve(texts.size());
+    for (std::size_t index = 0; index < texts.size(); ++index) {
+        const std::string version = index < versions.size() ? versions[index] : std::string{};
+        const std::string field =
+            index < fields.size() ? fields[index] : std::string("content.mutators");
+        std::string error;
+        mutators::ResolvedMutator resolved;
+        if (!resolve_run_mutator(texts[index], version, folder, &resolved, &error))
+            return std::string(source) + ": " + field + ": " + error;
+        mutators::PipelineMutator entry;
+        entry.package = resolved.folder;
+        entry.manifest = resolved.manifest;
+        entry.options = resolved.options;
+        installed.push_back(oa::formats::oamut::version_text(resolved.manifest.version));
+        listed.push_back(std::move(entry));
+    }
+    const std::string refusal = mutators::list_refusal(listed, installed);
+    if (!refusal.empty())
+        return std::string(source) + ": content.mutators: " + refusal;
+    return {};
+}
+
+std::string Runtime::take_launch_mutators(
+    std::string_view source,
+    std::vector<std::string> texts,
+    std::vector<std::string> versions,
+    std::vector<std::string> fields
+) {
+    const std::string refusal = launch_mutator_refusal(source, texts, versions, fields);
+    if (!refusal.empty())
+        return refusal;
+    const fs::path folder =
+        user_folder_ / std::string(oa::data::mutator_library::mutators_folder_name);
+    std::vector<mutators::ResolvedMutator> chosen;
+    chosen.reserve(texts.size());
+    for (std::size_t index = 0; index < texts.size(); ++index) {
+        const std::string version = index < versions.size() ? versions[index] : std::string{};
+        mutators::ResolvedMutator resolved;
+        if (!resolve_run_mutator(texts[index], version, folder, &resolved, nullptr))
+            return std::string(source) + ": content.mutators: a mutator could not be read";
+        chosen.push_back(std::move(resolved));
+    }
+    options_.mutators = std::move(texts);
+    options_.mutator_versions = std::move(versions);
+    options_.mutator_fields = std::move(fields);
+    choose_match_mutators(std::move(chosen));
+    return {};
 }
 
 void Runtime::apply_match_mutators(const MatchBootstrap&) {

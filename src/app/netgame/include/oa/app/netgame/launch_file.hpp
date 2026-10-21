@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace oa::app::netgame {
@@ -69,12 +70,30 @@ enum class QuitAfter : uint8_t {
     after_score ///< leave after the score
 };
 
+/// One mutator a launch names, in the order the file lists them.
+///
+/// The version is empty when the file names none. Each option is its id and
+/// its value as written. `on` and `true` are stored as `true`; `off` and
+/// `false` are stored as `false`.
+struct LaunchMutator {
+    std::string id{};
+    std::string version{};
+    std::vector<std::pair<std::string, std::string>> options{};
+};
+
+/// The most mutators one launch names. The same cap as one loadout.
+inline constexpr std::size_t kLaunchMutatorLimit = 32;
+
 /// The base game, expansions and mod a launch names for this run.
 struct LaunchContentChoice {
     std::string base_game{};               ///< content.base-game; empty when unnamed
     std::vector<std::string> expansions{}; ///< content.expansions
     std::string mod{};                     ///< content.mod, an id or a path
     bool named = false;                    ///< the launch has a content group with a choice
+    /// The mutators this launch names, top first. It does not set `named`.
+    std::vector<LaunchMutator> mutators{};
+    /// The file has `content.mutators`, including an empty list. It does not set `named`.
+    bool mutators_named = false;
 };
 
 /// What a launch asks to be told about the game: the status stream.
