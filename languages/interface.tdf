@@ -12969,3 +12969,83 @@
 	es=SALIR;
 	it=ESCI;
 	}
+
+[NEW CAMPAIGN]
+	{
+	de=NEUE KAMPAGNE;
+	fr=NOUVELLE CAMPAGNE;
+	es=NUEVA CAMPAÑA;
+	it=NUOVA CAMPAGNA;
+	}
+
+[LOAD GAME]
+	{
+	de=SPIEL LADEN;
+	fr=CHARGER UNE PARTIE;
+	es=CARGAR PARTIDA;
+	it=CARICA PARTITA;
+	}
+
+[SKIRMISH]
+	{
+	de=GEFECHT;
+	fr=ESCARMOUCHE;
+	es=ESCARAMUZA;
+	it=SCHERMAGLIA;
+	}
+
+[ANY MISSION]
+	{
+	de=BELIEBIGE MISSION;
+	fr=MISSION AU CHOIX;
+	es=CUALQUIER MISIÓN;
+	it=MISSIONE A SCELTA;
+	}
+
+[PREVIOUS MENU]
+	{
+	de=VORHERIGES MENÜ;
+	fr=MENU PRÉCÉDENT;
+	es=MENÚ ANTERIOR;
+	it=MENU PRECEDENTE;
+	}
+
+[Begin the Arm or the Core campaign from its first mission.]
+	{
+	de=Beginne die Kampagne der Arm oder der Core mit ihrer ersten Mission.;
+	fr=Commence la campagne Arm ou Core par sa première mission.;
+	es=Empieza la campaña Arm o Core desde su primera misión.;
+	it=Inizia la campagna Arm o Core dalla sua prima missione.;
+	}
+
+[Go on with a game you saved.]
+	{
+	de=Setze ein Spiel fort, das du gespeichert hast.;
+	fr=Reprends une partie que tu as sauvegardée.;
+	es=Continúa una partida que guardaste.;
+	it=Riprendi una partita che hai salvato.;
+	}
+
+[Fight computer players on a map you choose, with the sides, the resources and the rules you set.]
+	{
+	de=Kämpfe auf einer Karte deiner Wahl gegen Computerspieler, mit den Seiten, Ressourcen und Regeln, die du festlegst.;
+	fr=Affronte des joueurs ordinateur sur la carte de ton choix, avec les camps, les ressources et les règles que tu fixes.;
+	es=Lucha contra jugadores controlados por el ordenador en el mapa que elijas, con los bandos, los recursos y las reglas que fijes.;
+	it=Combatti contro giocatori controllati dal computer sulla mappa che scegli, con le fazioni, le risorse e le regole che imposti.;
+	}
+
+[Play any mission of either campaign.]
+	{
+	de=Spiele eine beliebige Mission einer der beiden Kampagnen.;
+	fr=Joue n'importe quelle mission de l'une ou l'autre campagne.;
+	es=Juega cualquier misión de cualquiera de las dos campañas.;
+	it=Gioca una missione qualsiasi di una delle due campagne.;
+	}
+
+[Go back to the main menu.]
+	{
+	de=Zurück zum Hauptmenü.;
+	fr=Reviens au menu principal.;
+	es=Vuelve al menú principal.;
+	it=Torna al menu principale.;
+	}

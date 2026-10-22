@@ -5339,11 +5339,25 @@ class Runtime final : public menu::Host,
 
     /// Keeps Open Annihilation's main menu (runtime_main_menu.cpp) on the OA
     /// layer while the main menu shows: puts it under every other screen
-    /// when the layer has none. Not while the run takes the game's own menu
-    /// (Options::classic_main_menu), an add-on's overlay stands over the
-    /// menu or a package owns the frame. OaLayer::tick calls it once a
-    /// frame.
+    /// when the layer has none. Not while an add-on's overlay stands over
+    /// the menu, nor while oa_menu_may_show says no. OaLayer::tick calls it
+    /// once a frame.
     void keep_main_menu_screen();
+
+    /// Keeps Open Annihilation's Single Player menu
+    /// (runtime_single_player_menu.cpp) on the OA layer while SINGLE.GUI
+    /// shows: puts it under every other screen when the layer has none.
+    /// Not while oa_menu_may_show says no. OaLayer::tick calls it once a
+    /// frame.
+    void keep_single_player_menu_screen();
+
+    /// Tells whether Open Annihilation's menus may cover the game's: not
+    /// while the run takes the game's own menus
+    /// (Options::classic_main_menu), a package owns the frame, a message
+    /// box of the game's shows, or the OA layer has no fonts.
+    ///
+    /// @return true while they may
+    [[nodiscard]] bool oa_menu_may_show();
 
     /// Tells whether Open Annihilation's main menu is on the OA layer. It
     /// covers MAINMENU.GUI, whose Library and Settings buttons then neither
@@ -5352,21 +5366,38 @@ class Runtime final : public menu::Host,
     /// @return true while it is
     [[nodiscard]] bool oa_main_menu_shown();
 
-    /// Tells whether Open Annihilation's main menu covers the whole of the
-    /// front end's picture this frame, so that nothing of MAINMENU.GUI's
-    /// picture shows: the frame then neither draws nor uploads it
-    /// (present_covered_front_end).
+    /// Tells whether Open Annihilation's Single Player menu is on the OA
+    /// layer, covering SINGLE.GUI.
     ///
-    /// @return true while it does
+    /// @return true while it is
+    [[nodiscard]] bool oa_single_player_menu_shown();
+
+    /// Tells whether one of Open Annihilation's menus covers the game's
+    /// screen shown now: the main menu over MAINMENU.GUI or the Single
+    /// Player menu over SINGLE.GUI. The covered screen's buttons then take
+    /// no input.
+    ///
+    /// @return true while one does
+    [[nodiscard]] bool oa_menu_shown();
+
+    /// Tells whether Open Annihilation's main menu or Single Player menu
+    /// covers the whole of the front end's picture this frame, so that
+    /// nothing of the game's screen under it shows: the frame then neither
+    /// draws nor uploads it (present_covered_front_end).
+    ///
+    /// @return true while one does
     [[nodiscard]] bool main_menu_covers_front_end();
 
-    /// Presses a button of MAINMENU.GUI as a click released on it does: the
-    /// main menu's handler takes it, plays its sound and moves the front end
-    /// on. Open Annihilation's main menu presses the game's buttons this way.
+    /// Presses a button of the game's screen shown as a click released on
+    /// it does: the screen's handler takes it, plays its sound and moves
+    /// the front end on. Open Annihilation's menus press the game's buttons
+    /// this way.
     ///
-    /// @param name the button's name in MAINMENU.GUI, such as SINGLE
-    /// @return true when the main menu shows that button and it takes a press
-    bool press_main_menu_gadget(std::string_view name);
+    /// @param shown the screen the button is on, Screen::main_menu or
+    ///     Screen::single_player
+    /// @param name the button's name in that screen's GUI, such as SINGLE
+    /// @return true when that screen shows that button and it takes a press
+    bool press_menu_gadget(Screen shown, std::string_view name);
 
     /// GET MAP over the battle room, as a screen of the OA layer
     /// (runtime_get_map.cpp).
@@ -15899,6 +15930,9 @@ class Runtime final : public menu::Host,
     // A package overlay stands over the main menu, so it takes the
     // MAINMENU.GUI laid out under that overlay.
     bool main_menu_overlay_ = false;
+    // The main menu's version label as Open Annihilation's main menu last
+    // read it; the Single Player menu shows it too.
+    std::string menu_version_;
     // Replaces the frontend clock while a headless check steps it.
     std::optional<uint32_t> fake_frontend_tick_;
     renderer::Surface modal_parent_surface_;

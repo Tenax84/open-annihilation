@@ -543,6 +543,12 @@ latched the closing key and drew a backdrop.
 
 ## Open Annihilation's main menu
 
+The main menu and the Single Player menu are both column menus
+(`column_menu.hpp`, `column_menu.cpp`): one screen made from a look, the
+buttons, their captions, a heading and the measures, that reads the game's
+screen under it for which buttons show, take a press and have a quick key.
+Both lie on the same backdrop, put together once and kept for either.
+
 `runtime_main_menu.cpp` keeps one screen, `main-menu`, at the bottom of the
 OA layer while the main menu shows (`Runtime::keep_main_menu_screen`, from
 `OaLayer::tick`, which puts it under every screen already there with
@@ -555,7 +561,7 @@ them.
 
 - **What the buttons do.** The game's buttons are pressed as a click
   released on MAINMENU.GUI's own records presses them
-  (`Runtime::press_main_menu_gadget`): SINGLE, MULTI, INTRO, EXIT, and the
+  (`Runtime::press_menu_gadget`): SINGLE, MULTI, INTRO, EXIT, and the
   record the mod profile names for the credits. Their sounds, their checks
   and the screens they lead to stay the game's. LIBRARY and SETTINGS open
   the Library and Settings as the OA buttons do. A record MAINMENU.GUI
@@ -569,7 +575,9 @@ them.
   quick keys and Escape stay the game's. Automation lists the buttons as
   `oa.main-menu.single-player` and so on.
 - **When it shows.** On the main menu, outside a match, while no package
-  owns the frame and no add-on's overlay stands over the menu. MAINMENU.GUI's
+  owns the frame, no add-on's overlay stands over the menu and no message
+  box of the game's shows: those boxes are drawn in the front end's
+  picture, so the menu steps aside while one is open. MAINMENU.GUI's
   Library and Settings buttons neither show nor take input under it.
   `--classic-main-menu` keeps the game's own menu, and so does every check
   and every unattended run, which drive MAINMENU.GUI's buttons where 3.1c
@@ -604,6 +612,39 @@ them.
   corners where MAINMENU.GUI's Library and Settings buttons stand. The
   captions are drawn in the dialog's fonts, not the title's.
 
+
+## Open Annihilation's Single Player menu
+
+`runtime_single_player_menu.cpp` keeps one screen, `single-player-menu`, at
+the bottom of the OA layer while SINGLE.GUI shows
+(`Runtime::keep_single_player_menu_screen`, from `OaLayer::tick`), on the
+same art and backdrop as the main menu: a smaller OPEN ANNIHILATION title,
+a SINGLE PLAYER heading between two metal rules, and one column of NEW
+CAMPAIGN, LOAD GAME, SKIRMISH, ANY MISSION and, standing apart with an
+arrow, PREVIOUS MENU. Beside the column a panel names the button
+under the pointer, or else the focused one, and says what it does; the
+panel shows only while the window has room for it beside the column.
+Under them the plate shows the main menu's version label.
+
+- **What the buttons do.** Each presses SINGLE.GUI's own record as a click
+  released on it does (`Runtime::press_menu_gadget`): NewCamp, LoadGame,
+  Skirmish, AnyMsn and PrevMenu, so their sounds, their checks and
+  the screens they lead to stay the game's. A record SINGLE.GUI grays out,
+  as LoadGame without saved games and Skirmish in the demo, shows faded
+  and takes no press; one it hides, as AnyMsn until its code is typed,
+  leaves its place, and the column closes up. SINGLE.GUI's Options has no
+  button: the main menu's Settings will hold what it sets.
+- **Input.** As the main menu's: the arrows, Tab, Return and Space are the
+  menu's, Options' quick key O goes no further
+  (`ColumnMenuFacts::withheld_keys`), and every other key goes on to
+  SINGLE.GUI, whose quick keys,
+  Escape and the code that shows Any Mission stay the game's. Automation
+  lists the buttons as `oa.single-player-menu.new-campaign` and so on, and
+  not SINGLE.GUI's records under them.
+- **When it shows.** As the main menu: not with `--classic-main-menu`,
+  while a package owns the frame, or while a message box of the game's is
+  open. Its frames are left out as the main menu's are
+  (`Runtime::main_menu_covers_front_end`).
 ## The Library
 
 `library_host.hpp`, `runtime_library.cpp` and `runtime_library_actions.cpp`
