@@ -29,6 +29,8 @@ option(OA_BUILD_PLATFORM "Build the SDL3 image and audio shell" ON)
 option(OA_SANITIZERS "Build with AddressSanitizer and UndefinedBehaviorSanitizer; any report stops the process" OFF)
 option(OA_REQUIRE_GAME "Fail configuration when oa-game cannot be built" OFF)
 option(OA_SELF_CHECKS "Build the game's self-checks, the --check-* options the native checks run" ON)
+# This fork builds no tests unless asked: -DBUILD_TESTING=ON brings them back.
+option(BUILD_TESTING "Build the tests" OFF)
 include(CTest)
 # The native checks run the self-checks, so a build without them builds no
 # tests.
@@ -3506,6 +3508,12 @@ if(BUILD_TESTING)
     add_test(NAME doc-links-selftest COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_links.py --self-test)
     set_tests_properties(doc-links doc-links-selftest PROPERTIES TIMEOUT 60)
+    # The MCP server that drives the game through the automation endpoint
+    # (tools/mcp/oa_mcp_server.py) answers MCP's requests and every kind of
+    # tool against a stand-in endpoint.
+    add_test(NAME mcp-server-selftest COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tools/mcp/oa_mcp_server.py --self-test)
+    set_tests_properties(mcp-server-selftest PROPERTIES TIMEOUT 60)
     # The engine's C, C++ and Objective-C sources are laid out as
     # .clang-format says, by the clang-format release that
     # tools/format/requirements.txt pins (tools/format_sources.py, whose
