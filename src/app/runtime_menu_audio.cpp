@@ -18,20 +18,19 @@ void Runtime::start_menu_music() {
 }
 
 bool Runtime::menu_hum_waits() const {
-    // A --first-run walk shows again each time the menu settles, and its
-    // movies wait for a walk that will not: its hum waits for the walk's
-    // first end alone.
+    // A --first-run walk shows again each time the menu settles: its hum
+    // waits for the walk's first end alone.
     if (options_.first_run && setup_finished_)
         return false;
-    return options_.intro_after_setup;
+    return options_.hum_after_setup;
 }
 
 void Runtime::play_menu_voice(std::string_view sound) {
-    // The setup is still to finish, and the movies to play after it: the
-    // hum waits for both (start_waiting_menu_hum).
+    // The setup is still to finish: the hum waits for it
+    // (start_waiting_menu_hum).
     if (menu_hum_waits()) {
         if (!menu_hum_waiting_)
-            std::cout << "menu hum: waits for the setup and the movies after it\n" << std::flush;
+            std::cout << "menu hum: waits for the setup\n" << std::flush;
         menu_hum_waiting_ = true;
         return;
     }

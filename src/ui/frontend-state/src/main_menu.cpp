@@ -73,6 +73,7 @@ void handle_event(State& state, const Event& event, Host& host) {
             return;
         host.select_cursor_animation(menu_cursor_animation_index);
         state.movie_skip = host.shift_key_state() < 0 ? 1U : 0U;
+        state.logo_before_intro = true;
         host.drain_input();
         host.check_frontend_integrity();
         state.state = state_id::intro_followup;

@@ -138,42 +138,32 @@ logs it.
 
 ## The start's movies and the menu hum
 
-The game starts with two movies, the logo movie and the intro (the mod
-profile's `media.movies`, `1.zrb` and `2.zrb` for 3.1c), unless
-`--skip-intro` or the game's `-c`, `-n` or `-y` skips them, or a key ends
-them. The main menu's hum, the BGM loop on the alternate route
+The game starts without the logo movie and the intro (the mod profile's
+`media.movies`, `1.zrb` and `2.zrb` for 3.1c). The main menu's INTRO plays
+both, the logo then the intro (`State::logo_before_intro`, set in the main
+menu and read by the dispatcher's intro state), and a key ends each. The
+main menu's hum, the BGM loop on the alternate route
 (`Runtime::play_menu_voice`, `runtime_menu_audio.cpp`), starts with the
-main menu once the movies are over, never while one plays:
+main menu:
 
-- A start that does not show the setup plays the movies in `run_once`
-  (`main.cpp`) before the archives are mounted. The runtime then opens the
-  main menu, which starts the hum.
+- A start that does not show the setup opens the main menu, which starts
+  the hum.
 - A start that shows the setup, the first start and a `--first-run` start,
-  keeps the movies until the setup will not show again
-  (`Options::intro_after_setup`, `Runtime::play_intro_after_setup`), and
-  the hum waits with them (`Runtime::menu_hum_waits`): it does not play
-  through the setup window, the copy, the mounting of the archives or the
-  setup's steps over the main menu. When the walk ends, the movies play,
-  and the frame after them the hum starts
-  (`Runtime::start_waiting_menu_hum`); with the movies skipped it starts
-  as the walk ends. A `--first-run` start shows the setup again each time
-  the menu settles, so its movies never come: its hum starts once the walk
-  is first finished.
+  keeps the hum waiting until the setup will not show again
+  (`Options::hum_after_setup`, `Runtime::end_setup_wait`,
+  `Runtime::menu_hum_waits`): it does not play through the setup window,
+  the copy, the mounting of the archives or the setup's steps over the main
+  menu. The frame after the walk ends the hum starts
+  (`Runtime::start_waiting_menu_hum`). A `--first-run` start shows the
+  setup again each time the menu settles: its hum starts once the walk is
+  first finished.
 
 The hum stops as a match starts (`Runtime::stop_menu_music`) and starts
 again as the game returns to the menus; a movie the menus play holds it
 while it plays (`Runtime::play_movie_resource`). `--mute` and headless runs
 play none of it, but the log says what it does in every run: `menu hum:
-waits for the setup and the movies after it` when it waits, and `menu hum:
-starts`, with `(muted)` or `(headless)`, each time it starts, after the
-movies' `intro 1.ZRB: decoded …` lines. `native-menu-hum-start` and
-`native-menu-hum-start-skip-intro` check that order on a start without the
-setup, with the movies and with `--skip-intro`; `native-menu-hum-setup`
-that the hum still waits once the setup window has copied the game and the
-archives are mounted; and `native-menu-hum-first-run` and
-`native-menu-hum-first-run-skip-intro` that, when the setup's walk over the
-menu ends, the movies play first and the hum starts after them, or at once
-when they are skipped.
+waits for the setup` when it waits, and `menu hum: starts`, with `(muted)`
+or `(headless)`, each time it starts.
 
 ## Adding a screen or overlay
 

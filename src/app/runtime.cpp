@@ -17,7 +17,6 @@
 #include "oa/base/float_precision.hpp"
 #include "oa/data/defs/version.hpp"
 #include "oa/formats/hpi.hpp"
-#include "oa/media/intro_player.hpp"
 #include "oa/platform/app_loop.hpp"
 #include "oa/platform/preferences.hpp"
 #include "oa/ui/engine_settings.hpp"
@@ -47,102 +46,6 @@
 #include <vector>
 
 namespace oa::app {
-
-namespace {
-
-/// The window a movie plays in, so Alt+Enter and a lost device are handled.
-struct IntroWindow {
-    SDL_Window* window{};
-    SDL_Renderer* renderer{};
-    RendererHost* host{};
-    FullScreenSwitch* full_screen{};
-};
-
-/// Plays one movie file and writes the intro line.
-///
-/// @param options the parsed command line
-/// @param path the movie file
-/// @param snapshot true when the intro movie may write --snapshot
-/// @param shown the window; null for a headless run
-void play_intro_file(
-    const Options& options, const fs::path& path, bool snapshot, IntroWindow* shown
-) {
-    if (!fs::exists(path)) {
-        std::cerr << "intro missing: " << path_to_utf8(path) << '\n';
-        return;
-    }
-    auto opened = oa::media::IntroPlayer::open(path);
-    if (!opened) {
-        std::cerr << "intro skip " << path_to_utf8(path.filename()) << ": " << opened.error << '\n';
-        return;
-    }
-    oa::media::PlaybackOptions playback;
-    playback.headless_check = options.headless_check;
-    playback.frame_limit = options.frame_limit.value_or(0);
-    playback.play_audio = !options.headless_check && !options.mute;
-    if (shown != nullptr && shown->window != nullptr) {
-        playback.window = shown->window;
-        playback.renderer = shown->host != nullptr ? shown->host->renderer() : shown->renderer;
-        playback.hooks.context = shown;
-        // The movie player does not hand its events on, so whether Alt+Enter
-        // took one does not matter. A lost device is noted for after the movie.
-        playback.hooks.window_event = [](void* context, const SDL_Event& event) {
-            auto& display = *static_cast<IntroWindow*>(context);
-            if (display.host != nullptr && display.host->take_event(event))
-                return;
-            if (display.full_screen != nullptr)
-                std::ignore = take_full_screen_event(display.window, *display.full_screen, event);
-        };
-    }
-    if (snapshot)
-        playback.snapshot_path = options.snapshot;
-    auto result = opened.player->play(playback);
-    if (shown != nullptr && shown->host != nullptr)
-        shown->host->service();
-    if (!result.ok()) {
-        std::cerr << "intro " << path_to_utf8(path.filename()) << ": " << result.error << '\n';
-        return;
-    }
-    std::cout << "intro " << path_to_utf8(path.filename()) << ": decoded " << result.decoded_frames
-              << " frame(s)" << (result.skipped ? ", skipped\n" : "\n");
-}
-
-} // namespace
-
-void play_intro_movies(
-    const Options& options,
-    SDL_Window* window,
-    SDL_Renderer* renderer,
-    RendererHost* host,
-    FullScreenSwitch* full_screen
-) {
-    // The game's -c, -n and -y switches skip the movies too. This path does
-    // not read PlayMovie: a start without the setup still plays the movies
-    // every time, and 3.1c plays them under those switches while PlayMovie
-    // is set. A switch that skips them is what leaves them unplayed.
-    if (options.skip_intro || options.launch.skip_intro != 0)
-        return;
-    // The logo movie, then the intro. The mod profile names each file
-    // (media.movies), and an empty name plays none there. A mod folder's
-    // movie replaces the game folder's.
-    const oa::AssetStore folders(options.game_folders);
-    IntroWindow shown{window, renderer, host, full_screen};
-    IntroWindow* place = window != nullptr ? &shown : nullptr;
-    const auto play = [&](std::string_view name, bool snapshot) {
-        if (name.empty())
-            return;
-        const auto found = folders.loose_file(std::string("Data/") + std::string(name));
-        play_intro_file(
-            options, found ? *found : options.game_dir / "Data" / std::string(name), snapshot, place
-        );
-    };
-    const oa::data::mod_profile::MediaMovies base_movies{};
-    const auto& movies = options.mod_profile ? options.mod_profile->media.movies : base_movies;
-    play(movies.logo, false);
-    play(movies.intro, true);
-    // The movies present on the game's renderer.
-    oa::base::float_precision::restore_program_float_control();
-}
 
 bool setup_shows_over_menu(const Options& options) {
     namespace first_run = oa::ui::first_run;

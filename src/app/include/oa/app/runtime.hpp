@@ -186,23 +186,6 @@ struct WorldDrawList;
 class GafFrameCache;
 class RendererHost;
 
-/// Plays the logo and the intro the game starts with, unless a switch skips
-/// them. The window may be null for a headless run. A device lost while a
-/// movie plays is made again before this returns.
-///
-/// @param options the parsed command line, with the mod profile played
-/// @param window the window the movies show in; null for a headless run
-/// @param renderer that window's renderer; null with the window
-/// @param host what made the renderer; null when there is none
-/// @param full_screen Alt+Enter's switch, updated while a movie plays; null when there is none
-void play_intro_movies(
-    const Options& options,
-    SDL_Window* window,
-    SDL_Renderer* renderer,
-    RendererHost* host,
-    FullScreenSwitch* full_screen
-);
-
 /// Reports whether this start will show the setup over the menu. The same
 /// facts the runtime's gate uses once the video driver can be read.
 ///
@@ -4088,11 +4071,11 @@ class Runtime final : public menu::Host,
     /// done; leaving another way does not, so it returns.
     void tell_first_run();
 
-    /// Plays the intro that waited for the setup, once the setup will not
-    /// show again, and writes "first-run: done" before it. A start that did
-    /// not wait returns without playing. The main menu's hum waited with the
-    /// intro, and starts after it (start_waiting_menu_hum).
-    void play_intro_after_setup();
+    /// Ends the wait for the setup once the setup will not show again, and
+    /// writes "first-run: done". A start that did not wait returns at once.
+    /// The main menu's hum waited for the setup, and starts after it
+    /// (start_waiting_menu_hum).
+    void end_setup_wait();
 
     /// Writes "first-run: not showing" once when the setup stays hidden, and
     /// again when that reason changes.
@@ -14034,9 +14017,8 @@ class Runtime final : public menu::Host,
     void play_menu_voice(std::string_view sound);
 
     /// Tells whether the main menu's hum waits: while the setup is still to
-    /// finish and the movies to play after it (Options::intro_after_setup).
-    /// A --first-run start, whose setup shows again and whose movies wait
-    /// for a walk that will not, waits only until the walk is first finished.
+    /// finish (Options::hum_after_setup). A --first-run start, whose setup
+    /// shows again, waits only until the walk is first finished.
     ///
     /// @return true while the hum waits
     [[nodiscard]] bool menu_hum_waits() const;

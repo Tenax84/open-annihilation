@@ -78,6 +78,10 @@ void dispatch(State& s, Host& h, const StateHandler& extension) {
         const auto resource =
             s.state == state_id::intro_followup ? movie::intro_followup : movie::ending_5;
         call(Step::shut_down_resource);
+        if (s.state == state_id::intro_followup && s.logo_before_intro) {
+            s.logo_before_intro = false;
+            h.play_movie(s, movie::intro);
+        }
         h.play_movie(s, resource);
         transition(state_id::main_menu);
         return;

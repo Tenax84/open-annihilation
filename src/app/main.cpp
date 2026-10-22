@@ -572,29 +572,6 @@ struct HostDisplay {
     }
 };
 
-/// Plays the movies the game starts with, the logo then the intro, unless a
-/// switch skips them.
-///
-/// @param options the parsed command line, with the mod profile played
-/// @param host the window the movies show in; null for a headless run
-void play_intro(const Options& options, HostDisplay* host) {
-    const uint32_t intro_began = oa::platform::tick_ms();
-    if (host == nullptr) {
-        play_intro_movies(options, nullptr, nullptr, nullptr, nullptr);
-        oa::platform::log_files::note_timing_span("intro", intro_began);
-        return;
-    }
-    // Alt+Enter switches full screen during the movies as it does in the game.
-    play_intro_movies(
-        options,
-        host->window,
-        host->renderer_host.renderer(),
-        &host->renderer_host,
-        &host->full_screen
-    );
-    oa::platform::log_files::note_timing_span("intro", intro_began);
-}
-
 /// Writes each game file and listing a run looks up to a file, one a line,
 /// from whichever thread looks it up (--trace-lookups).
 class LookupLog {
@@ -1822,14 +1799,11 @@ int run_once(
         if (options.check_game_files && options.game_files_route == GameFilesRoute::manage &&
             !run_game_files_manage_check(options, display.window, display.renderer_host.renderer()))
             return finish_game_files_check(options, 1);
-    // While the setup will still show, the movies wait until its last step,
-    // and the main menu's hum waits for them (Runtime::play_menu_voice). A
-    // start that does not show it plays them here, before the archives are
-    // mounted and the runtime opens the main menu, which starts the hum.
+    // The game starts without the logo and the intro; the main menu's INTRO
+    // plays them. While the setup will still show, the main menu's hum waits
+    // until its last step (Runtime::play_menu_voice).
     if (options.restarts == 0 && setup_shows_over_menu(options))
-        options.intro_after_setup = true;
-    else if (options.restarts == 0)
-        play_intro(options, options.headless_check ? nullptr : &display);
+        options.hum_after_setup = true;
     oa::base::float_precision::restore_program_float_control();
     oa::AssetStore assets(options.game_folders);
     if (lookup_log != nullptr)

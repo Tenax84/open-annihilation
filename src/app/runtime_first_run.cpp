@@ -1237,8 +1237,8 @@ void FirstRunHost::finish(Runtime& runtime) {
     // A --first-run start's menu hum waits for this (Runtime::menu_hum_waits).
     runtime.setup_finished_ = true;
     // Skip setup and Start playing both end the walk. --first-run shows it
-    // again, so the movies stay until that return will not happen.
-    runtime.play_intro_after_setup();
+    // again, so the wait stays until that return will not happen.
+    runtime.end_setup_wait();
 }
 
 void FirstRunHost::apply_online(Runtime& runtime, bool online_on) {
@@ -1310,7 +1310,7 @@ void FirstRunHost::retry_download(Runtime& runtime, const first_run::Session& se
 }
 
 void FirstRunHost::tell(Runtime& runtime) {
-    runtime.play_intro_after_setup();
+    runtime.end_setup_wait();
     runtime.log_first_run_gate(true);
     if (runtime.oa_layer_ == nullptr)
         return;
@@ -1365,19 +1365,13 @@ void Runtime::tell_first_run() {
     FirstRunHost::tell(*this);
 }
 
-void Runtime::play_intro_after_setup() {
-    if (!options_.intro_after_setup)
+void Runtime::end_setup_wait() {
+    if (!options_.hum_after_setup)
         return;
-    // 3.1c plays the logo and the intro before the menu is used, while
-    // PlayMovie is set. The setup is that arrival, so the movies wait until
-    // the walk will not show again. A switch that skips them plays nothing
-    // on this start; that is the same skip a start without the setup uses.
     if (first_run::decide(FirstRunHost::facts_for(*this, true)) == first_run::Hold::show)
         return;
-    options_.intro_after_setup = false;
+    options_.hum_after_setup = false;
     std::cout << "first-run: done\n" << std::flush;
-    RendererHost* host = render_run_ ? render_run_->host : nullptr;
-    play_intro_movies(options_, sdl_.window, sdl_.renderer, host, &full_screen_switch_);
 }
 
 void Runtime::log_first_run_gate(bool sdl_ready) {

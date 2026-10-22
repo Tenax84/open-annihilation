@@ -103,6 +103,9 @@ struct State {
     int32_t play_intro_movie{}; // [PlayMovie] preference
     int32_t skip_intro{};       // command-line switch; suppresses the intro
     uint32_t movie_skip{}; // Game.movie_skip; INTRO sets it to 1 when Shift is held, 0 otherwise
+    // Set by the main menu's INTRO: the logo movie plays before the intro,
+    // as the game no longer plays either when it starts.
+    bool logo_before_intro{};
     std::array<PlayerSlot, limits::player_count> players{};
     // The display's mode flags (flags::fullscreen_mode); the intro reads them
     // after Step::get_video_context and the cursor call.

@@ -507,10 +507,9 @@ struct Options {
     // Shows the first-run setup even when the preference says it is done,
     // and in a run that would otherwise leave it closed.
     bool first_run = false;
-    // The logo and the intro wait until the setup will not show again, then
-    // play before the menu is used. A start that does not show the setup
-    // leaves this clear and plays them where it always has.
-    bool intro_after_setup = false;
+    // The main menu's hum waits until the setup will not show again. A start
+    // that does not show the setup leaves this clear.
+    bool hum_after_setup = false;
     // Walks the first-run setup over the main menu: a built-in language, a
     // pack that fails and then retries, Skip setup, and both online choices.
     bool check_first_run = false;
