@@ -19,3 +19,7 @@
 # The pseudo language pack's files are read back byte for byte by the pack
 # tests, its warm-up text included.
 /src/data/languages/tests/pseudo-pack/** -text
+
+# cmd.exe misreads labels and blocks in a batch file with bare line feeds,
+# so every checkout writes them with carriage returns.
+*.bat text eol=crlf
