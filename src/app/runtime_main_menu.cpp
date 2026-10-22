@@ -15,7 +15,9 @@
 // While a message box of the game's shows, the menu steps aside, and
 // MAINMENU.GUI shows under the box.
 
+#include "campaign_menu.hpp"
 #include "column_menu.hpp"
+#include "skirmish_menu.hpp"
 #include "oa_layer.hpp"
 
 #include "oa/app/runtime.hpp"
@@ -89,16 +91,24 @@ bool Runtime::oa_menu_shown() {
         return oa_main_menu_shown();
     if (screen_ == Screen::single_player)
         return oa_single_player_menu_shown();
+    if (screen_ == Screen::new_campaign)
+        return oa_new_campaign_menu_shown();
+    if (screen_ == Screen::skirmish)
+        return oa_skirmish_menu_shown();
     return false;
 }
 
 bool Runtime::main_menu_covers_front_end() {
-    if ((screen_ != Screen::main_menu && screen_ != Screen::single_player) ||
+    if ((screen_ != Screen::main_menu && screen_ != Screen::single_player &&
+         screen_ != Screen::new_campaign && screen_ != Screen::skirmish) ||
         sdl_.renderer == nullptr || frame_without_cursor_ || !oa_menu_may_show())
         return false;
     OaLayer& layer = oa_layer();
     const LayerScreen* menu = layer.find(
-        screen_ == Screen::main_menu ? main_menu_screen_name : single_player_menu_screen_name
+        screen_ == Screen::main_menu       ? main_menu_screen_name
+        : screen_ == Screen::single_player ? single_player_menu_screen_name
+        : screen_ == Screen::new_campaign  ? new_campaign_menu_screen_name
+                                           : skirmish_menu_screen_name
     );
     if (menu == nullptr || !menu->opaque())
         return false;
@@ -117,7 +127,7 @@ bool Runtime::oa_menu_may_show() {
            oa::ui::frontend_dialogs::dialog_count() == 0 && oa_layer().screen_fonts() != nullptr;
 }
 
-bool Runtime::press_menu_gadget(Screen shown, std::string_view name) {
+bool Runtime::press_menu_gadget(Screen shown, std::string_view name, int32_t mouse_button) {
     if (screen_ != shown)
         return false;
     const auto found = gui_record_named(resources_.layout.gadgets, name);
@@ -125,10 +135,18 @@ bool Runtime::press_menu_gadget(Screen shown, std::string_view name) {
         !frontend_gadget_pressable(*found))
         return false;
     // As a click released on the record: the record is the selection while
-    // the screen's handler reads it.
+    // the screen's handler reads it. NEWGAME.GUI's handler reads the record
+    // under the pointer, which the record is then as well.
+    const auto pointed = hovered_;
     selected_ = static_cast<int32_t>(*found);
+    if (shown == Screen::new_campaign)
+        hovered_ = *found;
+    event_button_ = mouse_button;
     activate();
+    event_button_ = 1;
     selected_ = -1;
+    if (shown == Screen::new_campaign)
+        hovered_ = screen_ == shown ? pointed : std::nullopt;
     return true;
 }
 

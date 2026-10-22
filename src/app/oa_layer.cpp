@@ -2721,6 +2721,8 @@ void OaLayer::tick() {
     lay_out_screens();
     runtime_.keep_main_menu_screen();
     runtime_.keep_single_player_menu_screen();
+    runtime_.keep_new_campaign_menu_screen();
+    runtime_.keep_skirmish_menu_screen();
     runtime_.keep_presence_card_screen();
     runtime_.keep_more_maps_screen();
     runtime_.keep_get_map_screen();

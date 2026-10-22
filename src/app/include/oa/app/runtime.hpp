@@ -74,6 +74,7 @@
 #include "oa/app/content/downloads.hpp"
 #include "oa/app/content/settings.hpp"
 #include "oa/app/renderer_records.hpp"
+#include "oa/app/window_icon.hpp"
 #include "oa/ui/frontend_renderer/scroll_bars.hpp"
 #include "oa/present/world_renderer/world_radar.hpp"
 #include "oa/sim/messages.hpp"
@@ -5351,6 +5352,41 @@ class Runtime final : public menu::Host,
     /// frame.
     void keep_single_player_menu_screen();
 
+    /// Keeps Open Annihilation's New Campaign screen
+    /// (runtime_new_campaign_menu.cpp) on the OA layer while NEWGAME.GUI
+    /// shows for a new campaign: puts it under every other screen when the
+    /// layer has none. Not while oa_menu_may_show says no. OaLayer::tick
+    /// calls it once a frame.
+    void keep_new_campaign_menu_screen();
+
+    /// Tells whether Open Annihilation's New Campaign screen is on the OA
+    /// layer, covering NEWGAME.GUI.
+    ///
+    /// @return true while it is
+    [[nodiscard]] bool oa_new_campaign_menu_shown();
+
+    /// Returns a side's emblem for Open Annihilation's menus: Arm's and
+    /// Core's logos, the first frames of NEWGAME's Side0 and Side1 art, and
+    /// for a side past them, or one whose logo is missing, its commander's
+    /// picture from unitpics.
+    ///
+    /// @param side the side, by its place in the side data
+    /// @param logos the GAF archive holding Side0 and Side1, NEWGAME's
+    /// @return the picture; empty for none
+    [[nodiscard]] WindowIcon side_emblem(std::size_t side, const oa::formats::gaf::Archive& logos);
+
+    /// Keeps Open Annihilation's Skirmish screen
+    /// (runtime_skirmish_menu.cpp) on the OA layer while SKIRMISH.GUI
+    /// shows: puts it under every other screen when the layer has none. Not
+    /// while oa_menu_may_show says no. OaLayer::tick calls it once a frame.
+    void keep_skirmish_menu_screen();
+
+    /// Tells whether Open Annihilation's Skirmish screen is on the OA layer,
+    /// covering SKIRMISH.GUI.
+    ///
+    /// @return true while it is
+    [[nodiscard]] bool oa_skirmish_menu_shown();
+
     /// Tells whether Open Annihilation's menus may cover the game's: not
     /// while the run takes the game's own menus
     /// (Options::classic_main_menu), a package owns the frame, a message
@@ -5373,17 +5409,19 @@ class Runtime final : public menu::Host,
     [[nodiscard]] bool oa_single_player_menu_shown();
 
     /// Tells whether one of Open Annihilation's menus covers the game's
-    /// screen shown now: the main menu over MAINMENU.GUI or the Single
-    /// Player menu over SINGLE.GUI. The covered screen's buttons then take
-    /// no input.
+    /// screen shown now: the main menu over MAINMENU.GUI, the Single Player
+    /// menu over SINGLE.GUI, the New Campaign screen over NEWGAME.GUI or the
+    /// Skirmish screen over SKIRMISH.GUI. The covered screen's buttons then
+    /// take no input.
     ///
     /// @return true while one does
     [[nodiscard]] bool oa_menu_shown();
 
-    /// Tells whether Open Annihilation's main menu or Single Player menu
-    /// covers the whole of the front end's picture this frame, so that
-    /// nothing of the game's screen under it shows: the frame then neither
-    /// draws nor uploads it (present_covered_front_end).
+    /// Tells whether Open Annihilation's main menu, Single Player menu, New
+    /// Campaign screen or Skirmish screen covers the whole of the front
+    /// end's picture this frame, so that nothing of the game's screen under
+    /// it shows: the frame then neither draws nor uploads it
+    /// (present_covered_front_end).
     ///
     /// @return true while one does
     [[nodiscard]] bool main_menu_covers_front_end();
@@ -5393,11 +5431,13 @@ class Runtime final : public menu::Host,
     /// the front end on. Open Annihilation's menus press the game's buttons
     /// this way.
     ///
-    /// @param shown the screen the button is on, Screen::main_menu or
-    ///     Screen::single_player
+    /// @param shown the screen the button is on, Screen::main_menu,
+    ///     Screen::single_player, Screen::new_campaign or Screen::skirmish
     /// @param name the button's name in that screen's GUI, such as SINGLE
+    /// @param mouse_button the button the click is of, 1 left or 2 right, as
+    ///     SKIRMISH.GUI's colour, metal and energy buttons tell them apart
     /// @return true when that screen shows that button and it takes a press
-    bool press_menu_gadget(Screen shown, std::string_view name);
+    bool press_menu_gadget(Screen shown, std::string_view name, int32_t mouse_button = 1);
 
     /// GET MAP over the battle room, as a screen of the OA layer
     /// (runtime_get_map.cpp).
@@ -5673,12 +5713,48 @@ class Runtime final : public menu::Host,
 
     /// Clicks the hovered gadget of the new-campaign or any-mission screen.
     ///
-    /// PrevMenu returns to Single Player; the side buttons show the chosen
-    /// side's Arm/Core and emblem buttons pressed, save the side and refill the
-    /// Campaign list with its campaigns (and, on Any Mission, the Missions
-    /// list); Difficulty cycles and saves the difficulty; Start marks
-    /// every mission unplayed and opens the chosen mission's briefing.
+    /// PrevMenu returns to Single Player; the side buttons choose their side
+    /// (choose_campaign_side); Difficulty steps to the next difficulty
+    /// (choose_campaign_difficulty); Start marks every mission unplayed and
+    /// opens the chosen mission's briefing.
     void activate_campaign_gadget();
+
+    /// Chooses the side whose campaigns NEWGAME.GUI lists: Arm's and Core's
+    /// buttons and emblems show pressed for either of them, the side is
+    /// saved, and the Campaign list is filled again with its campaigns,
+    /// selecting the side's own (discover_campaigns). A side past the side
+    /// data's chooses nothing.
+    ///
+    /// @param side the side, by its place in the side data
+    void choose_campaign_side(uint32_t side);
+
+    /// Selects a row of NEWGAME.GUI's Campaign list, as a press on it does:
+    /// a row other than the selected one lists its campaign's missions. A row
+    /// past the list selects nothing.
+    ///
+    /// @param row the row
+    void choose_campaign_row(std::size_t row);
+
+    /// Sets and saves the difficulty NEWGAME.GUI's Difficulty button shows
+    /// and the campaign is played at.
+    ///
+    /// @param difficulty 0 easy, 1 medium or 2 hard; another chooses nothing
+    void choose_campaign_difficulty(uint32_t difficulty);
+
+    /// Tells how many sides the campaign screens offer: the side data's,
+    /// at most as many as NEWGAME.GUI's setup holds, and Arm and Core when
+    /// the side data has none.
+    ///
+    /// @return the count
+    [[nodiscard]] uint32_t campaign_side_count() const;
+
+    /// Returns the name a side's campaigns name it by: its name in the side
+    /// data, as ARM and CORE are in 3.1c's.
+    ///
+    /// @param side the side, by its place in the side data
+    /// @return the name; ARM for side 0 and CORE for another the side data
+    ///     does not name
+    [[nodiscard]] std::string campaign_side_name(uint32_t side) const;
 
     /// Starts NEWGAME.GUI's choice, as its Start button does.
     ///
@@ -14623,7 +14699,7 @@ class Runtime final : public menu::Host,
 
     /// Tells whether the game data holds a campaign for a side.
     ///
-    /// @param side 0 for Arm, 1 for Core
+    /// @param side the side, by its place in the side data: 0 for Arm, 1 for Core
     /// @return true when a campaign file names the side
     [[nodiscard]] bool side_has_campaign(uint32_t side);
 

@@ -4448,37 +4448,46 @@ void Runtime::activate_campaign_gadget() {
     // The side buttons refill the Campaign list with the chosen side's
     // campaigns and, on Any Mission, the Missions list.
     if (name == "Side0" || name == oa::data::defs::side_name(0)) {
-        set_button_status(oa::data::defs::side_name(0), 1);
-        set_button_status("Side0", 1);
-        preferences_.side = 0;
-        write_number(init::general_section, "side", 0);
-        flush_preferences();
-        discover_campaigns();
-        sync_campaign_option_widgets();
-        rebuild_surface();
+        choose_campaign_side(0);
         return;
     }
     if (name == "Side1" || name == oa::data::defs::side_name(1)) {
-        set_button_status(oa::data::defs::side_name(1), 1);
-        set_button_status("Side1", 1);
-        preferences_.side = 1;
-        write_number(init::general_section, "side", 1);
-        flush_preferences();
-        discover_campaigns();
-        sync_campaign_option_widgets();
-        rebuild_surface();
+        choose_campaign_side(1);
         return;
     }
     if (name == "Difficulty") {
-        preferences_.difficulty = (preferences_.difficulty + 1U) % 3U;
-        write_number(init::general_section, "Difficulty", preferences_.difficulty);
-        flush_preferences();
-        sync_campaign_option_widgets();
-        rebuild_surface();
+        choose_campaign_difficulty((preferences_.difficulty + 1U) % 3U);
         return;
     }
     if (name == "Start")
         start_campaign_setup();
+}
+
+void Runtime::choose_campaign_side(uint32_t side) {
+    if (side >= campaign_side_count())
+        return;
+    // NEWGAME.GUI has buttons for Arm and Core only; a side past them shows
+    // on Open Annihilation's New Campaign screen alone.
+    if (side < 2) {
+        set_button_status(oa::data::defs::side_name(static_cast<uint8_t>(side)), 1);
+        set_button_status(side == 0 ? "Side0" : "Side1", 1);
+    }
+    preferences_.side = side;
+    write_number(init::general_section, "side", side);
+    flush_preferences();
+    discover_campaigns();
+    sync_campaign_option_widgets();
+    rebuild_surface();
+}
+
+void Runtime::choose_campaign_difficulty(uint32_t difficulty) {
+    if (difficulty > 2)
+        return;
+    preferences_.difficulty = difficulty;
+    write_number(init::general_section, "Difficulty", preferences_.difficulty);
+    flush_preferences();
+    sync_campaign_option_widgets();
+    rebuild_surface();
 }
 
 void Runtime::start_campaign_setup() {

@@ -259,9 +259,10 @@ struct AutomationHostAccess {
             game.screen_ != Screen::loading && !game.frame_owned_by_package() &&
             !game.oa_menu_shown()
         )
-            // Open Annihilation's main menu and Single Player menu cover
-            // MAINMENU.GUI and SINGLE.GUI, whose buttons then take no input:
-            // only the menu's own are listed.
+            // Open Annihilation's main menu, Single Player menu, New
+            // Campaign screen and Skirmish screen cover MAINMENU.GUI,
+            // SINGLE.GUI, NEWGAME.GUI and SKIRMISH.GUI, whose buttons then
+            // take no input: only the menu's own are listed.
             frontend_controls(game, *controls);
         layer_controls(game, *controls);
         stacked_dialog_controls(*controls);

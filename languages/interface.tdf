@@ -13049,3 +13049,227 @@
 	es=Vuelve al menú principal.;
 	it=Torna al menu principale.;
 	}
+
+[SELECT SIDE]
+	{
+	de=SEITE WÄHLEN;
+	fr=CHOISIR UN CAMP;
+	es=ELEGIR BANDO;
+	it=SCEGLI FAZIONE;
+	}
+
+[SELECT CAMPAIGN]
+	{
+	de=KAMPAGNE WÄHLEN;
+	fr=CHOISIR UNE CAMPAGNE;
+	es=ELEGIR CAMPAÑA;
+	it=SCEGLI CAMPAGNA;
+	}
+
+[DIFFICULTY]
+	{
+	de=SCHWIERIGKEIT;
+	fr=DIFFICULTÉ;
+	es=DIFICULTAD;
+	it=DIFFICOLTÀ;
+	}
+
+[EASY]
+	{
+	de=LEICHT;
+	fr=FACILE;
+	es=FÁCIL;
+	it=FACILE;
+	}
+
+[MEDIUM]
+	{
+	de=MITTEL;
+	fr=MOYEN;
+	es=MEDIO;
+	it=MEDIO;
+	}
+
+[HARD]
+	{
+	de=SCHWER;
+	fr=DIFFICILE;
+	es=DIFÍCIL;
+	it=DIFFICILE;
+	}
+
+[START]
+	{
+	de=START;
+	fr=COMMENCER;
+	es=EMPEZAR;
+	it=INIZIA;
+	}
+
+[1 mission]
+	{
+	de=1 Mission;
+	fr=1 mission;
+	es=1 misión;
+	it=1 missione;
+	}
+
+[{count} missions]
+	{
+	de={count} Missionen;
+	fr={count} missions;
+	es={count} misiones;
+	it={count} missioni;
+	}
+
+[First mission: {mission}]
+	{
+	de=Erste Mission: {mission};
+	fr=Première mission : {mission};
+	es=Primera misión: {mission};
+	it=Prima missione: {mission};
+	}
+
+[No campaign is listed for this side.]
+	{
+	de=Für diese Seite ist keine Kampagne aufgeführt.;
+	fr=Aucune campagne n'est proposée pour ce camp.;
+	es=No hay ninguna campaña para este bando.;
+	it=Nessuna campagna è elencata per questa fazione.;
+	}
+
+[PLAYER]
+	{
+	de=SPIELER;
+	fr=JOUEUR;
+	es=JUGADOR;
+	it=GIOCATORE;
+	}
+
+[SIDE]
+	{
+	de=SEITE;
+	fr=CAMP;
+	es=BANDO;
+	it=FAZIONE;
+	}
+
+[COLOR]
+	{
+	de=FARBE;
+	fr=COULEUR;
+	es=COLOR;
+	it=COLORE;
+	}
+
+[TEAM]
+	{
+	de=TEAM;
+	fr=ÉQUIPE;
+	es=EQUIPO;
+	it=SQUADRA;
+	}
+
+[METAL]
+	{
+	de=METALL;
+	fr=MÉTAL;
+	es=METAL;
+	it=METALLO;
+	}
+
+[ENERGY]
+	{
+	de=ENERGIE;
+	fr=ÉNERGIE;
+	es=ENERGÍA;
+	it=ENERGIA;
+	}
+
+[MAP]
+	{
+	de=KARTE;
+	fr=CARTE;
+	es=MAPA;
+	it=MAPPA;
+	}
+
+[SELECT MAP]
+	{
+	de=KARTE WÄHLEN;
+	fr=CHOISIR LA CARTE;
+	es=ELEGIR MAPA;
+	it=SCEGLI MAPPA;
+	}
+
+[GAME OPTIONS]
+	{
+	de=SPIELOPTIONEN;
+	fr=OPTIONS DE JEU;
+	es=OPCIONES DE PARTIDA;
+	it=OPZIONI DI GIOCO;
+	}
+
+[Size {size}]
+	{
+	de=Größe {size};
+	fr=Taille {size};
+	es=Tamaño {size};
+	it=Dimensioni {size};
+	}
+
+[No picture]
+	{
+	de=Kein Bild;
+	fr=Pas d'image;
+	es=Sin imagen;
+	it=Nessuna immagine;
+	}
+
+[Click a slot to add a computer player.]
+	{
+	de=Klicke auf einen Platz, um einen Computergegner hinzuzufügen.;
+	fr=Cliquez sur une place pour ajouter un joueur ordinateur.;
+	es=Haz clic en un puesto para añadir un jugador del ordenador.;
+	it=Fai clic su un posto per aggiungere un giocatore del computer.;
+	}
+
+[Click to change who plays this slot.]
+	{
+	de=Klicke, um zu ändern, wer diesen Platz spielt.;
+	fr=Cliquez pour changer qui joue cette place.;
+	es=Haz clic para cambiar quién juega este puesto.;
+	it=Fai clic per cambiare chi gioca questo posto.;
+	}
+
+[Click to change the side.]
+	{
+	de=Klicke, um die Seite zu wechseln.;
+	fr=Cliquez pour changer de camp.;
+	es=Haz clic para cambiar de bando.;
+	it=Fai clic per cambiare fazione.;
+	}
+
+[Left click for the next colour, right click for the one before.]
+	{
+	de=Linksklick für die nächste Farbe, Rechtsklick für die vorige.;
+	fr=Clic gauche pour la couleur suivante, clic droit pour la précédente.;
+	es=Clic izquierdo para el color siguiente, clic derecho para el anterior.;
+	it=Clic sinistro per il colore successivo, clic destro per quello precedente.;
+	}
+
+[Click to change the team.]
+	{
+	de=Klicke, um das Team zu wechseln.;
+	fr=Cliquez pour changer d'équipe.;
+	es=Haz clic para cambiar de equipo.;
+	it=Fai clic per cambiare squadra.;
+	}
+
+[Choose the map to play on.]
+	{
+	de=Wähle die Karte, auf der gespielt wird.;
+	fr=Choisissez la carte sur laquelle jouer.;
+	es=Elige el mapa en el que jugar.;
+	it=Scegli la mappa su cui giocare.;
+	}

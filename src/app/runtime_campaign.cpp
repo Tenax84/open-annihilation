@@ -539,25 +539,53 @@ bool Runtime::side_has_campaign(uint32_t side) {
     const auto env = campaign_list_env(assets_, preferences_.difficulty, difficulty_names());
     std::vector<char> names(64 * 1024);
     return missions::campaign_load_names(
-               env.files, side == 0 ? "ARM" : "CORE", names.data(), names.size()
+               env.files, campaign_side_name(side).c_str(), names.data(), names.size()
            ) > 0;
+}
+
+uint32_t Runtime::campaign_side_count() const {
+    if (side_table_.count == 0)
+        return 2;
+    return std::min<uint32_t>(side_table_.count, static_cast<uint32_t>(campaign::kMaxSides));
+}
+
+std::string Runtime::campaign_side_name(uint32_t side) const {
+    if (side < side_table_.count) {
+        const auto& name = side_table_.sides[side].name;
+        const std::string named(name, ::strnlen(name, sizeof name));
+        if (!named.empty())
+            return named;
+    }
+    return side == 0 ? "ARM" : "CORE";
 }
 
 void Runtime::enter_new_game_panel(bool any_mission) {
     // A side the game data has no campaign for, such as Core in the Total
     // Annihilation demo (1997), is grayed out, and the panel opens on the
-    // other side when the preferred one has none.
-    const bool side_campaigns[2]{side_has_campaign(0), side_has_campaign(1)};
-    const uint32_t other_side = preferences_.side == 0 ? 1U : 0U;
-    if (!side_campaigns[preferences_.side != 0 ? 1 : 0] && side_campaigns[other_side])
-        preferences_.side = other_side;
+    // first side that has one when the preferred one has none.
+    const uint32_t side_count = campaign_side_count();
+    std::vector<bool> side_campaigns;
+    for (uint32_t side = 0; side < side_count; ++side)
+        side_campaigns.push_back(side_has_campaign(side));
+    if (preferences_.side >= side_count)
+        preferences_.side = 0;
+    if (!side_campaigns[preferences_.side]) {
+        const auto first = std::find(side_campaigns.begin(), side_campaigns.end(), true);
+        if (first != side_campaigns.end())
+            preferences_.side = static_cast<uint32_t>(first - side_campaigns.begin());
+    }
     auto& setup = new_game_setup();
     setup.side = static_cast<int32_t>(preferences_.side);
     setup.difficulty = static_cast<int32_t>(preferences_.difficulty);
     setup.unlock_flags = preferences_.campaign_unlock_flags;
-    std::snprintf(setup.side_names[0], sizeof setup.side_names[0], "%s", "ARM");
-    std::snprintf(setup.side_names[1], sizeof setup.side_names[1], "%s", "CORE");
-    setup.side_count = 2;
+    for (uint32_t side = 0; side < side_count; ++side)
+        std::snprintf(
+            setup.side_names[side],
+            sizeof setup.side_names[side],
+            "%s",
+            campaign_side_name(side).c_str()
+        );
+    setup.side_count = side_count;
     setup.env = campaign_list_env(assets_, preferences_.difficulty, difficulty_names());
     setup.campaign = &campaign_runtime().file;
     setup.campaign_selected = 0;
@@ -628,7 +656,7 @@ void Runtime::enter_new_game_panel(bool any_mission) {
     const char* const side_buttons[2][2]{
         {"Side0", oa::data::defs::side_name(0)}, {"Side1", oa::data::defs::side_name(1)}
     };
-    for (std::size_t side = 0; side < 2; ++side)
+    for (std::size_t side = 0; side < 2 && side < side_campaigns.size(); ++side)
         if (!side_campaigns[side])
             for (const char* name : side_buttons[side])
                 if (auto* gadget = widget(name))
@@ -1054,9 +1082,10 @@ void Runtime::discover_campaigns() {
     selected_campaign_index_ = 0;
     campaign_first_visible_ = 0;
     const auto env = campaign_list_env(assets_, preferences_.difficulty, difficulty_names());
-    const char* side = preferences_.side == 0 ? "ARM" : "CORE";
+    const std::string side = campaign_side_name(preferences_.side);
     std::vector<char> names(64 * 1024);
-    const auto count = missions::campaign_load_names(env.files, side, names.data(), names.size());
+    const auto count =
+        missions::campaign_load_names(env.files, side.c_str(), names.data(), names.size());
     const char* entry = names.data();
     for (int32_t i = 0; i < count; ++i) {
         campaign_labels_.emplace_back(entry);
@@ -1064,7 +1093,10 @@ void Runtime::discover_campaigns() {
         entry += std::strlen(entry) + 1;
     }
     name_campaigns();
-    const char* preferred = preferences_.side != 0 ? "Core Campaign" : "Arm Campaign";
+    // Arm and Core each select their own campaign; another side its first.
+    const char* preferred = preferences_.side == 0   ? "Arm Campaign"
+                            : preferences_.side == 1 ? "Core Campaign"
+                                                     : "";
     for (std::size_t i = 0; i < campaign_labels_.size(); ++i)
         if (names_equal(campaign_labels_[i], preferred)) {
             selected_campaign_index_ = i;
@@ -1109,14 +1141,7 @@ bool Runtime::select_campaign_list_row(std::string_view gadget_name, float canva
         const auto index = picked ? *picked : campaign_first_visible_ + row;
         if (index >= campaign_files_.size())
             return false;
-        // Only a press that changes the campaign refills the Missions list;
-        // one on the selected row keeps the chosen mission.
-        const bool changed = index != selected_campaign_index_;
-        selected_campaign_index_ = index;
-        select_frontend_list_row("Campaign", index);
-        if (changed)
-            load_campaign_missions(index);
-        rebuild_surface();
+        choose_campaign_row(index);
         return true;
     }
     const auto index = picked ? *picked : campaign_mission_first_visible_ + row;
@@ -1126,6 +1151,19 @@ bool Runtime::select_campaign_list_row(std::string_view gadget_name, float canva
     select_frontend_list_row("Missions", index);
     rebuild_surface();
     return true;
+}
+
+void Runtime::choose_campaign_row(std::size_t row) {
+    if (row >= campaign_files_.size())
+        return;
+    // Only a press that changes the campaign refills the Missions list; one
+    // on the selected row keeps the chosen mission.
+    const bool changed = row != selected_campaign_index_;
+    selected_campaign_index_ = row;
+    select_frontend_list_row("Campaign", row);
+    if (changed)
+        load_campaign_missions(row);
+    rebuild_surface();
 }
 
 void Runtime::step_campaign_list(bool forward) {

@@ -547,7 +547,10 @@ The main menu and the Single Player menu are both column menus
 (`column_menu.hpp`, `column_menu.cpp`): one screen made from a look, the
 buttons, their captions, a heading and the measures, that reads the game's
 screen under it for which buttons show, take a press and have a quick key.
-Both lie on the same backdrop, put together once and kept for either.
+They, the New Campaign screen and the Skirmish screen draw with the same
+art, captions, steel (panels in bolted steel frames, bevelled plates and
+buttons, bolts) and version plate (`menu_paint.hpp`, `menu_paint.cpp`) and lie on the same
+backdrop, put together once and kept for each.
 
 `runtime_main_menu.cpp` keeps one screen, `main-menu`, at the bottom of the
 OA layer while the main menu shows (`Runtime::keep_main_menu_screen`, from
@@ -645,6 +648,107 @@ Under them the plate shows the main menu's version label.
   while a package owns the frame, or while a message box of the game's is
   open. Its frames are left out as the main menu's are
   (`Runtime::main_menu_covers_front_end`).
+
+## Open Annihilation's New Campaign screen
+
+`runtime_new_campaign_menu.cpp` keeps one screen, `new-campaign-menu`
+(`campaign_menu.hpp`, `campaign_menu.cpp`), at the bottom of the OA layer
+while NEWGAME.GUI shows for a new campaign
+(`Runtime::keep_new_campaign_menu_screen`, from `OaLayer::tick`), on the
+same art and backdrop as the main menu (`menu_paint.hpp`): a smaller OPEN
+ANNIHILATION title, a NEW CAMPAIGN heading between two metal rules, a
+SELECT SIDE strip, under it a SELECT CAMPAIGN list and a panel about the
+chosen campaign, then PREVIOUS MENU and START, and the version plate.
+The strip, the list and the panel lie in bolted steel frames, the first
+two labelled on steel plates set into the frame; the tiles are bolted
+steel monitors over steel name plates, the list sinks into its panel with
+steel arrows at the ends of its scroll bar that move it a row, and the
+chosen side, campaign and difficulty glow amber on gunmetal grounds.
+
+- **Sides.** The strip has a tile for every side the side data names
+  (`Runtime::campaign_side_count`, at most five), not only Arm and Core, so
+  that a mod's side shows beside them. Arm's and Core's tiles show their
+  logos, the first frames of NEWGAME's Side0 and Side1 art, cut to the logo
+  and lit in steel, or in amber for the chosen side; a mod's side shows its
+  commander's picture from `unitpics` lit the same way, or its name without
+  one. Each stands over a name plate; a side past 3.1c's two carries a MOD tag. A side no
+  campaign names shows faded and takes no press. When the strip has more
+  sides than room, the arrows at its ends page through them.
+- **Campaigns.** The list holds the chosen side's campaigns as
+  NEWGAME.GUI's Campaign list does, the campaigns whose files name the
+  side (`Runtime::campaign_side_name`), and scrolls when it holds more than
+  it shows. The panel names the chosen campaign, how many missions it has
+  and its first mission, and has the difficulty under them as three
+  buttons, EASY, MEDIUM and HARD, captioned with the name each difficulty
+  carries.
+- **What the presses do.** A side, a campaign row or a difficulty sets the
+  setup as NEWGAME.GUI's own controls do (`Runtime::choose_campaign_side`,
+  `choose_campaign_row`, `choose_campaign_difficulty`): Arm's and Core's
+  tiles press Side0 and Side1; a mod's side, which NEWGAME.GUI has no
+  button for, is chosen and saved the same way. START and PREVIOUS MENU
+  press NEWGAME.GUI's Start and PrevMenu (`Runtime::press_menu_gadget`), so
+  the briefing and the Single Player screen they lead to stay the game's.
+- **Input.** It takes every pointer and the wheel, which scrolls the list or
+  pages the strip under the pointer. Left and Right choose the side, Up,
+  Down, Page Up, Page Down, Home and End the campaign, and Return and Space
+  start; every other key goes on to NEWGAME.GUI, whose quick keys and
+  Escape stay the game's. Automation lists `oa.new-campaign-menu.side-1`
+  and on, `side-earlier` and `side-later`, the rows shown as `campaign-1`
+  and on, `difficulty-easy`, `difficulty-medium`, `difficulty-hard`,
+  `previous-menu` and `start`.
+- **When it shows.** As the main menu: not with `--classic-main-menu`,
+  while a package owns the frame, or while a message box of the game's is
+  open. Any Mission keeps NEWGAME.GUI as the game shows it. Its frames are
+  left out as the main menu's are (`Runtime::main_menu_covers_front_end`).
+- **Limitations.** A mod's side plays its campaign's briefing with Core's
+  briefing art and colours, as the briefing knows Arm and Core only.
+
+## Open Annihilation's Skirmish screen
+
+`runtime_skirmish_menu.cpp` keeps one screen, `skirmish-menu`
+(`skirmish_menu.hpp`, `skirmish_menu.cpp`), at the bottom of the OA layer
+while SKIRMISH.GUI shows (`Runtime::keep_skirmish_menu_screen`, from
+`OaLayer::tick`), on the same art, steel and backdrop as the New Campaign
+screen: a smaller OPEN ANNIHILATION title, a SKIRMISH heading, a PLAYERS
+panel, a MAP panel and a GAME OPTIONS panel beside it, PREVIOUS MENU and
+START, and the version plate.
+
+- **Players.** A row for every slot SKIRMISH.GUI has, numbered, under the
+  captions PLAYER, SIDE, COLOR, TEAM, METAL and ENERGY: who plays it as its
+  Player button reads, the side's name beside its emblem on a small dark
+  screen (`Runtime::side_emblem`: Arm's and Core's logos from NEWGAME's
+  art, a mod's side its commander's picture), the colour's logo, the first
+  frame of the colour logos it has, the alliance group as a number, or a
+  dash for none, and the starting metal and energy. An open slot shows only
+  Open; the local player's row is ringed in amber. The bar under the rows
+  says what the field under the pointer does, the game's own help for the
+  metal, the energy and the rules.
+- **Map.** The selected map's minimap, the part of it the map covers, in a
+  bolted steel monitor, with an amber mark on each start position the
+  map's schema gives the players in the setup; its name as Current Map
+  shows it, how many players it is for and its size as its OTA file gives
+  them, and SELECT MAP.
+- **Game options.** Commander, Location, Mapping, Line of Sight and
+  Difficulty, each with its button's caption between two steel arrows.
+- **What the presses do.** Every press presses the SKIRMISH.GUI button it
+  stands for (`Runtime::press_menu_gadget`) with the mouse button it was
+  made with, so that the game's handler, sounds, checks and the screens it
+  leads to stay the game's: the right button steps the colour back and
+  lowers the metal and energy, as in the game. A rule's right arrow
+  presses its button once; its left arrow presses it round to the value
+  before, once for an on and off rule and twice for Line of Sight and
+  Difficulty, which step through three.
+- **Input.** It takes every pointer. Return and Space start; every other
+  key goes on to SKIRMISH.GUI, whose quick keys, Escape and the typed codes
+  that set the number of slots stay the game's. Automation lists
+  `oa.skirmish-menu.player-1` and on, with `side-`, `color-`, `team-`,
+  `metal-` and `energy-` for each slot played, `commander-previous` and
+  `commander-next` and so on for each rule, `select-map`, `previous-menu`
+  and `start`.
+- **When it shows.** As the other menus: not with `--classic-main-menu`,
+  while a package owns the frame, or while a message box of the game's is
+  open. The map selection shows over SKIRMISH.GUI as the game shows it.
+
 ## The Library
 
 `library_host.hpp`, `runtime_library.cpp` and `runtime_library_actions.cpp`
