@@ -259,7 +259,7 @@ void draw_upright_arrow(
 );
 
 /// Draws a small steel button: a bevelled steel plate with a bolt in each
-/// corner when it is high enough for them.
+/// corner when its shorter side is long enough for them.
 ///
 /// @param canvas where it draws
 /// @param rect the button

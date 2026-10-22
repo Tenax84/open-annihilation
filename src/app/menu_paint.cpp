@@ -721,10 +721,13 @@ void draw_upright_arrow(
 
 void draw_steel_button(const kit::Canvas& canvas, const kit::Rect& rect, kit::Colour face) {
     draw_steel(canvas, rect, face);
-    const int32_t radius = rect.height / 14;
+    // The bolts follow the shorter side, so that a tall narrow plate, such
+    // as a scroll bar's thumb, keeps them small and inside it.
+    const int32_t side = std::min(rect.width, rect.height);
+    const int32_t radius = side / 14;
     if (radius < 1)
         return;
-    const int32_t inset = std::max(rect.height / 6, radius + 2);
+    const int32_t inset = std::max(side / 6, radius + 2);
     for (const kit::Point corner :
          {kit::Point{rect.x + inset, rect.y + inset},
           kit::Point{rect.x + rect.width - inset - 1, rect.y + inset},

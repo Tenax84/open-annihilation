@@ -26,9 +26,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -219,6 +221,13 @@ struct Runtime::LibraryHost {
     /// @param list the display list the Library shows
     void request_pictures(const oa::ui::kit::DisplayList& list);
 
+    /// Asks for the pictures of some of the visible entries, the first
+    /// first, and for the registry icons the Registries tab or the
+    /// selection shows, as request_pictures does for the rows a display
+    /// list shows.
+    /// @param places the entries, by their place among the visible ones
+    void request_row_pictures(std::span<const std::size_t> places);
+
     /// Returns the logo the game ships, decoded once from the app icon.
     ///
     /// The visible part of the window icon, so the plates fill the card.
@@ -285,6 +294,17 @@ struct Runtime::LibraryHost {
     /// @param runtime the runtime, whose game palette colours a terrain minimap
     /// @param list the display list the Library shows
     void pump_map_previews(Runtime& runtime, const oa::ui::kit::DisplayList& list);
+
+    /// Decodes a few minimaps, as the display list's pump_map_previews does,
+    /// for the Active tab's maps and the map packs a screen says it shows.
+    /// @param runtime the runtime, whose game palette colours a terrain minimap
+    /// @param map_shows tells whether the Active tab shows a map, by its place from 1
+    /// @param row_shows tells whether a map pack's row shows
+    void pump_map_previews(
+        Runtime& runtime,
+        const std::function<bool(std::size_t)>& map_shows,
+        const std::function<bool(const oa::ui::library::EntryId&)>& row_shows
+    );
 
     /// The runtime's own feed: the Library's inputs (Runtime::library_inputs).
     ///

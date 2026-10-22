@@ -982,8 +982,14 @@ class SettingsMenuScreen final : public LayerScreen {
         SettingsMenuFacts now = facts_();
         if (now == facts_now_)
             return false;
+        // By the category's word, not its name: a language chosen on the
+        // screen renames it and keeps the view where it is.
+        const auto word_of = [](const SettingsMenuFacts& facts) {
+            return facts.chosen < facts.categories.size() ? facts.categories[facts.chosen].id
+                                                          : std::string();
+        };
         const bool other_category = now.chosen != facts_now_.chosen ||
-                                    now.heading != facts_now_.heading ||
+                                    word_of(now) != word_of(facts_now_) ||
                                     now.sections.size() != facts_now_.sections.size();
         facts_now_ = std::move(now);
         if (other_category) {
@@ -1969,8 +1975,12 @@ class SettingsMenuScreen final : public LayerScreen {
         y += title_height + layout_.paragraph_gap;
         const int32_t bottom =
             about.y + about.height - layout_.default_height - layout_.note_height - layout_.paragraph_gap;
+        // A new line in a row's description starts a line of its own: a
+        // language's facts stand one to a line.
+        kit::WrapRules paragraph_rules;
+        paragraph_rules.newlines = true;
         const auto lines_of = [&](std::string_view text, kit::Colour ink) {
-            for (const std::string& line : kit::wrap(text, about.width, small)) {
+            for (const std::string& line : kit::wrap(text, about.width, small, paragraph_rules)) {
                 if (y + small_line > bottom)
                     return;
                 kit::box_text(

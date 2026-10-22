@@ -780,12 +780,22 @@ match, the dialog shows in its own look as before.
   row of buttons its buttons, and a text row its text. A locked row is
   faded with a padlock. The rows scroll with the wheel, the scroll bar and
   Home and End.
+- **Languages.** Language & Text adds a third section, LANGUAGES: the
+  Library's languages (`Runtime::LibraryHost`), the ones built into the
+  game first, then the packs in the Library's order with no search. A row
+  shows the language's name in itself and up to two of the Library's
+  buttons for it that can be pressed, USE NOW, GET, UPDATE, CANCEL, RETRY
+  and UNINSTALL; with one, In use, Built in, the size to download or the
+  Library's status line beside it. DETAILS tells its summary, maker,
+  status and the Library's facts, one to a line. USE NOW chooses the
+  language on the dialog, as Language does, so OK keeps it and UNDO and
+  CANCEL put it back; the other buttons are the Library's own presses
+  (`Runtime::library_entry_press`), their questions over the screen.
 - **What the presses do.** The dialog's rows are moved with
   `dialog_control_key`, as the dialog's own keys move them, and what they
   ask goes to `Runtime::take_engine_settings_action`, so every lock, every
   setting put in effect as it changes and every action stay the dialog's.
-  A drop-down steps item by item: a language that is only offered for
-  download is chosen in the dialog's own look. The game's options are the
+  A drop-down steps item by item. The game's options are the
   preferences their panels' handlers set, put in effect as there: the
   volumes and the gamma at once, the music's switch and play mode at the
   next frame (`Runtime::step_music`). Their stages' captions come from
@@ -815,6 +825,87 @@ match, the dialog shows in its own look as before.
 - **Limitations.** The game's own options show only on the main menu: in
   a match they stay on the in-game menu's PREFS panel. Music's CD
   transport buttons and the track display are not on the screen.
+
+## Open Annihilation's Library screen
+
+While Open Annihilation's main menu shows, the Library opens in a look of
+its own (`Runtime::push_library_menu_screen`, `runtime_library_menu.cpp`):
+one screen named `library`, as the Library's own (`library_menu.hpp`,
+`library_menu.cpp`), modal over the whole window on the menus' art and
+steel. Under a smaller OPEN ANNIHILATION title and a LIBRARY heading, with
+the refresh button at the heading's right, it has a LIBRARY panel of tabs,
+the chosen tab's panel and a DETAILS panel, then the tab's button on the
+left (UPDATE ALL, or ADD REGISTRY… on Registries), SETTINGS and CLOSE on
+the right, and the version plate. With `--classic-main-menu` the Library
+shows in its own look as before (`Runtime::LibraryScreen`).
+
+- **Tabs.** Active, then under a divider Mods, Maps and Updates, then
+  under another Registries, each with a small picture and its count; an
+  amber dot beside Updates while an update can be installed. The panel's
+  foot says how many packages are installed, and the download queue's
+  line stands over it while the queue holds one. The languages are on
+  Settings › Language & Text: a Library opened on Languages shows Active.
+- **Active.** Five tiles under steel strips. BASE GAME: the game's icon,
+  name, version and source, the file check, and CHANGE…, which opens the
+  base game chooser in the tab's place (its games with their radio, badge,
+  state and line, the note, USE THIS GAME and CANCEL). LANGUAGE: the
+  language in itself, Built in or the pack's version, and SETTINGS, which
+  opens Settings on Language & Text (`settings_menu_first_category_`).
+  EXPANSIONS: a plate for each expansion, ticked while on, with its
+  download arrow, cancel or retry mark, or a padlock while the command
+  line's mod needs it, and the hint and lock words under them. MOD: the
+  mod played or No Mod, its release and maker and Playing, CHOOSE MOD,
+  which shows Mods, and NO MOD, the Library's SWITCH OFF of the mod
+  played. MAPS: the installed maps' minimaps that fit, their names, and
+  BROWSE MAPS, which shows Maps. DETAILS tells of the tile under the
+  pointer, and its foot says when a change applies as the Library closes.
+- **Mods, Maps and Updates.** The search field, the filters with their
+  counts, TAGS ▾, whose list chooses a tag or every tag, and the rows in
+  the Library's order: the badge, or the minimap of a map pack without
+  one, or the letters; the name; the maker and summary, or the download's
+  state in amber with its bar under it, or why GET is blocked; the
+  version and size; and a mark: a download arrow, an amber up-arrow in a
+  ring, or a check in a ring. A press on a row chooses it; a press on its
+  arrow asks for GET or UPDATE by the Library's rule for a row's icon.
+  DETAILS tells of the row chosen: badge, name, status line, summary,
+  tags, which choose the tag, facts, the Library's note, and its buttons
+  two to a line.
+- **Registries.** A card for each registry: its icon or initials, its
+  title with Built in or an amber not reviewed, its address, its packages
+  and when it was refreshed (amber when it could not be reached), its
+  OFF/ON switch and REFRESH; then the dashed ADD REGISTRY… box, and the
+  note on review under the cards with a refusal over it in amber. DETAILS
+  tells of the card chosen: its facts, its signing keys' fingerprints and
+  whether they are built in or added by you, and ADD MIRROR… and REMOVE
+  for a registry the player added.
+- **What the presses do.** Browsing, the search, the filters, the tags and
+  the selection change the model as the Library's own screen does. Every
+  other press is the Library's own action (`Runtime::library_act`, the
+  Library screen's `act`), so its questions, sounds and refusals stay the
+  same, and leaving stores what the Active tab holds
+  (`Runtime::library_screen_closed`). The pictures of the rows in view
+  and a few beyond are asked for (`LibraryHost::request_row_pictures`),
+  and the minimaps of the maps and packs shown are decoded a few at a time
+  (`LibraryHost::pump_map_previews`).
+- **Input.** Up and Down choose the row or card before or after, Page Up,
+  Page Down, Home and End move further, Tab and Shift+Tab (and Ctrl+Tab)
+  change the tab, Return and Space press the details' first button that
+  can be pressed, F5 refreshes, Ctrl+F (Cmd+F on macOS) and `/` focus the
+  search, and Escape closes TAGS' list, clears the search, closes the
+  chooser, or closes the Library. The wheel scrolls TAGS' list, the rows
+  or the cards. Automation lists `oa.library.tab.<word>`, `refresh`,
+  `search`, `filter.<word>`, `tags` and `tags.<tag>`, `row.<registry>.<key>`
+  and its `.get` or `.update`, `action.<word>`, `detail.tag.<tag>`, the
+  Active tab's `active.change`, `active.language`,
+  `active.expansion.<id>`, `active.choose-mod`, `active.unload`,
+  `active.browse-maps` and the tiles, the chooser's `base.<id>`,
+  `base.use` and `base.cancel`, each card's `registry.<id>` with `.off`,
+  `.on` and `.refresh`, `add-registry-box`, `update-all` or
+  `add-registry`, `settings` and `close`.
+- **Limitations.** The Library's controller buttons (Y, X, LB, RB, B and
+  the right stick) and a finger's drag that scrolls are not taken; the
+  rows scroll by the wheel, the scroll bar and the keys. The maps search
+  of the Library's own Active tab is not on the screen.
 
 ## The Library
 

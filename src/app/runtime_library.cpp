@@ -70,6 +70,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <system_error>
@@ -80,6 +81,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1005,7 +1007,52 @@ void Runtime::LibraryHost::request_pictures(const kit::DisplayList& list) {
         work.wake.notify_all();
 }
 
+void Runtime::LibraryHost::request_row_pictures(std::span<const std::size_t> places) {
+    if (!own_feed || !work.pictures)
+        return;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        if (work.match_running)
+            return;
+    }
+    for (std::size_t index = 0; index < places.size(); ++index) {
+        const std::size_t place = places[index];
+        if (place >= model.visible.size())
+            continue;
+        const library::Entry& entry = model.entries[model.visible[place]];
+        const bool lead = index == 0 && model.selected && entry.id == *model.selected;
+        if (!lead && picture_known(this, entry))
+            continue;
+        picture_request(this, entry, lead);
+    }
+    library::RegistryPictureSource icons;
+    icons.context = this;
+    icons.known = registry_icon_known;
+    icons.request = registry_icon_request;
+    library::request_registry_icons(model, icons);
+    if (!work.pictures->waiting())
+        return;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        work.pictures_due = true;
+    }
+    if (ensure_worker())
+        work.wake.notify_all();
+}
+
 void Runtime::LibraryHost::pump_map_previews(Runtime& runtime, const kit::DisplayList& list) {
+    pump_map_previews(
+        runtime,
+        [&list](std::size_t number) { return active_tile_shows(list, number); },
+        [this, &list](const library::EntryId& id) { return library::entry_row_shown(model, list, id); }
+    );
+}
+
+void Runtime::LibraryHost::pump_map_previews(
+    Runtime& runtime,
+    const std::function<bool(std::size_t)>& map_shows,
+    const std::function<bool(const library::EntryId&)>& row_shows
+) {
     if (previews == nullptr)
         return;
     MapPreviewState& preview = *previews;
@@ -1041,8 +1088,7 @@ void Runtime::LibraryHost::pump_map_previews(Runtime& runtime, const kit::Displa
             bool shows = false;
             for (std::size_t place = 0; place < setup.maps.size(); ++place) {
                 const library::ActiveMap& tile = setup.maps[place];
-                if (tile.name == title && tile.pack_name == map.pack_name &&
-                    active_tile_shows(list, place + 1))
+                if (tile.name == title && tile.pack_name == map.pack_name && map_shows(place + 1))
                     shows = true;
             }
             if (!shows)
@@ -1061,8 +1107,7 @@ void Runtime::LibraryHost::pump_map_previews(Runtime& runtime, const kit::Displa
         }
     } else {
         for (const library::Entry& entry : model.entries) {
-            if (entry.id.kind != library::Kind::map_pack ||
-                !library::entry_row_shown(model, list, entry.id))
+            if (entry.id.kind != library::Kind::map_pack || !row_shows(entry.id))
                 continue;
             if (entry.listing != nullptr) {
                 for (const library::MapLine& line : entry.listing->maps) {
@@ -1278,6 +1323,22 @@ library::Inputs Runtime::library_inputs() {
             else
                 registry.address = formats::url::url_text(descriptor.catalogue);
             registry.packages = view.catalogue ? view.catalogue->packages.size() : 0;
+            if (view.catalogue)
+                for (const data::catalogue::Package& package : view.catalogue->packages)
+                    switch (package.kind) {
+                    case data::catalogue::Kind::oamod:
+                        ++registry.mods;
+                        break;
+                    case data::catalogue::Kind::oamap:
+                        ++registry.map_packs;
+                        break;
+                    case data::catalogue::Kind::oalang:
+                        ++registry.languages;
+                        break;
+                    case data::catalogue::Kind::expansion:
+                        ++registry.expansions;
+                        break;
+                    }
             if (view.checked)
                 registry.checked_ago = std::max(now - *view.checked, int64_t{0});
             registry.mirrors = view.registry.player_mirrors.size();
@@ -1911,6 +1972,9 @@ DemoInstallerPick ask_demo_installer(SDL_Window* window, bool unattended, bool h
 /// and state are the host's; it lays them out at the frame the layer gives
 /// it and hands what its input asks for to the runtime.
 struct Runtime::LibraryScreen final : LayerScreen {
+    // Settings presses the Library's entry buttons through act_on_entry.
+    friend class Runtime;
+
     /// Makes the screen.
     ///
     /// @param runtime the runtime whose Library it shows
@@ -2375,10 +2439,11 @@ struct Runtime::LibraryScreen final : LayerScreen {
     /// Forgets what the installer noted of an entry's earlier try, as the
     /// player asks for it again.
     ///
+    /// @param runtime the runtime
     /// @param id the entry
-    void forget_note(const library::EntryId& id) {
-        if (runtime_.mod_install_state_)
-            runtime_.mod_install_state_->note_for_library(runtime_, {id.registry, id.key, {}, {}});
+    static void forget_note(Runtime& runtime, const library::EntryId& id) {
+        if (runtime.mod_install_state_)
+            runtime.mod_install_state_->note_for_library(runtime, {id.registry, id.key, {}, {}});
     }
 
     /// Drops the held update CANCEL was pressed for.
@@ -2388,15 +2453,16 @@ struct Runtime::LibraryScreen final : LayerScreen {
     /// again. A roll back waiting in that update's place is left waiting, and
     /// a download that has not ended is left for the feed to cancel.
     ///
+    /// @param runtime the runtime
     /// @param entry the entry whose queue line was cancelled
-    void drop_held_update(const library::Entry& entry) {
+    static void drop_held_update(Runtime& runtime, const library::Entry& entry) {
         if (entry.queued == nullptr || entry.queued->phase != library::QueueItem::Phase::held)
             return;
-        if (runtime_.mod_install_state_ == nullptr)
+        if (runtime.mod_install_state_ == nullptr)
             return;
         const std::string* held_folder = nullptr;
         for (const ModInstallState::LibraryNote& note :
-             runtime_.mod_install_state_->library_notes) {
+             runtime.mod_install_state_->library_notes) {
             if (note.registry == entry.id.registry && note.key == entry.id.key &&
                 !note.held_target.empty())
                 held_folder = &note.held_target;
@@ -2408,21 +2474,22 @@ struct Runtime::LibraryScreen final : LayerScreen {
             return;
         if (!package_install::discard_pending_change())
             return;
-        runtime_.mod_install_state_->discarder.add(package_install::take_discards());
+        runtime.mod_install_state_->discarder.add(package_install::take_discards());
         ModInstallState::LibraryNote dropped{entry.id.registry, entry.id.key, {}, {}};
         dropped.cancelled = true;
-        runtime_.mod_install_state_->note_for_library(runtime_, std::move(dropped));
+        runtime.mod_install_state_->note_for_library(runtime, std::move(dropped));
     }
 
     /// Queues one entry's GET through the feed; what the installer noted of
     /// an earlier try is forgotten.
     ///
+    /// @param runtime the runtime
     /// @param host the host
     /// @param entry the entry
-    void get(LibraryHost& host, const library::Entry& entry) {
+    static void get(Runtime& runtime, LibraryHost& host, const library::Entry& entry) {
         if (host.feed.enqueue == nullptr || entry.id.registry.empty())
             return;
-        forget_note(entry.id);
+        forget_note(runtime, entry.id);
         std::string why;
         const std::optional<uint64_t> item = host.feed.enqueue(
             host.feed.context,
@@ -2432,8 +2499,58 @@ struct Runtime::LibraryScreen final : LayerScreen {
             &why
         );
         if (!item && !why.empty()) {
-            runtime_.status_ = why;
+            runtime.status_ = why;
             std::cerr << "open-annihilation: library: " << why << '\n';
+        }
+    }
+
+    /// Carries out an entry's GET, CANCEL, RETRY, UPDATE, ROLL BACK,
+    /// UNINSTALL, OPEN FOLDER or HOMEPAGE, as the Library's buttons do;
+    /// Runtime::library_entry_press hands them here from Settings.
+    ///
+    /// @param runtime the runtime
+    /// @param action the button
+    /// @param id the entry
+    /// @return true when it was one of those
+    static bool act_on_entry(Runtime& runtime, library::Action action, const library::EntryId& id) {
+        LibraryHost& host = runtime.library_host();
+        const library::Entry* entry = library::find_entry(host.model, id);
+        switch (action) {
+        case library::Action::get:
+            if (entry != nullptr)
+                get(runtime, host, *entry);
+            return true;
+        case library::Action::cancel:
+            if (entry != nullptr) {
+                drop_held_update(runtime, *entry);
+                if (host.feed.cancel != nullptr)
+                    host.feed.cancel(host.feed.context, id.registry, id.key);
+            }
+            return true;
+        case library::Action::retry:
+            if (entry != nullptr && host.feed.retry != nullptr) {
+                forget_note(runtime, id);
+                host.feed.retry(host.feed.context, id.registry, id.key);
+            }
+            return true;
+        case library::Action::update:
+        case library::Action::roll_back:
+        case library::Action::uninstall:
+            runtime.library_entry_action(action, id);
+            return true;
+        case library::Action::open_folder:
+            if (entry != nullptr && entry->installed != nullptr) {
+                const FolderOpening opening = runtime.open_player_folder(entry->installed->folder);
+                if (!opening.opened)
+                    runtime.status_ = opening.reason;
+            }
+            return true;
+        case library::Action::homepage:
+            if (entry != nullptr && entry->listing != nullptr && !entry->listing->homepage.empty())
+                runtime.open_web_link(entry->listing->homepage);
+            return true;
+        default:
+            return false;
         }
     }
 
@@ -2533,43 +2650,15 @@ struct Runtime::LibraryScreen final : LayerScreen {
             download_expansion(result);
             return false;
         }
+        if (act_on_entry(runtime_, action, id))
+            return false;
         const library::Entry* entry = library::find_entry(host.model, id);
         switch (action) {
-        case library::Action::get:
-            if (entry != nullptr)
-                get(host, *entry);
-            return false;
-        case library::Action::cancel:
-            if (entry != nullptr) {
-                drop_held_update(*entry);
-                if (host.feed.cancel != nullptr)
-                    host.feed.cancel(host.feed.context, id.registry, id.key);
-            }
-            return false;
-        case library::Action::retry:
-            if (entry != nullptr && host.feed.retry != nullptr) {
-                forget_note(id);
-                host.feed.retry(host.feed.context, id.registry, id.key);
-            }
-            return false;
-        case library::Action::update:
         case library::Action::update_all:
-        case library::Action::roll_back:
         case library::Action::play_now:
         case library::Action::switch_off:
         case library::Action::check_now:
             runtime_.library_entry_action(action, id);
-            return false;
-        case library::Action::open_folder:
-            if (entry != nullptr && entry->installed != nullptr) {
-                const FolderOpening opening = runtime_.open_player_folder(entry->installed->folder);
-                if (!opening.opened)
-                    runtime_.status_ = opening.reason;
-            }
-            return false;
-        case library::Action::homepage:
-            if (entry != nullptr && entry->listing != nullptr && !entry->listing->homepage.empty())
-                runtime_.open_web_link(entry->listing->homepage);
             return false;
         case library::Action::settings:
             open_settings();
@@ -2595,9 +2684,6 @@ struct Runtime::LibraryScreen final : LayerScreen {
         case library::Action::refresh_registry:
             // One registry: its catalogue. The game does not ask for download counts.
             runtime_.content_service().refresh(content::RefreshReason::check_now, result.registry);
-            return false;
-        case library::Action::uninstall:
-            runtime_.library_entry_action(action, id);
             return false;
         case library::Action::use_now:
             if (entry != nullptr)
@@ -2718,7 +2804,12 @@ void Runtime::open_library(std::optional<library::Tab> tab) {
         library::set_query(host.model, {});
         library::close_details(host.model);
         library::set_tab(host.model, shown);
-        layer.push(std::make_unique<LibraryScreen>(*this));
+        // Over Open Annihilation's main menu the Library shows in the main
+        // menu's look, over the whole window.
+        if (oa_main_menu_shown())
+            push_library_menu_screen();
+        else
+            layer.push(std::make_unique<LibraryScreen>(*this));
     }
     ++host.model_revision;
     EngineSettingsMenuHost& button = engine_settings_menu_host();
@@ -2744,6 +2835,22 @@ std::size_t Runtime::library_update_count() {
 bool Runtime::library_registry_built_in(std::string_view registry) {
     const LibraryHost& host = library_host();
     return host.feed.built_in != nullptr && host.feed.built_in(host.feed.context, registry);
+}
+
+void Runtime::library_entry_press(library::Action action, const library::EntryId& entry) {
+    std::ignore = LibraryScreen::act_on_entry(*this, action, entry);
+}
+
+bool Runtime::library_act(const library::ScreenResult& result) {
+    if (!result.action)
+        return false;
+    LibraryScreen acting(*this);
+    return acting.act(result);
+}
+
+void Runtime::library_screen_closed() {
+    LibraryScreen leaving(*this);
+    leaving.close(false);
 }
 
 /// The longest a run a switch of the mod in the Library began waits for the

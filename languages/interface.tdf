@@ -12074,6 +12074,22 @@
 	it={n} giorni fa;
 	}
 
+[{n} expansion]
+	{
+	de={n} Erweiterung;
+	fr={n} extension;
+	es={n} expansión;
+	it={n} espansione;
+	}
+
+[{n} expansions]
+	{
+	de={n} Erweiterungen;
+	fr={n} extensions;
+	es={n} expansiones;
+	it={n} espansioni;
+	}
+
 [{n} files]
 	{
 	de={n} Dateien;
@@ -12120,6 +12136,46 @@
 	fr=il y a {n} min;
 	es=hace {n} min;
 	it={n} min fa;
+	}
+
+[{n} language]
+	{
+	de={n} Sprache;
+	fr={n} langue;
+	es={n} idioma;
+	it={n} lingua;
+	}
+
+[{n} languages]
+	{
+	de={n} Sprachen;
+	fr={n} langues;
+	es={n} idiomas;
+	it={n} lingue;
+	}
+
+[{n} map pack]
+	{
+	de={n} Kartenpaket;
+	fr={n} pack de cartes;
+	es={n} paquete de mapas;
+	it={n} pacchetto di mappe;
+	}
+
+[{n} map packs]
+	{
+	de={n} Kartenpakete;
+	fr={n} packs de cartes;
+	es={n} paquetes de mapas;
+	it={n} pacchetti di mappe;
+	}
+
+[{n} mod]
+	{
+	de={n} Mod;
+	fr={n} mod;
+	es={n} mod;
+	it={n} mod;
 	}
 
 [{n} mirror]
@@ -12762,6 +12818,14 @@
 	it=Pausa;
 	}
 
+[Contents]
+	{
+	de=Inhalt;
+	fr=Contenu;
+	es=Contenido;
+	it=Contenuto;
+	}
+
 [Continue]
 	{
 	de=Weiter;
@@ -13288,6 +13352,166 @@
 	fr=OPTIONS CLASSIQUES;
 	es=OPCIONES CLÁSICAS;
 	it=OPZIONI CLASSICHE;
+	}
+
+[LANGUAGES]
+	{
+	de=SPRACHEN;
+	fr=LANGUES;
+	es=IDIOMAS;
+	it=LINGUE;
+	}
+
+[BROWSE MAPS]
+	{
+	de=KARTEN DURCHSUCHEN;
+	fr=PARCOURIR LES CARTES;
+	es=EXPLORAR MAPAS;
+	it=SFOGLIA MAPPE;
+	}
+
+[CHOOSE MOD]
+	{
+	de=MOD WÄHLEN;
+	fr=CHOISIR UN MOD;
+	es=ELEGIR MOD;
+	it=SCEGLI MOD;
+	}
+
+[NO MOD]
+	{
+	de=KEIN MOD;
+	fr=AUCUN MOD;
+	es=SIN MOD;
+	it=NESSUN MOD;
+	}
+
+[CHOOSE MOD shows the mods, and PLAY NOW there plays one.]
+	{
+	de=MOD WÄHLEN zeigt die Mods, und JETZT SPIELEN spielt dort einen.;
+	fr=CHOISIR UN MOD affiche les mods, et JOUER y en lance un.;
+	es=ELEGIR MOD muestra los mods, y JUGAR AHORA juega uno allí.;
+	it=SCEGLI MOD mostra le mod, e GIOCA ORA ne avvia una.;
+	}
+
+[Changes apply when the Library closes.]
+	{
+	de=Änderungen gelten, wenn die Bibliothek geschlossen wird.;
+	fr=Les changements s'appliquent à la fermeture de la Bibliothèque.;
+	es=Los cambios se aplican al cerrar la Biblioteca.;
+	it=Le modifiche si applicano alla chiusura della Libreria.;
+	}
+
+[Choose a package to read about it.]
+	{
+	de=Wähle ein Paket, um mehr darüber zu lesen.;
+	fr=Choisissez un paquet pour en savoir plus.;
+	es=Elige un paquete para leer sobre él.;
+	it=Scegli un pacchetto per leggerne i dettagli.;
+	}
+
+[Choose a registry to read about it.]
+	{
+	de=Wähle ein Verzeichnis, um mehr darüber zu lesen.;
+	fr=Choisissez un registre pour en savoir plus.;
+	es=Elige un registro para leer sobre él.;
+	it=Scegli un registro per leggerne i dettagli.;
+	}
+
+[Point at a tile to read about it.]
+	{
+	de=Zeige auf eine Kachel, um mehr darüber zu lesen.;
+	fr=Pointez une tuile pour en savoir plus.;
+	es=Señala una casilla para leer sobre ella.;
+	it=Punta un riquadro per leggerne i dettagli.;
+	}
+
+[Every tag]
+	{
+	de=Alle Schlagwörter;
+	fr=Tous les mots-clés;
+	es=Todas las etiquetas;
+	it=Tutti i tag;
+	}
+
+[Files]
+	{
+	de=Dateien;
+	fr=Fichiers;
+	es=Archivos;
+	it=File;
+	}
+
+[Installed: {count}]
+	{
+	de=Installiert: {count};
+	fr=Installés : {count};
+	es=Instalados: {count};
+	it=Installati: {count};
+	}
+
+[Mirrors]
+	{
+	de=Spiegelserver;
+	fr=Miroirs;
+	es=Réplicas;
+	it=Mirror;
+	}
+
+[Pack]
+	{
+	de=Paket;
+	fr=Paquet;
+	es=Paquete;
+	it=Pacchetto;
+	}
+
+[Packages]
+	{
+	de=Pakete;
+	fr=Paquets;
+	es=Paquetes;
+	it=Pacchetti;
+	}
+
+[Packs]
+	{
+	de=Pakete;
+	fr=Paquets;
+	es=Paquetes;
+	it=Pacchetti;
+	}
+
+[Not copied]
+	{
+	de=Nicht kopiert;
+	fr=Non copiée;
+	es=No copiada;
+	it=Non copiata;
+	}
+
+[Press an expansion to turn it on or off. The change applies when the Library closes.]
+	{
+	de=Drücke eine Erweiterung, um sie ein- oder auszuschalten. Die Änderung gilt, wenn die Bibliothek geschlossen wird.;
+	fr=Appuyez sur une extension pour l'activer ou la désactiver. Le changement s'applique à la fermeture de la Bibliothèque.;
+	es=Pulsa una expansión para activarla o desactivarla. El cambio se aplica al cerrar la Biblioteca.;
+	it=Premi un'espansione per attivarla o disattivarla. La modifica si applica alla chiusura della Libreria.;
+	}
+
+[The game Open Annihilation plays, from the files you added. CHANGE… chooses another one you added, or adds one.]
+	{
+	de=Das Spiel, das Open Annihilation spielt, aus den Dateien, die du hinzugefügt hast. WECHSELN… wählt ein anderes hinzugefügtes oder fügt eines hinzu.;
+	fr=Le jeu qu'Open Annihilation lance, à partir des fichiers que vous avez ajoutés. CHANGER… en choisit un autre déjà ajouté, ou en ajoute un.;
+	es=El juego que ejecuta Open Annihilation, a partir de los archivos que añadiste. CAMBIAR… elige otro que añadiste o añade uno.;
+	it=Il gioco che Open Annihilation esegue, dai file che hai aggiunto. CAMBIA… ne sceglie un altro già aggiunto o ne aggiunge uno.;
+	}
+
+[The language the game shows its words in. Its SETTINGS button opens Settings › Language & Text, where the languages are chosen and got.]
+	{
+	de=Die Sprache, in der das Spiel seine Texte zeigt. Die Schaltfläche EINSTELLUNGEN öffnet Einstellungen › Sprache und Text, wo die Sprachen gewählt und geholt werden.;
+	fr=La langue dans laquelle le jeu affiche ses textes. Son bouton RÉGLAGES ouvre Réglages › Langue et texte, où les langues sont choisies et obtenues.;
+	es=El idioma en que el juego muestra sus textos. Su botón AJUSTES abre Ajustes › Idioma y texto, donde se eligen y obtienen los idiomas.;
+	it=La lingua in cui il gioco mostra i suoi testi. Il pulsante IMPOSTAZIONI apre Impostazioni › Lingua e testo, dove si scelgono e si ottengono le lingue.;
 	}
 
 [Sound]

@@ -148,6 +148,7 @@ enum class Tab : uint8_t;
 enum class Action : uint8_t;
 struct EntryId;
 struct Inputs;
+struct ScreenResult;
 } // namespace oa::ui::library
 
 namespace oa::ui::kit {
@@ -4971,6 +4972,16 @@ class Runtime final : public menu::Host,
     void
     library_entry_action(oa::ui::library::Action action, const oa::ui::library::EntryId& entry);
 
+    /// Carries out one of the Library's entry buttons pressed outside the
+    /// Library, on Settings › Language & Text's list of languages: GET,
+    /// CANCEL, RETRY, UPDATE, ROLL BACK, UNINSTALL, OPEN FOLDER or HOMEPAGE,
+    /// as the Library's own press of it does. Any other does nothing.
+    ///
+    /// @param action the button
+    /// @param entry the entry
+    void
+    library_entry_press(oa::ui::library::Action action, const oa::ui::library::EntryId& entry);
+
     /// Carries out an installed entry's UNINSTALL, which library_entry_action
     /// hands here. For the mod being played, or the language pack the game
     /// shows its words from, as the Library's model or this run says
@@ -5343,6 +5354,35 @@ class Runtime final : public menu::Host,
     /// shows in its own look over the whole window: on the main menu while
     /// Open Annihilation's main menu shows.
     void push_settings_menu_screen();
+
+    /// The Settings screen's category that the next Settings screen opens
+    /// on, by its word, such as "language"; empty opens on the first. The
+    /// screen clears it as it opens.
+    std::string settings_menu_first_category_{};
+
+    /// What Open Annihilation's Library screen (runtime_library_menu.cpp)
+    /// reads and asks for: the Library's model and the actions of its
+    /// buttons.
+    struct LibraryMenuHost;
+
+    /// Puts Open Annihilation's Library screen (library_menu.hpp) on the OA
+    /// layer as its top screen, named library, over the whole window: on
+    /// the main menu while Open Annihilation's main menu shows.
+    void push_library_menu_screen();
+
+    /// Carries out what a press of the Library asked for, as the Library's
+    /// own screen does: an entry's button, UPDATE ALL, the refresh, a
+    /// registry's switch, REFRESH, REMOVE, ADD MIRROR… and ADD REGISTRY…,
+    /// SETTINGS, CLOSE, CHANGE…, a base game to copy, TURN ON and the
+    /// questions about the expansions.
+    ///
+    /// @param result what was asked for
+    /// @return true when the Library closes
+    bool library_act(const oa::ui::library::ScreenResult& result);
+
+    /// Does what the Library's leaving does: stores what its Active tab
+    /// holds, and forgets the pictures it waits for.
+    void library_screen_closed();
 
     /// Keeps the presence card's screen (runtime_presence_card.cpp) on the OA
     /// layer while the multiplayer screens show: pushes it when the layer

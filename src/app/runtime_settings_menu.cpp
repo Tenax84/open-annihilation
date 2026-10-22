@@ -20,6 +20,7 @@
 // put back what the screen opened with, and Restore defaults sets both to
 // their defaults, the game's options as their panels' RESTORE does.
 
+#include "library_host.hpp"
 #include "menu_paint.hpp"
 #include "oa_layer.hpp"
 #include "settings_menu.hpp"
@@ -27,9 +28,12 @@
 #include "oa/app/runtime.hpp"
 #include "oa/audio/game_audio.hpp"
 #include "oa/data/defs/layout.hpp"
+#include "oa/data/languages.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
 #include "oa/ui/frontend_state/initialization.hpp"
 #include "oa/ui/gui_layout.hpp"
+#include "oa/ui/library/library.hpp"
+#include "oa/ui/library/text.hpp"
 
 #include <algorithm>
 #include <array>
@@ -52,9 +56,14 @@ namespace {
 
 namespace settings = oa::ui::engine_settings;
 namespace kit = oa::ui::kit;
+namespace library = oa::ui::library;
 namespace init = oa::ui::frontend_state::initialization;
 namespace flag = init::preference_flags;
 using menu_paint::worded;
+
+/// The most buttons a language's row shows: the Library's first that can be
+/// pressed, of those the list offers.
+constexpr std::size_t language_buttons_most = 2;
 
 /// The sound a step of one of the game's options plays, as its button does.
 constexpr std::string_view options_sound = "Options";
@@ -206,6 +215,14 @@ struct Runtime::SettingsMenuHost {
         // The dialog opens on its first section; the screen opens on its
         // first category, whose rows are the game's.
         chosen_ = 0;
+        // The Library's language tile opens it on Language & Text.
+        if (!runtime_.settings_menu_first_category_.empty()) {
+            const std::vector<Category> listed = categories();
+            for (std::size_t at = 0; at < listed.size(); ++at)
+                if (listed[at].shown.id == runtime_.settings_menu_first_category_)
+                    chosen_ = at;
+            runtime_.settings_menu_first_category_.clear();
+        }
         show_page_of(chosen_);
     }
 
@@ -277,6 +294,15 @@ struct Runtime::SettingsMenuHost {
                 now.sections.push_back(std::move(section));
             if (category.page == settings::Page::system)
                 now.notice = dialog->folder_notice;
+        }
+        language_section_.reset();
+        language_rows_.clear();
+        if (category.page == settings::Page::language) {
+            SettingsMenuSection languages = languages_section();
+            if (!languages.rows.empty()) {
+                language_section_ = now.sections.size();
+                now.sections.push_back(std::move(languages));
+            }
         }
         return now;
     }
@@ -372,6 +398,11 @@ struct Runtime::SettingsMenuHost {
                 classic->press(runtime_, button);
             return;
         }
+        if (language_section_ && section == *language_section_) {
+            if (row < language_rows_.size() && button < language_rows_[row].actions.size())
+                press_language(language_rows_[row].entry, language_rows_[row].actions[button]);
+            return;
+        }
         settings::Dialog* dialog = runtime_.engine_settings_dialog();
         if (dialog == nullptr)
             return;
@@ -441,6 +472,193 @@ struct Runtime::SettingsMenuHost {
     }
 
   private:
+
+    /// One row of Language & Text's list of languages: the Library's entry
+    /// and what its buttons do, left to right.
+    struct LanguageRow {
+        library::EntryId entry{};               ///< the language
+        std::vector<library::Action> actions{}; ///< its buttons' actions
+    };
+
+    /// Returns one of the Library's words in the language shown.
+    ///
+    /// @param english the word, as text.hpp holds it
+    /// @return the word shown
+    [[nodiscard]] std::string library_word(std::string_view english) {
+        const library::TextHooks& text = runtime_.library_host().model.text;
+        if (text.shown == nullptr)
+            return std::string(english);
+        return std::string(text.shown(text.context, english));
+    }
+
+    /// Returns Language & Text's list of languages, from the Library's
+    /// languages: the languages built into the game first, then the packs
+    /// in the Library's order with no search: updates, the other installed
+    /// ones, those that can be got, then those that cannot, each by name.
+    /// A row shows the language's name in itself and the Library's buttons
+    /// for it that can be pressed: USE NOW, GET, UPDATE, CANCEL, RETRY and
+    /// UNINSTALL, at most language_buttons_most; DETAILS tells its facts.
+    /// The rows' entries and actions are kept for press.
+    ///
+    /// @return the section; no rows while the Library lists no language
+    [[nodiscard]] SettingsMenuSection languages_section() {
+        LibraryHost& host = runtime_.library_host();
+        // The list follows the language shown at once, as Language and
+        // USE NOW move it.
+        if (host.own_feed && host.refreshed &&
+            host.model.inputs.language.tag != runtime_.shown_language().tag)
+            host.rebuild(runtime_);
+        const library::Library& model = host.model;
+        std::vector<const library::Entry*> built_in;
+        std::vector<const library::Entry*> packs;
+        for (const library::Entry& entry : model.entries) {
+            if (entry.id.kind != library::Kind::language)
+                continue;
+            (library::is_built_in_language(entry.id) ? built_in : packs).push_back(&entry);
+        }
+        const auto order = [](const library::Entry& entry) {
+            switch (entry.state) {
+            case library::State::update:
+                return 0;
+            case library::State::installed:
+            case library::State::playing:
+                return 1;
+            case library::State::get:
+                return entry.can_act ? 2 : 3;
+            }
+            return 3;
+        };
+        const auto folded = [](std::string_view name) {
+            std::string lower(name);
+            for (char& character : lower)
+                if (character >= 'A' && character <= 'Z')
+                    character = static_cast<char>(character - 'A' + 'a');
+            return lower;
+        };
+        std::stable_sort(
+            packs.begin(), packs.end(),
+            [&](const library::Entry* left, const library::Entry* right) {
+                const int left_order = order(*left);
+                const int right_order = order(*right);
+                if (left_order != right_order)
+                    return left_order < right_order;
+                return folded(library::entry_name(*left)) < folded(library::entry_name(*right));
+            }
+        );
+        SettingsMenuSection section;
+        section.title = worded("LANGUAGES");
+        for (const std::vector<const library::Entry*>* group : {&built_in, &packs})
+            for (const library::Entry* entry : *group)
+                section.rows.push_back(language_row(model, *entry));
+        return section;
+    }
+
+    /// Returns one language of the list as a row, and keeps its entry and
+    /// its buttons' actions.
+    ///
+    /// @param model the Library's model
+    /// @param entry the language
+    /// @return the row
+    [[nodiscard]] SettingsMenuRow
+    language_row(const library::Library& model, const library::Entry& entry) {
+        const bool built_in = library::is_built_in_language(entry.id);
+        const bool in_use = built_in ? entry.state == library::State::playing
+                                     : entry.installed != nullptr && entry.installed->in_use;
+        LanguageRow kept{entry.id, {}};
+        SettingsMenuRow shown;
+        shown.id = built_in ? "language-" + std::string(library::built_in_language_tag(entry.id))
+                            : "language-pack-" + entry.id.key;
+        shown.label = std::string(library::entry_name(entry));
+        shown.control = SettingsMenuControl::buttons;
+        for (const library::ActionButton& button : library::entry_actions(model, entry)) {
+            if (!button.enabled || kept.actions.size() >= language_buttons_most)
+                continue;
+            switch (button.action) {
+            case library::Action::uninstall:
+                // The pack the game shows its words from is never uninstalled.
+                if (in_use)
+                    continue;
+                break;
+            case library::Action::use_now:
+            case library::Action::get:
+            case library::Action::update:
+            case library::Action::cancel:
+            case library::Action::retry:
+                break;
+            default:
+                continue;
+            }
+            kept.actions.push_back(button.action);
+            shown.buttons.push_back(button.text);
+        }
+        const std::string status = library::status_line(model, entry);
+        // Two buttons take the whole control; one leaves room for the state.
+        if (shown.buttons.size() < 2) {
+            if (in_use)
+                shown.value = library_word(library::words::chip_in_use);
+            else if (built_in)
+                shown.value = library_word(library::words::registry_built_in);
+            else if (entry.state == library::State::get && entry.queued == nullptr &&
+                     entry.listing != nullptr)
+                shown.value = library::size_text(entry.listing->size, model.text);
+            else
+                shown.value = status;
+        }
+        std::vector<std::string> lines;
+        const auto add = [&lines](std::string line) {
+            if (!line.empty())
+                lines.push_back(std::move(line));
+        };
+        add(std::string(library::entry_summary(entry)));
+        add(library::byline(entry, model.text));
+        add(status);
+        add(entry.blocked);
+        for (const library::Fact& fact : library::facts(model, entry))
+            add(fact.long_label + ": " + fact.long_value);
+        for (const std::string& line : lines) {
+            if (!shown.detail.empty())
+                shown.detail += '\n';
+            shown.detail += line;
+        }
+        if (std::find(kept.actions.begin(), kept.actions.end(), library::Action::use_now) !=
+            kept.actions.end())
+            shown.takes_effect = effect_of("language", kit::RowKind::choice);
+        language_rows_.push_back(std::move(kept));
+        return shown;
+    }
+
+    /// Presses one of a language's buttons. USE NOW chooses the language on
+    /// the dialog, as its Language does, so OK keeps it and Cancel and Undo
+    /// put back what the screen opened with; the others are the Library's
+    /// own (Runtime::library_entry_press).
+    ///
+    /// @param id the language
+    /// @param action the button's
+    void press_language(const library::EntryId& id, library::Action action) {
+        if (action != library::Action::use_now) {
+            runtime_.library_entry_press(action, id);
+            return;
+        }
+        LibraryHost& host = runtime_.library_host();
+        const library::Entry* entry = library::find_entry(host.model, id);
+        settings::Dialog* dialog = runtime_.engine_settings_dialog();
+        if (entry == nullptr || dialog == nullptr || !library::package_can_run(host.model, *entry))
+            return;
+        std::string tag;
+        if (library::is_built_in_language(id))
+            tag = std::string(library::built_in_language_tag(id));
+        else if (entry->installed != nullptr)
+            tag = id.key;
+        const oa::data::languages::Language* language = oa::data::languages::find_by_tag(tag);
+        if (language == nullptr || !oa::data::languages::playable(*language))
+            return;
+        dialog->chosen.language = std::string(language->tag);
+        if (language->needs == oa::data::languages::TextNeeds::modern_fonts)
+            dialog->chosen.modern_fonts = true;
+        take(settings::DialogAction::changed);
+        runtime_.play_ui_sound(options_sound, 0);
+        host.rebuild(runtime_);
+    }
 
     /// Brings the dialog up to date, as its own screen does each frame:
     /// Hardware acceleration's status follows the renderer, Touch shows once
@@ -1147,6 +1365,8 @@ struct Runtime::SettingsMenuHost {
     std::vector<settings::SectionRow> engine_rows_{};   ///< the dialog's rows, as last read
     std::vector<ClassicRow> classic_now_{};             ///< the game's options' rows, as last read
     std::map<std::string, std::vector<std::string>> captions_{}; ///< the stages' captions read
+    std::optional<std::size_t> language_section_{}; ///< the list of languages' section; none off it
+    std::vector<LanguageRow> language_rows_{};      ///< the list of languages' rows, as last read
 };
 
 void Runtime::push_settings_menu_screen() {
