@@ -5333,6 +5333,17 @@ class Runtime final : public menu::Host,
     /// @param in_match the dialog was opened in a match; otherwise on the main menu
     void push_settings_screen(bool in_match);
 
+    /// What Open Annihilation's Settings screen (runtime_settings_menu.cpp)
+    /// reads and sets: the open settings dialog's sections and the game's
+    /// own options, which the game's Options screen sets.
+    struct SettingsMenuHost;
+
+    /// Puts Open Annihilation's Settings screen (settings_menu.hpp) on the
+    /// OA layer as its top screen, over the open settings dialog, which it
+    /// shows in its own look over the whole window: on the main menu while
+    /// Open Annihilation's main menu shows.
+    void push_settings_menu_screen();
+
     /// Keeps the presence card's screen (runtime_presence_card.cpp) on the OA
     /// layer while the multiplayer screens show: pushes it when the layer
     /// has none. OaLayer::tick calls it once a frame.

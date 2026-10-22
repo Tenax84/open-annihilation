@@ -636,7 +636,8 @@ Under them the plate shows the main menu's version label.
   as LoadGame without saved games and Skirmish in the demo, shows faded
   and takes no press; one it hides, as AnyMsn until its code is typed,
   leaves its place, and the column closes up. SINGLE.GUI's Options has no
-  button: the main menu's Settings will hold what it sets.
+  button: the main menu's Settings holds what it sets
+  ([Open Annihilation's Settings screen](#open-annihilations-settings-screen)).
 - **Input.** As the main menu's: the arrows, Tab, Return and Space are the
   menu's, Options' quick key O goes no further
   (`ColumnMenuFacts::withheld_keys`), and every other key goes on to
@@ -748,6 +749,72 @@ START, and the version plate.
 - **When it shows.** As the other menus: not with `--classic-main-menu`,
   while a package owns the frame, or while a message box of the game's is
   open. The map selection shows over SKIRMISH.GUI as the game shows it.
+
+## Open Annihilation's Settings screen
+
+While Open Annihilation's main menu shows, the main menu's SETTINGS, its
+Settings button and Cmd+, (Ctrl+, elsewhere) open the settings dialog in a
+look of its own (`Runtime::push_settings_menu_screen`,
+`runtime_settings_menu.cpp`): one screen, `settings` like the dialog's
+(`settings_menu.hpp`, `settings_menu.cpp`), modal over the whole window on
+the menus' art and steel. Under a smaller OPEN ANNIHILATION title and a
+SETTINGS heading it has a CATEGORIES panel, the chosen category's panel and
+a DETAILS panel, then RESTORE DEFAULTS and UNDO on the left, CANCEL and OK
+on the right, and the version plate. With `--classic-main-menu`, and in a
+match, the dialog shows in its own look as before.
+
+- **Categories.** Sound, Music, Graphics and Game Speeds, the game's own
+  options, then Controls, Interface, Language & Text and Engine Limits,
+  Touch and Controller while the dialog lists them, and under a divider
+  Game Files where it is listed, Downloads, Game Content, System,
+  Developer and the registered pages, each with a small picture. The
+  chosen one glows amber.
+- **Sections.** A category's panel holds up to two sections under steel
+  strips: CLASSIC OPTIONS, marked 3.1c, the options the game's Options
+  screen sets (Sound Mode, Sound Volume, Unit Speech and TEST; Music,
+  Music Volume and Play Mode; Gamma, Shadows, Shading and Anti-Aliasing;
+  Game Speed, Scroll Speed, Message Lines, Message Time, Mouse Buttons and
+  Unit Chat Text), and OPEN ANNIHILATION, the open section of the dialog,
+  read with `section_rows`. A switch, a strip and a drop-down show their
+  value between two steel arrows, a slider its track, knob and value, a
+  row of buttons its buttons, and a text row its text. A locked row is
+  faded with a padlock. The rows scroll with the wheel, the scroll bar and
+  Home and End.
+- **What the presses do.** The dialog's rows are moved with
+  `dialog_control_key`, as the dialog's own keys move them, and what they
+  ask goes to `Runtime::take_engine_settings_action`, so every lock, every
+  setting put in effect as it changes and every action stay the dialog's.
+  A drop-down steps item by item: a language that is only offered for
+  download is chosen in the dialog's own look. The game's options are the
+  preferences their panels' handlers set, put in effect as there: the
+  volumes and the gamma at once, the music's switch and play mode at the
+  next frame (`Runtime::step_music`). Their stages' captions come from
+  SOUNDS.GUI, MUSIC.GUI and SPEEDS.GUI in the language shown. A step of
+  one of them plays the Options sound. Developer's last row, Standard
+  hacks, hands the dialog to its own look on Developer, for Developer
+  Mode's list; the game's options changed until then are saved there.
+- **The four buttons.** RESTORE DEFAULTS sets the dialog's settings as its
+  own Restore defaults does and the game's options as their panels'
+  RESTORE does, except the screen size, which the dialog's Screen size
+  sets. UNDO puts back what the screen opened with and stays open
+  (`undo_dialog_changes`). CANCEL puts it back and closes, OK keeps both
+  and saves them. Their quick keys R, U, C and O, Return and Escape press
+  them too.
+- **Details.** DETAILS names the row under the pointer, or the one the
+  keys gave the focus, says what it does in its hints' words, why it is
+  locked, its default (`SectionRow::default_value`) and when a change
+  takes effect.
+- **Input.** Up and Down move the focus along the rows, Left and Right
+  step the focused row, Space steps it on or presses its first button,
+  Tab, Page Down, Shift+Tab and Page Up change the category. Automation
+  lists `oa.settings.nav.<word>`, each row's `<word>-previous` and
+  `<word>-next`, a slider as `<word>`, a row's buttons as `<word>` or
+  `<word>.<place>`, `scroll-up`, `scroll-down`, `restore-defaults`,
+  `undo`, `cancel` and `ok`; the game's options' words start with
+  `classic-`.
+- **Limitations.** The game's own options show only on the main menu: in
+  a match they stay on the in-game menu's PREFS panel. Music's CD
+  transport buttons and the track display are not on the screen.
 
 ## The Library
 

@@ -2317,6 +2317,92 @@ DialogAction dialog_key(Dialog& dialog, DialogKey key) {
     return changed_or_redraw(dialog, before);
 }
 
+std::string_view section_name(Page page) noexcept {
+    return page == Page::registered ? std::string_view{} : layout::page_name(page);
+}
+
+std::vector<SectionRow> section_rows(const Dialog& dialog) {
+    std::vector<SectionRow> shown;
+    if (dialog.page == Page::registered) {
+        const RegisteredContent content = registered_content(dialog);
+        for (const kit::PlacedRow& placed : content.placed.rows)
+            shown.push_back({placed.view, placed.control, {}});
+        return shown;
+    }
+    kit::PlacedRows placed;
+    const Locks locks = layout::shown_locks(dialog);
+    const layout::Rows rows = layout::place_section(
+        dialog, dialog.page, locks, dialog.section_hooks, &layout::estimated_width, &placed
+    );
+    // Restore defaults gives each row that is not locked the defaults'
+    // value; Downloads' and Game Content's rows are not settings of the
+    // defaults.
+    const layout::SettingsModel defaults = layout::reading(dialog.defaults, dialog);
+    for (std::size_t index = 0; index < placed.rows.size(); ++index) {
+        SectionRow& row = shown.emplace_back();
+        row.view = placed.rows[index].view;
+        row.control = placed.rows[index].control;
+        if (index >= rows.rows.size())
+            continue;
+        const layout::Row& placed_row = rows.rows[index];
+        if (placed_row.downloads >= 0 || placed_row.content >= 0 ||
+            placed_row.lock != Lock::none)
+            continue;
+        const kit::RowView restored =
+            kit::view_of(layout::row_spec(placed_row.setting), defaults, &layout::shown_text);
+        switch (restored.kind) {
+        case kit::RowKind::toggle:
+            if (restored.captions.size() == 2)
+                row.default_value = restored.captions[restored.on ? 1 : 0];
+            break;
+        case kit::RowKind::levels:
+        case kit::RowKind::choice:
+            if (restored.index >= 0 &&
+                static_cast<std::size_t>(restored.index) < restored.captions.size())
+                row.default_value = restored.captions[static_cast<std::size_t>(restored.index)];
+            break;
+        case kit::RowKind::slider:
+            row.default_value = restored.value;
+            break;
+        default:
+            break;
+        }
+    }
+    return shown;
+}
+
+DialogAction
+dialog_control_key(Dialog& dialog, int32_t control, DialogKey key, std::size_t button) {
+    close_list(dialog);
+    const int32_t focused = dialog.focused;
+    const FolderButton marked = dialog.folder_marked;
+    dialog.focused = control;
+    if (button < folder_button_count)
+        dialog.folder_marked = static_cast<FolderButton>(button);
+    const DialogAction action = dialog_key(dialog, key);
+    // A drop-down's list stays shut: the other look steps its items.
+    const bool opened_list = dialog.open_list != no_control;
+    close_list(dialog);
+    dialog.focused = focused;
+    if (action != DialogAction::open_folder)
+        dialog.folder_marked = marked;
+    if (opened_list && action == DialogAction::redraw)
+        return DialogAction::none;
+    return action;
+}
+
+DialogAction undo_dialog_changes(Dialog& dialog) {
+    close_list(dialog);
+    dialog.chosen = dialog.opened;
+    dialog.install_id_chosen = dialog.install_id_opened;
+    dialog.registered_values = dialog.registered_opened;
+    dialog.welcome_again = false;
+    dialog.restored = false;
+    dialog.pressed = no_control;
+    dialog.dragging = false;
+    return DialogAction::changed;
+}
+
 DialogAction dialog_wheel(Dialog& dialog, int32_t x, int32_t y, float notches) {
     if (!dialog_contains(dialog, x, y) || dialog.pressed != no_control || !std::isfinite(notches))
         return DialogAction::none;

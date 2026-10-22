@@ -904,7 +904,12 @@ void Runtime::open_engine_settings_from_menu() {
         oa_layer().close_top();
     }
     open_engine_settings_dialog();
-    push_settings_screen(false);
+    // Over Open Annihilation's main menu the dialog shows in the Settings
+    // screen's look, over the whole window, with the game's own options.
+    if (oa_main_menu_shown())
+        push_settings_menu_screen();
+    else
+        push_settings_screen(false);
     auto& host = engine_settings_menu_host();
     host.button_hovered = false;
     host.button_pressed = false;

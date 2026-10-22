@@ -719,6 +719,26 @@ never show or move it. A key that moves the focus onto a row, or acts on a
 focused row, first scrolls the least that shows the row whole; a key that
 moves it to a button or a section's entry does not scroll.
 
+## Another look
+
+A screen that shows the settings in a look of its own, as Open
+Annihilation's Settings screen does ([src/app](../../app/README.md#open-annihilations-settings-screen)),
+reads and moves the dialog through three functions, so that the dialog
+keeps deciding every lock, step and action:
+
+- `section_rows` returns the open section's rows as the dialog shows them:
+  each row's view (`kit::RowView`, its words as shown), its control and
+  what Restore defaults would give it (`SectionRow::default_value`). On
+  Developer it holds Developer's own rows, without the list.
+- `dialog_control_key` acts on one control as a key does while that
+  control has the focus: a section's entry, Restore defaults or a row. A
+  drop-down's list never stays open, and the focus is put back where it
+  was.
+- `undo_dialog_changes` puts back what the dialog opened with, as Cancel
+  does, and leaves it open.
+
+`section_name` gives a section's name as its entry shows it, in English.
+
 ## Sizes
 
 The dialog, its notices and its prompts are laid out in points, one point a

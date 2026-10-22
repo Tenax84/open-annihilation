@@ -1,0 +1,149 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Open Annihilation's Settings screen on the OA layer
+// (runtime_settings_menu.cpp opens it from the main menu). It covers the
+// whole window with the main menu's art (menu_paint.hpp): under a smaller
+// OPEN ANNIHILATION title and a SETTINGS heading, a CATEGORIES panel, the
+// chosen category's panel and a DETAILS panel, then RESTORE DEFAULTS, UNDO,
+// CANCEL and OK, and the version plate.
+//
+// The categories list the game's own options, Sound, Music, Graphics and
+// Game Speeds, and Open Annihilation's sections. A category's panel holds up
+// to two sections, each under a strip: CLASSIC OPTIONS, the options the
+// game's Options screen sets, marked 3.1c, and OPEN ANNIHILATION, the
+// engine's own. A row shows its label and its control: a value between two
+// steel arrows, a slider with its value, buttons, or a value alone. The row
+// under the pointer glows amber, and DETAILS says what it does, its default
+// and when it takes effect.
+//
+// The screen is modal and draws nothing that moves on its own. What the
+// presses do is its host's: the screen asks for a step, a stop, a button,
+// a category, and the four buttons, and reads what the settings show again.
+#pragma once
+
+#include "oa_layer.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace oa::app {
+
+/// The Settings screen's name on the OA layer: the settings dialog's, so that
+/// the screens that look for Settings find it in either look.
+inline constexpr std::string_view settings_menu_screen_name = "settings";
+
+/// What a row's control is.
+enum class SettingsMenuControl : uint8_t {
+    selector, ///< its value between two steel arrows that step it: a switch, a strip, a drop-down
+    slider,   ///< a track with a knob at its stop and its value beside it
+    buttons,  ///< its value, when it has one, and up to three buttons
+    text,     ///< its value alone; nothing to press
+};
+
+/// One row of a section.
+struct SettingsMenuRow {
+    std::string id{};                              ///< its word, for automation
+    std::string label{};                           ///< what it sets, as shown
+    SettingsMenuControl control{};                 ///< its control
+    std::string value{};                           ///< what it shows now, as shown
+    int32_t index{};                               ///< a selector's or a slider's stop now, from 0
+    int32_t count{};                               ///< how many stops it has
+    std::vector<std::string> buttons{};            ///< a row of buttons' captions, left to right
+    bool enabled{true};                            ///< it takes a press
+    std::string lock{};                            ///< why it does not, as shown; empty when it does
+    std::string detail{};                          ///< what it does, as shown
+    std::string default_value{};                   ///< its default, as shown; empty for none
+    std::string takes_effect{};                    ///< when a change takes effect, as shown
+
+    friend bool operator==(const SettingsMenuRow&, const SettingsMenuRow&) = default;
+};
+
+/// One section of a category's panel, under its strip.
+struct SettingsMenuSection {
+    std::string title{};                ///< the strip's title, as shown
+    std::string badge{};                ///< the small plate at the strip's right; empty for none
+    std::vector<SettingsMenuRow> rows{}; ///< its rows, top to bottom
+
+    friend bool operator==(const SettingsMenuSection&, const SettingsMenuSection&) = default;
+};
+
+/// The picture beside a category's name.
+enum class SettingsMenuIcon : uint8_t {
+    sound,
+    music,
+    graphics,
+    speeds,
+    controls,
+    interface,
+    language,
+    limits,
+    touch,
+    controller,
+    game_files,
+    downloads,
+    content,
+    system,
+    developer,
+    page, ///< a page an extension registered
+};
+
+/// One entry of the CATEGORIES panel.
+struct SettingsMenuCategory {
+    std::string id{};        ///< its word, for automation
+    std::string name{};      ///< its name, as shown
+    SettingsMenuIcon icon{}; ///< its picture
+    bool after_divider{};    ///< it stands under the divider, with the files and the system
+
+    friend bool operator==(const SettingsMenuCategory&, const SettingsMenuCategory&) = default;
+};
+
+/// What the Settings screen shows now.
+struct SettingsMenuFacts {
+    std::vector<SettingsMenuCategory> categories{}; ///< the entries, top to bottom
+    std::size_t chosen{};                            ///< the category shown
+    std::string heading{};                           ///< the chosen category's panel's label
+    std::vector<SettingsMenuSection> sections{};     ///< its sections
+    std::string notice{};  ///< a line in amber under the details, such as a folder that did not open
+    std::string version{}; ///< the version label; empty for no plate
+
+    friend bool operator==(const SettingsMenuFacts&, const SettingsMenuFacts&) = default;
+};
+
+/// What the Settings screen's presses do. The screen reads the facts again
+/// after each.
+struct SettingsMenuActions {
+    /// Shows a category, by its place in the list.
+    std::function<void(std::size_t)> choose{};
+    /// Steps a row one stop, by its section and its place there: true for
+    /// the next stop, false for the one before.
+    std::function<void(std::size_t, std::size_t, bool)> step{};
+    /// Moves a slider's row to a stop, by its section and its place there.
+    std::function<void(std::size_t, std::size_t, int32_t)> set_stop{};
+    /// Presses a row's button, by the row's section, its place there and
+    /// the button's place from 0 at the left.
+    std::function<void(std::size_t, std::size_t, std::size_t)> press{};
+    std::function<void()> restore_defaults{}; ///< RESTORE DEFAULTS
+    std::function<void()> undo{};             ///< UNDO: back to what the screen opened with
+    std::function<void()> cancel{};           ///< CANCEL: back to that, and the screen closes
+    std::function<void()> accept{};           ///< OK: the settings kept, and the screen closes
+};
+
+/// Makes the Settings screen.
+///
+/// @param shows tells whether the screen shows; it closes when it does not
+/// @param facts reads what the settings show now
+/// @param actions what its presses do
+/// @return the screen
+[[nodiscard]] std::unique_ptr<LayerScreen> make_settings_menu(
+    std::function<bool()> shows,
+    std::function<SettingsMenuFacts()> facts,
+    SettingsMenuActions actions
+);
+
+} // namespace oa::app

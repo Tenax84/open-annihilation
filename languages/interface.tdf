@@ -13273,3 +13273,443 @@
 	es=Elige el mapa en el que jugar.;
 	it=Scegli la mappa su cui giocare.;
 	}
+
+[CATEGORIES]
+	{
+	de=KATEGORIEN;
+	fr=CATÉGORIES;
+	es=CATEGORÍAS;
+	it=CATEGORIE;
+	}
+
+[CLASSIC OPTIONS]
+	{
+	de=KLASSISCHE OPTIONEN;
+	fr=OPTIONS CLASSIQUES;
+	es=OPCIONES CLÁSICAS;
+	it=OPZIONI CLASSICHE;
+	}
+
+[Sound]
+	{
+	de=Sound;
+	fr=Son;
+	es=Sonido;
+	it=Suono;
+	}
+
+[Game Speeds]
+	{
+	de=Geschwindigkeiten;
+	fr=Vitesses;
+	es=Velocidades;
+	it=Velocità;
+	}
+
+[Game Files]
+	{
+	de=Spieldateien;
+	fr=Fichiers du jeu;
+	es=Archivos del juego;
+	it=File di gioco;
+	}
+
+[Standard hacks]
+	{
+	de=Standard-Hacks;
+	fr=Hacks standard;
+	es=Hacks estándar;
+	it=Hack standard;
+	}
+
+[OPEN LIST...]
+	{
+	de=LISTE ÖFFNEN...;
+	fr=OUVRIR LA LISTE...;
+	es=ABRIR LISTA...;
+	it=APRI ELENCO...;
+	}
+
+[Developer Mode's list of the standard hacks opens in the settings dialog. The game's own options changed here are kept.]
+	{
+	de=Die Liste der Standard-Hacks des Entwicklermodus öffnet sich im Einstellungsdialog. Die hier geänderten Optionen des Spiels bleiben erhalten.;
+	fr=La liste des hacks standard du mode développeur s'ouvre dans la fenêtre des réglages. Les options du jeu modifiées ici sont conservées.;
+	es=La lista de hacks estándar del modo desarrollador se abre en el diálogo de ajustes. Las opciones del juego cambiadas aquí se conservan.;
+	it=L'elenco degli hack standard della modalità sviluppatore si apre nella finestra delle impostazioni. Le opzioni del gioco cambiate qui restano.;
+	}
+
+[Point at a setting to read what it does.]
+	{
+	de=Zeige auf eine Einstellung, um zu lesen, was sie bewirkt.;
+	fr=Pointe un réglage pour lire ce qu'il fait.;
+	es=Señala un ajuste para leer qué hace.;
+	it=Punta un'impostazione per leggere cosa fa.;
+	}
+
+[Nothing to set here.]
+	{
+	de=Hier gibt es nichts einzustellen.;
+	fr=Rien à régler ici.;
+	es=Aquí no hay nada que ajustar.;
+	it=Qui non c'è nulla da impostare.;
+	}
+
+[Locked: {reason}]
+	{
+	de=Gesperrt: {reason};
+	fr=Verrouillé : {reason};
+	es=Bloqueado: {reason};
+	it=Bloccato: {reason};
+	}
+
+[Default: {value}]
+	{
+	de=Standard: {value};
+	fr=Par défaut : {value};
+	es=Predeterminado: {value};
+	it=Predefinito: {value};
+	}
+
+[Takes effect immediately]
+	{
+	de=Wirkt sofort;
+	fr=Prend effet immédiatement;
+	es=Se aplica al instante;
+	it=Ha effetto subito;
+	}
+
+[Takes effect when you press OK]
+	{
+	de=Wirkt, sobald du OK drückst;
+	fr=Prend effet quand tu appuies sur OK;
+	es=Se aplica al pulsar OK;
+	it=Ha effetto quando premi OK;
+	}
+
+[Takes effect from the next start]
+	{
+	de=Wirkt ab dem nächsten Start;
+	fr=Prend effet au prochain démarrage;
+	es=Se aplica desde el próximo inicio;
+	it=Ha effetto dal prossimo avvio;
+	}
+
+[Takes effect from the next game]
+	{
+	de=Wirkt ab dem nächsten Spiel;
+	fr=Prend effet à la prochaine partie;
+	es=Se aplica desde la próxima partida;
+	it=Ha effetto dalla prossima partita;
+	}
+
+[On]
+	{
+	de=An;
+	fr=Activé;
+	es=Sí;
+	it=Sì;
+	}
+
+[OPEN]
+	{
+	de=ÖFFNEN;
+	fr=OUVRIR;
+	es=ABRIR;
+	it=APRI;
+	}
+
+[TEST]
+	{
+	de=TEST;
+	fr=TEST;
+	es=PROBAR;
+	it=PROVA;
+	}
+
+[{count} secs]
+	{
+	de={count} s;
+	fr={count} s;
+	es={count} s;
+	it={count} s;
+	}
+
+[Sound Mode]
+	{
+	de=Soundmodus;
+	fr=Mode sonore;
+	es=Modo de sonido;
+	it=Modalità audio;
+	}
+
+[How the game plays its sounds, or whether it plays none.]
+	{
+	de=Wie das Spiel seine Klänge abspielt, oder ob gar keine.;
+	fr=Comment le jeu joue ses sons, ou s'il n'en joue aucun.;
+	es=Cómo reproduce el juego sus sonidos, o si no reproduce ninguno.;
+	it=Come il gioco riproduce i suoni, o se non ne riproduce.;
+	}
+
+[Sound Volume]
+	{
+	de=Lautstärke der Effekte;
+	fr=Volume des effets;
+	es=Volumen de efectos;
+	it=Volume effetti;
+	}
+
+[How loud the game's sound effects play.]
+	{
+	de=Wie laut die Soundeffekte des Spiels sind.;
+	fr=Le volume des effets sonores du jeu.;
+	es=Lo fuerte que suenan los efectos del juego.;
+	it=Quanto forte suonano gli effetti del gioco.;
+	}
+
+[Unit Speech]
+	{
+	de=Einheitensprache;
+	fr=Voix des unités;
+	es=Voz de unidades;
+	it=Voce delle unità;
+	}
+
+[How much the units say when they are given orders.]
+	{
+	de=Wie viel die Einheiten sagen, wenn sie Befehle erhalten.;
+	fr=Ce que disent les unités quand elles reçoivent des ordres.;
+	es=Cuánto hablan las unidades al recibir órdenes.;
+	it=Quanto parlano le unità quando ricevono ordini.;
+	}
+
+[Test Sound]
+	{
+	de=Testklang;
+	fr=Son de test;
+	es=Sonido de prueba;
+	it=Suono di prova;
+	}
+
+[Plays a sound at the volume set.]
+	{
+	de=Spielt einen Klang in der eingestellten Lautstärke.;
+	fr=Joue un son au volume réglé.;
+	es=Reproduce un sonido con el volumen fijado.;
+	it=Riproduce un suono al volume impostato.;
+	}
+
+[Whether the game plays its music.]
+	{
+	de=Ob das Spiel seine Musik spielt.;
+	fr=Si le jeu joue sa musique.;
+	es=Si el juego reproduce su música.;
+	it=Se il gioco riproduce la sua musica.;
+	}
+
+[Music Volume]
+	{
+	de=Musiklautstärke;
+	fr=Volume de la musique;
+	es=Volumen de la música;
+	it=Volume musica;
+	}
+
+[How loud the music plays.]
+	{
+	de=Wie laut die Musik spielt.;
+	fr=Le volume de la musique.;
+	es=Lo fuerte que suena la música.;
+	it=Quanto forte suona la musica.;
+	}
+
+[Play Mode]
+	{
+	de=Wiedergabe;
+	fr=Mode de lecture;
+	es=Modo de reproducción;
+	it=Modalità di riproduzione;
+	}
+
+[Which tracks the music plays, and in what order.]
+	{
+	de=Welche Stücke die Musik spielt, und in welcher Reihenfolge.;
+	fr=Quelles pistes la musique joue, et dans quel ordre.;
+	es=Qué pistas suenan y en qué orden.;
+	it=Quali brani suonano e in quale ordine.;
+	}
+
+[Gamma]
+	{
+	de=Gamma;
+	fr=Gamma;
+	es=Gamma;
+	it=Gamma;
+	}
+
+[How bright the game's pictures are drawn.]
+	{
+	de=Wie hell die Bilder des Spiels gezeichnet werden.;
+	fr=La luminosité des images du jeu.;
+	es=Lo brillantes que se dibujan las imágenes del juego.;
+	it=Quanto sono luminose le immagini del gioco.;
+	}
+
+[Shadows]
+	{
+	de=Schatten;
+	fr=Ombres;
+	es=Sombras;
+	it=Ombre;
+	}
+
+[Whether units, vehicles and features cast shadows.]
+	{
+	de=Ob Einheiten, Fahrzeuge und Objekte Schatten werfen.;
+	fr=Si les unités, les véhicules et les éléments projettent des ombres.;
+	es=Si unidades, vehículos y objetos proyectan sombras.;
+	it=Se unità, veicoli e oggetti proiettano ombre.;
+	}
+
+[Shading]
+	{
+	de=Schattierung;
+	fr=Ombrage;
+	es=Sombreado;
+	it=Ombreggiatura;
+	}
+
+[Whether the units are shaded by the light.]
+	{
+	de=Ob die Einheiten vom Licht schattiert werden.;
+	fr=Si les unités sont ombrées par la lumière.;
+	es=Si las unidades se sombrean con la luz.;
+	it=Se le unità sono ombreggiate dalla luce.;
+	}
+
+[Anti-Aliasing]
+	{
+	de=Kantenglättung;
+	fr=Anticrénelage;
+	es=Suavizado;
+	it=Antialiasing;
+	}
+
+[Whether the units' edges are smoothed, as the game smooths them.]
+	{
+	de=Ob die Kanten der Einheiten geglättet werden, wie das Spiel sie glättet.;
+	fr=Si les bords des unités sont lissés, comme le jeu les lisse.;
+	es=Si los bordes de las unidades se suavizan, como los suaviza el juego.;
+	it=Se i bordi delle unità sono smussati, come li smussa il gioco.;
+	}
+
+[Game Speed]
+	{
+	de=Spielgeschwindigkeit;
+	fr=Vitesse du jeu;
+	es=Velocidad de juego;
+	it=Velocità di gioco;
+	}
+
+[How fast a game plays when it starts. 0 is the game's normal speed.]
+	{
+	de=Wie schnell ein Spiel zu Beginn läuft. 0 ist die normale Geschwindigkeit.;
+	fr=La vitesse d'une partie à son début. 0 est la vitesse normale.;
+	es=Lo rápido que va una partida al empezar. 0 es la velocidad normal.;
+	it=Quanto è veloce una partita all'inizio. 0 è la velocità normale.;
+	}
+
+[Scroll Speed]
+	{
+	de=Scrollgeschwindigkeit;
+	fr=Vitesse de défilement;
+	es=Velocidad de desplazamiento;
+	it=Velocità di scorrimento;
+	}
+
+[How fast the view scrolls over the battlefield.]
+	{
+	de=Wie schnell die Ansicht über das Schlachtfeld scrollt.;
+	fr=La vitesse à laquelle la vue défile sur le champ de bataille.;
+	es=Lo rápido que se desplaza la vista por el campo de batalla.;
+	it=Quanto velocemente la vista scorre sul campo di battaglia.;
+	}
+
+[Message Lines]
+	{
+	de=Nachrichtenzeilen;
+	fr=Lignes de messages;
+	es=Líneas de mensajes;
+	it=Righe dei messaggi;
+	}
+
+[How many lines of messages show over the battlefield.]
+	{
+	de=Wie viele Nachrichtenzeilen über dem Schlachtfeld stehen.;
+	fr=Le nombre de lignes de messages sur le champ de bataille.;
+	es=Cuántas líneas de mensajes se ven sobre el campo de batalla.;
+	it=Quante righe di messaggi si vedono sul campo di battaglia.;
+	}
+
+[Message Time]
+	{
+	de=Nachrichtendauer;
+	fr=Durée des messages;
+	es=Duración de mensajes;
+	it=Durata dei messaggi;
+	}
+
+[How long a message stays before it scrolls away.]
+	{
+	de=Wie lange eine Nachricht bleibt, bevor sie wegscrollt.;
+	fr=Combien de temps un message reste avant de défiler.;
+	es=Cuánto tiempo queda un mensaje antes de desaparecer.;
+	it=Quanto resta un messaggio prima di scorrere via.;
+	}
+
+[Mouse Buttons]
+	{
+	de=Maustasten;
+	fr=Boutons de la souris;
+	es=Botones del ratón;
+	it=Tasti del mouse;
+	}
+
+[Which mouse button selects and which gives orders.]
+	{
+	de=Welche Maustaste auswählt und welche Befehle gibt.;
+	fr=Quel bouton de la souris sélectionne et lequel donne les ordres.;
+	es=Qué botón del ratón selecciona y cuál da órdenes.;
+	it=Quale tasto del mouse seleziona e quale dà ordini.;
+	}
+
+[Unit Chat Text]
+	{
+	de=Einheiten-Text;
+	fr=Texte des unités;
+	es=Texto de unidades;
+	it=Testo delle unità;
+	}
+
+[How much of what the units say shows as text.]
+	{
+	de=Wie viel von dem, was die Einheiten sagen, als Text erscheint.;
+	fr=Ce que disent les unités qui s'affiche en texte.;
+	es=Cuánto de lo que dicen las unidades aparece como texto.;
+	it=Quanto di ciò che dicono le unità appare come testo.;
+	}
+
+[Left click]
+	{
+	de=Linksklick;
+	fr=Clic gauche;
+	es=Clic izquierdo;
+	it=Clic sinistro;
+	}
+
+[Right click]
+	{
+	de=Rechtsklick;
+	fr=Clic droit;
+	es=Clic derecho;
+	it=Clic destro;
+	}
