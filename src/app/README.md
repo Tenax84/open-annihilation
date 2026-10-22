@@ -588,6 +588,28 @@ them.
   at every other window's height, or at its width when it is narrower than
   1000 of those rows; the background covers the window, cut mostly on the
   right.
+- **Drawing.** The background, the shade over its top and bottom and the
+  ground under it are put together once at the window's pixels and kept
+  until the window's size changes, so that a redraw, such as the one a
+  button the pointer comes over asks for, copies them and draws only the
+  title, the buttons and the plate. The layer then composes and uploads
+  only the rows of the window that differ from what its texture holds
+  (`OaLayer::prepare_front_end`).
+- **Frames.** While the screen covers the whole of the front end's picture
+  (`Runtime::main_menu_covers_front_end`), MAINMENU.GUI's picture is
+  neither drawn nor uploaded, as nothing of it shows: only its cursor ticks
+  (`Runtime::present_covered_front_end`). The game's cursor is shown as
+  the system's pointer, enlarged as the picture is
+  (`Runtime::show_menu_system_cursor`), so that the pointer moves without
+  a frame being drawn. A frame that would show what the window shows
+  already, the same screens, textures, place and cursor, is neither drawn
+  nor presented, and the loop waits for the next event, at most a tenth
+  of a second, while a move of the pointer that changes no button's look
+  lets the wait go on. Any event of the window or the renderer has the
+  next frame presented. Not in a run that is driven, recorded or timed
+  frame by frame, nor while the frame statistics show
+  (`Runtime::quiet_frames_allowed`): those present every frame and draw the
+  cursor in it.
 - **Limitations.** The first-run setup's coach marks still point at the
   corners where MAINMENU.GUI's Library and Settings buttons stand. The
   captions are drawn in the dialog's fonts, not the title's.

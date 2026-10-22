@@ -319,6 +319,7 @@ struct PackageOptions;
 class MapPacks;
 struct PackMap;
 class OaLayer;
+struct CoveredFrame;
 
 namespace content {
 class Service;
@@ -1133,7 +1134,8 @@ class Runtime final : public menu::Host,
     /// the system's pointer drives is open over the game (the Game files
     /// screen). Everywhere else, in play and in the game's own menus, dialogs
     /// and message boxes, the game draws its cursor and the system's pointer
-    /// is hidden.
+    /// is hidden. Over Open Annihilation's main menu the system's pointer
+    /// shows the game's cursor (show_menu_system_cursor).
     ///
     /// @return true where the system's pointer is to show
     [[nodiscard]] bool system_pointer_wanted() const;
@@ -5367,6 +5369,14 @@ class Runtime final : public menu::Host,
     /// @return true while it is
     [[nodiscard]] bool oa_main_menu_shown();
 
+    /// Tells whether Open Annihilation's main menu covers the whole of the
+    /// front end's picture this frame, so that nothing of MAINMENU.GUI's
+    /// picture shows: the frame then neither draws nor uploads it
+    /// (present_covered_front_end).
+    ///
+    /// @return true while it does
+    [[nodiscard]] bool main_menu_covers_front_end();
+
     /// Presses a button of MAINMENU.GUI as a click released on it does: the
     /// main menu's handler takes it, plays its sound and moves the front end
     /// on. Open Annihilation's main menu presses the game's buttons this way.
@@ -9165,6 +9175,39 @@ class Runtime final : public menu::Host,
     ///
     /// Throws PresentError when SDL refuses a call.
     void present_front_end();
+
+    /// Presents the front end while Open Annihilation's main menu covers its
+    /// picture (main_menu_covers_front_end): only the OA layer's screens and
+    /// the cursor, without drawing or uploading the picture under them. A
+    /// frame that would show what the window shows already is not drawn
+    /// nor presented while quiet frames are allowed (quiet_frames_allowed),
+    /// and front_end_quiet_ tells so.
+    ///
+    /// Throws PresentError when SDL refuses a call.
+    void present_covered_front_end();
+
+    /// Tells whether a frame that would show what the window shows already
+    /// may be left out: a run in a window that nothing drives, records or
+    /// times frame by frame, without the frame statistics shown.
+    ///
+    /// @return true when it may
+    [[nodiscard]] bool quiet_frames_allowed() const;
+
+    /// Shows the game's cursor as the system's pointer over Open
+    /// Annihilation's main menu, enlarged as the picture is, so that the
+    /// pointer moves without a frame being drawn. Not while the cursor is
+    /// hidden, lifted by touch, a middle-click pan's or left out of the
+    /// frame, nor while quiet frames are not allowed.
+    ///
+    /// @param area where the picture lies in the window, in window pixels
+    /// @param picture_width the picture's width, in its pixels
+    /// @return true when the system draws the cursor this frame; the frame
+    ///     then draws none
+    bool show_menu_system_cursor(const SDL_FRect& area, int picture_width);
+
+    /// Puts the system's own pointer back and forgets the game's cursors
+    /// made for it (show_menu_system_cursor).
+    void release_menu_system_cursor() noexcept;
 
     /// Returns the current frontend screen's gadgets and selection as the input handlers' menu.
     ///
@@ -16235,6 +16278,31 @@ class Runtime final : public menu::Host,
     SDL_Texture* match_dialog_side_tex_ = nullptr; // match_dialog_side_
     int match_dialog_side_tex_w_ = 0, match_dialog_side_tex_h_ = 0;
     int match_cursor_tex_w_ = 0, match_cursor_tex_h_ = 0;
+
+    /// One cursor of the game made as the system's pointer.
+    struct MenuSystemCursor {
+        const oa::formats::gaf::Frame* frame{}; ///< the cursor's frame it was made from
+        SDL_Cursor* cursor{};                   ///< the system's pointer
+    };
+
+    /// The game's cursors made as the system's pointer over Open
+    /// Annihilation's main menu (show_menu_system_cursor), at
+    /// menu_cursor_scale_ and the display gamma menu_cursor_gamma_.
+    std::vector<MenuSystemCursor> menu_cursors_{};
+    float menu_cursor_scale_ = 0.0F;             ///< the scale menu_cursors_ were made at
+    std::array<uint8_t, 256> menu_cursor_gamma_{}; ///< the gamma menu_cursors_ were made at
+    /// The system's pointer shows the game's cursor (show_menu_system_cursor).
+    bool menu_cursor_shown_ = false;
+    /// The front end was presented with Open Annihilation's main menu
+    /// covering its picture this frame (present_covered_front_end).
+    bool covered_front_end_ = false;
+    /// This frame showed what the window showed already and was neither
+    /// drawn nor presented: the loop waits for the next event.
+    bool front_end_quiet_ = false;
+    /// What the last frame presented with the main menu covering the
+    /// picture showed; null when it is to be presented again, after any
+    /// event of the window or the renderer.
+    std::shared_ptr<const CoveredFrame> covered_shown_{};
 
     /// Accumulated wall time per frame phase, in nanoseconds, for --benchmark.
     struct PhaseTimes {

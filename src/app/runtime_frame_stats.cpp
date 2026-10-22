@@ -13,6 +13,7 @@
 #include "graphics_report.hpp"
 #include "match_clock.hpp"
 #include "match_models.hpp"
+#include "oa_layer.hpp"
 #include "pad_state.hpp"
 #include "oa/app/frame_pacing.hpp"
 #include "oa/app/match_console.hpp"
@@ -64,6 +65,12 @@ constexpr auto kLightEdgeSlot = static_cast<uint8_t>(oa::ui::gadget_render::colo
 /// (black): the panel's outline, and what its and the graph's fills darken
 /// toward.
 constexpr auto kDarkEdgeSlot = static_cast<uint8_t>(oa::ui::gadget_render::color_slot::dark_edge);
+/// How long a frame that showed what the window showed already waits for an
+/// event at most while the system's pointer shows the main menu's cursor,
+/// in nanoseconds: the clocks of the music, the notices and the downloads
+/// are looked at ten times a second.
+constexpr uint64_t kQuietMenuWaitNs = 100'000'000;
+
 /// GUI palette slot of the table's labels and the units count: a light gray.
 constexpr uint8_t kLabelSlot = 20;
 /// GUI palette slot of the column names, the notes and a missing measure: a
@@ -285,6 +292,10 @@ void Runtime::pace_next_frame(bool& running) {
                             device_state::buttons_held() != 0 || touch_finger_count() != 0 ||
                             PadAccess::input_held(*this);
     activity.unattended = options_.unattended;
+    // A frame that showed what the window showed already waits for the
+    // next event, whatever input came lately.
+    if (front_end_quiet_)
+        activity.input_recent = false;
     paced_frames_per_second_ = paced_frame_rate(options_.max_frames_per_second, activity);
     // While the renderer waits for the display, the loop keeps just below
     // the display's rate, so that each present finds the display ready.
@@ -294,18 +305,35 @@ void Runtime::pace_next_frame(bool& running) {
     const bool idle = !activity.match_advancing && !activity.camera_moving &&
                       !activity.input_recent && !activity.unattended;
     frame_wait_ = idle && sdl_.window != nullptr ? FrameWait::idle : FrameWait::precise;
-    const uint64_t wait = end_paced_frame(frame_pacer_, frame_clock_ns(), paced_frames_per_second_);
+    uint64_t wait = end_paced_frame(frame_pacer_, frame_clock_ns(), paced_frames_per_second_);
+    if (front_end_quiet_ && menu_cursor_shown_ && frame_wait_ == FrameWait::idle)
+        wait = std::max(wait, kQuietMenuWaitNs);
     if (wait == 0)
         return;
     if (frame_wait_ == FrameWait::idle) {
         // An idle wait ends early when an event comes, so the pointer and
         // the keys answer at once; the frame that follows starts a new run.
         SDL_Event event{};
-        const auto timeout_ms = static_cast<int32_t>(
+        const uint64_t until = frame_pacing::steady_now_ns() + wait;
+        auto timeout_ms = static_cast<int32_t>(
             (wait + kNanosecondsPerMillisecond - 1) / kNanosecondsPerMillisecond
         );
-        if (SDL_WaitEventTimeout(&event, timeout_ms))
+        while (SDL_WaitEventTimeout(&event, timeout_ms)) {
+            const uint64_t looks = front_end_quiet_ ? oa_layer().looks() : 0;
             dispatch_event(event, running);
+            // While the system's pointer shows the main menu's cursor, a
+            // move of the pointer that changes no screen's look needs no
+            // frame: the wait goes on to its end.
+            if (!front_end_quiet_ || !menu_cursor_shown_ || event.type != SDL_EVENT_MOUSE_MOTION ||
+                !running || exit_requested_ || oa_layer().looks() != looks)
+                return;
+            const uint64_t at = frame_pacing::steady_now_ns();
+            if (at >= until)
+                return;
+            timeout_ms = static_cast<int32_t>(
+                (until - at + kNanosecondsPerMillisecond - 1) / kNanosecondsPerMillisecond
+            );
+        }
         return;
     }
     // A frame at the full rate waits to the nanosecond, sleeping first and

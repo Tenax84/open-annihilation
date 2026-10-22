@@ -33,6 +33,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -1335,8 +1337,20 @@ void Runtime::render() {
     // before the frame is composed; the memory guard may drop it first.
     update_render_tier();
     watch_accelerated_memory();
+    // While Open Annihilation's main menu covers the front end's picture,
+    // nothing of that picture shows: only the cursor ticks.
+    front_end_quiet_ = false;
+    covered_front_end_ = main_menu_covers_front_end();
+    if (!covered_front_end_) {
+        covered_shown_.reset();
+        if (menu_cursor_shown_ || !menu_cursors_.empty())
+            release_menu_system_cursor();
+    }
     const auto compose_start = std::chrono::steady_clock::now();
-    rebuild_surface();
+    if (covered_front_end_)
+        tick_and_draw_cursor();
+    else
+        rebuild_surface();
     const auto composed = elapsed_since(compose_start);
     phase_times_.compose += composed;
     frame_pacing::note_frame_measure(
@@ -1369,6 +1383,10 @@ void Runtime::render() {
 }
 
 void Runtime::present_front_end() {
+    if (covered_front_end_) {
+        present_covered_front_end();
+        return;
+    }
     // A match's surface_ is composed at the display gamma already.
     const auto present_start = std::chrono::steady_clock::now();
     const bool gamma = !gamma_identity_ && screen_ != Screen::match;
@@ -1494,6 +1512,210 @@ void Runtime::present_front_end() {
     const auto present_ns = static_cast<uint64_t>(elapsed_since(present_start));
     frame_pacing::note_frame_measure(frame_stats_, frame_pacing::FrameMeasure::present, present_ns);
     note_present_time(present_ns);
+}
+
+/// What a frame presented while Open Annihilation's main menu covers the
+/// front end's picture shows (Runtime::present_covered_front_end): two that
+/// are equal show the same pixels.
+struct CoveredFrame {
+    OaLayer::FrontFrame layer{}; ///< what the OA layer draws
+    std::array<int, 2> output{}; ///< the window's width and height, in pixels
+    std::array<float, 4> area{}; ///< where the picture lies in the window
+    bool system_cursor{};        ///< the system's pointer shows the cursor
+    /// The cursor's frame the frame draws; null for none, and while the
+    /// system's pointer shows it.
+    const void* cursor{};
+    std::array<int, 2> cursor_at{};   ///< where the frame draws it, in the picture's pixels
+    std::array<uint8_t, 256> gamma{}; ///< the display gamma the cursor is drawn at
+    bool operator==(const CoveredFrame&) const = default;
+};
+
+void Runtime::present_covered_front_end() {
+    const auto present_start = std::chrono::steady_clock::now();
+    const int frame_w = output_texture_w_ > 0 ? output_texture_w_ : kCanvasWidth;
+    const int frame_h = output_texture_h_ > 0 ? output_texture_h_ : kCanvasHeight;
+    if (!set_frame_presentation(sdl_.renderer, menu_scaling(), frame_w, frame_h))
+        throw_present_error("SDL logical presentation");
+    int output_w = 0;
+    int output_h = 0;
+    SDL_RendererLogicalPresentation presented_mode = SDL_LOGICAL_PRESENTATION_DISABLED;
+    const bool have_output = SDL_GetRenderOutputSize(sdl_.renderer, &output_w, &output_h) &&
+                             output_w > 0 && output_h > 0;
+    std::ignore =
+        SDL_GetRenderLogicalPresentation(sdl_.renderer, nullptr, nullptr, &presented_mode);
+    const bool whole_steps = presented_mode == SDL_LOGICAL_PRESENTATION_INTEGER_SCALE;
+    const SDL_FRect wanted =
+        have_output ? frame_letterbox(output_w, output_h, frame_w, frame_h, whole_steps)
+                    : SDL_FRect{};
+    SDL_FRect reckoned{};
+    const bool have_rect = SDL_GetRenderLogicalPresentationRect(sdl_.renderer, &reckoned);
+    const bool sdl_places =
+        !have_output ||
+        (have_rect && std::fabs(reckoned.x - wanted.x) <= 0.05F &&
+         std::fabs(reckoned.y - wanted.y) <= 0.05F && std::fabs(reckoned.w - wanted.w) <= 0.05F &&
+         std::fabs(reckoned.h - wanted.h) <= 0.05F);
+    // The picture's place, as present_front_end finds it: where the logical
+    // presentation does not match the drawing surface, the letterbox in the
+    // window's own pixels.
+    SDL_FRect area = sdl_places ? reckoned : wanted;
+    if (sdl_places && !have_rect)
+        area = SDL_FRect{};
+    if (!sdl_places) {
+        std::ignore = SDL_SetRenderLogicalPresentation(
+            sdl_.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED
+        );
+        std::ignore = SDL_SetRenderScale(sdl_.renderer, 1.0F, 1.0F);
+        std::ignore = SDL_SetRenderViewport(sdl_.renderer, nullptr);
+        std::ignore = SDL_SetRenderClipRect(sdl_.renderer, nullptr);
+    }
+    auto shown = std::make_shared<CoveredFrame>();
+    shown->layer = oa_layer().prepare_front_end(area);
+    shown->output = {output_w, output_h};
+    shown->area = {area.x, area.y, area.w, area.h};
+    shown->system_cursor = show_menu_system_cursor(area, frame_w);
+    if (!shown->system_cursor && cursors_loaded_ && !frame_without_cursor_ &&
+        cursor_image_ != nullptr && !middle_pan_shows_direction()) {
+        const auto touch = touch_cursor();
+        if (touch.replaces_pointer ? touch.visible : pointer_shows_cursor()) {
+            shown->cursor = cursor_image_;
+            shown->cursor_at = {
+                static_cast<int>(touch.replaces_pointer ? touch.x : pointer_x_),
+                static_cast<int>(touch.replaces_pointer ? touch.y : pointer_y_)
+            };
+        }
+    }
+    shown->gamma = gamma_table_;
+    if (covered_shown_ && *covered_shown_ == *shown && quiet_frames_allowed()) {
+        front_end_quiet_ = true;
+        return;
+    }
+    if (!SDL_SetRenderDrawColor(sdl_.renderer, 0, 0, 0, 255) || !SDL_RenderClear(sdl_.renderer))
+        throw_present_error("SDL render");
+    oa_layer().draw_front_end(shown->layer);
+    if (!shown->system_cursor)
+        present_software_cursor(false);
+    capture_render_target();
+    if (render_fault_due(RenderFaultPoint::present))
+        throw PresentError("injected present error");
+    if (render_fault_due(RenderFaultPoint::float_state))
+        std::fesetround(FE_TOWARDZERO);
+    if (!SDL_RenderPresent(sdl_.renderer))
+        note_present_refused("SDL render");
+    oa::base::float_precision::restore_program_float_control();
+    covered_shown_ = std::move(shown);
+    const auto present_ns = static_cast<uint64_t>(elapsed_since(present_start));
+    frame_pacing::note_frame_measure(frame_stats_, frame_pacing::FrameMeasure::present, present_ns);
+    note_present_time(present_ns);
+}
+
+bool Runtime::quiet_frames_allowed() const {
+    return sdl_.window != nullptr && sdl_.renderer != nullptr && !options_.remote_controlled &&
+           !options_.frame_limit && !options_.headless_check && !options_.unattended &&
+           director_ == nullptr && !video_capture_ && !frame_run_clock_ns_ && !frame_stats_shown_;
+}
+
+bool Runtime::show_menu_system_cursor(const SDL_FRect& area, int picture_width) {
+    const bool wanted = quiet_frames_allowed() && cursors_loaded_ && cursor_image_ != nullptr &&
+                        !frame_without_cursor_ && !system_pointer_screen_open_ &&
+                        application_active_ && !middle_pan_shows_direction() &&
+                        !touch_cursor().replaces_pointer && picture_width > 0 && area.w > 0.0F;
+    if (!wanted) {
+        if (menu_cursor_shown_ || !menu_cursors_.empty())
+            release_menu_system_cursor();
+        return false;
+    }
+    // As large as the cursor the picture enlarges, at the display gamma.
+    const float scale = area.w / static_cast<float>(picture_width);
+    if (scale != menu_cursor_scale_ || menu_cursor_gamma_ != gamma_table_) {
+        for (const MenuSystemCursor& made : menu_cursors_)
+            SDL_DestroyCursor(made.cursor);
+        menu_cursors_.clear();
+        menu_cursor_scale_ = scale;
+        menu_cursor_gamma_ = gamma_table_;
+    }
+    auto made = std::find_if(menu_cursors_.begin(), menu_cursors_.end(), [this](const auto& held) {
+        return held.frame == cursor_image_;
+    });
+    if (made == menu_cursors_.end()) {
+        const auto rendered = oa::formats::gaf::render_normal(*cursor_image_);
+        if (!rendered.ok())
+            return false;
+        const auto& frame = *rendered.frame;
+        const int width = std::max(static_cast<int>(std::lround(frame.width * scale)), 1);
+        const int height = std::max(static_cast<int>(std::lround(frame.height * scale)), 1);
+        SDL_Surface* picture = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_ARGB8888);
+        if (picture == nullptr)
+            return false;
+        const auto& pal = match_palette_.size() >= 1024 ? match_palette_ : resources_.gui_palette;
+        for (int row = 0; row < height; ++row) {
+            auto* dst = reinterpret_cast<uint32_t*>(
+                static_cast<uint8_t*>(picture->pixels) + static_cast<std::size_t>(row) * picture->pitch
+            );
+            const auto from_row = std::min(
+                static_cast<std::size_t>(row) * frame.height / static_cast<std::size_t>(height),
+                static_cast<std::size_t>(frame.height) - 1U
+            );
+            for (int column = 0; column < width; ++column) {
+                const auto from_column = std::min(
+                    static_cast<std::size_t>(column) * frame.width / static_cast<std::size_t>(width),
+                    static_cast<std::size_t>(frame.width) - 1U
+                );
+                const std::size_t offset = from_row * frame.width + from_column;
+                uint32_t texel = 0;
+                if (offset < frame.coverage.size() && frame.coverage[offset] != 0) {
+                    const auto pal_i = static_cast<std::size_t>(frame.pixels[offset]) * 4U;
+                    if (pal_i + 2 < pal.size())
+                        texel = 0xff000000U | (static_cast<uint32_t>(pal[pal_i]) << 16) |
+                                (static_cast<uint32_t>(pal[pal_i + 1]) << 8) |
+                                static_cast<uint32_t>(pal[pal_i + 2]);
+                }
+                dst[column] = texel;
+            }
+            if (!gamma_identity_)
+                gamma_xrgb_row(dst, width, gamma_table_);
+        }
+        SDL_Cursor* cursor = SDL_CreateColorCursor(
+            picture,
+            std::clamp(static_cast<int>(std::lround(frame.origin_x * scale)), 0, width - 1),
+            std::clamp(static_cast<int>(std::lround(frame.origin_y * scale)), 0, height - 1)
+        );
+        SDL_DestroySurface(picture);
+        if (cursor == nullptr)
+            return false;
+        // An animated cursor's frames are each made once; a cursor of
+        // another kind starts the set again.
+        constexpr std::size_t most_menu_cursors = 32;
+        if (menu_cursors_.size() >= most_menu_cursors) {
+            for (const MenuSystemCursor& held : menu_cursors_)
+                if (held.cursor != SDL_GetCursor())
+                    SDL_DestroyCursor(held.cursor);
+            std::erase_if(menu_cursors_, [](const auto& held) {
+                return held.cursor != SDL_GetCursor();
+            });
+        }
+        menu_cursors_.push_back({cursor_image_, cursor});
+        made = std::prev(menu_cursors_.end());
+    }
+    if (SDL_GetCursor() != made->cursor)
+        std::ignore = SDL_SetCursor(made->cursor);
+    if (!menu_cursor_shown_) {
+        menu_cursor_shown_ = true;
+        if (!SDL_CursorVisible())
+            std::ignore = SDL_ShowCursor();
+    }
+    return true;
+}
+
+void Runtime::release_menu_system_cursor() noexcept {
+    menu_cursor_shown_ = false;
+    if (SDL_Cursor* system = SDL_GetDefaultCursor())
+        std::ignore = SDL_SetCursor(system);
+    for (const MenuSystemCursor& made : menu_cursors_)
+        SDL_DestroyCursor(made.cursor);
+    menu_cursors_.clear();
+    menu_cursor_scale_ = 0.0F;
+    // The game draws its cursor again, the system's pointer hidden.
+    apply_system_pointer(false);
 }
 
 [[nodiscard]] oa::ui::gui_input::MenuObject Runtime::input_menu() const {

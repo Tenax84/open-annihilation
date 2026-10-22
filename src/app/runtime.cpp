@@ -1071,6 +1071,12 @@ void Runtime::dispatch_event(SDL_Event& event, bool& running) {
         }
     note_window_activation(event);
     note_input_activity(event);
+    // Any event of the window or the renderer may have taken the window's
+    // pixels: the main menu's next frame is presented, not left out.
+    if ((event.type >= SDL_EVENT_WINDOW_FIRST && event.type <= SDL_EVENT_WINDOW_LAST) ||
+        event.type == SDL_EVENT_RENDER_TARGETS_RESET || event.type == SDL_EVENT_RENDER_DEVICE_RESET ||
+        event.type == SDL_EVENT_RENDER_DEVICE_LOST)
+        covered_shown_.reset();
     // A hardware keyboard's Cmd alternates stand for their keys while touch
     // controls are on; the app lifecycle's events, which the watch acted on,
     // reach no screen; the touch controls take fingers and the presses on

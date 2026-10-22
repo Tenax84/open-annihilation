@@ -797,6 +797,48 @@ class OaLayer {
     ///     (SDL_GetRenderLogicalPresentationRect); null in a match
     void present(const SDL_FRect* picture_area);
 
+    /// What the front end's part of the layer draws into the window in a
+    /// frame, its textures uploaded (prepare_front_end). Two frames that are
+    /// equal draw the same pixels.
+    struct FrontFrame {
+        /// The window outside the picture, darkened under a modal screen
+        /// with a backdrop: each bar's left, top, width and height, in
+        /// window pixels.
+        std::vector<std::array<int32_t, 4>> bars{};
+        std::array<uint8_t, 3> bar_colour{};   ///< the bars' red, green and blue
+        bool badges{};                         ///< the battle room's OA badges draw
+        std::array<int32_t, 4> badge_bounds{}; ///< where the badges' texture draws
+        bool screens{};                        ///< the screens' texture draws
+        std::array<int32_t, 4> bounds{};       ///< where the screens' texture draws
+        /// The uploads to the layer's textures so far: a frame prepared after
+        /// one changed what they hold differs from every frame before.
+        uint64_t uploads{};
+        bool operator==(const FrontFrame&) const = default;
+    };
+
+    /// Draws the front end's screens and badges that changed, and uploads
+    /// them to the layer's textures, without drawing into the window: what
+    /// present draws on the front end, in two steps, so that a frame that
+    /// would show what the window shows already can be left out.
+    ///
+    /// Throws PresentError when SDL cannot make the layer's texture.
+    ///
+    /// @param area where the picture lies in the window, in window pixels
+    /// @return what draw_front_end draws; nothing in a match
+    [[nodiscard]] FrontFrame prepare_front_end(const SDL_FRect& area);
+
+    /// Returns a number that changes with the looks of the screens: with the
+    /// layer's own revision, the screens that show, and each one's revision.
+    ///
+    /// @return the number
+    [[nodiscard]] uint64_t looks() const;
+
+    /// Draws a frame prepare_front_end made into the window, in the window's
+    /// own pixels, as present does on the front end.
+    ///
+    /// @param frame the frame
+    void draw_front_end(const FrontFrame& frame);
+
     /// Tells whether this frame's OA badges are drawn here, at the window's
     /// own pixels, rather than into the 640 by 480 frame.
     ///
@@ -1262,17 +1304,20 @@ class OaLayer {
     /// @param area where the picture lies in the window, in window pixels
     void present_front_end(const SDL_FRect& area);
 
-    /// Draws the battle room's OA badges into the window, under the screens:
-    /// the logo filtered into each CD rectangle's window pixels, and the
-    /// rules dot as solid window pixels on top. Nothing while the battle
-    /// room shows no badge, or the logo cannot be drawn.
+    /// Uploads the battle room's OA badges for the window, under the
+    /// screens: the logo filtered into each CD rectangle's window pixels,
+    /// and the rules dot as solid window pixels on top, drawn at
+    /// badge_bounds_. Nothing while the battle room shows no badge, or the
+    /// logo cannot be drawn.
     ///
     /// Throws PresentError when SDL cannot make the badges' texture.
     ///
     /// @param seen the front end's view
     /// @param output_width the window's width, in pixels
     /// @param output_height the window's height, in pixels
-    void present_presence_badges(const LayerView& seen, int output_width, int output_height);
+    /// @return true when the badges draw
+    [[nodiscard]] bool
+    compose_presence_badges(const LayerView& seen, int output_width, int output_height);
 
     /// Draws the match's layer into the window, as the match's other layers
     /// laid out 1:1 are drawn (one_to_one_scale_mode).
@@ -1318,6 +1363,13 @@ class OaLayer {
     oa::ui::display_layout::Rect
         front_bounds_{}; ///< the window pixels the front end's texture covers
     std::array<uint8_t, 256> uploaded_gamma_{}; ///< the gamma table the texture was uploaded at
+    /// The front end's screens as texture_ holds them, 4 bytes a pixel at
+    /// the display gamma, front_bounds_ in size: the rows a new drawing
+    /// changes are composed again here and uploaded alone.
+    std::vector<uint8_t> front_rgba_{};
+    /// Counts the uploads to texture_ and badge_texture_ on the front end
+    /// (FrontFrame::uploads).
+    uint64_t front_uploads_{};
     /// The layer's texture, in tiles beyond the renderer's limit; none
     /// before the first present.
     TiledTexture texture_;

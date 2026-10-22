@@ -374,10 +374,7 @@ class MainMenuScreen final : public LayerScreen {
     /// @param canvas where it draws, at the layer's scale
     void draw(const kit::Canvas& canvas) const override {
         const MenuArt& art = menu_art();
-        const kit::Rect whole{0, 0, size_.x, size_.y};
-        kit::fill_rect(canvas, whole, ground_colour);
-        draw_art(kit::clipped(canvas, whole), layout_.background, art.background);
-        draw_shade(canvas);
+        draw_backdrop(canvas, art);
         draw_art(canvas, layout_.title, art.title);
         for (std::size_t index = 0; index < entry_count; ++index)
             draw_button(canvas, index, art);
@@ -402,6 +399,7 @@ class MainMenuScreen final : public LayerScreen {
         );
         laid_out_ = true;
         fitted_.clear();
+        backdrop_.clear();
         ++revision_;
     }
 
@@ -672,23 +670,111 @@ class MainMenuScreen final : public LayerScreen {
         );
     }
 
-    /// Darkens the top and the bottom of the picture, so that the title and
-    /// the version plate stand out of it.
+    /// Draws what lies under the title and the buttons: the ground, the
+    /// picture over it cut by the screen's edges, and the shade over its top
+    /// and bottom, so that the title and the version plate stand out of it.
+    /// They are put together once, at the pixels the screen covers, and kept
+    /// until its size changes: a redraw, such as the one a button the
+    /// pointer comes over asks for, copies them.
     ///
     /// @param canvas where it draws
-    void draw_shade(const kit::Canvas& canvas) const {
-        const double rows = static_cast<double>(size_.y);
+    /// @param art the menu's art
+    void draw_backdrop(const kit::Canvas& canvas, const MenuArt& art) const {
+        const kit::Rect whole{0, 0, size_.x, size_.y};
+        const kit::Point covered = kit::covered_pixels(canvas, whole);
+        if (covered.x <= 0 || covered.y <= 0 || size_.x <= 0 || size_.y <= 0)
+            return;
+        if (backdrop_size_.x != covered.x || backdrop_size_.y != covered.y || backdrop_.empty())
+            backdrop_ = backdrop_pixels(canvas, covered, art.background);
+        backdrop_size_ = covered;
+        kit::draw_picture(
+            canvas,
+            whole,
+            {static_cast<uint32_t>(covered.x), static_cast<uint32_t>(covered.y), backdrop_}
+        );
+    }
+
+    /// Puts the backdrop together at the pixels the screen covers
+    /// (draw_backdrop): the ground, the picture over it, and the shade's
+    /// bands, each band's opacity falling off as the square of its distance
+    /// from the edge, from the edge's opacity to none.
+    ///
+    /// @param canvas where it is drawn
+    /// @param covered the pixels the screen covers, across and down
+    /// @param picture the background's picture
+    /// @return four bytes a pixel, every one opaque
+    [[nodiscard]] std::vector<uint8_t> backdrop_pixels(
+        const kit::Canvas& canvas, kit::Point covered, const WindowIcon& picture
+    ) const {
+        const auto columns = static_cast<std::size_t>(covered.x);
+        const auto rows = static_cast<std::size_t>(covered.y);
+        std::vector<uint8_t> pixels(columns * rows * 4U);
+        for (std::size_t at = 0; at < columns * rows; ++at) {
+            pixels[at * 4U] = ground_colour.r;
+            pixels[at * 4U + 1U] = ground_colour.g;
+            pixels[at * 4U + 2U] = ground_colour.b;
+            pixels[at * 4U + 3U] = 255;
+        }
+        // A point is this many of the screen's pixels across and down.
+        const double across = static_cast<double>(covered.x) / size_.x;
+        const double down = static_cast<double>(covered.y) / size_.y;
+        const kit::Point fitted = kit::covered_pixels(canvas, layout_.background);
+        if (fitted.x > 0 && fitted.y > 0 && picture.width > 0 && picture.height > 0) {
+            const std::vector<uint8_t> scaled = oa::ui::paint::resized_rgba(
+                picture.pixels,
+                static_cast<int>(picture.width),
+                static_cast<int>(picture.height),
+                fitted.x,
+                fitted.y
+            );
+            const auto left = static_cast<int64_t>(std::lround(layout_.background.x * across));
+            const auto top = static_cast<int64_t>(std::lround(layout_.background.y * down));
+            const int64_t first = std::max<int64_t>(left, 0);
+            const int64_t end = std::min<int64_t>(left + fitted.x, covered.x);
+            if (scaled.size() == static_cast<std::size_t>(fitted.x) * fitted.y * 4U && end > first)
+                for (int64_t row = std::max<int64_t>(top, 0);
+                     row < std::min<int64_t>(top + fitted.y, covered.y);
+                     ++row) {
+                    const uint8_t* from =
+                        scaled.data() +
+                        static_cast<std::size_t>((row - top) * fitted.x + (first - left)) * 4U;
+                    uint8_t* to =
+                        pixels.data() + static_cast<std::size_t>(row * covered.x + first) * 4U;
+                    for (int64_t column = first; column < end; ++column, from += 4, to += 4) {
+                        const uint32_t alpha = from[3];
+                        for (std::size_t channel = 0; channel < 3U; ++channel)
+                            to[channel] = static_cast<uint8_t>(
+                                (from[channel] * alpha + to[channel] * (255U - alpha) + 127U) /
+                                255U
+                            );
+                    }
+                }
+        }
         const auto band = [&](double from, double to, uint32_t opacity) {
-            const int32_t top = nearest(from);
-            const int32_t bottom = nearest(to);
-            if (bottom > top && opacity > 0)
-                kit::blend_rect(canvas, {0, top, size_.x, bottom - top}, shade_colour, opacity);
+            if (opacity == 0)
+                return;
+            const auto first = static_cast<int64_t>(std::lround(nearest(from) * down));
+            const auto end = static_cast<int64_t>(std::lround(nearest(to) * down));
+            for (int64_t row = std::max<int64_t>(first, 0); row < std::min<int64_t>(end, covered.y);
+                 ++row) {
+                uint8_t* shaded = pixels.data() + static_cast<std::size_t>(row) * columns * 4U;
+                for (std::size_t column = 0; column < columns; ++column, shaded += 4) {
+                    shaded[0] = static_cast<uint8_t>(
+                        (shade_colour.r * opacity + shaded[0] * (256U - opacity)) >> 8U
+                    );
+                    shaded[1] = static_cast<uint8_t>(
+                        (shade_colour.g * opacity + shaded[1] * (256U - opacity)) >> 8U
+                    );
+                    shaded[2] = static_cast<uint8_t>(
+                        (shade_colour.b * opacity + shaded[2] * (256U - opacity)) >> 8U
+                    );
+                }
+            }
         };
-        const double top_rows = rows * top_shade_share;
-        const double bottom_rows = rows * bottom_shade_share;
+        const auto screen_rows = static_cast<double>(size_.y);
+        const double top_rows = screen_rows * top_shade_share;
+        const double bottom_rows = screen_rows * bottom_shade_share;
         for (int32_t index = 0; index < shade_bands; ++index) {
-            // Each band's opacity falls off as the square of its distance
-            // from the edge, from the edge's opacity to none.
             const double near = 1.0 - (static_cast<double>(index) + 0.5) / shade_bands;
             const double share = near * near;
             band(
@@ -697,11 +783,12 @@ class MainMenuScreen final : public LayerScreen {
                 static_cast<uint32_t>(std::lround(top_shade_opacity * share))
             );
             band(
-                rows - bottom_rows * (index + 1) / shade_bands,
-                rows - bottom_rows * index / shade_bands,
+                screen_rows - bottom_rows * (index + 1) / shade_bands,
+                screen_rows - bottom_rows * index / shade_bands,
                 static_cast<uint32_t>(std::lround(bottom_shade_opacity * share))
             );
         }
+        return pixels;
     }
 
     /// Draws one button: its face in its look, its caption outlined, and
@@ -803,6 +890,10 @@ class MainMenuScreen final : public LayerScreen {
     bool focus_shown_{};                     ///< a key has shown the focus
     /// The pictures of the art filtered to the sizes they are drawn at.
     mutable std::vector<FittedArt> fitted_{};
+    /// The backdrop at the pixels the screen covers (draw_backdrop), four
+    /// bytes a pixel; empty until it is first drawn at the screen's size.
+    mutable std::vector<uint8_t> backdrop_{};
+    mutable kit::Point backdrop_size_{}; ///< the pixels backdrop_ covers, across and down
     uint64_t revision_{1};                   ///< counts the changes to what it draws
 };
 
@@ -843,6 +934,22 @@ record_named(std::span<const oa::ui::gui_layout::Gadget> gadgets, std::string_vi
 
 bool Runtime::oa_main_menu_shown() {
     return oa_layer().find(main_menu_screen_name) != nullptr;
+}
+
+bool Runtime::main_menu_covers_front_end() {
+    if (screen_ != Screen::main_menu || sdl_.renderer == nullptr || options_.classic_main_menu ||
+        main_menu_overlay_ || frame_owned_by_package() || frame_without_cursor_)
+        return false;
+    OaLayer& layer = oa_layer();
+    const LayerScreen* menu = layer.find(main_menu_screen_name);
+    if (menu == nullptr || !menu->opaque())
+        return false;
+    const LayerView seen = layer.view();
+    const auto& shown = menu->placement(seen).shown;
+    const auto& picture = seen.picture;
+    return shown.width > 0 && shown.height > 0 && shown.x <= picture.x && shown.y <= picture.y &&
+           shown.x + shown.width >= picture.x + picture.width &&
+           shown.y + shown.height >= picture.y + picture.height;
 }
 
 bool Runtime::press_main_menu_gadget(std::string_view name) {
