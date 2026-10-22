@@ -541,6 +541,14 @@ class OaLayer {
     /// @param screen the screen; null is ignored
     void push(std::unique_ptr<LayerScreen> screen);
 
+    /// Puts a screen at the bottom of the stack at once, under every screen
+    /// on it: a screen that stands for a screen of the game, such as Open
+    /// Annihilation's main menu, which a notice or a dialog opened before it
+    /// stays over.
+    ///
+    /// @param screen the screen; null is ignored
+    void push_under(std::unique_ptr<LayerScreen> screen);
+
     /// Shows a screen nobody asked for at this moment, such as a notice or an
     /// install's question, once the layer is free: the screens wait first in,
     /// first out, and the first is pushed while no modal screen shows, no

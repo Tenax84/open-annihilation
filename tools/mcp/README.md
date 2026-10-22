@@ -68,8 +68,9 @@ A test asked of the client in words, such as "start the game headless,
 open Skirmish and tell me which maps it lists", becomes calls like these:
 
 1. `game_launch` with `headless` true, then `wait_for` `main_menu`;
-2. `click_control` `SINGLE`, then `click_control` `Skirmish`, then
-   `wait_for` `skirmish`;
+2. `click_control` `oa.main-menu.single-player` (Open Annihilation's main
+   menu; with `--classic-main-menu`, the game's own, it is `SINGLE`), then
+   `click_control` `Skirmish`, then `wait_for` `skirmish`;
 3. `controls` with `name_contains` naming the map list, or `screenshot`
    to see the screen;
 4. `game_quit`.

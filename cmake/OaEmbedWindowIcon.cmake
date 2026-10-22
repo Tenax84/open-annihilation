@@ -3,17 +3,22 @@
 
 # Writes the C++ source that holds the PNG file of one of the icons
 # window_icon.hpp declares, run as a script:
-#   cmake -DINPUT=<png> -DOUTPUT=<source> [-DFUNCTION=<name>]
+#   cmake -DINPUT=<png> -DOUTPUT=<source> [-DFUNCTION=<name>] [-DHEADER=<header>]
 #     -P OaEmbedWindowIcon.cmake
 # The source defines oa::app::<FUNCTION>() over the file's bytes:
 # window_icon_png() when FUNCTION is not given, settings_icon_png() for the
-# settings icon and mods_icon_png() for the mods icon. OUTPUT is rewritten
-# only when its text changes.
+# settings icon and mods_icon_png() for the mods icon. HEADER is the header
+# that declares the function, oa/app/window_icon.hpp when not given; the
+# main menu's art is declared in oa/app/main_menu_art.hpp. OUTPUT is
+# rewritten only when its text changes.
 if(NOT INPUT OR NOT OUTPUT)
   message(FATAL_ERROR "OaEmbedWindowIcon.cmake needs -DINPUT=<png> -DOUTPUT=<source>")
 endif()
 if(NOT FUNCTION)
   set(FUNCTION window_icon_png)
+endif()
+if(NOT HEADER)
+  set(HEADER oa/app/window_icon.hpp)
 endif()
 file(READ "${INPUT}" hex HEX)
 string(LENGTH "${hex}" hex_digits)
@@ -29,7 +34,7 @@ string(REGEX REPLACE ", \n" ",\n" bytes "${bytes}")
 get_filename_component(name "${INPUT}" NAME)
 file(CONFIGURE OUTPUT "${OUTPUT}" @ONLY CONTENT [[
 // Written by cmake/OaEmbedWindowIcon.cmake from @name@; edit the icon, not this file.
-#include "oa/app/window_icon.hpp"
+#include "@HEADER@"
 
 namespace oa::app {
 namespace {

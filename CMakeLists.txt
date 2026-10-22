@@ -29,9 +29,16 @@ option(OA_BUILD_PLATFORM "Build the SDL3 image and audio shell" ON)
 option(OA_SANITIZERS "Build with AddressSanitizer and UndefinedBehaviorSanitizer; any report stops the process" OFF)
 option(OA_REQUIRE_GAME "Fail configuration when oa-game cannot be built" OFF)
 option(OA_SELF_CHECKS "Build the game's self-checks, the --check-* options the native checks run" ON)
-# This fork builds no tests unless asked: -DBUILD_TESTING=ON brings them back.
-option(BUILD_TESTING "Build the tests" OFF)
+# This fork builds and runs no tests, even when configured with
+# -DBUILD_TESTING=ON: deleting the FORCE line below brings them back.
+set(BUILD_TESTING OFF CACHE BOOL "Build the tests (switched off in this fork)" FORCE)
 include(CTest)
+# A build folder configured earlier with tests keeps its old CTestTestfile;
+# an empty one in its place leaves ctest nothing to run, so it ends at once.
+if(NOT BUILD_TESTING)
+  file(WRITE "${CMAKE_BINARY_DIR}/CTestTestfile.cmake"
+    "# Tests are switched off in this fork; see BUILD_TESTING in CMakeLists.txt.\n")
+endif()
 # The native checks run the self-checks, so a build without them builds no
 # tests.
 if(BUILD_TESTING AND NOT OA_SELF_CHECKS)
@@ -430,9 +437,28 @@ add_custom_command(OUTPUT "${oa_mods_icon_512_source}"
   DEPENDS "${oa_mods_icon_512_png}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/OaEmbedWindowIcon.cmake"
   COMMENT "Embedding the 512-pixel mods icon"
   VERBATIM)
+# The main menu's art (branding/main-menu): the background, the title and
+# the face of its buttons in their four looks, each embedded as a PNG file
+# that oa/app/main_menu_art.hpp declares.
+set(oa_main_menu_art_sources)
+foreach(oa_main_menu_art IN ITEMS background title button-normal button-hover button-pressed
+    button-disabled)
+  string(REPLACE "-" "_" oa_main_menu_art_name "${oa_main_menu_art}")
+  set(oa_main_menu_art_png "${CMAKE_CURRENT_SOURCE_DIR}/branding/main-menu/${oa_main_menu_art}.png")
+  set(oa_main_menu_art_source
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/main_menu_${oa_main_menu_art_name}_png.cpp")
+  add_custom_command(OUTPUT "${oa_main_menu_art_source}"
+    COMMAND ${CMAKE_COMMAND} "-DINPUT=${oa_main_menu_art_png}" "-DOUTPUT=${oa_main_menu_art_source}"
+      -DFUNCTION=main_menu_${oa_main_menu_art_name}_png -DHEADER=oa/app/main_menu_art.hpp
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/OaEmbedWindowIcon.cmake"
+    DEPENDS "${oa_main_menu_art_png}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/OaEmbedWindowIcon.cmake"
+    COMMENT "Embedding the main menu's ${oa_main_menu_art}"
+    VERBATIM)
+  list(APPEND oa_main_menu_art_sources "${oa_main_menu_art_source}")
+endforeach()
 add_library(oa-app-window-icon src/app/window_icon.cpp "${oa_window_icon_source}"
   "${oa_settings_icon_source}" "${oa_mods_icon_source}"
-  "${oa_settings_icon_512_source}" "${oa_mods_icon_512_source}")
+  "${oa_settings_icon_512_source}" "${oa_mods_icon_512_source}" ${oa_main_menu_art_sources})
 add_library(oa::app::window_icon ALIAS oa-app-window-icon)
 target_link_libraries(oa-app-window-icon PUBLIC oa-app-headers PRIVATE oa-formats-png oa-options)
 # The Full tier's fog of war on the card (full_fog.hpp): the fog grid's
@@ -1074,6 +1100,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/runtime_user_folder.cpp
   src/app/runtime_mod_warning.cpp
   src/app/runtime_presence_card.cpp
+  src/app/runtime_main_menu.cpp
   src/app/runtime_mod_install.cpp src/app/runtime_content.cpp src/app/runtime_challenge.cpp
   src/app/runtime_registries.cpp
   src/app/runtime_package_kinds.cpp

@@ -321,6 +321,7 @@ Runtime::EngineSettingsMenuHost& Runtime::engine_settings_menu_host() {
 
 bool Runtime::EngineSettingsMenuHost::button_shown(Runtime& runtime) {
     return runtime.screen_ == Screen::main_menu && !runtime.frame_owned_by_package() &&
+           !runtime.oa_main_menu_shown() &&
            runtime.surface_.width >= static_cast<uint32_t>(kCanvasWidth) &&
            runtime.surface_.height >= static_cast<uint32_t>(kCanvasHeight) &&
            runtime.engine_settings_fonts() != nullptr;

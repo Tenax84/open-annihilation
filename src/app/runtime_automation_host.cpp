@@ -256,8 +256,11 @@ struct AutomationHostAccess {
             match_controls(game, *controls);
         else if (
             screen_id(game.screen_) <= screen_id(Screen::briefing) &&
-            game.screen_ != Screen::loading && !game.frame_owned_by_package()
+            game.screen_ != Screen::loading && !game.frame_owned_by_package() &&
+            !(game.screen_ == Screen::main_menu && game.oa_main_menu_shown())
         )
+            // Open Annihilation's main menu covers MAINMENU.GUI, whose
+            // buttons then take no input: only the menu's own are listed.
             frontend_controls(game, *controls);
         layer_controls(game, *controls);
         stacked_dialog_controls(*controls);

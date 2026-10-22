@@ -116,7 +116,8 @@ struct Runtime::EngineSettingsMenuHost {
     [[nodiscard]] const WindowIcon* icon_for(bool mods, int32_t side);
 
     /// Tells whether the main menu's buttons show: the menu's own panel is
-    /// drawn, no package owns the frame, and the dialog's fonts are there.
+    /// drawn, no package owns the frame, Open Annihilation's main menu does
+    /// not cover it, and the dialog's fonts are there.
     ///
     /// @param runtime the runtime
     /// @return true while the buttons show and answer the pointer

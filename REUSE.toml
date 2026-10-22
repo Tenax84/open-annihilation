@@ -128,6 +128,16 @@ precedence = "override"
 SPDX-FileCopyrightText = "Contributor Covenant contributors <https://www.contributor-covenant.org>"
 SPDX-License-Identifier = "CC-BY-4.0"
 
+# Open Annihilation's main menu art, made for the engine: the background,
+# the title and the faces of the menu's buttons, which the game embeds
+# (branding/main-menu/README.md). Unlike the branding below, it is under
+# the project's licence.
+[[annotations]]
+path = ["branding/main-menu/*.png", "branding/main-menu/README.md"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Open Annihilation Authors; see COPYRIGHT"
+SPDX-License-Identifier = "GPL-3.0-only"
+
 # The Open Annihilation branding: the icon, the settings icon and the mods
 # icon, from the Open Annihilation branding repository, the icons
 # tools/make_icons.py makes from the icon, which the builds put in the game,

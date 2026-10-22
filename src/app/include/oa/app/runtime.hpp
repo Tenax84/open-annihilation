@@ -5352,6 +5352,29 @@ class Runtime final : public menu::Host,
     /// has none. OaLayer::tick calls it once a frame.
     void keep_presence_card_screen();
 
+    /// Keeps Open Annihilation's main menu (runtime_main_menu.cpp) on the OA
+    /// layer while the main menu shows: puts it under every other screen
+    /// when the layer has none. Not while the run takes the game's own menu
+    /// (Options::classic_main_menu), an add-on's overlay stands over the
+    /// menu or a package owns the frame. OaLayer::tick calls it once a
+    /// frame.
+    void keep_main_menu_screen();
+
+    /// Tells whether Open Annihilation's main menu is on the OA layer. It
+    /// covers MAINMENU.GUI, whose Library and Settings buttons then neither
+    /// show nor take input.
+    ///
+    /// @return true while it is
+    [[nodiscard]] bool oa_main_menu_shown();
+
+    /// Presses a button of MAINMENU.GUI as a click released on it does: the
+    /// main menu's handler takes it, plays its sound and moves the front end
+    /// on. Open Annihilation's main menu presses the game's buttons this way.
+    ///
+    /// @param name the button's name in MAINMENU.GUI, such as SINGLE
+    /// @return true when the main menu shows that button and it takes a press
+    bool press_main_menu_gadget(std::string_view name);
+
     /// GET MAP over the battle room, as a screen of the OA layer
     /// (runtime_get_map.cpp).
     struct GetMapScreen;

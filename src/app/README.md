@@ -217,7 +217,8 @@ reaches through `Runtime::oa_layer()`. It holds the settings dialog on the
 main menu and in a match (`Runtime::SettingsScreen`), the Library on the
 main menu (`Runtime::LibraryScreen`, [The Library](#the-library)), the
 in-game menu's OA button, and the notices and questions of the engine's own
-(`NoticeScreen`, `QuestionScreen`). It replaces the main menu's and the match's own hosts of
+(`NoticeScreen`, `QuestionScreen`), and Open Annihilation's main menu
+(`runtime_main_menu.cpp`, [Open Annihilation's main menu](#open-annihilations-main-menu)). It replaces the main menu's and the match's own hosts of
 the dialog, and the notices' and the installs' prompts' own overlays, which
 each mapped the pointer, told a finger from a mouse, mapped the keys,
 latched the closing key and drew a backdrop.
@@ -549,6 +550,47 @@ latched the closing key and drew a backdrop.
   each control and part named `oa.` and its kit name, with its exact
   rectangle in the window's pixels and that rectangle mapped back onto the
   canvas.
+
+## Open Annihilation's main menu
+
+`runtime_main_menu.cpp` keeps one screen, `main-menu`, at the bottom of the
+OA layer while the main menu shows (`Runtime::keep_main_menu_screen`, from
+`OaLayer::tick`, which puts it under every screen already there with
+`OaLayer::push_under`). It covers the window with its own art
+([branding/main-menu](../../branding/main-menu/README.md)): the battlefield,
+the OPEN ANNIHILATION title, and one column of seven buttons, SINGLE PLAYER,
+MULTIPLAYER, LIBRARY, SETTINGS, INTRO, CREDITS and EXIT, their captions from
+the interface catalogue, with MAINMENU.GUI's version label on a plate under
+them.
+
+- **What the buttons do.** The game's buttons are pressed as a click
+  released on MAINMENU.GUI's own records presses them
+  (`Runtime::press_main_menu_gadget`): SINGLE, MULTI, INTRO, EXIT, and the
+  record the mod profile names for the credits. Their sounds, their checks
+  and the screens they lead to stay the game's. LIBRARY and SETTINGS open
+  the Library and Settings as the OA buttons do. A record MAINMENU.GUI
+  grays out or hides, as INTRO and the credits are without movies, shows
+  faded and takes no press; a quick key of the record is underlined in the
+  caption.
+- **Input.** It is not modal, so a screen over it takes what it shows. It
+  takes every pointer, so MAINMENU.GUI sees none, and the wheel. The
+  arrows and Tab move the focus round the column, and Return and Space
+  press the focused button; every other key goes on to MAINMENU.GUI, whose
+  quick keys and Escape stay the game's. Automation lists the buttons as
+  `oa.main-menu.single-player` and so on.
+- **When it shows.** On the main menu, outside a match, while no package
+  owns the frame and no add-on's overlay stands over the menu. MAINMENU.GUI's
+  Library and Settings buttons neither show nor take input under it.
+  `--classic-main-menu` keeps the game's own menu, and so does every check
+  and every unattended run, which drive MAINMENU.GUI's buttons where 3.1c
+  has them.
+- **Layout.** The measures are given for a window 1080 rows high and taken
+  at every other window's height, or at its width when it is narrower than
+  1000 of those rows; the background covers the window, cut mostly on the
+  right.
+- **Limitations.** The first-run setup's coach marks still point at the
+  corners where MAINMENU.GUI's Library and Settings buttons stand. The
+  captions are drawn in the dialog's fonts, not the title's.
 
 ## The Library
 

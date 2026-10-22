@@ -9,9 +9,9 @@ standard input and output. Through its tools it starts the game on the dummy
 SDL drivers with a preferences file of its own, and then:
 
 - game_launch answers the endpoint's hello, and wait_for sees the main menu;
-- controls lists the main menu's SINGLE button, and screenshot answers a PNG
+- controls lists Open Annihilation's main menu's Single Player button, and screenshot answers a PNG
   picture of the presented frame;
-- after subscribe, click_control on SINGLE opens Single Player, and Escape
+- after subscribe, click_control on that button opens Single Player, and Escape
   through press_key goes back to the main menu;
 - read_events gives the screen events of both changes, in order;
 - game_quit ends the game with status 0, and game_status says so.
@@ -28,6 +28,9 @@ import tempfile
 # A command that starts the executable under test, such as the compatibility
 # layer a cross build runs its tests through; empty runs it directly.
 RUNNER = os.environ.get("OA_TEST_RUNNER", "")
+
+# The automation name of the main menu's Single Player button.
+SINGLE_PLAYER = "oa.main-menu.single-player"
 SERVER = Path(__file__).resolve().parent / "mcp" / "oa_mcp_server.py"
 # Seconds the game may take to start and show its main menu.
 START_SECONDS = 120
@@ -94,13 +97,13 @@ def check(native, game_dir, workdir):
             raise McpFailure(f"game_launch answered {launched['hello']}")
         client.tool_json("wait_for", screen="main_menu", timeout=START_SECONDS)
         names = [control["name"] for control in client.tool_json("controls")["controls"]]
-        if "SINGLE" not in names:
-            raise McpFailure(f"controls listed no SINGLE: {names}")
+        if SINGLE_PLAYER not in names:
+            raise McpFailure(f"controls listed no {SINGLE_PLAYER}: {names}")
         picture = client.tool("screenshot")[0]
         if picture.get("type") != "image" or not base64.b64decode(picture["data"]).startswith(PNG_SIGNATURE):
             raise McpFailure("screenshot answered no PNG picture")
         client.tool_json("subscribe", events=["screen"])
-        clicked = client.tool_json("click_control", name="SINGLE")
+        clicked = client.tool_json("click_control", name=SINGLE_PLAYER)
         client.tool_json("wait_for", screen="single_player", timeout=30)
         client.tool_json("press_key", key="escape")
         client.tool_json("wait_for", screen="main_menu", timeout=30)

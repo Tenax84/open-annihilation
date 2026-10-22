@@ -1752,6 +1752,15 @@ void OaLayer::push(std::unique_ptr<LayerScreen> screen) {
     sync_text_input();
 }
 
+void OaLayer::push_under(std::unique_ptr<LayerScreen> screen) {
+    if (!screen)
+        return;
+    screen->lay_out(view());
+    screens_.insert(screens_.begin(), std::move(screen));
+    ++revision_;
+    sync_text_input();
+}
+
 void OaLayer::show_when_free(std::unique_ptr<LayerScreen> screen) {
     if (!screen)
         return;
@@ -2665,6 +2674,7 @@ void OaLayer::drop_pending_prompts() {
 void OaLayer::tick() {
     // The window's size, and with it the screens' class, may have changed.
     lay_out_screens();
+    runtime_.keep_main_menu_screen();
     runtime_.keep_presence_card_screen();
     runtime_.keep_more_maps_screen();
     runtime_.keep_get_map_screen();

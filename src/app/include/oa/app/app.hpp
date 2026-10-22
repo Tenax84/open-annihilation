@@ -579,6 +579,10 @@ struct Options {
     /// --no-game-files-screen: with no usable game folder, the notice with its look-again
     /// button instead of the Game files screen, where the platform offers both.
     bool no_game_files_screen = false;
+    /// --classic-main-menu: the main menu is the game's own, MAINMENU.GUI over
+    /// its art, instead of Open Annihilation's (runtime_main_menu.cpp). Every
+    /// check and every unattended run takes it too.
+    bool classic_main_menu = false;
     /// --game-files-route folder|demo|copy-yourself|manage: the check's route.
     GameFilesRoute game_files_route{};
     /// --game-files-expect main-menu|stopped-kept|resumed|not-a-game|short-space|next-start:

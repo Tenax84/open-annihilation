@@ -12921,3 +12921,51 @@
 	es=Desde {place}…;
 	it=Da {place}…;
 	}
+
+[SINGLE PLAYER]
+	{
+	de=EINZELSPIELER;
+	fr=UN JOUEUR;
+	es=UN JUGADOR;
+	it=GIOCATORE SINGOLO;
+	}
+
+[MULTIPLAYER]
+	{
+	de=MEHRSPIELER;
+	fr=MULTIJOUEUR;
+	es=MULTIJUGADOR;
+	it=MULTIGIOCATORE;
+	}
+
+[LIBRARY]
+	{
+	de=BIBLIOTHEK;
+	fr=BIBLIOTHÈQUE;
+	es=BIBLIOTECA;
+	it=BIBLIOTECA;
+	}
+
+[INTRO]
+	{
+	de=INTRO;
+	fr=INTRO;
+	es=INTRO;
+	it=INTRO;
+	}
+
+[CREDITS]
+	{
+	de=MITWIRKENDE;
+	fr=CRÉDITS;
+	es=CRÉDITOS;
+	it=RICONOSCIMENTI;
+	}
+
+[EXIT]
+	{
+	de=BEENDEN;
+	fr=QUITTER;
+	es=SALIR;
+	it=ESCI;
+	}
