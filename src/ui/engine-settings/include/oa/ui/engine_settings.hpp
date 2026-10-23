@@ -50,6 +50,8 @@ inline constexpr std::string_view edge_stickiness = "open-annihilation.window-ed
 inline constexpr std::string_view middle_click_pan = "open-annihilation.middle-click-pan";
 /// 1 or 0 (EngineSettings::escape_opens_menu).
 inline constexpr std::string_view escape_opens_menu = "open-annihilation.escape-opens-menu";
+/// 1 or 0 (EngineSettings::selection_bar).
+inline constexpr std::string_view selection_bar = "open-annihilation.selection-bar";
 /// Units per player, decimal (EngineSettings::unit_limit).
 inline constexpr std::string_view unit_limit = "open-annihilation.unit-limit";
 /// Frames a second, decimal (EngineSettings::max_frame_rate).
@@ -925,6 +927,9 @@ struct EngineSettings {
     /// A middle click pans the view towards the pointer until another press.
     bool middle_click_pan{true};
     bool escape_opens_menu{}; ///< Escape with nothing to cancel opens the game menu
+    /// A match shows the selection bar along the battlefield's foot: the
+    /// numbered group buttons and the buttons that select units by kind.
+    bool selection_bar{};
     bool switch_alt{};        ///< 3.1c's SwitchAlt: a number key alone selects its group
     /// Whether a window keeps the pointer while a match's battlefield
     /// shows. Full screen holds the pointer either way.

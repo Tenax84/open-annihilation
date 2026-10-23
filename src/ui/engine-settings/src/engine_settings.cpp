@@ -605,6 +605,8 @@ EngineSettings read_settings(
         settings.middle_click_pan = *number > 0;
     if (const auto number = stored_number(values, key::escape_opens_menu))
         settings.escape_opens_menu = *number > 0;
+    if (const auto number = stored_number(values, key::selection_bar))
+        settings.selection_bar = *number > 0;
     if (const auto number = stored_number(values, key::unit_limit))
         settings.unit_limit = clamped(
             *number,
@@ -791,6 +793,14 @@ void write_settings(
         switch_text(chosen.escape_opens_menu),
         chosen.escape_opens_menu != opened.escape_opens_menu,
         chosen.escape_opens_menu == defaults.escape_opens_menu,
+        restored
+    );
+    store(
+        values,
+        key::selection_bar,
+        switch_text(chosen.selection_bar),
+        chosen.selection_bar != opened.selection_bar,
+        chosen.selection_bar == defaults.selection_bar,
         restored
     );
     store(

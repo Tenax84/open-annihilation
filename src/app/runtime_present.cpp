@@ -1012,7 +1012,16 @@ void Runtime::finish_match_layers(
     oa_layer().present(nullptr);
     if (dialogs)
         draw_one_to_one(sdl_.renderer, match_dialog_tex_, nullptr, nullptr, one_to_one);
-    present_software_cursor(true);
+    // The cursor as the system's pointer, as large as the match's pixels are
+    // in the window's, so that it moves between frames; otherwise in the
+    // frame.
+    const double density = match_display_density();
+    const SDL_FRect area{
+        0.0F, 0.0F, static_cast<float>(density * match_layout_.width),
+        static_cast<float>(density * match_layout_.height)
+    };
+    if (!show_system_cursor(area, match_layout_.width))
+        present_software_cursor(true);
     capture_render_target();
     if (render_fault_due(RenderFaultPoint::present))
         throw PresentError("injected present error");
@@ -1341,11 +1350,14 @@ void Runtime::render() {
     // nothing of that picture shows: only the cursor ticks.
     front_end_quiet_ = false;
     covered_front_end_ = main_menu_covers_front_end();
-    if (!covered_front_end_) {
+    if (!covered_front_end_)
         covered_shown_.reset();
-        if (menu_cursor_shown_ || !menu_cursors_.empty())
-            release_menu_system_cursor();
-    }
+    // The match's layers show the cursor as the system's pointer too
+    // (finish_match_layers); any other frame draws it.
+    const bool match_layers = screen_ == Screen::match && match_use_layers_;
+    if (!covered_front_end_ && !match_layers &&
+        (system_cursor_shown_ || !system_cursors_.empty()))
+        release_system_cursor();
     const auto compose_start = std::chrono::steady_clock::now();
     if (covered_front_end_)
         tick_and_draw_cursor();
@@ -1572,7 +1584,7 @@ void Runtime::present_covered_front_end() {
     shown->layer = oa_layer().prepare_front_end(area);
     shown->output = {output_w, output_h};
     shown->area = {area.x, area.y, area.w, area.h};
-    shown->system_cursor = show_menu_system_cursor(area, frame_w);
+    shown->system_cursor = show_system_cursor(area, frame_w);
     if (!shown->system_cursor && cursors_loaded_ && !frame_without_cursor_ &&
         cursor_image_ != nullptr && !middle_pan_shows_direction()) {
         const auto touch = touch_cursor();
@@ -1614,29 +1626,29 @@ bool Runtime::quiet_frames_allowed() const {
            director_ == nullptr && !video_capture_ && !frame_run_clock_ns_ && !frame_stats_shown_;
 }
 
-bool Runtime::show_menu_system_cursor(const SDL_FRect& area, int picture_width) {
+bool Runtime::show_system_cursor(const SDL_FRect& area, int picture_width) {
     const bool wanted = quiet_frames_allowed() && cursors_loaded_ && cursor_image_ != nullptr &&
                         !frame_without_cursor_ && !system_pointer_screen_open_ &&
                         application_active_ && !middle_pan_shows_direction() &&
                         !touch_cursor().replaces_pointer && picture_width > 0 && area.w > 0.0F;
     if (!wanted) {
-        if (menu_cursor_shown_ || !menu_cursors_.empty())
-            release_menu_system_cursor();
+        if (system_cursor_shown_ || !system_cursors_.empty())
+            release_system_cursor();
         return false;
     }
     // As large as the cursor the picture enlarges, at the display gamma.
     const float scale = area.w / static_cast<float>(picture_width);
-    if (scale != menu_cursor_scale_ || menu_cursor_gamma_ != gamma_table_) {
-        for (const MenuSystemCursor& made : menu_cursors_)
+    if (scale != system_cursor_scale_ || system_cursor_gamma_ != gamma_table_) {
+        for (const SystemCursor& made : system_cursors_)
             SDL_DestroyCursor(made.cursor);
-        menu_cursors_.clear();
-        menu_cursor_scale_ = scale;
-        menu_cursor_gamma_ = gamma_table_;
+        system_cursors_.clear();
+        system_cursor_scale_ = scale;
+        system_cursor_gamma_ = gamma_table_;
     }
-    auto made = std::find_if(menu_cursors_.begin(), menu_cursors_.end(), [this](const auto& held) {
+    auto made = std::find_if(system_cursors_.begin(), system_cursors_.end(), [this](const auto& held) {
         return held.frame == cursor_image_;
     });
-    if (made == menu_cursors_.end()) {
+    if (made == system_cursors_.end()) {
         const auto rendered = oa::formats::gaf::render_normal(*cursor_image_);
         if (!rendered.ok())
             return false;
@@ -1682,38 +1694,38 @@ bool Runtime::show_menu_system_cursor(const SDL_FRect& area, int picture_width) 
         SDL_DestroySurface(picture);
         if (cursor == nullptr)
             return false;
-        // An animated cursor's frames are each made once; a cursor of
-        // another kind starts the set again.
-        constexpr std::size_t most_menu_cursors = 32;
-        if (menu_cursors_.size() >= most_menu_cursors) {
-            for (const MenuSystemCursor& held : menu_cursors_)
+        // Each frame of each cursor is made once, the match's animated
+        // cursors with them; past most_system_cursors the set starts again.
+        constexpr std::size_t most_system_cursors = 128;
+        if (system_cursors_.size() >= most_system_cursors) {
+            for (const SystemCursor& held : system_cursors_)
                 if (held.cursor != SDL_GetCursor())
                     SDL_DestroyCursor(held.cursor);
-            std::erase_if(menu_cursors_, [](const auto& held) {
+            std::erase_if(system_cursors_, [](const auto& held) {
                 return held.cursor != SDL_GetCursor();
             });
         }
-        menu_cursors_.push_back({cursor_image_, cursor});
-        made = std::prev(menu_cursors_.end());
+        system_cursors_.push_back({cursor_image_, cursor});
+        made = std::prev(system_cursors_.end());
     }
     if (SDL_GetCursor() != made->cursor)
         std::ignore = SDL_SetCursor(made->cursor);
-    if (!menu_cursor_shown_) {
-        menu_cursor_shown_ = true;
+    if (!system_cursor_shown_) {
+        system_cursor_shown_ = true;
         if (!SDL_CursorVisible())
             std::ignore = SDL_ShowCursor();
     }
     return true;
 }
 
-void Runtime::release_menu_system_cursor() noexcept {
-    menu_cursor_shown_ = false;
+void Runtime::release_system_cursor() noexcept {
+    system_cursor_shown_ = false;
     if (SDL_Cursor* system = SDL_GetDefaultCursor())
         std::ignore = SDL_SetCursor(system);
-    for (const MenuSystemCursor& made : menu_cursors_)
+    for (const SystemCursor& made : system_cursors_)
         SDL_DestroyCursor(made.cursor);
-    menu_cursors_.clear();
-    menu_cursor_scale_ = 0.0F;
+    system_cursors_.clear();
+    system_cursor_scale_ = 0.0F;
     // The game draws its cursor again, the system's pointer hidden.
     apply_system_pointer(false);
 }

@@ -325,11 +325,13 @@ void Runtime::handle_sdl_event(SDL_Event& event, bool& running) {
         // nothing to do; any other left press clears that mark.
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT)
             radar_left_press_held_ = false;
-        // The commander placement (setup.commander-warp) takes the pointer
-        // first; ui.resource-panel's panel floats over the battlefield and
-        // takes it next; ui.build-tools' drag with the snap override key
+        // The selection bar takes a press on it first; the commander
+        // placement (setup.commander-warp) takes the pointer next;
+        // ui.resource-panel's panel floats over the battlefield and takes it
+        // next; ui.build-tools' drag with the snap override key
         // takes a press on an own unit before the battlefield does.
-        if (commander_placement_pointer(event, x, y) || resource_panel_pointer(event, x, y) ||
+        if (selection_bar_pointer(event, x, y) || commander_placement_pointer(event, x, y) ||
+            resource_panel_pointer(event, x, y) ||
             megamap_pointer(event, x, y) || whiteboard_pointer(event, x, y) ||
             order_drag_pointer(event, x, y) || build_queue_drag_pointer(event, x, y))
             return;

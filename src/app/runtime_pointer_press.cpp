@@ -76,7 +76,7 @@ void Runtime::refresh_pointer_area() {
     input::set_pointer_area(
         match_->state().game,
         radar_contains(pointer_x_, pointer_y_),
-        battlefield_contains(pointer_x_, pointer_y_)
+        battlefield_contains(pointer_x_, pointer_y_) && !selection_bar_covers(pointer_x_, pointer_y_)
     );
 }
 

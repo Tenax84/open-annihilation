@@ -68,7 +68,8 @@ enum class Page : uint8_t {
     language,      ///< Language & Text: the language and how game text is drawn
     graphics,      ///< Graphics
     /// User Interface: menu scaling, the window's frame, HUD scaling,
-    /// Interface size, and whether Escape opens the game menu
+    /// Interface size, whether Escape opens the game menu, and whether a
+    /// match shows the selection bar
     user_interface,
     /// Touch: how the touch controls answer a finger; listed only while the
     /// game has touch controls (Dialog::touch)
@@ -305,6 +306,7 @@ enum class Setting : uint8_t {
     /// and the OA buttons again. It changes no setting. During a game the
     /// button is locked, and the choice is made from the main menu.
     welcome_setup,
+    selection_bar, ///< Selection bar: a switch
 };
 
 /// Returns the settings a section shows, top to bottom.

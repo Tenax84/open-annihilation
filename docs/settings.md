@@ -504,8 +504,8 @@ and which a value you choose always replaces:
 ![The top of the User Interface section: Menu scaling Sharp, Window frame Hidden in play, HUD scaling On and the Interface size row.](images/settings/user-interface.png)
 
 The User Interface section says how Open Annihilation's own screens, the
-window and the side panel are drawn, and whether Escape opens the game
-menu. Each setting takes effect at once, except Interface size, which
+window and the side panel are drawn, whether Escape opens the game menu,
+and whether a match shows the selection bar. Each setting takes effect at once, except Interface size, which
 applies when you press OK.
 
 - **Menu scaling**, Sharp, Whole steps or Unfiltered, Sharp by default. It
@@ -578,6 +578,11 @@ applies when you press OK.
   elsewhere. The first Escape cancels an order or clears the selection, as
   in 3.1c; the next opens the in-game menu. Turn it on if F2 is awkward to
   reach, as on many Mac keyboards.
+- **Selection bar**, Off by default. On, a match shows a bar under the
+  battlefield with a button for each of groups 1 to 9 and buttons that
+  select all units, the Commander, aircraft, combat units, builders,
+  factories, the units on screen or those of the selected type. It takes
+  effect immediately. Turn it on if you prefer clicking to the keys.
 
 ## Touch
 

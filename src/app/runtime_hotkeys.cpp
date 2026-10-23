@@ -262,66 +262,21 @@ bool Runtime::handle_match_hotkey(const SDL_KeyboardEvent& key) {
     if (ctrl) {
         if (selection_shortcut_key(sym, shift))
             return true;
-        if (sym == SDLK_A) {
-            select_units_matching([](const oa::sim::unit_spawn::Slot&) { return true; });
-            return true;
-        }
-        if (sym == SDLK_C) {
-            select_and_follow_commander(shift);
-            return true;
-        }
-        if (sym == SDLK_B) {
-            select_units_matching([&](const oa::sim::unit_spawn::Slot& slot) {
-                const auto* def = definition_for(slot.unit_index);
-                return def && def->builder && def->bm_code != 0;
-            });
-            return true;
-        }
-        if (sym == SDLK_F) {
-            select_units_matching([&](const oa::sim::unit_spawn::Slot& slot) {
-                const auto* def = definition_for(slot.unit_index);
-                return def && def->builder && def->bm_code == 0;
-            });
-            return true;
-        }
-        if (sym == SDLK_V) {
-            select_units_matching([&](const oa::sim::unit_spawn::Slot& slot) {
-                const auto* def = definition_for(slot.unit_index);
-                return def && def->can_fly;
-            });
-            return true;
-        }
-        // Ctrl+S selects the local units of the on-screen list: those whose
-        // box overlaps the view.
-        if (sym == SDLK_S) {
-            auto& world = match_->state();
-            world.game.local_player_index = match_local_player_;
-            oa::sim::selection::select_visible_units(world, on_screen_lists(), selection_hooks());
-            adopt_selected_units();
-            return true;
-        }
-        // Ctrl+Z adds to the selection every selectable local unit, anywhere
-        // on the map, whose type is the type of any selected unit, as 3.1c
-        // does. The type set holds the profile's type ids, or every type id
-        // with ui.selection-shortcuts' same-type-bitset-fix.
-        if (sym == SDLK_Z) {
-            auto& world = match_->state();
-            world.game.local_player_index = match_local_player_;
-            const bool every_type =
-                selection_shortcuts_on() && ui_rules().selection_shortcuts.same_type_bitset_fix;
-            oa::sim::selection::select_matching_types(
-                world,
-                selection_hooks(),
-                every_type ? oa::data::limits::highest_type_bits : limits_.unit_types.bitset_bits
-            );
-            adopt_selected_units();
-            int count = 0;
-            for (const auto& slot : match_->world().slots)
-                count += slot.unit != nullptr && slot.owner_index == match_local_player_ &&
-                         (slot.unit->flags & OA_UNIT_FLAG_SELECTED) != 0;
-            status_ = count == 0 ? "No units" : std::to_string(count) + " selected";
-            return true;
-        }
+        // The game's selection keys (run_selection_command).
+        const std::pair<SDL_Keycode, SelectionCommand> selection_keys[] = {
+            {SDLK_A, SelectionCommand::all},
+            {SDLK_C, SelectionCommand::commander},
+            {SDLK_B, SelectionCommand::builders},
+            {SDLK_F, SelectionCommand::factories},
+            {SDLK_V, SelectionCommand::air},
+            {SDLK_S, SelectionCommand::on_screen},
+            {SDLK_Z, SelectionCommand::same_type},
+        };
+        for (const auto& [selection_key, command] : selection_keys)
+            if (sym == selection_key) {
+                run_selection_command(command, shift);
+                return true;
+            }
         return false;
     }
     if (sym == SDLK_TAB && selected_match_unit_ != 0) {

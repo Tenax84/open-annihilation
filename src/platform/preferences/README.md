@@ -175,6 +175,7 @@ of range is clamped. A switch is On for any number above 0: a word such as
 | `open-annihilation.window-edge` | `capture`, `sticky` or `free`; any other text reads as `capture`, and an earlier 0.8 build's `sticky` and `free` keep their meaning. While a match's battlefield shows in a focused window, Capture keeps the pointer in the window until a menu, Escape or a lost focus, Sticky holds it on the window's edges until a push or a flick as firm as `window-edge-stickiness` lets it leave, and Free leaves it free | `capture` |
 | `open-annihilation.window-edge-stickiness` | a decimal from `0.0` to `5.0`, written with one decimal; another number is rounded to the nearest tenth and held to that range, and any other text reads as `1.0`. How firmly Sticky holds: the push and the flick that let the pointer go grow with it, and `0.0` never holds | `1.0` |
 | `open-annihilation.escape-opens-menu` | 0 or 1 | 1 on macOS with the player's own file, else 0 |
+| `open-annihilation.selection-bar` | 0 or 1: a match shows the selection bar | 0 |
 | `open-annihilation.unit-limit` | units per player, 20 to 1500, or to a mod's higher maximum (`oa::data::limits::UnitsPerPlayer`) | the game folder's `totala.ini` `[Preferences] UnitLimit`, clamped to 20 to 500, with the player's own file; else 250 |
 | `open-annihilation.max-fps` | frames a second, 30 to 120 | 120 |
 | `open-annihilation.anti-aliasing` | 1 (off), 2, 3, 4, 8 or 16 | 1 |

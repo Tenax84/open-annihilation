@@ -310,6 +310,18 @@ namespace content {
 class Service;
 } // namespace content
 
+/// The selections the Ctrl+letter keys and the selection bar's buttons make.
+enum class SelectionCommand : uint8_t {
+    all,       ///< every unit of the local player's (Ctrl+A)
+    commander, ///< the commander, the view following it (Ctrl+C)
+    air,       ///< every aircraft (Ctrl+V)
+    combat,    ///< every mobile armed unit that neither flies nor builds
+    builders,  ///< every mobile builder (Ctrl+B)
+    factories, ///< every builder that does not move (Ctrl+F)
+    on_screen, ///< every unit whose box overlaps the view (Ctrl+S)
+    same_type, ///< every unit, anywhere, of a selected unit's type (Ctrl+Z)
+};
+
 class Runtime final : public menu::Host,
                       public entry::SinglePlayerHost,
                       public frontend::Host,
@@ -1133,10 +1145,10 @@ class Runtime final : public menu::Host,
     /// It shows where the game draws no cursor of its own: without the game's
     /// cursors, while the application is inactive, and while a screen that
     /// the system's pointer drives is open over the game (the Game files
-    /// screen). Everywhere else, in play and in the game's own menus, dialogs
-    /// and message boxes, the game draws its cursor and the system's pointer
-    /// is hidden. Over Open Annihilation's main menu the system's pointer
-    /// shows the game's cursor (show_menu_system_cursor).
+    /// screen). Everywhere else, in the game's own menus, dialogs and message
+    /// boxes, the game draws its cursor and the system's pointer is hidden.
+    /// Over Open Annihilation's main menu and in a match the system's pointer
+    /// shows the game's cursor (show_system_cursor).
     ///
     /// @return true where the system's pointer is to show
     [[nodiscard]] bool system_pointer_wanted() const;
@@ -2368,13 +2380,13 @@ class Runtime final : public menu::Host,
     /// the open sheet; no-op unless match_layout_.phone. [runtime_phone_hud.cpp]
     void refresh_placed_hud_regions();
 
-    /// Returns whether a canvas point lies on a placed HUD region or a touch control, so the
-    /// battlefield must not take it. False on a desktop without touch controls or the pad HUD.
-    /// [runtime_phone_hud.cpp]
+    /// Returns whether a canvas point lies on a placed HUD region, a touch control or the
+    /// selection bar, so the battlefield must not take it. On a desktop without touch controls or
+    /// the pad HUD, only the selection bar covers a point. [runtime_phone_hud.cpp]
     ///
     /// @param x canvas x in pixels
     /// @param y canvas y in pixels
-    /// @return whether a region or control covers the point
+    /// @return whether a region, a control or the bar covers the point
     [[nodiscard]] bool placed_hud_covers(float x, float y) const;
 
     /// Draws the placed regions over a CPU frame. [runtime_phone_hud.cpp]
@@ -9446,8 +9458,8 @@ class Runtime final : public menu::Host,
     [[nodiscard]] bool quiet_frames_allowed() const;
 
     /// Shows the game's cursor as the system's pointer over Open
-    /// Annihilation's main menu, enlarged as the picture is, so that the
-    /// pointer moves without a frame being drawn. Not while the cursor is
+    /// Annihilation's main menu and over a match's layers, enlarged as the
+    /// picture is, so that the pointer moves without a frame being drawn. Not while the cursor is
     /// hidden, lifted by touch, a middle-click pan's or left out of the
     /// frame, nor while quiet frames are not allowed.
     ///
@@ -9455,11 +9467,11 @@ class Runtime final : public menu::Host,
     /// @param picture_width the picture's width, in its pixels
     /// @return true when the system draws the cursor this frame; the frame
     ///     then draws none
-    bool show_menu_system_cursor(const SDL_FRect& area, int picture_width);
+    bool show_system_cursor(const SDL_FRect& area, int picture_width);
 
     /// Puts the system's own pointer back and forgets the game's cursors
-    /// made for it (show_menu_system_cursor).
-    void release_menu_system_cursor() noexcept;
+    /// made for it (show_system_cursor).
+    void release_system_cursor() noexcept;
 
     /// Returns the current frontend screen's gadgets and selection as the input handlers' menu.
     ///
@@ -11558,6 +11570,46 @@ class Runtime final : public menu::Host,
     /// Filters the selection a drag box just made by the W, B or Y key held
     /// (ui.selection-shortcuts).
     void selection_shortcut_drag_filter();
+
+    /// Makes a selection, as the game's own Ctrl+letter key does: without
+    /// ui.selection-shortcuts' changes to Ctrl+S, Ctrl+B and Ctrl+F.
+    ///
+    /// @param command the selection
+    /// @param shift shift is held: the commander joins the selection
+    void run_selection_command(SelectionCommand command, bool shift);
+
+    /// Tells whether the selection bar shows: while User Interface's
+    /// Selection bar is on, in a match the local player plays, with the
+    /// battlefield's interface, no touch controls or pad HUD, and the match
+    /// neither finished nor paused.
+    ///
+    /// @return true while it shows
+    [[nodiscard]] bool selection_bar_shows() const;
+
+    /// Tells whether the selection bar covers a canvas point, as drawn last.
+    ///
+    /// @param x canvas column
+    /// @param y canvas row
+    /// @return true on the bar
+    [[nodiscard]] bool selection_bar_covers(float x, float y) const;
+
+    /// Draws the selection bar along the bottom of the overlays' area
+    /// (overlay_area), centred across it, at the HUD's text scale or the
+    /// largest whole scale under it at which it fits; where it fits at no
+    /// scale, it does not show.
+    void draw_selection_bar();
+
+    /// Takes a pointer event on the selection bar: a move notes the button
+    /// under the pointer and goes on; a press on the bar is its own, and a
+    /// left press and release on one button presses it. A group's button
+    /// selects its group, with shift adds it to the selection, and with
+    /// Ctrl stores the selection as the group.
+    ///
+    /// @param event the pointer event
+    /// @param x pointer column on the canvas
+    /// @param y pointer row on the canvas
+    /// @return true when the bar took the event
+    bool selection_bar_pointer(const SDL_Event& event, float x, float y);
 
     /// Takes the selection the selection module left in the unit flags: each selected local unit
     /// refreshes its order panel, the primary unit stays when it is still selected (else the first
@@ -16241,6 +16293,18 @@ class Runtime final : public menu::Host,
     /// A left press moved the commander while it was placed; the press's
     /// release belongs to the placement too (commander_placement_pointer).
     bool commander_place_held_ = false;
+    /// The selection bar as drawn last, on the canvas; empty while it does
+    /// not show (draw_selection_bar).
+    oa::ui::display_layout::Rect selection_bar_rect_{};
+    /// The selection bar's buttons as drawn last, by button index, on the
+    /// canvas (draw_selection_bar).
+    std::vector<oa::ui::display_layout::Rect> selection_bar_buttons_{};
+    /// The selection bar's button under the pointer, and the one pressed and
+    /// not yet released; -1 for none (selection_bar_pointer).
+    int32_t selection_bar_hovered_ = -1;
+    int32_t selection_bar_held_ = -1;
+    /// A press on the selection bar is down; its release is the bar's too.
+    bool selection_bar_pressed_ = false;
     bool match_finished_ = false;
     // A paused menu was on the HUD as the match finished (pause_menu_shown).
     bool outcome_over_menu_ = false;
@@ -16544,19 +16608,19 @@ class Runtime final : public menu::Host,
     int match_cursor_tex_w_ = 0, match_cursor_tex_h_ = 0;
 
     /// One cursor of the game made as the system's pointer.
-    struct MenuSystemCursor {
+    struct SystemCursor {
         const oa::formats::gaf::Frame* frame{}; ///< the cursor's frame it was made from
         SDL_Cursor* cursor{};                   ///< the system's pointer
     };
 
     /// The game's cursors made as the system's pointer over Open
-    /// Annihilation's main menu (show_menu_system_cursor), at
-    /// menu_cursor_scale_ and the display gamma menu_cursor_gamma_.
-    std::vector<MenuSystemCursor> menu_cursors_{};
-    float menu_cursor_scale_ = 0.0F;             ///< the scale menu_cursors_ were made at
-    std::array<uint8_t, 256> menu_cursor_gamma_{}; ///< the gamma menu_cursors_ were made at
-    /// The system's pointer shows the game's cursor (show_menu_system_cursor).
-    bool menu_cursor_shown_ = false;
+    /// Annihilation's main menu and a match (show_system_cursor), at
+    /// system_cursor_scale_ and the display gamma system_cursor_gamma_.
+    std::vector<SystemCursor> system_cursors_{};
+    float system_cursor_scale_ = 0.0F;             ///< the scale system_cursors_ were made at
+    std::array<uint8_t, 256> system_cursor_gamma_{}; ///< the gamma system_cursors_ were made at
+    /// The system's pointer shows the game's cursor (show_system_cursor).
+    bool system_cursor_shown_ = false;
     /// The front end was presented with Open Annihilation's main menu
     /// covering its picture this frame (present_covered_front_end).
     bool covered_front_end_ = false;

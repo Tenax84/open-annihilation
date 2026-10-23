@@ -306,6 +306,14 @@
 	it=Una mappa nel pacchetto non è adatta al gioco di base.;
 	}
 
+[A match shows group and unit selection buttons under the battlefield.]
+	{
+	de=Im Spiel zeigt eine Leiste unter dem Schlachtfeld Gruppen- und Einheitenauswahl-Schaltflächen.;
+	fr=En partie, une barre sous le champ de bataille affiche des boutons de sélection de groupes et d'unités.;
+	es=En la partida, una barra bajo el campo de batalla muestra botones para seleccionar grupos y unidades.;
+	it=In partita, una barra sotto il campo di battaglia mostra pulsanti per selezionare gruppi e unità.;
+	}
+
 [A middle click pans the view towards the pointer until you click or press a key.]
 	{
 	de=Ein Mittelklick schwenkt die Ansicht zum Zeiger, bis du klickst oder eine Taste drückst.;
@@ -7642,6 +7650,14 @@
 	it=Scorciatoie di selezione;
 	}
 
+[Selection bar]
+	{
+	de=Auswahlleiste;
+	fr=Barre de sélection;
+	es=Barra de selección;
+	it=Barra di selezione;
+	}
+
 [Selective Weapon Use]
 	{
 	de=Selektiver Waffeneinsatz;
@@ -14512,4 +14528,52 @@
 	fr=Cette mission n'a pas de briefing.;
 	es=Esta misión no tiene informe.;
 	it=Questa missione non ha un briefing.;
+	}
+
+[GROUPS]
+	{
+	de=GRUPPEN;
+	fr=GROUPES;
+	es=GRUPOS;
+	it=GRUPPI;
+	}
+
+[AIR]
+	{
+	de=LUFT;
+	fr=AIR;
+	es=AIRE;
+	it=AEREI;
+	}
+
+[COMBAT]
+	{
+	de=KAMPF;
+	fr=COMBAT;
+	es=COMBATE;
+	it=TRUPPE;
+	}
+
+[Ctrl+# store]
+	{
+	de=Strg+# speichern;
+	fr=Ctrl+# mémoriser;
+	es=Ctrl+# guardar;
+	it=Ctrl+# memorizza;
+	}
+
+[Alt+# select]
+	{
+	de=Alt+# wählen;
+	fr=Alt+# sélectionner;
+	es=Alt+# seleccionar;
+	it=Alt+# seleziona;
+	}
+
+[# select]
+	{
+	de=# wählen;
+	fr=# sélectionner;
+	es=# seleccionar;
+	it=# seleziona;
 	}

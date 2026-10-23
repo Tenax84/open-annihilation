@@ -45,7 +45,7 @@ using Stepper = kit::Stepper<SettingsModel>;
 using Hint = std::array<std::string_view, 2>;
 
 /// The number of settings: Setting's enumerators.
-constexpr std::size_t kSettingCount = static_cast<std::size_t>(Setting::welcome_setup) + 1;
+constexpr std::size_t kSettingCount = static_cast<std::size_t>(Setting::selection_bar) + 1;
 
 // ---------------------------------------------------------------------------
 // The sections' rows.
@@ -88,13 +88,15 @@ constexpr std::array<Setting, 10> kGraphicsRows{
 };
 /// User Interface's rows: how the menus scale, the window's frame, the
 /// HUD's scaling, the size Open Annihilation's own screens are drawn at,
-/// then whether Escape opens the game menu.
-constexpr std::array<Setting, 5> kUserInterfaceRows{
+/// then whether Escape opens the game menu and whether a match shows the
+/// selection bar.
+constexpr std::array<Setting, 6> kUserInterfaceRows{
     Setting::menu_scaling,
     Setting::window_frame,
     Setting::hud_scaling,
     Setting::interface_size,
     Setting::escape_opens_menu,
+    Setting::selection_bar,
 };
 /// Language's rows: the language first, and the text size right
 /// under the switch it needs.
@@ -2453,6 +2455,10 @@ constexpr std::array<SettingRow, kSettingCount> kDeclared{{
     {.setting = S::welcome_setup,
      .spec = welcome_setup_row(),
      .lock = &Locks::welcome_setup},
+    {.setting = S::selection_bar,
+     .spec = engine_switch<&E::selection_bar>(
+         "selection-bar", "Selection bar",
+         {"A match shows group and unit selection buttons under the battlefield.", {}})},
 }};
 // clang-format on
 
@@ -2541,6 +2547,7 @@ constexpr std::array<std::string_view, kSettingCount> kSettingNames{
     "skirmish-players",
     "smooth-motion",
     "first-run",
+    "selection-bar",
 };
 
 /// Tells whether every row stands at its setting's place and is named by

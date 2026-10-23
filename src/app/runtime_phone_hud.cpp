@@ -645,7 +645,7 @@ void PhoneHudAccess::blit_regions(Runtime& runtime, oa::ui::frontend_renderer::S
 bool Runtime::placed_hud_covers(float x, float y) const {
     const auto canvas_x = static_cast<int>(std::floor(x));
     const auto canvas_y = static_cast<int>(std::floor(y));
-    if (layout::hud_covers(match_layout_, canvas_x, canvas_y))
+    if (layout::hud_covers(match_layout_, canvas_x, canvas_y) || selection_bar_covers(x, y))
         return true;
     const auto* state = touch_state_if_made();
     if (!touch_controls_active() && (state == nullptr || !state->hud.pad.hud))

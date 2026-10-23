@@ -2297,6 +2297,9 @@ void Runtime::render_match_surface() {
     draw_middle_pan_marks();
     draw_commander_placement();
     draw_match_kill_board();
+    // The selection bar along the bottom of the battlefield, under the
+    // status strip that rises over it.
+    draw_selection_bar();
     // Then the status strip over the bottom of the battlefield. The panels'
     // text keeps to the game fonts' size at most (PanelText).
     {

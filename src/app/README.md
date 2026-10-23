@@ -601,7 +601,7 @@ them.
   neither drawn nor uploaded, as nothing of it shows: only its cursor ticks
   (`Runtime::present_covered_front_end`). The game's cursor is shown as
   the system's pointer, enlarged as the picture is
-  (`Runtime::show_menu_system_cursor`), so that the pointer moves without
+  (`Runtime::show_system_cursor`), so that the pointer moves without
   a frame being drawn. A frame that would show what the window shows
   already, the same screens, textures, place and cursor, is neither drawn
   nor presented, and the loop waits for the next event, at most a tenth
@@ -891,6 +891,46 @@ panel, PREVIOUS MENU and START, and the version plate.
   is the game's.
 - **Frames.** As over the main menu: while the screen covers the briefing
   (`Runtime::main_menu_covers_front_end`), the briefing is not drawn.
+
+## Open Annihilation's selection bar
+
+`runtime_selection_bar.cpp` draws the selection bar in a match while
+User Interface's Selection bar is on, which it is not by default
+(`selection_bar.hpp`, `selection_bar.cpp`): a slim strip of bolted steel,
+in the menus' steel and amber, along the bottom of the overlays' area
+(`Runtime::overlay_area`), centred across it. It is drawn on the
+battlefield's layer after the units' bars and before the status strip,
+which rises over it (`Runtime::draw_selection_bar`).
+
+- **Groups.** Under a GROUPS plate, a button for each of groups 1 to 9 with
+  its number, how many of the player's units it holds and a small tank, or
+  an aircraft when most of them fly; an empty group shows a dash. The group
+  that is the whole selection, and holds nothing else, is lit in amber.
+  Under the buttons, the keys: `Ctrl+# store` and `Alt+# select`, or
+  `# select` while SwitchAlt lets a digit alone select its group.
+- **Selections.** Under a SELECT plate, ALL, COMMANDER, AIR, COMBAT,
+  BUILDERS, FACTORIES, ON SCREEN and SAME TYPE, each with a pictogram, its
+  caption and its key. Each makes the selection of the game's own
+  Ctrl+A, C, V, B, F, S and Z, which the keys and the buttons both run
+  (`Runtime::run_selection_command`); COMBAT, which no key makes, selects
+  every armed unit that moves and neither flies nor builds. With
+  ui.selection-shortcuts on, Ctrl+S, Ctrl+B and Ctrl+F make that hack's
+  selections, so ON SCREEN, BUILDERS and FACTORIES name no key.
+- **Presses.** A left press and release on one button presses it: a group's
+  button selects the group (`Runtime::select_squad`), with Shift adds it to
+  the selection, and with Ctrl stores the selection as the group
+  (`Runtime::assign_squad`). Every press on the bar is its own, so none
+  reaches the battlefield; over the bar the pointer is no battlefield's
+  (`Runtime::placed_hud_covers`, `Runtime::refresh_pointer_area`), and the
+  cursor is the plain one.
+- **Scale.** The HUD text's scale, or the largest whole scale under it at
+  which the bar fits the area's width; the SELECT buttons share what the
+  groups leave, up to a width each. Where it fits at no scale, or would
+  take more than half the area's height, it does not show.
+- **When it shows.** In a match the local player plays, with the
+  battlefield's interface: not while the match is paused or finished, for
+  a player who watches, in director mode, with the touch controls or the
+  pad HUD on, or on a phone's placed HUD.
 
 ## Open Annihilation's Settings screen
 
@@ -2565,10 +2605,16 @@ hosts them on the OA layer.
   state settles it after the game drops pending input. The game lets the
   pointer go (`release_pointer`) before it shows an error or information
   box, before breaking into a debugger and on exit. The system's pointer is
-  hidden wherever the game draws its own cursor, in play and in the game's
-  menus, dialogs and message boxes; it shows only without the game's
-  cursors, while the game is inactive and over the Game files screen
-  (`system_pointer_wanted`). Every event, every frame of the loop and every
+  hidden wherever the game draws its own cursor, in the game's menus,
+  dialogs and message boxes; it shows without the game's cursors, while
+  the game is inactive and over the Game files screen
+  (`system_pointer_wanted`). Over Open Annihilation's main menu and in a
+  match drawn in layers it shows the game's cursor itself, made as the
+  system's pointer at the size the window enlarges the picture to
+  (`show_system_cursor`), so that the pointer moves between frames, however
+  long a frame of the match takes; a run that is driven, recorded or timed
+  frame by frame, the frame statistics, a middle-click pan and the touch
+  controls have the cursor drawn in the frame instead. Every event, every frame of the loop and every
   change of screen apply that rule again (`apply_system_pointer`), so a
   pointer shown anywhere else is hidden again by the next frame. A window
   that leaves full screen, by Alt+Enter, by the window system's own control

@@ -306,7 +306,7 @@ void Runtime::pace_next_frame(bool& running) {
                       !activity.input_recent && !activity.unattended;
     frame_wait_ = idle && sdl_.window != nullptr ? FrameWait::idle : FrameWait::precise;
     uint64_t wait = end_paced_frame(frame_pacer_, frame_clock_ns(), paced_frames_per_second_);
-    if (front_end_quiet_ && menu_cursor_shown_ && frame_wait_ == FrameWait::idle)
+    if (front_end_quiet_ && system_cursor_shown_ && frame_wait_ == FrameWait::idle)
         wait = std::max(wait, kQuietMenuWaitNs);
     if (wait == 0)
         return;
@@ -324,7 +324,7 @@ void Runtime::pace_next_frame(bool& running) {
             // While the system's pointer shows the main menu's cursor, a
             // move of the pointer that changes no screen's look needs no
             // frame: the wait goes on to its end.
-            if (!front_end_quiet_ || !menu_cursor_shown_ || event.type != SDL_EVENT_MOUSE_MOTION ||
+            if (!front_end_quiet_ || !system_cursor_shown_ || event.type != SDL_EVENT_MOUSE_MOTION ||
                 !running || exit_requested_ || oa_layer().looks() != looks)
                 return;
             const uint64_t at = frame_pacing::steady_now_ns();
