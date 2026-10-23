@@ -58,7 +58,7 @@
    "tier-heap-container": 11
   },
   "src/sim/match-runtime/include/oa/sim/match_runtime.hpp": {
-   "tier-heap-container": 29,
+   "tier-heap-container": 28,
    "tier-virtual": 4
   },
   "src/sim/match-runtime/include/oa/sim/match_runtime/attack_orders.hpp": {

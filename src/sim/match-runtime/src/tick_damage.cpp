@@ -10,6 +10,7 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <functional>
 
 namespace oa::sim::match_runtime {
 
@@ -79,11 +80,18 @@ void Match::drop_order(const RuntimeOrder& record) {
     std::erase_if(orders_, [&](const auto& candidate) { return candidate.get() == &record; });
 }
 
+Match::RuntimeOrder** Match::observer_head(const sim::simulation_state::Unit& unit) noexcept {
+    const auto* first = units_.data();
+    if (std::less<>{}(&unit, first) || !std::less<>{}(&unit, first + units_.size()))
+        return nullptr;
+    return &target_observers_[static_cast<std::size_t>(&unit - first)];
+}
+
 void Match::wake_target_observers(sim::simulation_state::Unit& unit, uint32_t event) {
-    const auto found = target_observers_.find(&unit);
-    if (found == target_observers_.end())
+    auto* const* head = observer_head(unit);
+    if (head == nullptr)
         return;
-    for (auto* entry = found->second; entry != nullptr; entry = entry->observer_next) {
+    for (auto* entry = *head; entry != nullptr; entry = entry->observer_next) {
         // Every order on the list still targets this unit. The walk raises
         // the event on each of them.
         assert(entry->attack.target == &unit);
@@ -424,17 +432,17 @@ void Match::record_death_statistics(
 }
 
 void Match::release_target_observers(sim::simulation_state::Unit& target) {
-    const auto found = target_observers_.find(&target);
-    if (found == target_observers_.end())
+    auto** head = observer_head(target);
+    if (head == nullptr)
         return;
-    auto* entry = found->second;
+    auto* entry = *head;
     std::size_t steps = orders_.size();
     while (entry != nullptr && steps-- > 0) {
         auto* next = entry->observer_next;
         lose_target(*entry, target);
         entry = next;
     }
-    target_observers_.erase(found);
+    *head = nullptr;
 }
 
 void Match::lose_target(RuntimeOrder& entry, const sim::simulation_state::Unit& target) {
@@ -451,29 +459,32 @@ void Match::link_target_observer(RuntimeOrder& entry, sim::simulation_state::Uni
     // Drop the order from the unit it watches now, so that unit's list no
     // longer reaches it once the order points somewhere else.
     unlink_target_observer(entry);
-    if (target == nullptr || target->record.type_index == 0) {
+    auto** head =
+        target != nullptr && target->record.type_index != 0 ? observer_head(*target) : nullptr;
+    if (head == nullptr) {
         entry.attack.target = nullptr;
         entry.observer_next = nullptr;
         check_target_observer(entry);
         return;
     }
-    auto& head = target_observers_[target];
     entry.attack.target = target;
-    entry.observer_next = head;
-    head = &entry;
+    entry.observer_next = *head;
+    *head = &entry;
     check_target_observer(entry);
 }
 
 void Match::unlink_target_observer(RuntimeOrder& entry) {
     if (entry.attack.target != nullptr) {
-        auto** link = &target_observers_[entry.attack.target];
-        // Every order may watch one unit, so the list is never longer than
-        // the orders there are; the bound only stops a damaged list looping.
-        std::size_t steps = orders_.size();
-        while (*link != nullptr && *link != &entry && steps-- > 0)
-            link = &(*link)->observer_next;
-        if (*link == &entry)
-            *link = entry.observer_next;
+        if (auto** link = observer_head(*entry.attack.target)) {
+            // Every order may watch one unit, so the list is never longer
+            // than the orders there are; the bound only stops a damaged list
+            // looping.
+            std::size_t steps = orders_.size();
+            while (*link != nullptr && *link != &entry && steps-- > 0)
+                link = &(*link)->observer_next;
+            if (*link == &entry)
+                *link = entry.observer_next;
+        }
         entry.attack.target = nullptr;
         entry.observer_next = nullptr;
     }
@@ -483,8 +494,9 @@ void Match::unlink_target_observer(RuntimeOrder& entry) {
 void Match::check_target_observer(const RuntimeOrder& entry) const noexcept {
 #ifndef NDEBUG
     auto* target = entry.attack.target;
-    for (const auto& [unit, head] : target_observers_) {
-        auto* cursor = head;
+    for (std::size_t index = 0; index < units_.size(); ++index) {
+        const auto* unit = &units_[index];
+        auto* cursor = target_observers_[index];
         int seen = 0;
         std::size_t steps = overlay_order_budget;
         while (cursor != nullptr && steps-- > 0) {
@@ -500,7 +512,7 @@ void Match::check_target_observer(const RuntimeOrder& entry) const noexcept {
             assert(seen <= 1);
     }
     if (target != nullptr)
-        assert(target_observers_.find(target) != target_observers_.end());
+        assert(const_cast<Match*>(this)->observer_head(*target) != nullptr);
 #else
     (void)entry;
 #endif

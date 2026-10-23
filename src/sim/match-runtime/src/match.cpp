@@ -335,6 +335,7 @@ Match::Match(const OfflineInputs& input, OfflineServices& services)
       spatial_units_(slots_.size()), weapons_(slots_.size()), movement_(slots_.size()),
       air_drivers_(slots_.size()), mirrored_air_goals_(slots_.size()), terrain_(input.map),
       random_(input.random_seed), lcg_seed_(input.random_seed) {
+    target_observers_ = std::make_unique<RuntimeOrder*[]>(units_.size());
     if (const auto* refusal = input_error(input)) {
         fault_.note(refusal);
         return;
