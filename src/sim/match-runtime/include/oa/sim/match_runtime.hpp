@@ -3156,7 +3156,16 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
     /// @return The spare order, cleared, outside every queue.
     sim::simulation_state::Order& refused_order() noexcept;
 
-    std::map<sim::simulation_state::Unit*, RuntimeOrder*> target_observers_;
+    // The head of each pool unit's list of observing orders (through
+    // RuntimeOrder::observer_next), at the unit's place in units_; null while
+    // no order watches the unit.
+    std::vector<RuntimeOrder*> target_observers_;
+    /// Returns the head of a unit's list of observing orders.
+    ///
+    /// @param unit Unit of the pool.
+    /// @return Its entry of target_observers_, or null for a unit outside the
+    ///     pool.
+    RuntimeOrder** observer_head(const sim::simulation_state::Unit& unit) noexcept;
     /// Makes every order that targets the dead unit lose it, emptying the
     /// unit's list of observing orders.
     ///
