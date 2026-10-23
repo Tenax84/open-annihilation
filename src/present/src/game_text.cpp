@@ -863,17 +863,27 @@ void lay_text(
         return;
     const int32_t left = x - layers.pen;
     const int32_t top = baseline_y - layers.baseline;
-    // The few colours a line makes are reduced once each.
+    // The few colours a line makes are reduced once each; a run of pixels
+    // of one colour, as inside a letter or along its outline, takes the
+    // last colour's index without looking it up.
     std::unordered_map<uint32_t, uint8_t> reduced;
+    uint32_t last_key = 0;
+    uint8_t last_index = 0;
+    bool any_reduced = false;
     const auto reduce = [&](std::array<uint8_t, 3> mixed) -> uint8_t {
         const auto key = (uint32_t{mixed[0]} << 16) | (uint32_t{mixed[1]} << 8) | mixed[2];
+        if (any_reduced && key == last_key)
+            return last_index;
         auto found = reduced.find(key);
         if (found == reduced.end())
             found =
                 reduced
                     .emplace(key, nearest_palette_index(canvas.palette, palette_entry_bytes, mixed))
                     .first;
-        return found->second;
+        last_key = key;
+        last_index = found->second;
+        any_reduced = true;
+        return last_index;
     };
     // Pixels the picture under an RGB canvas shows through, and the runs of
     // them each layer leaves to the canvas's world_run.
