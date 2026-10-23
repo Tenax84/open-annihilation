@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -269,11 +270,43 @@ light_row_for(std::span<const uint8_t> light_table, uint16_t foreground_color) {
     return light_table.data() + static_cast<std::size_t>(foreground_color) * palette_color_count;
 }
 
+// A GAF frame's palette indices and coverage as formats::gaf::render_normal
+// draws them.
+struct FramePixels {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::span<const uint8_t> pixels;
+    std::span<const uint8_t> coverage;
+};
+
+// Tells whether a frame is drawn as its own pixels: render_normal copies a
+// frame without layers that holds all its pixels as they are.
+[[nodiscard]] bool drawn_as_held(const formats::gaf::Frame& frame) noexcept {
+    const auto count = static_cast<std::size_t>(frame.width) * frame.height;
+    return frame.layers.empty() && frame.layer_count == 0 && count != 0 &&
+           count <= formats::gaf::limit::pixels_per_frame && frame.pixels.size() == count &&
+           frame.coverage.size() == count;
+}
+
+// Gives a frame's pixels as render_normal draws them: those of a frame drawn
+// as its own pixels, or those of the frame drawn into `rendered`. None when
+// the frame cannot be drawn, its error then in `rendered`.
+[[nodiscard]] std::optional<FramePixels>
+frame_pixels(const formats::gaf::Frame& frame, formats::gaf::RenderResult& rendered) {
+    if (drawn_as_held(frame))
+        return FramePixels{frame.width, frame.height, frame.pixels, frame.coverage};
+    rendered = formats::gaf::render_normal(frame);
+    if (!rendered.ok())
+        return std::nullopt;
+    const auto& drawn = *rendered.frame;
+    return FramePixels{drawn.width, drawn.height, drawn.pixels, drawn.coverage};
+}
+
 // Draws a frame's covered pixels through `light_row` when it is set, so a
 // button's GAF frame is lit as 3.1c draws it with a colour table.
 void blit(
     Surface& surface,
-    const formats::gaf::RenderedFrame& frame,
+    const FramePixels& frame,
     int x,
     int y,
     const PaletteBytes& palette,
@@ -318,7 +351,7 @@ void blit(
 // gadget rectangle (32xlogos is 32x32; Color_N is authored 20x20).
 void blit_stretched(
     Surface& surface,
-    const formats::gaf::RenderedFrame& frame,
+    const FramePixels& frame,
     int dest_x,
     int dest_y,
     int dest_w,
@@ -1274,13 +1307,13 @@ void render_screen_into(
             const auto frame_index = *state->gaf_frame;
             if (frame_index >= binding.sequence->frames.size())
                 throw std::runtime_error("runtime image frame index is out of range");
-            const auto rendered =
-                formats::gaf::render_normal(binding.sequence->frames[frame_index]);
-            if (!rendered.ok())
+            formats::gaf::RenderResult rendered;
+            const auto pixels = frame_pixels(binding.sequence->frames[frame_index], rendered);
+            if (!pixels)
                 throw std::runtime_error("cannot render runtime image: " + rendered.error->message);
             blit_stretched(
                 result,
-                *rendered.frame,
+                *pixels,
                 gadget.common.x,
                 gadget.common.y,
                 gadget.common.width,
@@ -1331,8 +1364,9 @@ void render_screen_into(
             if (index >= sequence->frames.size()) {
                 throw std::runtime_error("resolved GAF frame index is out of range");
             }
-            const auto rendered = formats::gaf::render_normal(sequence->frames[index]);
-            if (!rendered.ok()) {
+            formats::gaf::RenderResult rendered;
+            const auto pixels = frame_pixels(sequence->frames[index], rendered);
+            if (!pixels) {
                 throw std::runtime_error(
                     "cannot render MAINMENU.GAF sequence '" + sequence->name +
                     "': " + rendered.error->message
@@ -1341,12 +1375,10 @@ void render_screen_into(
             // The frame keeps its own size at the gadget's corner, however
             // the authored rectangle differs: NEWGAME's 160x160 side emblems
             // fill their frames from 132x106 Side0 and 129x104 Side1.
-            blit(
-                result, *rendered.frame, gadget.common.x, gadget.common.y, active_palette, light_row
-            );
+            blit(result, *pixels, gadget.common.x, gadget.common.y, active_palette, light_row);
             auto resolved_gadget = gadget;
-            resolved_gadget.common.width = static_cast<int16_t>(rendered.frame->width);
-            resolved_gadget.common.height = static_cast<int16_t>(rendered.frame->height);
+            resolved_gadget.common.width = static_cast<int16_t>(pixels->width);
+            resolved_gadget.common.height = static_cast<int16_t>(pixels->height);
             draw_button_text(
                 result,
                 resolved_gadget,
