@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <iterator>
@@ -748,6 +749,31 @@ void draw_ring(const kit::Canvas& canvas, const kit::Rect& rect, int32_t width, 
         kit::outline_rect(
             canvas,
             {rect.x + step, rect.y + step, rect.width - 2 * step, rect.height - 2 * step},
+            ink
+        );
+}
+
+void draw_line(
+    const kit::Canvas& canvas, kit::Point from, kit::Point to, int32_t width, kit::Colour ink
+) {
+    const int32_t steps = std::max(std::abs(to.x - from.x), std::abs(to.y - from.y));
+    const int32_t half = width / 2;
+    for (int32_t step = 0; step <= steps; ++step) {
+        const double share = steps > 0 ? static_cast<double>(step) / steps : 0.0;
+        const int32_t x = from.x + nearest((to.x - from.x) * share);
+        const int32_t y = from.y + nearest((to.y - from.y) * share);
+        kit::fill_rect(canvas, {x - half, y - half, std::max(width, 1), std::max(width, 1)}, ink);
+    }
+}
+
+void draw_circle(const kit::Canvas& canvas, const kit::Rect& box, int32_t width, kit::Colour ink) {
+    const int32_t side = std::min(box.width, box.height);
+    const kit::Rect square{box.x + (box.width - side) / 2, box.y + (box.height - side) / 2, side, side};
+    for (int32_t step = 0; step < width; ++step)
+        kit::outline_round_rect(
+            canvas,
+            {square.x + step, square.y + step, square.width - 2 * step, square.height - 2 * step},
+            std::max(side / 2 - step, 0),
             ink
         );
 }

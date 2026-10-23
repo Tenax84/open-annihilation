@@ -1103,7 +1103,10 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/menu_paint.cpp src/app/column_menu.cpp src/app/runtime_main_menu.cpp
   src/app/runtime_single_player_menu.cpp src/app/campaign_menu.cpp
   src/app/runtime_new_campaign_menu.cpp src/app/skirmish_menu.cpp
-  src/app/runtime_skirmish_menu.cpp src/app/settings_menu.cpp src/app/runtime_settings_menu.cpp
+  src/app/runtime_skirmish_menu.cpp src/app/multiplayer_menu.cpp
+  src/app/load_game_menu.cpp src/app/runtime_load_game_menu.cpp
+  src/app/briefing_menu.cpp src/app/runtime_briefing_menu.cpp
+  src/app/runtime_multiplayer_menu.cpp src/app/settings_menu.cpp src/app/runtime_settings_menu.cpp
   src/app/library_menu.cpp src/app/runtime_library_menu.cpp
   src/app/runtime_mod_install.cpp src/app/runtime_content.cpp src/app/runtime_challenge.cpp
   src/app/runtime_registries.cpp

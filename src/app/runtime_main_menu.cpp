@@ -17,6 +17,9 @@
 
 #include "campaign_menu.hpp"
 #include "column_menu.hpp"
+#include "briefing_menu.hpp"
+#include "load_game_menu.hpp"
+#include "multiplayer_menu.hpp"
 #include "skirmish_menu.hpp"
 #include "oa_layer.hpp"
 
@@ -24,6 +27,7 @@
 #include "oa/app/view_rules.hpp"
 #include "oa/ui/frontend/main_menu.hpp"
 #include "oa/ui/frontend_dialogs.hpp"
+#include "oa/ui/frontend_multiplayer/screens.hpp"
 #include "oa/ui/frontend_state/main_menu.hpp"
 #include "oa/ui/gui_layout.hpp"
 
@@ -40,6 +44,7 @@ namespace oa::app {
 namespace {
 
 namespace menu = oa::ui::frontend_state::main_menu;
+namespace mp = oa::ui::frontend_multiplayer;
 
 /// The menu's buttons, top to bottom.
 enum class MenuEntry : uint8_t {
@@ -95,17 +100,35 @@ bool Runtime::oa_menu_shown() {
         return oa_new_campaign_menu_shown();
     if (screen_ == Screen::skirmish)
         return oa_skirmish_menu_shown();
+    if (screen_ == Screen::load_game)
+        return oa_load_game_menu_shown();
+    if (screen_ == Screen::briefing)
+        return oa_briefing_menu_shown();
     return false;
 }
 
 bool Runtime::main_menu_covers_front_end() {
+    // The Multiplayer screen covers SELPROV.GUI, SELGAME.GUI and TCP.GUI
+    // while it hands TCP.GUI the address.
+    const auto id = screen_id(screen_);
+    const bool multiplayer =
+        id == mp::kScreenProviders || id == mp::kScreenTcp || id == mp::kScreenGameList;
+    // The Load Game screen covers the load dialog over Single Player and
+    // the end of a mission.
+    const bool load_game = load_game_menu_covers();
+    // The briefing screen covers the mission briefing.
+    const bool briefing = briefing_menu_covers();
     if ((screen_ != Screen::main_menu && screen_ != Screen::single_player &&
-         screen_ != Screen::new_campaign && screen_ != Screen::skirmish) ||
+         screen_ != Screen::new_campaign && screen_ != Screen::skirmish && !multiplayer &&
+         !load_game && !briefing) ||
         sdl_.renderer == nullptr || frame_without_cursor_ || !oa_menu_may_show())
         return false;
     OaLayer& layer = oa_layer();
     const LayerScreen* menu = layer.find(
-        screen_ == Screen::main_menu       ? main_menu_screen_name
+        multiplayer                        ? multiplayer_menu_screen_name
+        : load_game                        ? load_game_menu_screen_name
+        : briefing                         ? briefing_menu_screen_name
+        : screen_ == Screen::main_menu     ? main_menu_screen_name
         : screen_ == Screen::single_player ? single_player_menu_screen_name
         : screen_ == Screen::new_campaign  ? new_campaign_menu_screen_name
                                            : skirmish_menu_screen_name

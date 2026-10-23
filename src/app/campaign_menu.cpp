@@ -1332,6 +1332,9 @@ class CampaignMenuScreen final : public LayerScreen {
         const kit::Measure regular = [&canvas](std::string_view line) {
             return kit::measure_text(canvas, kit::FontRole::regular, line);
         };
+        const kit::Measure secondary = [&canvas](std::string_view line) {
+            return kit::measure_text(canvas, secondary_caption_font, line);
+        };
         const int32_t pitch = kit::smooth_text_points(kit::FontRole::small) + line_leading;
         const int32_t level_label_top =
             layout_.levels[0].y - pitch - std::max(inset / 2, line_leading);
@@ -1400,8 +1403,8 @@ class CampaignMenuScreen final : public LayerScreen {
             }
             outlined_text(
                 canvas,
-                kit::FontRole::regular,
-                kit::fit(facts_now_.difficulties[level], rect.width - 12, regular),
+                secondary_caption_font,
+                kit::fit(facts_now_.difficulties[level], rect.width - 12, secondary),
                 box,
                 kit::Align::centre,
                 chosen || lit ? caption_lit_colour : caption_colour

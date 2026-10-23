@@ -226,15 +226,16 @@ struct Runtime::SettingsMenuHost {
         show_page_of(chosen_);
     }
 
-    /// Tells whether the screen shows: while the dialog is open on the main
-    /// menu and has not been handed to its own look. Off the main menu, an
-    /// open dialog closes as Cancel closes it.
+    /// Tells whether the screen shows: while the dialog is open on the
+    /// game's screen it opened over, the main menu or SELPROV.GUI under the
+    /// Multiplayer screen, and has not been handed to its own look. Off that
+    /// screen, an open dialog closes as Cancel closes it.
     ///
     /// @return true while it shows
     [[nodiscard]] bool shows() {
         if (handed_over_ || runtime_.engine_settings_dialog() == nullptr)
             return false;
-        if (runtime_.screen_ != Screen::main_menu) {
+        if (runtime_.screen_ != opened_on_) {
             cancel(false);
             return false;
         }
@@ -1359,6 +1360,7 @@ struct Runtime::SettingsMenuHost {
     }
 
     Runtime& runtime_;                                  ///< the runtime whose settings it shows
+    Screen opened_on_{runtime_.screen_};                ///< the game's screen it opened over
     init::OptionsEntrySnapshot entry_{};                ///< the game's options as the screen opened
     std::size_t chosen_{};                              ///< the category shown
     bool handed_over_{};                                ///< the dialog shows in its own look now

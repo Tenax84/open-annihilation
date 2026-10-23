@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // What Open Annihilation's menus on the OA layer draw alike: the column
-// menus (column_menu.hpp), the New Campaign screen (campaign_menu.hpp) and
-// the Skirmish screen (skirmish_menu.hpp). They share the main menu's art (branding/main-menu),
-// its colours, the backdrop put together from the battlefield picture, the
-// outlined captions, the heading between metal rules, the steel: bolted
-// frames round dark panels, bevelled plates and bolts, and the version
-// plate.
+// menus (column_menu.hpp), the New Campaign screen (campaign_menu.hpp),
+// the Skirmish screen (skirmish_menu.hpp), Settings, the Library and the
+// Multiplayer screen (multiplayer_menu.hpp). They share the main menu's art
+// (branding/main-menu), its colours, the backdrop put together from the
+// battlefield picture, the outlined captions, the heading between metal
+// rules, the steel: bolted frames round dark panels, bevelled plates and
+// bolts, lines and rings, and the version plate.
 #pragma once
 
 #include "oa/app/window_icon.hpp"
@@ -31,6 +32,10 @@ namespace oa::app::menu_paint {
 inline constexpr double design_rows = 1080.0;
 /// The heading's extra points after each character.
 inline constexpr int32_t heading_tracking = 3;
+/// The font a secondary button's caption is drawn in: a steel button's, on
+/// every menu. A primary button, drawn with the menus' faces, has its
+/// caption in the regular font.
+inline constexpr oa::ui::kit::FontRole secondary_caption_font = oa::ui::kit::FontRole::small;
 
 inline constexpr oa::ui::kit::Colour caption_colour{236, 230, 198};       ///< a caption, cream
 inline constexpr oa::ui::kit::Colour caption_lit_colour{255, 250, 222};   ///< a highlighted caption
@@ -284,6 +289,34 @@ void draw_sunk_edge(const oa::ui::kit::Canvas& canvas, const oa::ui::kit::Rect& 
 void draw_ring(
     const oa::ui::kit::Canvas& canvas,
     const oa::ui::kit::Rect& rect,
+    int32_t width,
+    oa::ui::kit::Colour ink
+);
+
+/// Draws a line of a width between two points, as squares along it.
+///
+/// @param canvas where it draws
+/// @param from where it starts
+/// @param to where it ends
+/// @param width how thick it is, in points
+/// @param ink its colour
+void draw_line(
+    const oa::ui::kit::Canvas& canvas,
+    oa::ui::kit::Point from,
+    oa::ui::kit::Point to,
+    int32_t width,
+    oa::ui::kit::Colour ink
+);
+
+/// Draws a ring: a circle's edge.
+///
+/// @param canvas where it draws
+/// @param box the square it fills
+/// @param width how thick it is, in points
+/// @param ink its colour
+void draw_circle(
+    const oa::ui::kit::Canvas& canvas,
+    const oa::ui::kit::Rect& box,
     int32_t width,
     oa::ui::kit::Colour ink
 );

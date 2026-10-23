@@ -530,6 +530,12 @@ void load_overlay_bind(ScreenContext* ctx, LoadGameOverlay& overlay) {
         ui::savegame_enter_save(overlay.panel, saves);
         oa::ui::gui_input::mark_label_shadows(overlay.layout.gadgets);
         ctx->services->set_text_input(ctx->host, 1);
+    } else if (static_cast<Runtime*>(ctx->host)->load_game_menu_covers() &&
+               ui::savegame_build_list(saves) == 0) {
+        // Open Annihilation's Load Game screen says itself that there is no
+        // save, so no message box tells it over the dialog.
+        for (const std::string_view hidden : {"DELETE", "GAMENAME", "SaveGame"})
+            ui::panel_set_active(overlay.panel, hidden, 0);
     } else if (ui::savegame_enter_load(overlay.panel, saves)) {
         oa::ui::gui_input::mark_label_shadows(overlay.layout.gadgets);
     }
@@ -1531,6 +1537,90 @@ std::optional<Runtime::LoadGameRows> Runtime::load_game_rows() const {
         static_cast<std::size_t>(list->list_selection) < overlay.rows.size())
         rows.selected = static_cast<std::size_t>(list->list_selection);
     return rows;
+}
+
+std::optional<Runtime::LoadDialogShown> Runtime::load_dialog_shown() const {
+    const auto& overlay = load_overlay();
+    if (!overlay.bound || overlay.save_role || screen_ != Screen::load_game)
+        return std::nullopt;
+    LoadDialogShown shown;
+    for (const auto& entry : overlay.saves.list.entries)
+        shown.saves.emplace_back(entry.description.data());
+    const auto* list = ui::panel_control(overlay.panel, "GAMES");
+    if (list == nullptr || list->list_selection < 0 ||
+        static_cast<std::size_t>(list->list_selection) >= shown.saves.size())
+        return shown;
+    shown.chosen = static_cast<std::size_t>(list->list_selection);
+    // The details are the preview's labels, as the dialog filled them.
+    const auto text = [&overlay](std::string_view name) {
+        const auto* control = ui::panel_control(overlay.panel, name);
+        return control != nullptr && control->active != 0 ? std::string(ui::control_text(*control))
+                                                           : std::string{};
+    };
+    shown.type = text("GAMETYPE");
+    shown.campaign = text("CAMPAIGN");
+    shown.place = text("MISSION");
+    shown.time = text("TIME");
+    shown.side = text("SIDE");
+    shown.difficulty = text("DIFF");
+    return shown;
+}
+
+void Runtime::choose_saved_game(std::size_t row) {
+    auto& overlay = load_overlay();
+    if (!overlay.bound || overlay.save_role || screen_ != Screen::load_game ||
+        row >= overlay.saves.list.entries.size())
+        return;
+    auto* list = ui::panel_control(overlay.panel, "GAMES");
+    if (list == nullptr)
+        return;
+    auto context = screen_context();
+    overlay.context = &context;
+    list->list_selection = static_cast<int16_t>(row);
+    ui::savegame_on_games_selected(overlay.panel, overlay.saves);
+    overlay.context = nullptr;
+}
+
+void Runtime::press_load_dialog(bool load) {
+    auto& overlay = load_overlay();
+    if (!overlay.bound || overlay.save_role || screen_ != Screen::load_game)
+        return;
+    const auto control = ui::panel_find(overlay.panel, load ? "LOAD" : "CANCEL");
+    if (control < 0) {
+        if (!load)
+            leave_load_dialog();
+        return;
+    }
+    auto context = screen_context();
+    load_overlay_click(&context, overlay, control);
+}
+
+WindowIcon Runtime::saved_game_picture() {
+    WindowIcon picture;
+    const auto& overlay = load_overlay();
+    const auto* radar = ui::panel_control(overlay.panel, "RADAR");
+    const auto& saved = overlay.saves.radar_picture;
+    const auto width = static_cast<uint32_t>(std::max(saved.surface.width, 0));
+    const auto height = static_cast<uint32_t>(std::max(saved.surface.height, 0));
+    if (!overlay.bound || radar == nullptr || radar->active == 0 || width == 0 || height == 0 ||
+        saved.pixels.size() < static_cast<std::size_t>(width) * height)
+        return picture;
+    // The picture's indices are the game's palette's.
+    oa::PaletteBytes colours = screen_palette();
+    if (const auto bytes = read("palettes/palette.pal"); bytes && bytes->size() == colours.size())
+        std::copy(bytes->begin(), bytes->end(), colours.begin());
+    picture.width = width;
+    picture.height = height;
+    picture.pixels.resize(static_cast<std::size_t>(width) * height * 4U);
+    for (std::size_t at = 0; at < static_cast<std::size_t>(width) * height; ++at) {
+        const std::size_t colour = static_cast<std::size_t>(saved.pixels[at]) * oa::palette_entry_bytes;
+        uint8_t* pixel = picture.pixels.data() + at * 4U;
+        pixel[0] = colours[colour];
+        pixel[1] = colours[colour + 1U];
+        pixel[2] = colours[colour + 2U];
+        pixel[3] = 255;
+    }
+    return picture;
 }
 
 /// Returns the name a side's own panel art would have in its intgaf for a

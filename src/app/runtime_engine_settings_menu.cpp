@@ -890,9 +890,10 @@ void Runtime::register_engine_settings_button() {
 }
 
 void Runtime::open_engine_settings_from_menu() {
-    // Nothing opens over a message box, over a frame a package owns, or a
-    // second time.
-    if (screen_ != Screen::main_menu || frame_owned_by_package() ||
+    // It opens from the main menu and from Open Annihilation's Multiplayer
+    // screen, whose OPTIONS stands for the game's own. Nothing opens over a
+    // message box, over a frame a package owns, or a second time.
+    if ((screen_ != Screen::main_menu && !oa_multiplayer_menu_shown()) || frame_owned_by_package() ||
         oa::ui::frontend_dialogs::dialog_count() != 0 || engine_settings_dialog() != nullptr ||
         saves_notice_shown() || engine_settings_fonts() == nullptr)
         return;
@@ -904,9 +905,10 @@ void Runtime::open_engine_settings_from_menu() {
         oa_layer().close_top();
     }
     open_engine_settings_dialog();
-    // Over Open Annihilation's main menu the dialog shows in the Settings
-    // screen's look, over the whole window, with the game's own options.
-    if (oa_main_menu_shown())
+    // Over Open Annihilation's main menu and Multiplayer screen the dialog
+    // shows in the Settings screen's look, over the whole window, with the
+    // game's own options.
+    if (oa_main_menu_shown() || oa_multiplayer_menu_shown())
         push_settings_menu_screen();
     else
         push_settings_screen(false);

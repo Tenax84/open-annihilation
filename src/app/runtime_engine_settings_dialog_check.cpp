@@ -1833,13 +1833,6 @@ void Runtime::check_engine_settings_dialog() {
                 }
             );
         };
-        // Answers the question on top of the OA layer with a key, as the layer does.
-        const auto answer = [this](oa::ui::kit::Key key, uint32_t sdl_key) {
-            LayerScreen* top = oa_layer().top();
-            require(top != nullptr, "no question shows to answer");
-            oa_layer().take_answer(*top, top->key(key, sdl_key), sdl_key);
-            oa_layer().forget_latched_key();
-        };
         const auto switch_question = [this]() -> const QuestionScreen* {
             const auto* asked = dynamic_cast<const QuestionScreen*>(oa_layer().top());
             if (asked == nullptr || asked->question().title != "SWITCH MOD")
@@ -1909,39 +1902,12 @@ void Runtime::check_engine_settings_dialog() {
                 "the picked folder played offers no SWITCH OFF"
             );
             const library::EntryId id = played->id;
+            // SWITCH OFF plays no mod at once, asking nothing.
             library_entry_action(library::Action::switch_off, id);
-            {
-                const QuestionScreen* asked = switch_question();
-                require(
-                    asked != nullptr && asked->question().buttons.size() == 2 &&
-                        asked->question().buttons[0].id == "cancel" &&
-                        asked->question().buttons[1].id == "switch" &&
-                        asked->question().buttons[1].caption == "SWITCH" &&
-                        asked->question().marked == 0,
-                    "SWITCH OFF did not ask the Switch Mod question"
-                );
-            }
-            if (!options_.snapshot.empty())
-                write_ppm(step_snapshot(options_.snapshot, "menu-switch-off-question"), frame());
-            answer(oa::ui::kit::Key::escape, SDLK_ESCAPE);
-            require(
-                switch_question() == nullptr && !soft_restart_requested() &&
-                    engine_settings().mod_folder == picked,
-                "Escape on the question did not put it away and keep the Mod as it was"
-            );
-            library_entry_action(library::Action::switch_off, id);
-            require(switch_question() != nullptr, "a second SWITCH OFF did not ask again");
-            answer(oa::ui::kit::Key::enter, SDLK_RETURN);
-            require(
-                switch_question() == nullptr && !soft_restart_requested() &&
-                    engine_settings().mod_folder == picked,
-                "CANCEL changed the Mod"
-            );
-            library_entry_action(library::Action::switch_off, id);
-            answer(oa::ui::kit::Key::yes, SDLK_Y);
             const auto switched = oa::platform::preferences::load(preference_path_);
             require(
-                soft_restart_requested() && engine_settings_dialog() == nullptr &&
+                switch_question() == nullptr && soft_restart_requested() &&
+                    engine_settings_dialog() == nullptr &&
                     !switched.contains(mod_key) && !switched.contains(picked_key),
                 "SWITCH away from the picked folder did not forget it"
             );

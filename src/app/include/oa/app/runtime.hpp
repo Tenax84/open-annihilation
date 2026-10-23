@@ -1070,6 +1070,22 @@ class Runtime final : public menu::Host,
     /// @param path the save or the recording
     void note_content_beside(const fs::path& path) const;
 
+    /// Tells whether Open Annihilation's Load Game screen covers the load
+    /// dialog: the dialog in its load role, opened over Single Player or
+    /// the end of a mission, while oa_menu_may_show says yes. Over a match
+    /// the game's own dialog shows.
+    ///
+    /// @return true while it covers it
+    [[nodiscard]] bool load_game_menu_covers();
+
+    /// Tells whether Open Annihilation's briefing screen covers the mission
+    /// briefing: MSNBRIEF.GUI over New Campaign, Any Mission or the end of a
+    /// mission, while oa_menu_may_show says yes. The briefing opened from
+    /// the pause menu of a match stays the game's.
+    ///
+    /// @return true while it covers it
+    [[nodiscard]] bool briefing_menu_covers();
+
   private:
 
     /// Runs one pass of the idle loop.
@@ -4950,9 +4966,9 @@ class Runtime final : public menu::Host,
     /// a prompt over the Library (MOD NOT ROLLED BACK). PLAY NOW switches the
     /// game to the installed mod's folder (switch_to_mod_folder), a refusal
     /// told in a note over the Library
-    /// (oa::ui::library::switch_refused_note). SWITCH OFF asks the Switch
-    /// Mod question for no mod (oa::ui::library::switch_off_question), whose
-    /// SWITCH plays the game with no mod and whose CANCEL leaves it. A switch
+    /// (oa::ui::library::switch_refused_note). SWITCH OFF, and PLAY NOW
+    /// on the base game entry, play the game with no mod at once, through the
+    /// same switch, with no question. A switch
     /// made while the Library shows opens it again after the soft restart,
     /// as it showed (keep_library_for_restart). PLAY NOW and SWITCH OFF do
     /// nothing during a game, or while the command line chose the mod. A
@@ -5437,6 +5453,46 @@ class Runtime final : public menu::Host,
     ///
     /// @return true while it is
     [[nodiscard]] bool oa_skirmish_menu_shown();
+
+    /// Keeps Open Annihilation's Multiplayer screen
+    /// (runtime_multiplayer_menu.cpp) on the OA layer while SELPROV.GUI or
+    /// SELGAME.GUI shows, and while TCP.GUI takes the address the screen
+    /// typed: puts it under every other screen when the layer has none, and
+    /// hands TCP.GUI that address. Not while oa_menu_may_show says no, a
+    /// message or a dialog of the multiplayer screens shows. OaLayer::tick
+    /// calls it once a frame.
+    void keep_multiplayer_menu_screen();
+
+    /// Tells whether Open Annihilation's Multiplayer screen is on the OA
+    /// layer, covering the multiplayer screens.
+    ///
+    /// @return true while it is
+    [[nodiscard]] bool oa_multiplayer_menu_shown();
+
+    /// Keeps Open Annihilation's Load Game screen
+    /// (runtime_load_game_menu.cpp) on the OA layer while the load dialog
+    /// shows over Single Player or the end of a mission
+    /// (load_game_menu_covers): puts it under every other screen when the
+    /// layer has none. OaLayer::tick calls it once a frame.
+    void keep_load_game_menu_screen();
+
+    /// Tells whether Open Annihilation's Load Game screen is on the OA
+    /// layer, covering LOADGAME.GUI.
+    ///
+    /// @return true while it is
+    [[nodiscard]] bool oa_load_game_menu_shown();
+
+    /// Keeps Open Annihilation's briefing screen
+    /// (runtime_briefing_menu.cpp) on the OA layer while the mission
+    /// briefing shows (briefing_menu_covers): puts it under every other
+    /// screen when the layer has none. OaLayer::tick calls it once a frame.
+    void keep_briefing_menu_screen();
+
+    /// Tells whether Open Annihilation's briefing screen is on the OA layer,
+    /// covering MSNBRIEF.GUI.
+    ///
+    /// @return true while it is
+    [[nodiscard]] bool oa_briefing_menu_shown();
 
     /// Tells whether Open Annihilation's menus may cover the game's: not
     /// while the run takes the game's own menus
@@ -7427,6 +7483,61 @@ class Runtime final : public menu::Host,
     ///
     /// @return the rows and the selected one; none while the dialog is not shown
     [[nodiscard]] std::optional<LoadGameRows> load_game_rows() const;
+
+    /// What the load dialog shows of its saves, for Open Annihilation's
+    /// Load Game screen.
+    struct LoadDialogShown {
+        std::vector<std::string> saves{};  ///< the saves' names, newest first
+        std::optional<std::size_t> chosen{}; ///< the chosen save; none for none
+        std::string type{};       ///< the chosen save's kind, as GAMETYPE reads
+        std::string campaign{};   ///< its campaign; empty for a skirmish
+        std::string place{};      ///< its mission, or a skirmish's map
+        std::string time{};       ///< how long it was played, hh:mm:ss
+        std::string side{};       ///< the side played
+        std::string difficulty{}; ///< its difficulty
+    };
+
+    /// Returns what the load dialog shows of its saves.
+    ///
+    /// @return the saves and the chosen one's details; none while the load
+    ///     dialog is not shown in its load role
+    [[nodiscard]] std::optional<LoadDialogShown> load_dialog_shown() const;
+
+    /// What the mission briefing shows, for Open Annihilation's briefing
+    /// screen.
+    struct MissionBriefingShown {
+        std::string planet{};       ///< the planet's name
+        int32_t wind{};             ///< the wind speed shown
+        double gravity{};           ///< the gravity, 1.0 for a standard planet's
+        bool narration{};           ///< SHUTUP is on
+        int32_t panorama_scroll{};  ///< the panorama's first column on show
+        int32_t rotation_frame{};   ///< the planet's frame on show
+    };
+
+    /// Returns what the mission briefing shows now.
+    ///
+    /// @return the bound mission's planet, wind, gravity, SHUTUP, panorama
+    ///     and planet
+    [[nodiscard]] MissionBriefingShown mission_briefing_shown();
+
+    /// Chooses a save in the load dialog, as a press on its row of GAMES
+    /// does: its details and its radar picture follow it.
+    ///
+    /// @param row the save, by its place in the list
+    void choose_saved_game(std::size_t row);
+
+    /// Presses LOAD or CANCEL of the load dialog, as a click released on
+    /// it does: LOAD starts the chosen save, CANCEL leaves the dialog for
+    /// the screen it was opened over.
+    ///
+    /// @param load true for LOAD, false for CANCEL
+    void press_load_dialog(bool load);
+
+    /// Returns the radar picture saved with the chosen save, in the game's
+    /// palette.
+    ///
+    /// @return the picture; empty while RADAR shows none
+    [[nodiscard]] WindowIcon saved_game_picture();
 
     /// Checks LOADGAME.GUI in both roles, placed as the game places it.
     ///
@@ -16060,6 +16171,16 @@ class Runtime final : public menu::Host,
     // The main menu's version label as Open Annihilation's main menu last
     // read it; the Single Player menu shows it too.
     std::string menu_version_;
+    // What Open Annihilation's Multiplayer screen keeps while it steps
+    // aside: the address typed, whether it was first read from the stored
+    // one, and how far TCP.GUI is in taking it.
+    struct MultiplayerMenuMemory {
+        std::string address{};     // the address typed
+        bool address_read{};       // address began as the stored address
+        bool address_waits{};      // SELECT was pressed: TCP.GUI takes address when it opens
+        bool address_sent{};       // TCP.GUI took address; the screen covers it until it goes
+    };
+    MultiplayerMenuMemory multiplayer_menu_memory_{};
     // Replaces the frontend clock while a headless check steps it.
     std::optional<uint32_t> fake_frontend_tick_;
     renderer::Surface modal_parent_surface_;

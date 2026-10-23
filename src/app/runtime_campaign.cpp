@@ -100,6 +100,8 @@ constexpr int32_t kSolarLabelRowStep = 20;
 constexpr int32_t kSolarLabelRightGap = 1;
 // The widest a briefing text may be when nothing trims it.
 constexpr int32_t kBriefingTextUnbounded = -1;
+// The gravity of a planet the briefing shows as 1.0.
+constexpr double kStandardGravity = 112.0;
 
 /// Decodes a frame of the briefing's planet art as the game draws it.
 ///
@@ -1846,6 +1848,19 @@ void Runtime::load_briefing_fonts() {
 
 oa::formats::fnt::Font& Runtime::briefing_text_font() {
     return briefing_text_font_ ? *briefing_text_font_ : resources_.font;
+}
+
+Runtime::MissionBriefingShown Runtime::mission_briefing_shown() {
+    auto& state = campaign_runtime();
+    MissionBriefingShown shown;
+    if (const char* planet = missions::campaign_planet(&state.file); planet != nullptr)
+        shown.planet = planet;
+    shown.wind = state.panel.wind_walk;
+    shown.gravity = static_cast<double>(state.file.gravity) / kStandardGravity;
+    shown.narration = state.panel.narration_on;
+    shown.panorama_scroll = state.panel.panorama_scroll;
+    shown.rotation_frame = state.panel.rotation_frame;
+    return shown;
 }
 
 std::string Runtime::briefing_row(std::size_t row) {

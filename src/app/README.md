@@ -750,11 +750,154 @@ START, and the version plate.
   while a package owns the frame, or while a message box of the game's is
   open. The map selection shows over SKIRMISH.GUI as the game shows it.
 
+## Open Annihilation's Multiplayer screen
+
+`runtime_multiplayer_menu.cpp` keeps one screen, `multiplayer-menu`
+(`multiplayer_menu.hpp`, `multiplayer_menu.cpp`), at the bottom of the OA
+layer while SELPROV.GUI or SELGAME.GUI shows
+(`Runtime::keep_multiplayer_menu_screen`, from `OaLayer::tick`), on the same
+art, steel and backdrop as the Library: a smaller OPEN ANNIHILATION title, a
+MULTIPLAYER heading, the panels of one of two steps, the step's buttons and
+the version plate.
+
+- **Connection.** Over SELPROV.GUI: a CONNECTION panel with a plate for each
+  connection the game offers, a globe for TCP/IP and two joined screens for
+  another, the chosen one in amber; under them, while the chosen connection
+  is TCP/IP, an Address field, which starts as the address the game stored
+  last. DETAILS tells what the chosen connection does. OPTIONS opens
+  Settings, which hold what the game's Options set, and its quick key does
+  the same; SELECT and PREVIOUS MENU press SELPROV.GUI's own Select and
+  Previous Menu. After SELECT on TCP/IP the screen stays over TCP.GUI, hands
+  it the address typed and presses its OK
+  (`Runtime::MultiplayerMenuMemory`), so the game checks, stores and uses
+  the address as its own dialog does.
+- **Games.** Over SELGAME.GUI: a PLAYER panel with the connection and where
+  it looks, the address or the local network, and the Your name and
+  Password fields, which type into SELGAME.GUI's NICKNAME and PASSWORD with
+  its own limits; the password shows faded while the chosen game asks for
+  none. A GAMES panel lists the games SELGAME.GUI lists, each with its name
+  and map as the game list shows them, its players out of the most it
+  takes, its ping and its status: Open, Full, Closed, In battle, Boneyards
+  only or Other version, read from what its host tells as the game list
+  reads it. The chosen game is SELGAME.GUI's chosen row, ringed in amber;
+  DETAILS shows its map's minimap when the game data has a map of that
+  name, and its players, ping, commander rule, line of sight, mapping,
+  metal, energy, watching and password. NEW GAME, UPDATE, WATCH, JOIN and
+  PREVIOUS MENU press SELGAME.GUI's own buttons (`multiplayer_click`), and
+  a second press on a game's row joins it, so that their checks, sounds and
+  the screens they lead to stay the game's; WATCH and JOIN take a press as
+  SELGAME.GUI's do.
+- **Input.** It takes every pointer, and the wheel scrolls the games. While
+  a field holds the focus, typed text goes to it, Backspace erases, Tab
+  moves to the next field, Return accepts (SELECT, from the address) and
+  Escape lets the field go. Otherwise the arrows choose a connection or a
+  game, Tab focuses the first field, Return presses SELECT or JOIN, and
+  every other key goes on to the game's screen, whose quick keys and Escape
+  stay the game's. The address field holds the focus as the connection step
+  opens, and the name field as the game step opens while it is empty.
+  Automation lists `oa.multiplayer-menu.connection-1` and on, `address`,
+  `options`, `select` and `previous-menu` on the connection step, and
+  `nickname`, `password`, `game-1` and on, `new-game`, `update`, `watch`,
+  `join` and `previous-menu` on the game step.
+- **When it shows.** As the other menus, and not while a message or a
+  dialog of the multiplayer screens shows: the screen steps aside, and the
+  game's screen shows under it. NEWMULTI.GUI and the battle room are the
+  game's.
+- **Frames.** As over the main menu: while the screen covers SELPROV.GUI,
+  SELGAME.GUI or TCP.GUI (`Runtime::main_menu_covers_front_end`), the
+  game's panel is not drawn, and a frame that would show what the window
+  shows already is not presented; the loop waits for the next event, at
+  most a tenth of a second, while the game's screen keeps ticking, so
+  that its list of games still follows the network.
+
+## Open Annihilation's Load Game screen
+
+`runtime_load_game_menu.cpp` keeps one screen, `load-game-menu`
+(`load_game_menu.hpp`, `load_game_menu.cpp`), at the bottom of the OA layer
+while the load dialog, LOADGAME.GUI in its load role, shows over Single
+Player or the end of a mission (`Runtime::keep_load_game_menu_screen`, from
+`OaLayer::tick`; `Runtime::load_game_menu_covers`), on the same art, steel
+and backdrop as the Multiplayer screen: a smaller OPEN ANNIHILATION title, a
+LOAD GAME heading, a SAVED GAMES panel, a DETAILS panel, PREVIOUS MENU and
+LOAD, and the version plate.
+
+- **Saved games.** A row for every save the dialog lists, newest first, its
+  name as the dialog shows it; the chosen one is the dialog's chosen row of
+  GAMES, ringed in amber. The line under them tells how many there are.
+- **Details.** The chosen save's radar picture in a bolted steel monitor,
+  in the game's palette, its name, and what the dialog's preview tells of
+  it: its kind, its campaign, its mission or a skirmish's map, how long it
+  was played, the side and the difficulty. A detail the save does not hold
+  is left out.
+- **No saves.** The dialog opens without the message box "There are no
+  saved games to choose from": the list says there is no saved game yet,
+  DETAILS tells how to make one, and LOAD takes no press. 3.1c, and the
+  dialog over a match, show the message box.
+- **What the presses do.** Choosing a save chooses the dialog's row
+  (`Runtime::choose_saved_game`), so its preview follows; LOAD and PREVIOUS
+  MENU press the dialog's own LOAD and CANCEL (`Runtime::press_load_dialog`),
+  and a second press on a save's row loads it, so that the dialog's checks,
+  sounds and the screens it leads to stay the game's.
+- **Input.** It takes every pointer, and the wheel scrolls the saves. The
+  arrows, Page Up, Page Down, Home and End choose a save and Return loads
+  it; every other key goes on to LOADGAME.GUI, whose quick keys and Escape
+  stay the game's. Automation lists `oa.load-game-menu.save-1` and on,
+  `previous-menu` and `load`.
+- **When it shows.** As the other menus: not with `--classic-main-menu`,
+  while a package owns the frame, or while a message box of the game's is
+  open, such as the one for a save that cannot be loaded. The save dialog,
+  and the load dialog over a match, are the game's.
+- **Frames.** As over the main menu: while the screen covers the dialog
+  (`Runtime::main_menu_covers_front_end`), the dialog is not drawn, and a
+  frame that would show what the window shows already is not presented.
+
+## Open Annihilation's mission briefing screen
+
+`runtime_briefing_menu.cpp` keeps one screen, `briefing-menu`
+(`briefing_menu.hpp`, `briefing_menu.cpp`), at the bottom of the OA layer
+while the mission briefing, MSNBRIEF.GUI, shows over New Campaign, Any
+Mission or the end of a mission (`Runtime::keep_briefing_menu_screen`, from
+`OaLayer::tick`; `Runtime::briefing_menu_covers`), on the same art, steel and
+backdrop as the Load Game screen: a smaller OPEN ANNIHILATION title, a
+MISSION BRIEFING heading, the panorama's panel, an ORDERS panel, a PLANET
+panel, PREVIOUS MENU and START, and the version plate.
+
+- **Panorama.** The mission's panorama in a bolted frame, filling it, as far
+  as the briefing scrolls it, its start following its end; the planet's name
+  on a plate in its corner.
+- **Orders.** The whole briefing, wrapped to the panel in the menus' font:
+  its first line with words in amber, as its title, a line without words as
+  half a line's room, and the words a briefing file marks `&G`, `&Y` or `&R`
+  in green, yellow or orange. The wheel, a press on the scroll bar and MORE…
+  scroll it; at its end MORE… reads BACK TO START and goes back to its top.
+  A briefing that fits shows neither the thumb nor MORE….
+- **Planet.** The planet turning in a ring of steel under stars, its frames
+  cut to the box that holds it in all of them and its black ground clear;
+  a table of the planet, the side, the wind speed as it wanders, the gravity
+  and the difficulty; and the NARRATION switch, ON with an amber lamp while
+  SHUTUP is on.
+- **What the presses do.** START, PREVIOUS MENU and NARRATION press the
+  briefing's own Start, PrevMenu and SHUTUP (`Runtime::click_briefing_gadget`),
+  so that its checks, its sounds, its narration and the screens it leads to
+  stay the game's. What the briefing shows is read through
+  `Runtime::mission_briefing_shown`.
+- **Input.** It takes every pointer. The arrows, Page Up, Page Down, Home and
+  End scroll the briefing; every other key goes on to MSNBRIEF.GUI, whose
+  Return and Escape stay the game's. Automation lists
+  `oa.briefing-menu.more`, `narration`, `previous-menu` and `start`.
+- **When it shows.** As the other menus: not with `--classic-main-menu`,
+  while a package owns the frame, or while a message box of the game's is
+  open. The briefing opened from the pause menu of a match, BRIEFING.GUI,
+  is the game's.
+- **Frames.** As over the main menu: while the screen covers the briefing
+  (`Runtime::main_menu_covers_front_end`), the briefing is not drawn.
+
 ## Open Annihilation's Settings screen
 
 While Open Annihilation's main menu shows, the main menu's SETTINGS, its
 Settings button and Cmd+, (Ctrl+, elsewhere) open the settings dialog in a
-look of its own (`Runtime::push_settings_menu_screen`,
+look of its own, and so does the Multiplayer screen's OPTIONS over
+SELPROV.GUI, where the screen stays open until the game leaves SELPROV.GUI (`Runtime::push_settings_menu_screen`,
 `runtime_settings_menu.cpp`): one screen, `settings` like the dialog's
 (`settings_menu.hpp`, `settings_menu.cpp`), modal over the whole window on
 the menus' art and steel. Under a smaller OPEN ANNIHILATION title and a
@@ -851,7 +994,9 @@ shows in its own look as before (`Runtime::LibraryScreen`).
   state and line, the note, USE THIS GAME and CANCEL). LANGUAGE: the
   language in itself, Built in or the pack's version, and SETTINGS, which
   opens Settings on Language & Text (`settings_menu_first_category_`).
-  EXPANSIONS: a plate for each expansion, ticked while on, with its
+  EXPANSIONS: a row for each expansion in the small font, parted by
+  faint rules, its sunken box ticked amber while on and its name faded
+  while off, the row under the pointer washed amber, with its
   download arrow, cancel or retry mark, or a padlock while the command
   line's mod needs it, and the hint and lock words under them. MOD: the
   mod played or No Mod, its release and maker and Playing, CHOOSE MOD,
@@ -994,11 +1139,10 @@ runtime goes).
   switches the game to the installed mod's folder (`switch_to_mod_folder`,
   the soft restart), and a folder it cannot play is told in a note over the
   Library (`library::switch_refused_note`); SWITCH OFF, on the mod played,
-  asks the Switch Mod question of No Mod (`library::switch_off_question`),
-  pushed over the Library at once, CANCEL marked, whose SWITCH plays no mod
-  through the same switch; ROLL BACK asks the Roll Back Mod question
+  and PLAY NOW on the base game entry play no mod at once through the same
+  switch, asking nothing; ROLL BACK asks the Roll Back Mod question
   (`library::roll_back_question`, with the reload line for the mod being
-  played), pushed and marked the same way, and its ROLL BACK rolls the
+  played), pushed over the Library at once, CANCEL marked, and its ROLL BACK rolls the
   folder back (`roll_back_mod_folder`), the feed looking again afterwards,
   a refusal told in MOD NOT ROLLED BACK over the Library. Every refusal
   shows in the status line too. PLAY NOW and SWITCH OFF do nothing during

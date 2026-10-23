@@ -1847,8 +1847,8 @@ class SettingsMenuScreen final : public LayerScreen {
     /// @param row its place there
     void draw_buttons(const kit::Canvas& canvas, std::size_t section, std::size_t row) const {
         const SettingsMenuRow& shown = facts_now_.sections[section].rows[row];
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
+        const kit::Measure secondary = [&canvas](std::string_view line) {
+            return kit::measure_text(canvas, secondary_caption_font, line);
         };
         const kit::Measure small = [&canvas](std::string_view line) {
             return kit::measure_text(canvas, kit::FontRole::small, line);
@@ -1881,8 +1881,8 @@ class SettingsMenuScreen final : public LayerScreen {
             }
             outlined_text(
                 canvas,
-                kit::FontRole::regular,
-                kit::fit(shown.buttons[at], box.width - 6, regular),
+                secondary_caption_font,
+                kit::fit(shown.buttons[at], box.width - 6, secondary),
                 box,
                 kit::Align::centre,
                 !usable ? caption_faded_colour : lit ? caption_lit_colour : caption_colour

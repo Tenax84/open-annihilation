@@ -122,6 +122,14 @@
 	it=1 giocatore;
 	}
 
+[1 saved game]
+	{
+	de=1 gespeichertes Spiel;
+	fr=1 partie sauvegardée;
+	es=1 partida guardada;
+	it=1 partita salvata;
+	}
+
 [1 track]
 	{
 	de=1 Titel;
@@ -1690,6 +1698,14 @@
 	it=Scegli una mappa;
 	}
 
+[Choose a saved game to read about it.]
+	{
+	de=Wähle ein gespeichertes Spiel, um mehr darüber zu lesen.;
+	fr=Choisis une partie sauvegardée pour en savoir plus.;
+	es=Elige una partida guardada para leer sobre ella.;
+	it=Scegli una partita salvata per saperne di più.;
+	}
+
 [Choose another place]
 	{
 	de=Anderen Ort wählen;
@@ -2312,6 +2328,14 @@
 	fr=Pas comme chez l'hôte : {name} est activé.;
 	es=Distinto del anfitrión: {name} está activado.;
 	it=Diverso dall'host: {name} è attivo.;
+	}
+
+[Difficulty]
+	{
+	de=Schwierigkeit;
+	fr=Difficulté;
+	es=Dificultad;
+	it=Difficoltà;
 	}
 
 [Difficulty Names]
@@ -3368,6 +3392,14 @@
 	fr=Fond du texte du jeu;
 	es=Fondo del texto del juego;
 	it=Sfondo del testo di gioco;
+	}
+
+[Game time]
+	{
+	de=Spielzeit;
+	fr=Durée de jeu;
+	es=Tiempo de juego;
+	it=Tempo di gioco;
 	}
 
 [Games]
@@ -5226,6 +5258,14 @@
 	it=Scambia i ruoli: il pad sinistro punta, il destro il pad muove la mappa, grilletti e impugnature si scambiano.;
 	}
 
+[Mission]
+	{
+	de=Mission;
+	fr=Mission;
+	es=Misión;
+	it=Missione;
+	}
+
 [Mobile Unit Yard Maps]
 	{
 	de=Grundrisse mobiler Einheiten;
@@ -5640,6 +5680,14 @@
 	fr=Aucune source ne le liste, donc la Bibliothèque ne peut pas l'obtenir à nouveau.;
 	es=Ninguna fuente lo lista, así que la Biblioteca no puede obtenerlo de nuevo.;
 	it=Nessuna fonte lo elenca, quindi la Biblioteca non può ottenerlo di nuovo.;
+	}
+
+[No saved games]
+	{
+	de=Keine gespeicherten Spiele;
+	fr=Aucune partie sauvegardée;
+	es=No hay partidas guardadas;
+	it=Nessuna partita salvata;
 	}
 
 [No signing key]
@@ -7226,6 +7274,14 @@
 	it=STESSO TIPO;
 	}
 
+[SAVED GAMES]
+	{
+	de=GESPEICHERTE SPIELE;
+	fr=PARTIES SAUVEGARDÉES;
+	es=PARTIDAS GUARDADAS;
+	it=PARTITE SALVATE;
+	}
+
 [SAVED GAMES MOVED]
 	{
 	de=SPEICHERSTÄNDE VERSCHOBEN;
@@ -7440,6 +7496,14 @@
 	fr=SYSTÈME;
 	es=SISTEMA;
 	it=SISTEMA;
+	}
+
+[Save a game during a battle to go on with it here.]
+	{
+	de=Speichere ein Spiel während einer Schlacht, um es hier fortzusetzen.;
+	fr=Sauvegarde une partie pendant une bataille pour la reprendre ici.;
+	es=Guarda una partida durante una batalla para continuarla aquí.;
+	it=Salva una partita durante una battaglia per riprenderla qui.;
 	}
 
 [Saved games that use its units cannot be loaded without it, and shared games need the same files on every machine.]
@@ -7738,6 +7802,14 @@
 	it=Mostra la pagina precedente.;
 	}
 
+[Side]
+	{
+	de=Seite;
+	fr=Camp;
+	es=Bando;
+	it=Fazione;
+	}
+
 [Signing key]
 	{
 	de=Signierschlüssel;
@@ -7752,6 +7824,14 @@
 	fr=Clés de signature;
 	es=Claves de firma;
 	it=Chiavi di firma;
+	}
+
+[Single]
+	{
+	de=Einzelspieler;
+	fr=Solo;
+	es=Un jugador;
+	it=Giocatore singolo;
 	}
 
 [Size]
@@ -9050,6 +9130,14 @@
 	it=Poi {package} · {phase};
 	}
 
+[There are no saved games yet.]
+	{
+	de=Es gibt noch keine gespeicherten Spiele.;
+	fr=Il n'y a pas encore de partie sauvegardée.;
+	es=Todavía no hay partidas guardadas.;
+	it=Non ci sono ancora partite salvate.;
+	}
+
 [There is no Total Annihilation folder on this {device} yet. {steps} Name it Total Annihilation. Wait until the copy has finished, then tap Check again.]
 	{
 	de=Auf diesem {device} gibt es noch keinen Ordner von Total Annihilation. {steps} Nenn ihn Total Annihilation. Warte, bis das Kopieren fertig ist, dann tippe Erneut prüfen.;
@@ -9456,6 +9544,14 @@
 	fr=Deux boutons pour tout ce qu'Open Annihilation ajoute;
 	es=Dos botones para todo lo que añade Open Annihilation;
 	it=Due pulsanti per tutto ciò che Open Annihilation aggiunge;
+	}
+
+[Type]
+	{
+	de=Art;
+	fr=Type;
+	es=Tipo;
+	it=Tipo;
 	}
 
 [UI kit gallery]
@@ -12234,6 +12330,14 @@
 	it={n} pacchetti;
 	}
 
+[{n} saved games]
+	{
+	de={n} gespeicherte Spiele;
+	fr={n} parties sauvegardées;
+	es={n} partidas guardadas;
+	it={n} partite salvate;
+	}
+
 [{n} tracks]
 	{
 	de={n} Titel;
@@ -13936,4 +14040,476 @@
 	fr=Clic droit;
 	es=Clic derecho;
 	it=Clic destro;
+	}
+
+[CONNECTION]
+	{
+	de=VERBINDUNG;
+	fr=CONNEXION;
+	es=CONEXIÓN;
+	it=CONNESSIONE;
+	}
+
+[Address]
+	{
+	de=Adresse;
+	fr=Adresse;
+	es=Dirección;
+	it=Indirizzo;
+	}
+
+[Leave blank to search the local network]
+	{
+	de=Leer lassen, um das lokale Netzwerk zu durchsuchen;
+	fr=Laisse vide pour chercher sur le réseau local;
+	es=Déjalo en blanco para buscar en la red local;
+	it=Lascia vuoto per cercare nella rete locale;
+	}
+
+[Choose how to connect.]
+	{
+	de=Wähle, wie du dich verbindest.;
+	fr=Choisis comment te connecter.;
+	es=Elige cómo conectarte.;
+	it=Scegli come connetterti.;
+	}
+
+[No connections are available.]
+	{
+	de=Es sind keine Verbindungen verfügbar.;
+	fr=Aucune connexion n'est disponible.;
+	es=No hay conexiones disponibles.;
+	it=Nessuna connessione disponibile.;
+	}
+
+[Connection]
+	{
+	de=Verbindung;
+	fr=Connexion;
+	es=Conexión;
+	it=Connessione;
+	}
+
+[Your name]
+	{
+	de=Dein Name;
+	fr=Ton nom;
+	es=Tu nombre;
+	it=Il tuo nome;
+	}
+
+[Password]
+	{
+	de=Passwort;
+	fr=Mot de passe;
+	es=Contraseña;
+	it=Password;
+	}
+
+[Only for games that ask for one.]
+	{
+	de=Nur für Spiele, die eines verlangen.;
+	fr=Seulement pour les parties qui en demandent un.;
+	es=Solo para las partidas que lo piden.;
+	it=Solo per le partite che ne chiedono una.;
+	}
+
+[Map]
+	{
+	de=Karte;
+	fr=Carte;
+	es=Mapa;
+	it=Mappa;
+	}
+
+[Players]
+	{
+	de=Spieler;
+	fr=Joueurs;
+	es=Jugadores;
+	it=Giocatori;
+	}
+
+[Ping]
+	{
+	de=Ping;
+	fr=Ping;
+	es=Ping;
+	it=Ping;
+	}
+
+[Status]
+	{
+	de=Status;
+	fr=État;
+	es=Estado;
+	it=Stato;
+	}
+
+[No games found. Press Update to look again.]
+	{
+	de=Keine Spiele gefunden. Drücke Aktualisieren, um erneut zu suchen.;
+	fr=Aucune partie trouvée. Appuie sur Actualiser pour chercher à nouveau.;
+	es=No se encontraron partidas. Pulsa Actualizar para buscar de nuevo.;
+	it=Nessuna partita trovata. Premi Aggiorna per cercare di nuovo.;
+	}
+
+[No games found]
+	{
+	de=Keine Spiele gefunden;
+	fr=Aucune partie trouvée;
+	es=No se encontraron partidas;
+	it=Nessuna partita trovata;
+	}
+
+[1 game found]
+	{
+	de=1 Spiel gefunden;
+	fr=1 partie trouvée;
+	es=1 partida encontrada;
+	it=1 partita trovata;
+	}
+
+[{n} games found]
+	{
+	de={n} Spiele gefunden;
+	fr={n} parties trouvées;
+	es={n} partidas encontradas;
+	it={n} partite trovate;
+	}
+
+[Choose a game to read about it.]
+	{
+	de=Wähle ein Spiel, um mehr darüber zu lesen.;
+	fr=Choisis une partie pour en savoir plus.;
+	es=Elige una partida para leer sobre ella.;
+	it=Scegli una partita per saperne di più.;
+	}
+
+[OPTIONS]
+	{
+	de=OPTIONEN;
+	fr=OPTIONS;
+	es=OPCIONES;
+	it=OPZIONI;
+	}
+
+[NEW GAME]
+	{
+	de=NEUES SPIEL;
+	fr=NOUVELLE PARTIE;
+	es=NUEVA PARTIDA;
+	it=NUOVA PARTITA;
+	}
+
+[WATCH]
+	{
+	de=ZUSCHAUEN;
+	fr=REGARDER;
+	es=OBSERVAR;
+	it=GUARDA;
+	}
+
+[JOIN]
+	{
+	de=BEITRETEN;
+	fr=REJOINDRE;
+	es=UNIRSE;
+	it=PARTECIPA;
+	}
+
+[Join a game at the address you type, or leave the address blank to find the games on your network. To host a game, choose New Game on the next screen.]
+	{
+	de=Tritt einem Spiel an der eingegebenen Adresse bei, oder lass die Adresse leer, um die Spiele in deinem Netzwerk zu finden. Um ein Spiel zu eröffnen, wähle auf dem nächsten Bildschirm Neues Spiel.;
+	fr=Rejoins une partie à l'adresse que tu tapes, ou laisse l'adresse vide pour trouver les parties de ton réseau. Pour héberger une partie, choisis Nouvelle partie à l'écran suivant.;
+	es=Únete a una partida en la dirección que escribas, o deja la dirección en blanco para encontrar las partidas de tu red. Para crear una partida, elige Nueva partida en la siguiente pantalla.;
+	it=Partecipa a una partita all'indirizzo che scrivi, o lascia l'indirizzo vuoto per trovare le partite della tua rete. Per ospitare una partita, scegli Nuova partita nella schermata successiva.;
+	}
+
+[Find the games on the computers of your local network. To host a game, choose New Game on the next screen.]
+	{
+	de=Finde die Spiele auf den Computern deines lokalen Netzwerks. Um ein Spiel zu eröffnen, wähle auf dem nächsten Bildschirm Neues Spiel.;
+	fr=Trouve les parties sur les ordinateurs de ton réseau local. Pour héberger une partie, choisis Nouvelle partie à l'écran suivant.;
+	es=Encuentra las partidas en los ordenadores de tu red local. Para crear una partida, elige Nueva partida en la siguiente pantalla.;
+	it=Trova le partite sui computer della tua rete locale. Per ospitare una partita, scegli Nuova partita nella schermata successiva.;
+	}
+
+[Modem and serial connections are not available in this build.]
+	{
+	de=Modem- und serielle Verbindungen sind in dieser Version nicht verfügbar.;
+	fr=Les connexions par modem et série ne sont pas disponibles dans cette version.;
+	es=Las conexiones por módem y serie no están disponibles en esta versión.;
+	it=Le connessioni via modem e seriale non sono disponibili in questa versione.;
+	}
+
+[Find the games this connection reaches. To host a game, choose New Game on the next screen.]
+	{
+	de=Finde die Spiele, die diese Verbindung erreicht. Um ein Spiel zu eröffnen, wähle auf dem nächsten Bildschirm Neues Spiel.;
+	fr=Trouve les parties que cette connexion atteint. Pour héberger une partie, choisis Nouvelle partie à l'écran suivant.;
+	es=Encuentra las partidas que alcanza esta conexión. Para crear una partida, elige Nueva partida en la siguiente pantalla.;
+	it=Trova le partite raggiunte da questa connessione. Per ospitare una partita, scegli Nuova partita nella schermata successiva.;
+	}
+
+[Address: {address}]
+	{
+	de=Adresse: {address};
+	fr=Adresse : {address};
+	es=Dirección: {address};
+	it=Indirizzo: {address};
+	}
+
+[Searching the local network]
+	{
+	de=Lokales Netzwerk wird durchsucht;
+	fr=Recherche sur le réseau local;
+	es=Buscando en la red local;
+	it=Ricerca nella rete locale;
+	}
+
+[{n} ms]
+	{
+	de={n} ms;
+	fr={n} ms;
+	es={n} ms;
+	it={n} ms;
+	}
+
+[Other version]
+	{
+	de=Andere Version;
+	fr=Autre version;
+	es=Otra versión;
+	it=Altra versione;
+	}
+
+[Closed]
+	{
+	de=Geschlossen;
+	fr=Fermée;
+	es=Cerrada;
+	it=Chiusa;
+	}
+
+[In battle]
+	{
+	de=Im Kampf;
+	fr=En combat;
+	es=En combate;
+	it=In battaglia;
+	}
+
+[Boneyards only]
+	{
+	de=Nur über Boneyards;
+	fr=Boneyards seulement;
+	es=Solo por Boneyards;
+	it=Solo da Boneyards;
+	}
+
+[Game continues]
+	{
+	de=Spiel geht weiter;
+	fr=La partie continue;
+	es=La partida continúa;
+	it=La partita continua;
+	}
+
+[Game ends]
+	{
+	de=Spiel endet;
+	fr=La partie s'arrête;
+	es=La partida termina;
+	it=La partita finisce;
+	}
+
+[Death match]
+	{
+	de=Deathmatch;
+	fr=Match à mort;
+	es=Combate a muerte;
+	it=Deathmatch;
+	}
+
+[Permanent]
+	{
+	de=Dauerhaft;
+	fr=Permanente;
+	es=Permanente;
+	it=Permanente;
+	}
+
+[True]
+	{
+	de=Echt;
+	fr=Réelle;
+	es=Real;
+	it=Reale;
+	}
+
+[Circular]
+	{
+	de=Kreisförmig;
+	fr=Circulaire;
+	es=Circular;
+	it=Circolare;
+	}
+
+[Commander]
+	{
+	de=Kommandant;
+	fr=Commandant;
+	es=Comandante;
+	it=Comandante;
+	}
+
+[Line of sight]
+	{
+	de=Sichtlinie;
+	fr=Ligne de vue;
+	es=Línea de visión;
+	it=Linea di vista;
+	}
+
+[Mapping]
+	{
+	de=Kartierung;
+	fr=Cartographie;
+	es=Cartografía;
+	it=Mappatura;
+	}
+
+[Unmapped]
+	{
+	de=Unkartiert;
+	fr=Non cartographiée;
+	es=Sin cartografiar;
+	it=Non mappata;
+	}
+
+[Mapped]
+	{
+	de=Kartiert;
+	fr=Cartographiée;
+	es=Cartografiada;
+	it=Mappata;
+	}
+
+[Metal]
+	{
+	de=Metall;
+	fr=Métal;
+	es=Metal;
+	it=Metallo;
+	}
+
+[Energy]
+	{
+	de=Energie;
+	fr=Énergie;
+	es=Energía;
+	it=Energia;
+	}
+
+[Watching]
+	{
+	de=Zuschauen;
+	fr=Spectateurs;
+	es=Espectadores;
+	it=Spettatori;
+	}
+
+[Allowed]
+	{
+	de=Erlaubt;
+	fr=Autorisés;
+	es=Permitidos;
+	it=Consentiti;
+	}
+
+[Not allowed]
+	{
+	de=Nicht erlaubt;
+	fr=Interdits;
+	es=No permitidos;
+	it=Non consentiti;
+	}
+
+[Asked]
+	{
+	de=Verlangt;
+	fr=Demandé;
+	es=Requerida;
+	it=Richiesta;
+	}
+
+[MISSION BRIEFING]
+	{
+	de=EINSATZBESPRECHUNG;
+	fr=BRIEFING DE MISSION;
+	es=INFORME DE MISIÓN;
+	it=BRIEFING DELLA MISSIONE;
+	}
+
+[PLANET]
+	{
+	de=PLANET;
+	fr=PLANÈTE;
+	es=PLANETA;
+	it=PIANETA;
+	}
+
+[NARRATION]
+	{
+	de=SPRECHER;
+	fr=NARRATION;
+	es=NARRACIÓN;
+	it=NARRAZIONE;
+	}
+
+[Planet]
+	{
+	de=Planet;
+	fr=Planète;
+	es=Planeta;
+	it=Pianeta;
+	}
+
+[Wind speed]
+	{
+	de=Windgeschwindigkeit;
+	fr=Vitesse du vent;
+	es=Velocidad del viento;
+	it=Velocità del vento;
+	}
+
+[Gravity]
+	{
+	de=Schwerkraft;
+	fr=Gravité;
+	es=Gravedad;
+	it=Gravità;
+	}
+
+[MORE…]
+	{
+	de=MEHR…;
+	fr=SUITE…;
+	es=MÁS…;
+	it=ALTRO…;
+	}
+
+[BACK TO START]
+	{
+	de=ZURÜCK ZUM ANFANG;
+	fr=RETOUR AU DÉBUT;
+	es=VOLVER AL INICIO;
+	it=TORNA ALL'INIZIO;
+	}
+
+[This mission has no briefing.]
+	{
+	de=Für diesen Einsatz gibt es keine Besprechung.;
+	fr=Cette mission n'a pas de briefing.;
+	es=Esta misión no tiene informe.;
+	it=Questa missione non ha un briefing.;
 	}

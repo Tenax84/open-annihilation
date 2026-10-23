@@ -85,8 +85,8 @@ constexpr double button_gap_columns = 8.0;    ///< between two small buttons
 constexpr double tag_rows = 28.0;             ///< a tag's plate's height
 constexpr double strip_rows = 30.0;           ///< a tile's or a section's strip's height
 constexpr double tile_gap_columns = 12.0;     ///< between two tiles
-constexpr double pill_rows = 36.0;            ///< an expansion's plate's height
-constexpr double pill_gap_rows = 6.0;         ///< between two expansions' plates
+constexpr double pill_rows = 36.0;            ///< an expansion's row's height
+constexpr double pill_gap_rows = 6.0;         ///< between two expansions' rows
 constexpr double tile_button_columns = 150.0; ///< a tile's button's width
 constexpr double tile_button_rows = 40.0;     ///< a tile's button's height
 constexpr double browse_columns = 170.0;      ///< BROWSE MAPS' width
@@ -239,7 +239,7 @@ struct LibraryLayout {
     int32_t tag_height{};      ///< a tag's plate's height
     int32_t strip{};           ///< a tile's strip's height
     int32_t tile_gap{};        ///< between two tiles
-    int32_t pill{};            ///< an expansion's plate's height
+    int32_t pill{};            ///< an expansion's row's height
     int32_t pill_gap{};        ///< between two plates
     int32_t tile_button{};     ///< a tile's button's width
     int32_t tile_button_height{}; ///< a tile's button's height
@@ -404,44 +404,6 @@ LibraryLayout lay_out_library_menu(int32_t width, int32_t height, kit::Point tit
     placed.plate_height = std::max(across(plate_rows), 1);
     placed.plate_margin = across(plate_margin_columns);
     return placed;
-}
-
-/// Draws a line of a width between two points, as squares along it.
-///
-/// @param canvas where it draws
-/// @param from where it starts
-/// @param to where it ends
-/// @param width how thick it is, in points
-/// @param ink its colour
-void draw_line(
-    const kit::Canvas& canvas, kit::Point from, kit::Point to, int32_t width, kit::Colour ink
-) {
-    const int32_t steps = std::max(std::abs(to.x - from.x), std::abs(to.y - from.y));
-    const int32_t half = width / 2;
-    for (int32_t step = 0; step <= steps; ++step) {
-        const double share = steps > 0 ? static_cast<double>(step) / steps : 0.0;
-        const int32_t x = from.x + nearest((to.x - from.x) * share);
-        const int32_t y = from.y + nearest((to.y - from.y) * share);
-        kit::fill_rect(canvas, {x - half, y - half, std::max(width, 1), std::max(width, 1)}, ink);
-    }
-}
-
-/// Draws a ring: a circle's edge.
-///
-/// @param canvas where it draws
-/// @param box the square it fills
-/// @param width how thick it is, in points
-/// @param ink its colour
-void draw_circle(const kit::Canvas& canvas, const kit::Rect& box, int32_t width, kit::Colour ink) {
-    const int32_t side = std::min(box.width, box.height);
-    const kit::Rect square{box.x + (box.width - side) / 2, box.y + (box.height - side) / 2, side, side};
-    for (int32_t step = 0; step < width; ++step)
-        kit::outline_round_rect(
-            canvas,
-            {square.x + step, square.y + step, square.width - 2 * step, square.height - 2 * step},
-            std::max(side / 2 - step, 0),
-            ink
-        );
 }
 
 /// Draws a check mark in a square.
@@ -1692,7 +1654,7 @@ class LibraryMenuScreen final : public LayerScreen {
         const int32_t second = room * 34 / 100;
         const int32_t third = room - first - second;
         const int32_t base_width = (body.width - gap) * 58 / 100;
-        const int32_t expansions_width = (body.width - gap) * 52 / 100;
+        const int32_t expansions_width = base_width;
         switch (tile) {
         case LibraryMenuTile::base:
             return {body.x, body.y, base_width, first};
@@ -1759,7 +1721,7 @@ class LibraryMenuScreen final : public LayerScreen {
         const int32_t lines = std::max((count + columns - 1) / columns, 1);
         const int32_t height = std::clamp(
             (room + layout_.pill_gap) / lines - layout_.pill_gap,
-            kit::smooth_text_points(kit::FontRole::regular) + 4, layout_.pill
+            kit::smooth_text_points(kit::FontRole::small) + 4, layout_.pill
         );
         const int32_t width = (inside.width - (columns - 1) * layout_.pill_gap) / columns;
         const auto line = static_cast<int32_t>(at) / columns;
@@ -2347,11 +2309,11 @@ class LibraryMenuScreen final : public LayerScreen {
             box.x += 1;
             box.y += 1;
         }
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
+        const kit::Measure secondary = [&canvas](std::string_view line) {
+            return kit::measure_text(canvas, secondary_caption_font, line);
         };
         outlined_text(
-            canvas, kit::FontRole::regular, kit::fit(caption, box.width - 8, regular), box,
+            canvas, secondary_caption_font, kit::fit(caption, box.width - 8, secondary), box,
             kit::Align::centre, caption_of(hit)
         );
     }
@@ -2796,12 +2758,23 @@ class LibraryMenuScreen final : public LayerScreen {
             const kit::Rect inside = tile_inside(tile);
             const kit::Canvas clip = kit::clipped(canvas, inside);
             int32_t y = inside.y;
-            for (std::size_t pill = 0; pill < shown.expansions.size(); ++pill) {
+            // Faint rules part the rows, and the columns while there are two.
+            const std::size_t count = shown.expansions.size();
+            const std::size_t columns = count > 1 && expansion_rect(1).y == expansion_rect(0).y ? 2 : 1;
+            for (std::size_t pill = 0; pill < count; ++pill) {
                 const kit::Rect plate = expansion_rect(pill);
                 if (plate.y + plate.height > inside.y + inside.height)
                     break;
                 draw_expansion(clip, pill, plate);
+                if (pill + columns < count)
+                    kit::fill_rect(clip, {plate.x, plate.y + plate.height + layout_.pill_gap / 2, plate.width, 1},
+                                   rule_line_colour);
                 y = std::max(y, plate.y + plate.height + layout_.pill_gap);
+            }
+            if (columns == 2) {
+                const kit::Rect second = expansion_rect(1);
+                kit::fill_rect(clip, {second.x - (layout_.pill_gap + 1) / 2, inside.y, 1,
+                                      y - layout_.pill_gap - inside.y}, rule_line_colour);
             }
             kit::WrapRules rules;
             rules.most_lines = 3;
@@ -2867,34 +2840,38 @@ class LibraryMenuScreen final : public LayerScreen {
         }
     }
 
-    /// Draws an expansion's plate: its box, ticked while on, its name, and
-    /// its arrow or its padlock.
+    /// Draws an expansion's row: its sunken box, ticked amber while on, its
+    /// name in the small font, faded while off, and its arrow or its
+    /// padlock; the row under the pointer is washed amber and its box edged
+    /// amber.
     ///
     /// @param canvas where it draws
     /// @param at the expansion, by its place
-    /// @param plate the plate
+    /// @param plate the row
     void draw_expansion(const kit::Canvas& canvas, std::size_t at, const kit::Rect& plate) const {
         const LibraryMenuExpansion& shown = facts_now_.active.expansions[at];
         const Hit hit{Part::expansion, at};
         const bool lit = enabled(hit) && hovered_ == hit;
-        draw_steel_button(canvas, plate, shown.on ? chosen_steel_colour : button_steel_colour);
-        const int32_t side = plate.height - 2 * std::max(plate.height / 5, 3);
-        const kit::Rect box{plate.x + layout_.pad, plate.y + (plate.height - side) / 2, side, side};
+        if (lit)
+            kit::blend_rect(canvas, plate, chosen_colour, row_light_opacity);
+        const int32_t side = std::clamp(kit::smooth_text_points(kit::FontRole::small) + 2, 6, std::max(plate.height - 4, 6));
+        const kit::Rect box{plate.x + layout_.pad / 2, plate.y + (plate.height - side) / 2, side, side};
         kit::fill_rect(canvas, box, well_colour);
         draw_sunk_edge(canvas, box);
+        kit::outline_rect(canvas, box, lit ? chosen_colour : row_edge_colour);
         if (shown.on)
-            draw_check(canvas, box, std::max(side / 8, 2), shown.enabled || shown.locked ? caption_lit_colour : caption_faded_colour);
-        const int32_t right = plate.x + plate.width - layout_.pad - (shown.arrow != LibraryMenuExpansionArrow::none || shown.locked ? side + layout_.pad : 0);
+            draw_check(canvas, box, std::max(side / 6, 2), shown.enabled || shown.locked ? chosen_colour : caption_faded_colour);
+        const int32_t right = plate.x + plate.width - layout_.pad / 2 - (shown.arrow != LibraryMenuExpansionArrow::none || shown.locked ? side + layout_.pad / 2 : 0);
         const int32_t left = box.x + box.width + layout_.pad;
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
+        const kit::Measure small = [&canvas](std::string_view line) {
+            return kit::measure_text(canvas, kit::FontRole::small, line);
         };
         outlined_text(
-            canvas, kit::FontRole::regular, kit::fit(shown.name, right - left, regular),
+            canvas, kit::FontRole::small, kit::fit(shown.name, right - left, small),
             {left, plate.y, right - left, plate.height}, kit::Align::left,
-            shown.on ? chosen_text_colour : caption_of(hit)
+            shown.on || lit ? caption_of(hit) : caption_faded_colour
         );
-        const kit::Rect end{plate.x + plate.width - layout_.pad - side, box.y, side, side};
+        const kit::Rect end{plate.x + plate.width - layout_.pad / 2 - side, box.y, side, side};
         const int32_t width = std::max(side / 9, 2);
         switch (shown.arrow) {
         case LibraryMenuExpansionArrow::none:
@@ -2915,8 +2892,6 @@ class LibraryMenuScreen final : public LayerScreen {
         }
         if (shown.locked || !shown.enabled)
             kit::blend_rect(canvas, plate, well_colour, dim_opacity / 2);
-        if (lit)
-            kit::outline_rect(canvas, plate, hover_edge_colour);
     }
 
     /// Draws the base game chooser over the Active tab: the games, each with
@@ -3019,6 +2994,9 @@ class LibraryMenuScreen final : public LayerScreen {
         const kit::Measure small = [&canvas](std::string_view line) {
             return kit::measure_text(canvas, kit::FontRole::small, line);
         };
+        const kit::Measure secondary = [&canvas](std::string_view line) {
+            return kit::measure_text(canvas, secondary_caption_font, line);
+        };
         const int32_t regular_line = kit::smooth_text_points(kit::FontRole::regular) + 8;
         const int32_t small_line = kit::smooth_text_points(kit::FontRole::small) + 6;
         const kit::Canvas inside = kit::clipped(canvas, view_);
@@ -3073,7 +3051,7 @@ class LibraryMenuScreen final : public LayerScreen {
                 const bool picked = item.on == on;
                 const Hit hit{on ? Part::card_on : Part::card_off, card};
                 draw_steel_button(inside, half, picked ? chosen_steel_colour : well_colour);
-                outlined_text(inside, kit::FontRole::regular, worded(on ? "ON" : "OFF"), half, kit::Align::centre,
+                outlined_text(inside, secondary_caption_font, worded(on ? "ON" : "OFF"), half, kit::Align::centre,
                               picked ? chosen_text_colour : hovered_ == hit ? caption_lit_colour : note_colour);
                 if (picked)
                     draw_ring(inside, half, 1, chosen_colour);
@@ -3087,8 +3065,8 @@ class LibraryMenuScreen final : public LayerScreen {
             draw_refresh_mark(inside, {refresh.x + layout_.pad / 2, refresh.y + (refresh.height - mark) / 2, mark, mark},
                               item.refreshing ? chosen_colour : caption_of(refresh_hit));
             const int32_t caption_left = refresh.x + layout_.pad / 2 + mark + 2;
-            outlined_text(inside, kit::FontRole::regular,
-                          kit::fit(worded("REFRESH"), refresh.x + refresh.width - caption_left - 4, regular),
+            outlined_text(inside, secondary_caption_font,
+                          kit::fit(worded("REFRESH"), refresh.x + refresh.width - caption_left - 4, secondary),
                           {caption_left, refresh.y, refresh.x + refresh.width - caption_left, refresh.height},
                           kit::Align::centre, caption_of(refresh_hit));
             if (chosen) {

@@ -284,20 +284,28 @@ SkirmishLayout lay_out_skirmish_menu(int32_t width, int32_t height, kit::Point t
     const int32_t right_width = left + content - right_left;
     placed.map = {right_left, players.y, right_width, across(map_rows)};
     const int32_t map_inner = right_width - 2 * placed.inset;
+    const int32_t map_name_height = std::max(across(map_name_rows), regular_line);
+    const int32_t map_facts_height = std::max(across(map_facts_rows), small_line);
+    const int32_t map_button_height = std::max(across(map_button_rows), regular_line);
+    // The map's screen takes what the panel has left over its name, the line
+    // about it and SELECT MAP, so that the button stays inside the panel when
+    // the text is taller than the window's scale allows for.
+    const int32_t picture_room = placed.map.height - band - across(picture_gap_rows) -
+                                 map_name_height - map_facts_height - across(map_button_gap_rows) -
+                                 map_button_height - placed.inset;
     int32_t row = placed.map.y + band;
-    placed.monitor = {right_left + placed.inset, row, map_inner, across(picture_rows)};
+    placed.monitor = {
+        right_left + placed.inset,
+        row,
+        map_inner,
+        std::clamp(picture_room, 0, across(picture_rows))
+    };
     row += placed.monitor.height + across(picture_gap_rows);
-    placed.map_name = {
-        right_left + placed.inset, row, map_inner, std::max(across(map_name_rows), regular_line)
-    };
+    placed.map_name = {right_left + placed.inset, row, map_inner, map_name_height};
     row += placed.map_name.height;
-    placed.map_facts = {
-        right_left + placed.inset, row, map_inner, std::max(across(map_facts_rows), small_line)
-    };
+    placed.map_facts = {right_left + placed.inset, row, map_inner, map_facts_height};
     row += placed.map_facts.height + across(map_button_gap_rows);
-    placed.select_map = {
-        right_left + placed.inset, row, map_inner, std::max(across(map_button_rows), regular_line)
-    };
+    placed.select_map = {right_left + placed.inset, row, map_inner, map_button_height};
 
     const int32_t options_top = placed.map.y + placed.map.height + across(panel_gap_rows);
     placed.options = {
@@ -1202,11 +1210,13 @@ class SkirmishMenuScreen final : public LayerScreen {
             box.x += 1;
             box.y += 1;
         }
-        const std::string text = worded("SELECT MAP");
+        const kit::Measure secondary = [&canvas](std::string_view line) {
+            return kit::measure_text(canvas, secondary_caption_font, line);
+        };
         outlined_text(
             canvas,
-            kit::FontRole::regular,
-            text,
+            secondary_caption_font,
+            kit::fit(worded("SELECT MAP"), box.width - 6, secondary),
             box,
             kit::Align::centre,
             !usable ? caption_faded_colour : lit ? caption_lit_colour : caption_colour,

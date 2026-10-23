@@ -250,10 +250,8 @@ void Runtime::library_entry_action(library::Action action, const library::EntryI
     }
     if (action == library::Action::switch_off ||
         (action == library::Action::play_now && base_game)) {
-        // The Switch Mod question of no mod: CANCEL leaves the mod played,
-        // SWITCH plays none. PLAY NOW on the base game entry asks it too.
-        oa::ui::kit::Question asked = library::switch_off_question(host.model.text);
-        const int32_t switch_button = button_named(asked, library::switch_button_id);
+        // No mod is played at once, with no question, as PLAY NOW plays a
+        // mod. PLAY NOW on the base game entry does the same.
         // The mod switched off: the one played, which PLAY NOW on the base
         // game entry leaves too.
         std::string played_name(library::entry_name(*found));
@@ -261,26 +259,16 @@ void Runtime::library_entry_action(library::Action action, const library::EntryI
             if (each.id.kind == library::Kind::mod && each.state == library::State::playing &&
                 !library::is_base_game(each.id))
                 played_name = std::string(library::entry_name(each));
-        QuestionScreen::Host answers;
-        answers.answer = [this, switch_button, played_name](int32_t button) {
-            if (button != switch_button)
-                return true;
-            // The Library opens again after the soft restart, as it shows now.
-            keep_library_for_restart();
-            restart_line_ = switching_line(false, played_name);
-            std::string refusal;
-            if (!switch_to_mod_folder({}, refusal)) {
-                library_return_.reset();
-                restart_line_.clear();
-                status_ = refusal;
-                library_log("SWITCH OFF: " + refusal);
-            }
-            return true;
-        };
-        answers.tick = [this] { return screen_ != Screen::main_menu; };
-        layer.push(
-            std::make_unique<QuestionScreen>(layer, Screen::main_menu, std::move(asked), answers)
-        );
+        // The Library opens again after the soft restart, as it shows now.
+        keep_library_for_restart();
+        restart_line_ = switching_line(false, played_name);
+        std::string refusal;
+        if (!switch_to_mod_folder({}, refusal)) {
+            library_return_.reset();
+            restart_line_.clear();
+            status_ = refusal;
+            library_log("SWITCH OFF: " + refusal);
+        }
         return;
     }
     if (action != library::Action::roll_back)
