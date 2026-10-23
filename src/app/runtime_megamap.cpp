@@ -405,33 +405,40 @@ void Runtime::draw_megamap() {
     const int grid_w = std::max(1, game.map_width / 2);
     const int grid_h = std::max(1, game.map_height / 2);
     const auto viewer_bit = static_cast<uint16_t>(1u << (match_view_player() & 0x1fu));
+    // The picture's columns that lie on the target, and the sight cell's
+    // column under each, the same for every row.
+    const int32_t first_x = std::max(0, -layout.left);
+    const int32_t end_x = std::min(layout.width, static_cast<int32_t>(target.width) - layout.left);
+    std::vector<std::size_t> column_cells(static_cast<std::size_t>(std::max(0, end_x - first_x)));
+    for (int32_t x = first_x; x < end_x; ++x) {
+        const auto map_x =
+            static_cast<int32_t>(static_cast<int64_t>(x) * layout.map_width / layout.width);
+        column_cells[static_cast<std::size_t>(x - first_x)] =
+            static_cast<std::size_t>(std::min(grid_w - 1, map_x / kSightCellPixels));
+    }
     for (int32_t y = 0; y < layout.height; ++y) {
         const int32_t py = layout.top + y;
-        if (py < 0 || py >= static_cast<int32_t>(target.height))
+        if (py < 0 || py >= static_cast<int32_t>(target.height) || first_x >= end_x)
             continue;
         const auto map_z =
             static_cast<int32_t>(static_cast<int64_t>(y) * layout.map_height / layout.height);
         const int gy = std::min(grid_h - 1, map_z / kSightCellPixels);
-        for (int32_t x = 0; x < layout.width; ++x) {
-            const int32_t px = layout.left + x;
-            if (px < 0 || px >= static_cast<int32_t>(target.width))
-                continue;
-            const auto map_x =
-                static_cast<int32_t>(static_cast<int64_t>(x) * layout.map_width / layout.width);
-            const int gx = std::min(grid_w - 1, map_x / kSightCellPixels);
-            const auto cell = static_cast<std::size_t>(gy) * static_cast<std::size_t>(grid_w) +
-                              static_cast<std::size_t>(gx);
-            uint8_t color = state.terrain[static_cast<std::size_t>(y * layout.width + x)];
+        const auto row_cell = static_cast<std::size_t>(gy) * static_cast<std::size_t>(grid_w);
+        const uint8_t* terrain = state.terrain.data() + static_cast<std::size_t>(y * layout.width);
+        uint8_t* out = target.rgb.data() + (static_cast<std::size_t>(py) * target.width +
+                                            static_cast<std::size_t>(layout.left + first_x)) *
+                                               3U;
+        for (int32_t x = first_x; x < end_x; ++x, out += 3) {
+            const auto cell = row_cell + column_cells[static_cast<std::size_t>(x - first_x)];
+            uint8_t color = terrain[x];
             if (cell < radar.sight_bits.size() && (radar.sight_bits[cell] & viewer_bit) == 0)
                 color = unexplored;
             else if (cell < radar.coverage.size() && radar.coverage[cell] == 0)
                 color = radar.gray_table[color];
             const auto pal = static_cast<std::size_t>(color) * 4U;
-            const auto di =
-                (static_cast<std::size_t>(py) * target.width + static_cast<std::size_t>(px)) * 3U;
-            target.rgb[di] = match_palette_[pal];
-            target.rgb[di + 1] = match_palette_[pal + 1];
-            target.rgb[di + 2] = match_palette_[pal + 2];
+            out[0] = match_palette_[pal];
+            out[1] = match_palette_[pal + 1];
+            out[2] = match_palette_[pal + 2];
         }
     }
     // The units the minimap shows, by their icons; the hovered one is found as they are drawn.
