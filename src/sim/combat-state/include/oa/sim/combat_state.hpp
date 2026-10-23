@@ -503,6 +503,22 @@ struct TargetSearchHost {
     const TargetSource& source, const TargetSearchRequest& request, TargetSearchHost& host
 );
 
+/// Chooses a target for one weapon slot as the overload above does, drawing
+/// the candidates from a list the caller keeps between searches.
+///
+/// @param source unit looking for a target
+/// @param request weapon slot 0..2 and whether its range is the radius
+/// @param host sightings, random stream and reach test
+/// @param[in,out] candidates list the search fills and draws from; whatever
+///     it held before is dropped
+/// @return the chosen unit, or 0 when none survives or the slot is out of range
+[[nodiscard]] UnitIdentity select_automatic_target(
+    const TargetSource& source,
+    const TargetSearchRequest& request,
+    TargetSearchHost& host,
+    std::vector<const TargetUnit*>& candidates
+);
+
 // UnitDef.abilities / UnitDef.flags bits read by the strategic refresh.
 inline constexpr uint32_t ability_can_attack = 0x00000010U;
 inline constexpr uint32_t ability_can_load = 0x00000100U;

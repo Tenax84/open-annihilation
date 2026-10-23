@@ -3306,6 +3306,9 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
     std::array<sim::detection::Sightings, OA_PLAYER_COUNT> sightings_{};
     std::vector<uint16_t> sighting_slots_;
     std::vector<sim::combat_state::TargetUnit> sighting_query_;
+    // The candidates of the automatic target search under way, kept so that
+    // each search reuses the list's storage.
+    std::vector<const sim::combat_state::TargetUnit*> target_candidates_;
     std::array<sim::combat_state::StrategicRefreshState, 10> strategic_states_;
     std::optional<StrategicEnvironment> strategic_environment_;
     std::vector<sim::combat_state::TargetUnit> target_projection_;

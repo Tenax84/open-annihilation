@@ -406,7 +406,8 @@ sim::simulation_state::Unit* Match::search_automatic_target(
         }
         source.weapon_flags[i] = static_cast<uint8_t>(definition->flags);
     }
-    const auto result = sim::combat_state::select_automatic_target(source, request, host);
+    const auto result =
+        sim::combat_state::select_automatic_target(source, request, host, target_candidates_);
     return result ? slots_.at(result).unit : nullptr;
 }
 

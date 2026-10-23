@@ -299,12 +299,22 @@ uint32_t randomized_distance_score(
 UnitIdentity select_automatic_target(
     const TargetSource& source, const TargetSearchRequest& request, TargetSearchHost& host
 ) {
+    std::vector<const TargetUnit*> candidates;
+    return select_automatic_target(source, request, host, candidates);
+}
+
+UnitIdentity select_automatic_target(
+    const TargetSource& source,
+    const TargetSearchRequest& request,
+    TargetSearchHost& host,
+    std::vector<const TargetUnit*>& candidates
+) {
     if (request.weapon_slot >= weapon_slot_count)
         return 0;
     const bool owner_override = source.owner_present && source.owner_status == 2;
     const auto radius = host.search_radius(source, request);
     const auto nearby = host.gather_nearby(source.owner_spatial_index, source.position, radius);
-    std::vector<const TargetUnit*> candidates;
+    candidates.clear();
     candidates.reserve(nearby.size());
     for (const auto& candidate : nearby)
         candidates.push_back(&candidate);
