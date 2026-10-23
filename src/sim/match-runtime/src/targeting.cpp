@@ -13,6 +13,7 @@
 #include "oa/sim/ground_orders/orders.hpp"
 #include "oa/sim/match_runtime/command.hpp"
 #include <cmath>
+#include <utility>
 
 namespace oa::sim::match_runtime {
 namespace {
@@ -102,40 +103,10 @@ class TargetHost final : public sim::combat_state::IntelligenceHost,
         }
         const auto environment = *match.strategic_environment_;
         auto& state = match.strategic_states_.at(player);
-        std::vector<sim::combat_state::StrategicType> types(match.input_.types.size());
-        state.owned_counts.assign(types.size(), 0);
-        for (std::size_t id = 1; id < types.size(); ++id) {
-            const auto& fields = match.input_.fields[id];
-            if (!fields.definition || !fields.runtime_metadata) {
-                match.fault_.note("strategic type requires resolved definition metadata");
-                return;
-            }
-            const auto& definition = *fields.definition;
-            auto& type = types[id];
-            type.flags = match.input_.types[id].simulation.flags;
-            type.abilities = (definition.can_attack ? sim::combat_state::ability_can_attack : 0u) |
-                             (definition.can_load ? sim::combat_state::ability_can_load : 0u);
-            type.makes_metal = static_cast<uint8_t>(definition.makes_metal);
-            type.min_water_depth = fields.runtime_metadata->min_water_depth;
-            type.radar_distance = definition.radar_distance;
-            type.sonar_distance = definition.sonar_distance;
-            type.build_cost_energy = static_cast<float>(definition.build_cost_energy);
-            type.build_cost_metal = static_cast<float>(definition.build_cost_metal);
-            type.energy_make = definition.energy_make;
-            type.energy_use = definition.energy_use;
-            type.extracts_metal = definition.extracts_metal;
-            type.wind_generator = definition.wind_generator;
-            type.tidal_generator = definition.tidal_generator;
-            const auto binding = sim::combat_state::bind_unit_weapons(
-                match.input_.weapons, {definition.weapon1, definition.weapon2, definition.weapon3}
-            );
-            for (std::size_t i = 0; i < 3; ++i) {
-                const auto& weapon = *binding.weapons.definitions[i];
-                type.weapons[i] = {
-                    weapon.registry_index, weapon.default_damage, weapon.range_world_units
-                };
-            }
-        }
+        state.owned_counts.assign(match.input_.types.size(), 0);
+        if (!strategic_types())
+            return;
+        const auto& types = match.strategic_types_;
         // The knowledge walk clears and recounts own completed live units before
         // the refresh draw. No unit-mutating callbacks intervene between that
         // scan and this callback.
@@ -346,6 +317,53 @@ class TargetHost final : public sim::combat_state::IntelligenceHost,
     }
 
   private:
+
+    /// Lists what the strategic refresh reads of every unit type, by type
+    /// index, the first time a refresh asks; the types and their weapons stay
+    /// as the match loaded them, so later refreshes read the same list.
+    ///
+    /// @return False, with the fault noted, while a type has no resolved
+    ///     definition; the list is then built again at the next refresh.
+    bool strategic_types() {
+        auto& listed = match.strategic_types_;
+        if (!listed.empty())
+            return true;
+        std::vector<sim::combat_state::StrategicType> types(match.input_.types.size());
+        for (std::size_t id = 1; id < types.size(); ++id) {
+            const auto& fields = match.input_.fields[id];
+            if (!fields.definition || !fields.runtime_metadata) {
+                match.fault_.note("strategic type requires resolved definition metadata");
+                return false;
+            }
+            const auto& definition = *fields.definition;
+            auto& type = types[id];
+            type.flags = match.input_.types[id].simulation.flags;
+            type.abilities = (definition.can_attack ? sim::combat_state::ability_can_attack : 0u) |
+                             (definition.can_load ? sim::combat_state::ability_can_load : 0u);
+            type.makes_metal = static_cast<uint8_t>(definition.makes_metal);
+            type.min_water_depth = fields.runtime_metadata->min_water_depth;
+            type.radar_distance = definition.radar_distance;
+            type.sonar_distance = definition.sonar_distance;
+            type.build_cost_energy = static_cast<float>(definition.build_cost_energy);
+            type.build_cost_metal = static_cast<float>(definition.build_cost_metal);
+            type.energy_make = definition.energy_make;
+            type.energy_use = definition.energy_use;
+            type.extracts_metal = definition.extracts_metal;
+            type.wind_generator = definition.wind_generator;
+            type.tidal_generator = definition.tidal_generator;
+            const auto binding = sim::combat_state::bind_unit_weapons(
+                match.input_.weapons, {definition.weapon1, definition.weapon2, definition.weapon3}
+            );
+            for (std::size_t i = 0; i < 3; ++i) {
+                const auto& weapon = *binding.weapons.definitions[i];
+                type.weapons[i] = {
+                    weapon.registry_index, weapon.default_damage, weapon.range_world_units
+                };
+            }
+        }
+        listed = std::move(types);
+        return true;
+    }
 
     /// Returns what the reach test reads of a unit: its position, the whole
     /// world units of its type's model top, its flags and its type's flags.

@@ -3310,6 +3310,9 @@ class Match final : private SpawnSubsystems, private UnitValueHost {
     // each search reuses the list's storage.
     std::vector<const sim::combat_state::TargetUnit*> target_candidates_;
     std::array<sim::combat_state::StrategicRefreshState, 10> strategic_states_;
+    // What the strategic refresh reads of each unit type, by type index;
+    // empty until the first refresh lists the types.
+    std::vector<sim::combat_state::StrategicType> strategic_types_;
     std::optional<StrategicEnvironment> strategic_environment_;
     std::vector<sim::combat_state::TargetUnit> target_projection_;
     // Per player: the unit slot the weapon sweep visited last.
