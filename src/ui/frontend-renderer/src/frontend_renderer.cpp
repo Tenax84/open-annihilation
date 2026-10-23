@@ -25,6 +25,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -640,22 +641,31 @@ void light_rectangle(
     const int right = std::min(rectangle.right, static_cast<int>(surface.width) - 1);
     const int top = std::max(rectangle.top, 0);
     const int bottom = std::min(rectangle.bottom, static_cast<int>(surface.height) - 1);
+    // Each colour is looked up in the palette once, the first time it is met.
+    std::unordered_map<uint32_t, std::array<uint8_t, 3>> lit;
     for (int y = top; y <= bottom; ++y)
         for (int x = left; x <= right; ++x) {
             const auto offset =
                 (static_cast<std::size_t>(y) * surface.width + static_cast<std::size_t>(x)) * 3U;
-            uint8_t source = 0;
-            for (std::size_t index = 0; index < palette_color_count; ++index) {
-                const auto color = index * palette_entry_bytes;
-                if (surface.rgb[offset] == palette[color] &&
-                    surface.rgb[offset + 1] == palette[color + 1] &&
-                    surface.rgb[offset + 2] == palette[color + 2]) {
-                    source = static_cast<uint8_t>(index);
-                    break;
+            const uint32_t drawn = static_cast<uint32_t>(surface.rgb[offset]) << 16 |
+                                   static_cast<uint32_t>(surface.rgb[offset + 1]) << 8 |
+                                   surface.rgb[offset + 2];
+            auto [entry, added] = lit.try_emplace(drawn);
+            if (added) {
+                uint8_t source = 0;
+                for (std::size_t index = 0; index < palette_color_count; ++index) {
+                    const auto color = index * palette_entry_bytes;
+                    if (surface.rgb[offset] == palette[color] &&
+                        surface.rgb[offset + 1] == palette[color + 1] &&
+                        surface.rgb[offset + 2] == palette[color + 2]) {
+                        source = static_cast<uint8_t>(index);
+                        break;
+                    }
                 }
+                entry->second =
+                    palette_rgb(palette, light_table[level * palette_color_count + source]);
             }
-            const auto transformed = light_table[level * palette_color_count + source];
-            const auto rgb = palette_rgb(palette, transformed);
+            const auto& rgb = entry->second;
             std::copy(
                 rgb.begin(), rgb.end(), surface.rgb.begin() + static_cast<std::ptrdiff_t>(offset)
             );
