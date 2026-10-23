@@ -449,20 +449,18 @@ void draw_button_text(
         return;
     }
 
-    const auto pixel_count = static_cast<std::size_t>(surface.width) * surface.height;
-    std::vector<uint8_t> indices(pixel_count);
-    std::vector<uint8_t> coverage(pixel_count);
-    const formats::fnt::IndexedSurface target{
-        surface.width, surface.height, surface.width, indices, coverage
-    };
-    (void)formats::fnt::raster_text(target, selected_font, text, x, y);
-    for (std::size_t index = 0; index < pixel_count; ++index) {
-        if (coverage[index] == 0)
-            continue;
-        const int pixel_x = static_cast<int>(index % surface.width);
-        const int pixel_y = static_cast<int>(index / surface.width);
-        set_pixel(surface, pixel_x, pixel_y, palette_rgb(active_palette, indices[index]));
-    }
+    draw_fnt_glyphs(
+        surface,
+        selected_font,
+        text,
+        x,
+        y,
+        active_palette,
+        {0,
+         0,
+         static_cast<int32_t>(surface.width) - 1,
+         static_cast<int32_t>(surface.height) - 1}
+    );
     const bool centred =
         (attributes & (align_left | align_right)) == 0 && (attributes & align_center) != 0;
     if (!centred || condition == ButtonCondition::disabled)
@@ -583,29 +581,16 @@ void draw_clipped_text(
         used += width;
         ++fitted;
     }
-    text = text.substr(0, fitted);
-    const auto pixel_count = static_cast<std::size_t>(surface.width) * surface.height;
-    std::vector<uint8_t> indices(pixel_count);
-    std::vector<uint8_t> coverage(pixel_count);
-    const formats::fnt::IndexedSurface target{
-        surface.width, surface.height, surface.width, indices, coverage
-    };
-    (void)formats::fnt::raster_text(target, selected_font, text, x, y);
-    const int left = std::max(clip.left, 0);
-    const int right = std::min(clip.right, static_cast<int>(surface.width) - 1);
-    const int top = std::max(clip.top, 0);
-    const int bottom = std::min(clip.bottom, static_cast<int>(surface.height) - 1);
-    for (int row = top; row <= bottom; ++row) {
-        for (int column = left; column <= right; ++column) {
-            const auto offset =
-                static_cast<std::size_t>(row) * surface.width + static_cast<std::size_t>(column);
-            if (coverage[offset] == 0)
-                continue;
-            const auto source_index =
-                light_row != nullptr ? light_row[indices[offset]] : indices[offset];
-            set_pixel(surface, column, row, palette_rgb(active_palette, source_index));
-        }
-    }
+    draw_fnt_glyphs(
+        surface,
+        selected_font,
+        text.substr(0, fitted),
+        x,
+        y,
+        active_palette,
+        {clip.left, clip.top, clip.right, clip.bottom},
+        light_row
+    );
 }
 
 void light_rectangle(
