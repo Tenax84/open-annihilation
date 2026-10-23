@@ -664,13 +664,7 @@ struct HpiArchive::Impl {
                 DecodeCode::out_of_range, node.data_offset, "HPI chunk table is another entry's"
             };
         }
-        std::size_t copied = 0;
-        return decode_blocks(
-            *chunks, position, wanted, [&](const uint8_t* bytes, std::size_t count) {
-                std::memcpy(output.data() + copied, bytes, count);
-                copied += count;
-            }
-        );
+        return decode_blocks(*chunks, position, output.first(wanted));
     }
 
     /// Returns how many chunks a compressed file node is stored in.
@@ -711,65 +705,69 @@ struct HpiArchive::Impl {
         return result;
     }
 
-    /// Decodes the chunks of a compressed file node that hold `wanted`
-    /// bytes from `position`, handing each chunk's part to `take` in order.
+    /// Decodes the chunks of a compressed file node that hold `output.size()`
+    /// bytes from `position` into `output`, in order.
+    ///
+    /// A chunk wanted whole decodes straight into `output`; one wanted in
+    /// part decodes into a buffer of its own, and its part is copied.
     ///
     /// @param chunks the chunk table of a compressed file node
     /// @param position first decoded byte wanted
-    /// @param wanted count of bytes wanted; within the entry
-    /// @param take called with each part's bytes and count
-    /// @return the count handed on; or the error, at its archive offset, of
+    /// @param[out] output receives the bytes; within the entry
+    /// @return the count decoded; or the error, at its archive offset, of
     ///         a chunk that cannot be read or decoded
-    template <class Take>
     [[nodiscard]] Decoded<uint32_t> decode_blocks(
-        const formats::hpi::ChunkTable& chunks, uint32_t position, std::size_t wanted, Take&& take
+        const formats::hpi::ChunkTable& chunks, uint32_t position, std::span<uint8_t> output
     ) const {
-        // Every byte of these buffers is written before it is read, so they
-        // are allocated without being filled.
-        const auto decoded_bytes =
-            std::make_unique_for_overwrite<uint8_t[]>(formats::hpi::BlockBytes);
-        const std::span<uint8_t> decoded(decoded_bytes.get(), formats::hpi::BlockBytes);
+        // Every byte of this buffer is written before it is read, so it is
+        // allocated without being filled, and only once a chunk needs it.
+        std::unique_ptr<uint8_t[]> part_bytes;
         std::size_t copied = 0;
         uint32_t cursor = position;
-        uint32_t loaded = std::numeric_limits<uint32_t>::max();
-        while (copied < wanted) {
+        while (copied < output.size()) {
             const uint32_t block_index = cursor / formats::hpi::BlockBytes;
-            if (block_index != loaded) {
-                const uint64_t at = chunks.offsets[block_index];
-                // The difference is one size of the table, so it fits 32 bits.
-                const auto stored = static_cast<uint32_t>(chunks.offsets[block_index + 1U] - at);
-                if (stored > kMaxStoredChunkSize)
-                    return DecodeError{
-                        DecodeCode::limit_exceeded,
-                        at,
-                        "stored HPI chunk exceeds the 1 MiB safety limit"
-                    };
-                // Each chunk gets a buffer of exactly its size, so a read past
-                // the chunk is a read past the allocation, which the sanitizer
-                // build reports.
-                const auto chunk_bytes = std::make_unique_for_overwrite<uint8_t[]>(stored);
-                const std::span<uint8_t> chunk(chunk_bytes.get(), stored);
-                if (read_stored(at, chunk) != chunk.size())
-                    return DecodeError{
-                        DecodeCode::truncated, at, "HPI chunk lies past the end of the archive"
-                    };
-                decrypt_at(chunk, key, at);
-                // Bytes a short chunk leaves unwritten read as zero.
-                std::memset(decoded.data(), 0, decoded.size());
-                const auto status = unsquash_archive_block(decoded, chunk);
-                if (status != formats::hpi::SquashStatus::ok)
-                    return DecodeError{
-                        DecodeCode::malformed,
-                        at,
-                        squash_status_name(status),
-                        static_cast<uint16_t>(status)
-                    };
-                loaded = block_index;
-            }
             const uint32_t offset = cursor % formats::hpi::BlockBytes;
             const std::size_t count =
-                std::min<std::size_t>(formats::hpi::BlockBytes - offset, wanted - copied);
-            take(decoded.data() + offset, count);
+                std::min<std::size_t>(formats::hpi::BlockBytes - offset, output.size() - copied);
+            const bool whole = count == formats::hpi::BlockBytes;
+            if (!whole && part_bytes == nullptr)
+                part_bytes = std::make_unique_for_overwrite<uint8_t[]>(formats::hpi::BlockBytes);
+            const std::span<uint8_t> decoded =
+                whole ? output.subspan(copied, formats::hpi::BlockBytes)
+                      : std::span<uint8_t>(part_bytes.get(), formats::hpi::BlockBytes);
+            const uint64_t at = chunks.offsets[block_index];
+            // The difference is one size of the table, so it fits 32 bits.
+            const auto stored = static_cast<uint32_t>(chunks.offsets[block_index + 1U] - at);
+            if (stored > kMaxStoredChunkSize)
+                return DecodeError{
+                    DecodeCode::limit_exceeded,
+                    at,
+                    "stored HPI chunk exceeds the 1 MiB safety limit"
+                };
+            // Each chunk gets a buffer of exactly its size, so a read past
+            // the chunk is a read past the allocation, which the sanitizer
+            // build reports.
+            const auto chunk_bytes = std::make_unique_for_overwrite<uint8_t[]>(stored);
+            const std::span<uint8_t> chunk(chunk_bytes.get(), stored);
+            if (read_stored(at, chunk) != chunk.size())
+                return DecodeError{
+                    DecodeCode::truncated, at, "HPI chunk lies past the end of the archive"
+                };
+            decrypt_at(chunk, key, at);
+            const auto status = unsquash_archive_block(decoded, chunk);
+            if (status != formats::hpi::SquashStatus::ok)
+                return DecodeError{
+                    DecodeCode::malformed,
+                    at,
+                    squash_status_name(status),
+                    static_cast<uint16_t>(status)
+                };
+            // A decoded chunk holds its unpacked size; the bytes of a short
+            // chunk past that read as zero.
+            const uint32_t unpacked = load_le32(chunk.data() + squash_field::unpacked_size);
+            std::memset(decoded.data() + unpacked, 0, decoded.size() - unpacked);
+            if (!whole)
+                std::memcpy(output.data() + copied, decoded.data() + offset, count);
             copied += count;
             cursor += static_cast<uint32_t>(count);
         }
@@ -888,16 +886,24 @@ Decoded<std::vector<uint8_t>> HpiArchive::read_node(uint32_t index) const {
             read = impl_->read_range(index, 0, bytes, nullptr);
         } else {
             // Room is set aside for the claimed size, and only the chunks
-            // that decode fill it.
+            // that decode fill it, each decoded straight into its place.
             bytes.reserve(node.size);
             auto table = impl_->chunk_table(index);
             if (!table.ok())
                 return table.error;
-            read = impl_->decode_blocks(
-                *table.value, 0, node.size, [&](const uint8_t* decoded, std::size_t count) {
-                    bytes.insert(bytes.end(), decoded, decoded + count);
-                }
-            );
+            uint32_t decoded = 0;
+            while (decoded < node.size) {
+                const uint32_t count = std::min(node.size - decoded, formats::hpi::BlockBytes);
+                bytes.resize(static_cast<std::size_t>(decoded) + count);
+                read = impl_->decode_blocks(
+                    *table.value, decoded, std::span<uint8_t>(bytes).subspan(decoded, count)
+                );
+                if (!read.ok())
+                    break;
+                decoded += count;
+            }
+            if (read.ok())
+                read = decoded;
         }
     } catch (const std::bad_alloc&) {
         return DecodeError{
