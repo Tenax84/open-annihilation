@@ -125,6 +125,17 @@ existing behaviour changes.
   built retires the old one, which batches of that frame may still name
   and draw from as it was.
 
+`oa/app/card/shaders.hpp` (`oa-app-card-shaders`, no SDL) holds the
+fragment shaders the card's effects run on SDL's GPU renderer, from the
+HLSL under `shaders/`, each as a `ShaderCode`: SPIR-V for Vulkan, DXIL for
+Direct3D 12 and Metal source, with the textures and uniform slots it reads.
+The build compiles them with SDL_shadercross (`OA_SHADERCROSS`, found under
+`local/deps/shadercross-install` when not given) and embeds the result
+(`cmake/OaEmbedShader.cmake`); a build without the compiler embeds them
+empty. `blur_shader()` is the glow's blur: each pixel the weighted mean of
+nine texels in a line across or down, in five LINEAR reads, times the
+vertex colour.
+
 ## State
 
 The executor owns its pages, targets and the scratch copy the darken
@@ -217,3 +228,7 @@ bytes of the supersampled targets, which it never checks.
   into memory on SDL's `direct3d` renderer, once at creation. The design's
   4x4 check target for that renderer, drawn into from the new target and
   read back instead, waits for the slice that wires the fallbacks.
+- The shaders are compiled and embedded, but nothing draws with them yet:
+  the executor makes no GPU render state and no batch names an effect.
+  SDL_shadercross is built by hand into `local/deps`; no bootstrap script
+  builds it, so a build without it has no effects.

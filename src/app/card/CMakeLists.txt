@@ -8,6 +8,54 @@ add_library(oa::app::card ALIAS oa-app-card)
 target_include_directories(oa-app-card PUBLIC include)
 target_compile_features(oa-app-card PUBLIC cxx_std_20)
 target_link_libraries(oa-app-card PRIVATE oa-options)
+# The card's fragment shaders (card/shaders.hpp), compiled from HLSL by
+# SDL_shadercross into SPIR-V, DXIL and Metal source and embedded in the
+# game. OA_SHADERCROSS names the compiler, found under
+# local/deps/shadercross-install when not given; without it each shader is
+# embedded empty and the card's effects stay off.
+find_program(OA_SHADERCROSS shadercross
+  HINTS "${PROJECT_SOURCE_DIR}/local/deps/shadercross-install/bin"
+  DOC "SDL_shadercross, which compiles the card's fragment shaders")
+set(oa_card_shader_sources)
+# Each shader: its name, the textures it reads and its uniform slots.
+foreach(oa_card_shader IN ITEMS "blur;1;1")
+  list(GET oa_card_shader 0 oa_card_shader_name)
+  list(GET oa_card_shader 1 oa_card_shader_samplers)
+  list(GET oa_card_shader 2 oa_card_shader_uniform_buffers)
+  set(oa_card_shader_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${oa_card_shader_name}.frag.hlsl")
+  set(oa_card_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/shaders")
+  set(oa_card_shader_source "${oa_card_shader_dir}/${oa_card_shader_name}_shader.cpp")
+  set(oa_card_shader_forms)
+  set(oa_card_shader_compile)
+  if(OA_SHADERCROSS)
+    foreach(oa_card_shader_form IN ITEMS SPIRV DXIL MSL)
+      set(oa_card_shader_file "${oa_card_shader_dir}/${oa_card_shader_name}.frag.${oa_card_shader_form}")
+      list(APPEND oa_card_shader_compile
+        COMMAND "${OA_SHADERCROSS}" "${oa_card_shader_hlsl}" -s HLSL -d ${oa_card_shader_form}
+          -t fragment -o "${oa_card_shader_file}")
+      list(APPEND oa_card_shader_forms "-D${oa_card_shader_form}=${oa_card_shader_file}")
+    endforeach()
+  endif()
+  add_custom_command(OUTPUT "${oa_card_shader_source}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${oa_card_shader_dir}"
+    ${oa_card_shader_compile}
+    COMMAND ${CMAKE_COMMAND} -DFUNCTION=${oa_card_shader_name}_shader
+      "-DOUTPUT=${oa_card_shader_source}" -DSAMPLERS=${oa_card_shader_samplers}
+      -DUNIFORM_BUFFERS=${oa_card_shader_uniform_buffers} ${oa_card_shader_forms}
+      -P "${PROJECT_SOURCE_DIR}/cmake/OaEmbedShader.cmake"
+    DEPENDS "${oa_card_shader_hlsl}" "${PROJECT_SOURCE_DIR}/cmake/OaEmbedShader.cmake"
+    COMMENT "Compiling the card's ${oa_card_shader_name} shader"
+    VERBATIM)
+  list(APPEND oa_card_shader_sources "${oa_card_shader_source}")
+endforeach()
+if(NOT OA_SHADERCROSS)
+  message(STATUS "SDL_shadercross not found: the card's effects are built without their shaders")
+endif()
+add_library(oa-app-card-shaders ${oa_card_shader_sources})
+add_library(oa::app::card_shaders ALIAS oa-app-card-shaders)
+target_include_directories(oa-app-card-shaders PUBLIC include)
+target_compile_features(oa-app-card-shaders PUBLIC cxx_std_20)
+target_link_libraries(oa-app-card-shaders PRIVATE oa-options)
 if(OA_BUILD_PLATFORM)
   # The executor (card/executor.hpp): texture pages and render targets made,
   # updated and destroyed on SDL's renderer, and a frame run on it with
