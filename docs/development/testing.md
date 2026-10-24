@@ -577,6 +577,13 @@ step times the frame. The fixture is a test extension, so only a build
 configured with `-DOA_RECORD_EXTENSION_HOOKS=ON` combines it and runs this
 check.
 
+The MCP server in [tools/mcp](../../tools/mcp/README.md) has two checks:
+`mcp-server-selftest` drives its tools against a stand-in endpoint and
+needs no installation, and `native-mcp-server`
+(`tools/check_native_mcp_server.py`) starts the server as an MCP client
+does and has it start the game on the dummy drivers, go from the main menu
+to Single Player and back, take a picture and quit.
+
 ### The renderer
 
 The game makes its renderer by walking SDL's render drivers and makes it
