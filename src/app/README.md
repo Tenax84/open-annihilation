@@ -1105,12 +1105,12 @@ runtime goes).
 - **How it opens.** The main menu's OA button opens it
   (`Runtime::open_library`) when a press is released over it, on Active,
   with the button's sound;
-  Settings › Language's MORE IN THE LIBRARY… opens it on Languages over
-  Settings (`DialogAction::open_library`). It opens only where the
+  Settings › Downloads' REGISTRIES IN THE LIBRARY… opens it on Registries
+  over Settings (`DialogAction::open_library`). It opens only where the
   settings do: on the main menu, never over a message box, a frame a
   package owns or the saves notice. The layer never holds two Libraries or
   two Settings: opening one already on the stack goes back to it
-  (`OaLayer::return_to`), so Library › SETTINGS… › MORE IN THE LIBRARY…
+  (`OaLayer::return_to`), so Library › SETTINGS… › REGISTRIES IN THE LIBRARY…
   returns to the first Library. The main menu's Settings button beside
   the OA button, Cmd+, (Ctrl+, elsewhere), the macOS menu's Settings… and
   the in-game OA button open Settings.

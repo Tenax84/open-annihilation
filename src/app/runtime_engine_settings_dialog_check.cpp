@@ -1265,19 +1265,14 @@ void Runtime::check_engine_settings_dialog() {
     chosen.language = "en";
     expect("Language English");
     require(shown_language().tag == "en", "Language English did not put English back");
-    // On the main menu MORE IN THE LIBRARY… stands right under Language's
-    // row, and the rows under it come one control later.
-    const int32_t library_link = engine_settings_dialog()->library_link ? 1 : 0;
-    click(
-        settings::first_row_control + 1 + library_link, "ON", "Use modern fonts for game text's On"
-    );
+    click(settings::first_row_control + 1, "ON", "Use modern fonts for game text's On");
     chosen.modern_fonts = true;
     expect("Use modern fonts for game text On");
     require(
         !shows_text(settings::dialog_layout(*engine_settings_dialog()), "Needs modern fonts"),
         "Text size stayed locked with the modern fonts On"
     );
-    focus(settings::first_row_control + 2 + library_link, "Text size");
+    focus(settings::first_row_control + 2, "Text size");
     tap(SDLK_RIGHT);
     chosen.text_size = settings::default_text_size + settings::text_size_step;
     expect("Text size a stop up");
@@ -1287,7 +1282,7 @@ void Runtime::check_engine_settings_dialog() {
         "Text size a stop up did not reach the text style"
     );
     // Font shadow lies under the view's edge: the focus brings it in.
-    focus(settings::first_row_control + 4 + library_link, "Font shadow");
+    focus(settings::first_row_control + 4, "Font shadow");
     tap(SDLK_LEFT);
     chosen.text_shadow = false;
     expect("Font shadow Off");
@@ -2586,10 +2581,7 @@ void Runtime::check_engine_settings_window_sizes() {
         tap(SDLK_COMMA, kShortcutModifier);
         auto* fraction_dialog = engine_settings_dialog();
         require(fraction_dialog != nullptr, "the shortcut did not open the dialog" + on);
-        // On the main menu MORE IN THE LIBRARY… stands right under
-        // Language's row, and the rows under it come one control later.
-        const int32_t fonts_row =
-            settings::first_row_control + 1 + (fraction_dialog->library_link ? 1 : 0);
+        const int32_t fonts_row = settings::first_row_control + 1;
         open_sizes(*fraction_dialog);
         require(
             !shows_text(settings::dialog_layout(*fraction_dialog), "150%"),

@@ -1658,31 +1658,21 @@ DialogAction open_folder(Dialog& dialog, FolderButton button) noexcept {
 }
 
 /// Takes what a row's button asks for: MANAGE… the Game files screen, a
-/// button of Your files its folder, MORE IN THE LIBRARY… the Library's
-/// Languages, REGISTRIES IN THE LIBRARY… the Library's Registries, SHOW
+/// button of Your files its folder, REGISTRIES IN THE LIBRARY… the
+/// Library's Registries, SHOW
 /// the UI kit gallery, SHOW AGAIN the welcome setup at the next main menu.
 ///
 /// @param[in,out] dialog the dialog
 /// @param action the button's action (manage_game_files_action,
-///     first_folder_action and its place, open_library_action,
+///     first_folder_action and its place, manage_registries_action,
 ///     show_gallery_action or show_welcome_action)
 /// @return what it asks of the host
 DialogAction row_action(Dialog& dialog, kit::ActionId action) noexcept {
-    static_assert(
-        layout::open_library_action != downloads::reset_install_id_action &&
-            layout::open_library_action != downloads::empty_downloads_action &&
-            layout::open_library_action != layout::manage_game_files_action &&
-            (layout::open_library_action < layout::first_folder_action ||
-             layout::open_library_action >=
-                 layout::first_folder_action + static_cast<kit::ActionId>(folder_button_count)),
-        "MORE IN THE LIBRARY… asks for an action no other row's button asks for"
-    );
     static_assert(
         layout::show_gallery_action != downloads::reset_install_id_action &&
             layout::show_gallery_action != downloads::empty_downloads_action &&
             layout::show_gallery_action != downloads::manage_registries_action &&
             layout::show_gallery_action != layout::manage_game_files_action &&
-            layout::show_gallery_action != layout::open_library_action &&
             (layout::show_gallery_action < layout::first_folder_action ||
              layout::show_gallery_action >=
                  layout::first_folder_action + static_cast<kit::ActionId>(folder_button_count)),
@@ -1693,7 +1683,6 @@ DialogAction row_action(Dialog& dialog, kit::ActionId action) noexcept {
             layout::show_welcome_action != downloads::empty_downloads_action &&
             layout::show_welcome_action != downloads::manage_registries_action &&
             layout::show_welcome_action != layout::manage_game_files_action &&
-            layout::show_welcome_action != layout::open_library_action &&
             layout::show_welcome_action != layout::show_gallery_action &&
             (layout::show_welcome_action < layout::first_folder_action ||
              layout::show_welcome_action >=
@@ -1714,10 +1703,6 @@ DialogAction row_action(Dialog& dialog, kit::ActionId action) noexcept {
         return DialogAction::empty_downloads;
     if (action == layout::manage_game_files_action)
         return DialogAction::manage_game_files;
-    if (action == layout::open_library_action) {
-        dialog.library_tab = LibraryTab::languages;
-        return DialogAction::open_library;
-    }
     if (action == downloads::manage_registries_action) {
         dialog.library_tab = LibraryTab::registries;
         return DialogAction::open_library;

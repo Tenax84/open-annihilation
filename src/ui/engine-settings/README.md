@@ -243,16 +243,6 @@ automation name is `oa.settings.language.` and the tag in lower case:
 `oa.settings.language.zh-hans`, `oa.settings.language.pt-br`. The divider
 above those rows has no automation name.
 
-While the host says the Library can open over the dialog
-(`Dialog::library_link`, which the game sets on the main menu's engine
-settings alone), MORE IN THE LIBRARY… stands right under Language's row, a
-link (`Setting::more_in_library`, named `settings.more-in-library`) whose
-hint says "More languages are in the Library.". Its press sets
-`Dialog::library_tab` to Languages and asks the host for the Library
-(`DialogAction::open_library`); the dialog stays open under it. In a match
-and in Language & Text alone it is not listed, and Language's rows stand as
-`page_settings` gives them.
-
 The rest of Language & Text says how game text is drawn. Use modern fonts
 for game text draws it in modern fonts, which hold the letters of many
 languages, in place of the game's own 8-bit fonts; Text size scales every

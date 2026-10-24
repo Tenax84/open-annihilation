@@ -5050,14 +5050,6 @@
 	it=ALTRO;
 	}
 
-[MORE IN THE LIBRARY…]
-	{
-	de=MEHR IN DER BIBLIOTHEK…;
-	fr=PLUS DANS LA BIBLIOTHÈQUE…;
-	es=MÁS EN LA BIBLIOTECA…;
-	it=ALTRO NELLA BIBLIOTECA…;
-	}
-
 [MORE MAPS…]
 	{
 	de=MEHR KARTEN…;
@@ -5328,14 +5320,6 @@
 	fr=Plus de cycles trouvent les routes plus vite mais utilisent plus de CPU.;
 	es=Más ciclos encuentran rutas más rápido, pero usan más CPU.;
 	it=Più cicli trovano i percorsi più in fretta, ma usano più CPU.;
-	}
-
-[More languages are in the Library.]
-	{
-	de=Weitere Sprachen sind in der Bibliothek.;
-	fr=D'autres langues sont dans la Bibliothèque.;
-	es=Hay más idiomas en la Biblioteca.;
-	it=Altre lingue sono nella Biblioteca.;
 	}
 
 [Mouse wheel zoom]

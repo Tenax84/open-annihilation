@@ -247,7 +247,7 @@ replay they show "Set by the host".
 
 ## Language & Text
 
-![The top of the Language & Text section: Language set to System default (English), More in the Library… under it, Use modern fonts for game text On, and the Text size row.](images/settings/language-1.png)
+![The top of the Language & Text section: Language set to System default (English), Use modern fonts for game text On, and the Text size row.](images/settings/language-1.png)
 
 The Language & Text section says which language the game's text is shown in and
 how that text is drawn. None of these changes the game itself, so no game
@@ -283,9 +283,6 @@ locks them, and players in different languages play together.
   languages only.
   [Languages](languages.md) says what the game data and the language packs
   translate.
-- **More in the Library…**, under Language on the main menu, opens the
-  Library on its Languages tab, over the settings, for every language pack
-  the registries offer ([the Library](library.md)).
 - **Use modern fonts for game text**, On by default. The game's text is
   drawn in modern fonts, which hold the letters of many languages and stay
   sharp at any size, in place of the game's own 8-bit fonts. Turn it off

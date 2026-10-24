@@ -279,10 +279,6 @@ enum class Setting : uint8_t {
     /// Interface size: a drop-down of Auto, 100%, 200%, 300% and 400%, on
     /// User Interface
     interface_size,
-    /// MORE IN THE LIBRARY…: a link under Language's row that opens the
-    /// Library on Languages, listed only while Dialog::library_link is set;
-    /// it changes no setting
-    more_in_library,
     /// UI kit gallery: Developer's row whose SHOW opens the gallery of every
     /// part of Open Annihilation's own screens (DialogAction::show_gallery);
     /// it changes no setting
@@ -549,7 +545,7 @@ enum class DialogAction : uint8_t {
     /// Kept so a host's switch over every action still compiles. The Library's
     /// Registries tab asks for its own mirror, not this.
     add_mirror,
-    /// MORE IN THE LIBRARY… was pressed: the host opens the Library on
+    /// REGISTRIES IN THE LIBRARY… was pressed: the host opens the Library on
     /// Dialog::library_tab over the dialog, which stays open under it
     open_library,
     /// SHOW on Developer's UI kit gallery: the host opens the gallery over
@@ -901,7 +897,7 @@ struct Dialog {
     std::vector<AvailableLanguage> available_languages{};
     /// The tag DialogAction::download_language asks the host to download.
     std::string download_request;
-    /// Language lists MORE IN THE LIBRARY… under its row: a host sets it as
+    /// Downloads lists REGISTRIES IN THE LIBRARY…: a host sets it as
     /// the engine's settings open on the main menu, where the Library can
     /// open over them; never in a match, and never for Language alone.
     bool library_link{};

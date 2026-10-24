@@ -56,8 +56,8 @@ The Library opens on the main menu, from:
   top right corner, from the moment OA finds them: you
   need not open the Library to learn of them, and its **Updates** tab lists
   them;
-- **MORE IN THE LIBRARY…** in Settings › Language, which opens it on
-  Languages, over the settings, which stay open under it.
+- **REGISTRIES IN THE LIBRARY…** in Settings › Downloads, which opens it
+  on Registries, over the settings, which stay open under it.
 
 The
 skirmish and battle room map lists have **MORE MAPS…** instead, which opens
