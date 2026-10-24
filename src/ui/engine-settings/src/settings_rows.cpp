@@ -2449,8 +2449,9 @@ constexpr std::array<SettingRow, kSettingCount> kDeclared{{
     {.setting = S::enhanced_graphics,
      .spec = engine_switch<&E::enhanced_graphics>(
          "enhanced-graphics", "Enhanced graphics",
-         {"Shots and explosions glow while the graphics card draws the battlefield.",
-          "The glow needs the GPU renderer, which the next start chooses."})},
+         {"Shots and explosions glow and edges are smoothed while the graphics card draws "
+          "the battlefield.",
+          "The glow and edge smoothing need the GPU renderer, which the next start chooses."})},
 }};
 // clang-format on
 

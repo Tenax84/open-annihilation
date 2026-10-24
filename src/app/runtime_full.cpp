@@ -993,6 +993,13 @@ void Runtime::FullPresentation::destroy_glow_targets() noexcept {
     glow_height = 0;
 }
 
+void Runtime::FullPresentation::destroy_fxaa_target() noexcept {
+    executor.destroy_target(fxaa_target);
+    fxaa_target = {};
+    fxaa_width = 0;
+    fxaa_height = 0;
+}
+
 void Runtime::free_full_match_state() noexcept {
     if (!full_)
         return;
@@ -1074,6 +1081,9 @@ void Runtime::free_full_match_textures() noexcept {
     full.refused_glow_width = 0;
     full.refused_glow_height = 0;
     full.drawn_glow_draws = 0;
+    full.destroy_fxaa_target();
+    full.refused_fxaa_width = 0;
+    full.refused_fxaa_height = 0;
     full.supersample = 1;
     full.drawn_plan = {};
     full.atlas = {};
@@ -1397,6 +1407,50 @@ bool Runtime::ensure_full_glow_targets(uint32_t battlefield_width, uint32_t batt
     return true;
 }
 
+bool Runtime::ensure_full_fxaa_target(
+    bool asked,
+    uint32_t battlefield_width,
+    uint32_t battlefield_height
+) {
+    auto& full = *full_;
+    if (!asked || !engine_settings_ || !engine_settings_->current.enhanced_graphics ||
+        !full.executor.capabilities().fxaa || battlefield_width == 0 || battlefield_height == 0) {
+        full.destroy_fxaa_target();
+        return false;
+    }
+    if (full.fxaa_width == battlefield_width && full.fxaa_height == battlefield_height)
+        return true;
+    full.destroy_fxaa_target();
+    if (full.refused_fxaa_width == battlefield_width &&
+        full.refused_fxaa_height == battlefield_height)
+        return false;
+    const auto refuse = [&](const std::string& why) {
+        full.destroy_fxaa_target();
+        full.refused_fxaa_width = battlefield_width;
+        full.refused_fxaa_height = battlefield_height;
+        std::cout << graphics_log_prefix << "the full tier's edge smoothing target of "
+                  << battlefield_width << "x" << battlefield_height << " could not be made ("
+                  << why << "); the frame draws no edge smoothing\n"
+                  << std::flush;
+        return false;
+    };
+    if (!accelerated_buffer_fits(
+            uint64_t{battlefield_width} * battlefield_height * bytes_per_texel
+        ))
+        return refuse("too little memory");
+    full.fxaa_target = full.executor.create_target(battlefield_width, battlefield_height, 1);
+    if (full.fxaa_target == card::TargetHandle{})
+        return refuse(full.executor.error());
+    full.fxaa_width = battlefield_width;
+    full.fxaa_height = battlefield_height;
+    full.refused_fxaa_width = 0;
+    full.refused_fxaa_height = 0;
+    std::cout << graphics_log_prefix << "the full tier smooths the edges through a target of "
+              << battlefield_width << "x" << battlefield_height << '\n'
+              << std::flush;
+    return true;
+}
+
 void Runtime::ensure_full_executor() {
     auto& full = *full_;
     if (!full.executor.is_open()) {
@@ -1442,6 +1496,11 @@ void Runtime::ensure_full_executor() {
         full.glow_height = 0;
         full.refused_glow_width = 0;
         full.refused_glow_height = 0;
+        full.fxaa_target = {};
+        full.fxaa_width = 0;
+        full.fxaa_height = 0;
+        full.refused_fxaa_width = 0;
+        full.refused_fxaa_height = 0;
         full.supersample = 1;
     }
     if (!full.function_tested) {
@@ -2121,6 +2180,25 @@ bool Runtime::present_full_match_layers(bool dialogs) {
         const supersampling::WorldTargetPlan supersampled =
             supersampling::plan_world_target(zoom, full.supersample, bf_w, bf_h);
         full.drawn_plan = supersampled;
+        // The edge smoothing (Enhanced graphics), where no world target
+        // smooths the battlefield already and the view is at zoom 1 or
+        // nearer: everything the battlefield shows drawn into its target
+        // from the target's corner, in place of the window, then drawn
+        // through the card's fxaa onto the battlefield.
+        const bool smoothing =
+            ensure_full_fxaa_target(supersampled.factor <= 1 && zoom >= 1.0F, bf_w, bf_h);
+        if (smoothing) {
+            over_target = full.fxaa_target;
+            over_scissor = nullptr;
+            painted = {0, 0, static_cast<int32_t>(bf_w), static_cast<int32_t>(bf_h)};
+            over_view.origin_x = view.origin_x - static_cast<float>(battlefield.x);
+            over_view.origin_y = view.origin_y - static_cast<float>(battlefield.y);
+            card::Batch clear;
+            clear.operation = card::Operation::clear;
+            clear.target = over_target;
+            clear.colour = card::Colour{0.0F, 0.0F, 0.0F, 1.0F};
+            frame.batches.push_back(clear);
+        }
         if (supersampled.factor > 1) {
             // From zoom 1 up the terrain into the world target, level 0
             // NEAREST at the zoom, the texture holding the factor's texels a
@@ -2198,11 +2276,13 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                 card::Batch resolve;
                 resolve.operation = card::Operation::resolve;
                 resolve.source = full.target;
-                resolve.scissored = true;
-                resolve.scissor = battlefield;
+                resolve.target = over_target;
+                resolve.scissored = over_scissor != nullptr;
+                if (over_scissor != nullptr)
+                    resolve.scissor = *over_scissor;
                 resolve.destination = {
-                    battlefield.x,
-                    battlefield.y,
+                    painted.x,
+                    painted.y,
                     static_cast<int32_t>(std::lround(
                         static_cast<double>(full.target_width) * zoom / static_cast<double>(factor)
                     )),
@@ -2215,18 +2295,15 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                 ft::TerrainPass pass = full.plan.passes[0];
                 pass.sampling = card::Sampling::linear;
                 quads += ft::append_terrain_tiles(
-                    frame, full.atlas, full.pages, view, pass, card::TargetHandle{}, &battlefield
+                    frame, full.atlas, full.pages, over_view, pass, over_target, over_scissor
                 );
                 const std::array<full_fog::GreyedLevel, 1> levels{
                     {{pass.level, pass.sampling, 1.0F}}
                 };
-                append_unseen(view, levels, card::TargetHandle{}, &battlefield);
+                append_unseen(over_view, levels, over_target, over_scissor);
             }
             emit_stages(
-                static_cast<float>(match_layout_.left),
-                static_cast<float>(match_layout_.top),
-                1.0F,
-                card::TargetHandle{}
+                static_cast<float>(painted.x), static_cast<float>(painted.y), 1.0F, over_target
             );
         } else {
             moved = zoom < 1.0F;
@@ -2337,6 +2414,20 @@ bool Runtime::present_full_match_layers(bool dialogs) {
             if (over_scissor != nullptr)
                 added.scissor = *over_scissor;
             frame.batches.push_back(added);
+        }
+        // The edge smoothing: the target drawn texel for texel through the
+        // fxaa onto the battlefield, under the painters' quads, which keep
+        // their sharp edges.
+        if (smoothing) {
+            card::Batch smoothed;
+            smoothed.operation = card::Operation::fxaa;
+            smoothed.source = full.fxaa_target;
+            smoothed.destination = battlefield;
+            smoothed.scissored = true;
+            smoothed.scissor = battlefield;
+            frame.batches.push_back(smoothed);
+            over_target = {};
+            painted = battlefield;
         }
         world_quads = append_world_quads(frame, full.world_quads, painted, over_target);
         full.build_ns = nanoseconds_since(build_start) - full.stage_ns;

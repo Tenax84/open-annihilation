@@ -42,7 +42,14 @@ existing behaviour changes.
   the weighted mean of nine texels in a line across, or down where
   `blur_down`, times the batch's colour, by `none` or
   `alpha_premultiplied`, on a renderer that runs the shader
-  (`Capabilities::blur`); a frame with a blur is refused on any other.
+  (`Capabilities::blur`); a frame with a blur is refused on any other;
+  or an `fxaa`, which draws a render target's texture whole into a
+  rectangle of another target, texel for texel where the rectangle is the
+  texture's size, through the edge smoothing shader, each pixel on an edge
+  between bright and dark read a fraction of a texel across the edge and
+  every other pixel as it is, times the batch's colour, by `none`, on a
+  renderer that runs the shader (`Capabilities::fxaa`); a frame with an
+  fxaa is refused on any other.
   Every batch names the target it draws into: a `TargetHandle`, or none
   for the frame's final target.
 - `append_quad` adds a quad as two triangles that share the diagonal from
@@ -79,11 +86,13 @@ existing behaviour changes.
   nearest texel. On SDL's GPU renderer (SDL 3.4 and later) it makes the
   blur shader from the form its device takes, SPIR-V, DXIL or Metal
   source, and two render states of it, one across and one down
-  (`Capabilities::blur`); where the renderer is another, the device takes
-  none of the forms the build holds or a call fails, the blur stays off. A
-  blur sets its state's step of one texel only when it changes, since SDL
-  hands the queued draws to the card before a state they use changes, and
-  puts the renderer's own shaders back after its draw.
+  (`Capabilities::blur`), and the edge smoothing shader with one render
+  state (`Capabilities::fxaa`); where the renderer is another, the device
+  takes none of the forms the build holds or a call fails, that effect
+  stays off. A blur sets its state's step of one texel, and an fxaa its
+  state's texel across and down, only when it changes, since SDL hands the
+  queued draws to the card before a state they use changes, and each puts
+  the renderer's own shaders back after its draw.
 - `create_page`, `update_page` (the whole level or a part, from bytes with
   a pitch in bytes) and `destroy_page`. A page has 1 to `most_page_levels`
   levels, each a texture of level 0 halved once more (`level_edge`), which
@@ -147,7 +156,14 @@ The build compiles them with SDL_shadercross (`OA_SHADERCROSS`, found under
 (`cmake/OaEmbedShader.cmake`); a build without the compiler embeds them
 empty. `blur_shader()` is the glow's blur: each pixel the weighted mean of
 nine texels in a line across or down, in five LINEAR reads, times the
-vertex colour. The executor runs it as `Operation::blur`.
+vertex colour. The executor runs it as `Operation::blur`. `fxaa_shader()`
+is the edge smoothing, fast approximate anti-aliasing: a pixel whose
+brightness differs little from its four neighbours' is kept; on an edge
+the shader finds which way the edge runs, follows it both ways to its
+ends, and reads the picture a fraction of a texel across it, more the
+nearer the pixel lies to the end where the edge steps, and softens a
+pixel that stands out from all eight neighbours. The executor runs it as
+`Operation::fxaa`.
 
 ## State
 

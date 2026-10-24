@@ -1001,9 +1001,11 @@ struct EngineSettings {
     /// profile may hold them lower still (ui.explosion-flash).
     ExplosionFlash explosion_flash{ExplosionFlash::full};
     /// Shots and explosions glow, their light blurred over what is around
-    /// them, while the graphics card draws the battlefield (Hardware
-    /// acceleration Full) on SDL's GPU renderer, which a start with it on
-    /// chooses first. It changes only what the frames show, never the game.
+    /// them, and the battlefield's edges are smoothed where Enhanced
+    /// anti-aliasing does not smooth them, while the graphics card draws the
+    /// battlefield (Hardware acceleration Full) on SDL's GPU renderer, which
+    /// a start with it on chooses first. It changes only what the frames
+    /// show, never the game.
     bool enhanced_graphics{};
     /// How units are drawn farther out than zoomed_out_after: as at any
     /// zoom, or as dots. Never icons, which the dialog shows but does not

@@ -71,6 +71,11 @@ struct Capabilities {
     /// one across and one down, were made. Where false a frame with a blur
     /// is refused.
     bool blur{};
+    /// Operation::fxaa runs: the renderer is SDL's GPU renderer (SDL 3.4
+    /// and later), its device takes one of the forms the edge smoothing
+    /// shader was built in (shaders.hpp), and the shader and its render
+    /// state were made. Where false a frame with an fxaa is refused.
+    bool fxaa{};
     uint32_t texture_limit{}; ///< the largest texture edge it makes; 0 for no limit
 };
 
@@ -89,6 +94,7 @@ struct Counts {
     uint64_t resolves{};         ///< resolve batches run
     uint64_t blend_reductions{}; ///< blend_reduce batches run
     uint64_t blurs{};            ///< blur batches run
+    uint64_t fxaa_passes{};      ///< fxaa batches run
     uint64_t halvings{};         ///< render targets halved into their half
     /// Flushes of the renderer after the pages' writes reached
     /// most_unflushed_update_bytes.
@@ -114,7 +120,8 @@ class Executor {
     /// it and the pixel-art sampling mode, tells the renderer to clamp
     /// texture coordinates where SDL offers the call, and on SDL's GPU
     /// renderer makes the blur's shader and render states
-    /// (Capabilities::blur), whose failure only leaves the blur off.
+    /// (Capabilities::blur) and the edge smoothing's (Capabilities::fxaa),
+    /// whose failure only leaves that effect off.
     ///
     /// @param renderer the renderer
     /// @param texture_limit the largest texture edge the renderer makes, in texels; 0 for no limit
@@ -506,14 +513,25 @@ class Executor {
     /// @return false when SDL refused
     bool run_blur(Run& run, const Batch& batch);
 
-    /// Makes the blur's shader and its two render states on SDL's GPU
-    /// renderer, for open; leaves Capabilities::blur false where the
-    /// renderer is another, its device takes none of the shader's forms or
-    /// a call fails.
-    void make_blur() noexcept;
+    /// Runs an fxaa batch: draws the source's texture whole into the
+    /// destination through the edge smoothing's render state, at the
+    /// batch's colour, setting the state's texel only when it changes, and
+    /// leaves the renderer with no render state.
+    ///
+    /// @param[in,out] run the run
+    /// @param batch the batch
+    /// @return false when SDL refused
+    bool run_fxaa(Run& run, const Batch& batch);
 
-    /// Destroys the blur's render states and shader.
-    void free_blur() noexcept;
+    /// Makes the effects' shaders and render states on SDL's GPU renderer,
+    /// for open: the blur's shader and its two states and the edge
+    /// smoothing's shader and its state. Leaves Capabilities::blur or
+    /// Capabilities::fxaa false where the renderer is another, its device
+    /// takes none of that shader's forms or a call fails.
+    void make_shaders() noexcept;
+
+    /// Destroys the effects' render states and shaders.
+    void free_shaders() noexcept;
 
     /// Runs a blend_reduce batch: halves the source unless done this run
     /// with the source not written since, draws the part's half LINEAR
@@ -571,6 +589,11 @@ class Executor {
     /// The step of one texel each state was last given, in texture
     /// coordinates; 0 for none yet.
     std::array<float, 2> blur_steps_{};
+    SDL_GPUShader* fxaa_shader_{};       ///< the edge smoothing's fragment shader on that device
+    SDL_GPURenderState* fxaa_state_{};   ///< the edge smoothing's render state
+    /// One texel across and down the state was last given, in texture
+    /// coordinates; 0 for none yet.
+    std::array<float, 2> fxaa_texel_{};
 };
 
 } // namespace oa::app::card

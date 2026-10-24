@@ -188,7 +188,7 @@ of range is clamped. A switch is On for any number above 0: a word such as
 | `open-annihilation.menu-scaling` | `sharp`, `whole-steps` or `unfiltered` | `sharp` |
 | `open-annihilation.native-density` | 0 or 1 | 0; 1 where the platform opens every window at native density |
 | `open-annihilation.explosion-flash` | `off`, `reduced` or `full` | `full` |
-| `open-annihilation.enhanced-graphics` | 0 or 1: shots and explosions glow in the Full tier on SDL's GPU renderer, which a start with it on chooses first | 0 |
+| `open-annihilation.enhanced-graphics` | 0 or 1: shots and explosions glow, and edges are smoothed where enhanced anti-aliasing is off, in the Full tier on SDL's GPU renderer, which a start with it on chooses first | 0 |
 | `open-annihilation.zoomed-out-units` | `rendered` or `dots`; any other text, `icons` among them, reads as `rendered` | `rendered` |
 | `open-annihilation.zoomed-out-after` | `1/2`, `1/3`, `1/4`, `1/6`, `1/8`, `1/12` or `1/16`; any other text reads as `1/6` | `1/6` |
 | `open-annihilation.window-frame` | `hidden-in-play` or `always-shown`; any other text reads as `hidden-in-play` | `hidden-in-play` |

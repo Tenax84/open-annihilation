@@ -7770,12 +7770,12 @@
 	it=Nitido;
 	}
 
-[Shots and explosions glow while the graphics card draws the battlefield.]
+[Shots and explosions glow and edges are smoothed while the graphics card draws the battlefield.]
 	{
-	de=Schüsse und Explosionen leuchten, während die Grafikkarte das Schlachtfeld zeichnet.;
-	fr=Les tirs et les explosions brillent lorsque la carte graphique dessine le champ de bataille.;
-	es=Los disparos y las explosiones brillan mientras la tarjeta gráfica dibuja el campo de batalla.;
-	it=Colpi ed esplosioni brillano mentre la scheda grafica disegna il campo di battaglia.;
+	de=Schüsse und Explosionen leuchten und Kanten werden geglättet, während die Grafikkarte das Schlachtfeld zeichnet.;
+	fr=Les tirs et les explosions brillent et les bords sont lissés lorsque la carte graphique dessine le champ de bataille.;
+	es=Los disparos y las explosiones brillan y los bordes se suavizan mientras la tarjeta gráfica dibuja el campo de batalla.;
+	it=Colpi ed esplosioni brillano e i bordi vengono smussati mentre la scheda grafica disegna il campo di battaglia.;
 	}
 
 [Show Active Only ({active}/{total})]
@@ -8786,12 +8786,12 @@
 	it=Il testo proprio del gioco e i nomi delle unità, dove i suoi i dati li hanno nella lingua.;
 	}
 
-[The glow needs the GPU renderer, which the next start chooses.]
+[The glow and edge smoothing need the GPU renderer, which the next start chooses.]
 	{
-	de=Das Leuchten braucht den GPU-Renderer, den der nächste Start wählt.;
-	fr=La lueur nécessite le moteur de rendu GPU, que le prochain démarrage choisit.;
-	es=El brillo necesita el renderizador GPU, que el próximo inicio elige.;
-	it=Il bagliore richiede il renderer GPU, che il prossimo avvio sceglie.;
+	de=Leuchten und Kantenglättung brauchen den GPU-Renderer, den der nächste Start wählt.;
+	fr=La lueur et le lissage des bords nécessitent le moteur de rendu GPU, que le prochain démarrage choisit.;
+	es=El brillo y el suavizado de bordes necesitan el renderizador GPU, que el próximo inicio elige.;
+	it=Il bagliore e la levigatura dei bordi richiedono il renderer GPU, che il prossimo avvio sceglie.;
 	}
 
 [The graphics card could not be used, so the processor draws the game. You can try it again under Graphics in the OA settings.]

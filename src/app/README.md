@@ -2027,6 +2027,14 @@ hosts them on the OA layer.
   sight or never mapped; then, where anything was drawn, the target is
   blurred across into the second and down back into the first and added
   over the battlefield by premultiplied alpha, under the painters' quads.
+  Where Enhanced graphics is on, the card runs the fxaa
+  (`card::Capabilities::fxaa`) and the frame draws at zoom 1 or nearer with
+  no world target, the edge smoothing: the terrain, the fog, the stages and
+  the glow are drawn into a target of the battlefield's size from its
+  corner (`ensure_full_fxaa_target`), in place of the window, and that
+  target is drawn texel for texel through `card::Operation::fxaa` onto the
+  battlefield, under the painters' quads and the painters' canvas, which
+  keep their sharp edges.
   Last the painters' quads (`paint_world_level`,
   `paint_world_blend`, `paint_world_minimum`): the kill board's shade of
   the world under it and the light of the local player's row, the +stats
