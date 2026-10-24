@@ -266,6 +266,23 @@ struct Runtime::FullPresentation {
     /// are, for ensure_full_world_target to decide.
     void destroy_world_target() noexcept;
 
+    // The glow (Enhanced graphics): what gives light drawn into the first
+    // target at half the battlefield's size, blurred across into the second
+    // and down back into the first, and added over the battlefield
+    // (Runtime::ensure_full_glow_targets).
+    std::array<card::TargetHandle, 2> glow_targets{};
+    uint32_t glow_width{};  ///< the targets' size across, in layout pixels; 0 for none
+    uint32_t glow_height{}; ///< the targets' size down
+    /// The renderer or the memory guard refused targets of this size, so
+    /// the frame draws no glow until the size changes.
+    uint32_t refused_glow_width{};
+    uint32_t refused_glow_height{};
+    uint32_t drawn_glow_draws{}; ///< sprites and beams the last frame's glow drew
+
+    /// Destroys the glow targets and forgets their size; a refusal
+    /// remembered is left, for ensure_full_glow_targets to decide.
+    void destroy_glow_targets() noexcept;
+
     card::CardFrame frame;              ///< the frame being built, its memory kept between frames
     FullFrameVertices frame_vertices{}; ///< the vertices of the frame being built, or the last
     /// The match's frame of the most vertices, which the log names as the

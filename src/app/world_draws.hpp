@@ -380,6 +380,9 @@ struct SpriteDraw {
     /// (WorldFrameDraw::shown_map), so that nothing of it lies on the black
     /// past the map's edges.
     bool on_map{};
+    /// A shot's frame (plan_match_projectiles), which the Full tier's glow
+    /// lights its surroundings by under Enhanced graphics.
+    bool glows{};
 };
 
 /// A rectangle of scene pixels: the columns from `left` up to `right` and
@@ -412,6 +415,10 @@ struct LineDraw {
     int32_t y1{};
     std::array<uint8_t, 3> color{}; ///< the RGB of a frame's line
     uint8_t palette_index{};        ///< the palette index of a bridge's line
+    /// A shot's beam, a laser's or lightning's (plan_match_projectiles),
+    /// which the Full tier's glow lights its surroundings by under
+    /// Enhanced graphics.
+    bool glows{};
 };
 
 /// A unit or a 3D feature, as plan_unit_supersampled planned it.

@@ -44,6 +44,7 @@ the locks a running game puts on them (`settings_locks`).
 | | Smooth motion: whether the frames between two ticks show units, their pieces, projectiles, debris and particles part of the way from one tick to the next, or each frame the latest tick whole | Off, On | On | `open-annihilation.smooth-motion` |
 | | Native pixel density, from the next start | Off, On; always On where the platform opens every window at native density | Off | `open-annihilation.native-density` |
 | | Explosion flash; a mod's profile may draw the flashes lower still (`ui.explosion-flash`), and the lower of the two is drawn | Off, Reduced, Full | Full | `open-annihilation.explosion-flash` (`off`, `reduced` or `full`) |
+| | Enhanced graphics: shots and explosions glow while the graphics card draws the battlefield (Full) on SDL's GPU renderer, which a start with it on chooses first | Off, On | Off | `open-annihilation.enhanced-graphics` |
 | | Zoomed out units: how units are drawn farther out than After zoom | Rendered, Dots; Icons shown faded, not offered | Rendered | `open-annihilation.zoomed-out-units` (`rendered` or `dots`; any other word, `icons` among them, reads as Rendered) |
 | | After zoom, a drop-down, locked "Needs Dots" while Zoomed out units is Rendered | 1/2, 1/3, 1/4, 1/6, 1/8, 1/12, 1/16 of normal size | 1/6 | `open-annihilation.zoomed-out-after` (`1/2`, `1/3`, `1/4`, `1/6`, `1/8`, `1/12` or `1/16`) |
 | User Interface | Menu scaling | Sharp, Whole steps, Unfiltered | Sharp | `open-annihilation.menu-scaling` (`sharp`, `whole-steps` or `unfiltered`) |

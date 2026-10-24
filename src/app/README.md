@@ -2015,7 +2015,19 @@ hosts them on the OA layer.
   the processor dithers them, since the pages hold no dithered sprite; and
   its black pass over everything (`append_unmapped`), UI colour 0 at the
   corner alphas of the cells never mapped, which blacks out the units as
-  the processor does. Last the painters' quads (`paint_world_level`,
+  the processor does. Where Enhanced graphics is on and the card runs the
+  blur (`card::Capabilities::blur`, SDL's GPU renderer alone), the glow:
+  the stages emit what gives light a second time (`SpriteStageInputs::glow`)
+  into the first of two targets at half the battlefield's size
+  (`ensure_full_glow_targets`), cleared transparent, each draw adding its
+  colour at an alpha of 0: a shot's frame (`SpriteDraw::glows`, plasma and
+  flame) at `glow_sprite_level`, an explosion's flash from its lit cell at
+  `glow_flash_level` and a shot's beam (`LineDraw::glows`, lasers and
+  lightning) `glow_line_widening` times as wide, none under a cell out of
+  sight or never mapped; then, where anything was drawn, the target is
+  blurred across into the second and down back into the first and added
+  over the battlefield by premultiplied alpha, under the painters' quads.
+  Last the painters' quads (`paint_world_level`,
   `paint_world_blend`, `paint_world_minimum`): the kill board's shade of
   the world under it and the light of the local player's row, the +stats
   panel's fills, and the shadow, outline and letter edges of game text in

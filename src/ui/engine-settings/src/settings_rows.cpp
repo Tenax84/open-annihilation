@@ -45,7 +45,7 @@ using Stepper = kit::Stepper<SettingsModel>;
 using Hint = std::array<std::string_view, 2>;
 
 /// The number of settings: Setting's enumerators.
-constexpr std::size_t kSettingCount = static_cast<std::size_t>(Setting::selection_bar) + 1;
+constexpr std::size_t kSettingCount = static_cast<std::size_t>(Setting::enhanced_graphics) + 1;
 
 // ---------------------------------------------------------------------------
 // The sections' rows.
@@ -72,9 +72,10 @@ constexpr std::array<Setting, 3> kEngineLimitsRows{
     Setting::skirmish_players,
 };
 /// Graphics' rows: how the frames are drawn, Smooth motion right under
-/// Vertical sync, then how units look zoomed out, and the zoom they look so
-/// from right under the way.
-constexpr std::array<Setting, 10> kGraphicsRows{
+/// Vertical sync, whether shots and explosions glow right under Explosion
+/// flash, then how units look zoomed out, and the zoom they look so from
+/// right under the way.
+constexpr std::array<Setting, 11> kGraphicsRows{
     Setting::max_frame_rate,
     Setting::anti_aliasing,
     Setting::screen_size,
@@ -83,6 +84,7 @@ constexpr std::array<Setting, 10> kGraphicsRows{
     Setting::smooth_motion,
     Setting::native_density,
     Setting::explosion_flash,
+    Setting::enhanced_graphics,
     Setting::zoomed_out_units,
     Setting::zoomed_out_after,
 };
@@ -2444,6 +2446,11 @@ constexpr std::array<SettingRow, kSettingCount> kDeclared{{
      .spec = engine_switch<&E::selection_bar>(
          "selection-bar", "Selection bar",
          {"A match shows group and unit selection buttons under the battlefield.", {}})},
+    {.setting = S::enhanced_graphics,
+     .spec = engine_switch<&E::enhanced_graphics>(
+         "enhanced-graphics", "Enhanced graphics",
+         {"Shots and explosions glow while the graphics card draws the battlefield.",
+          "The glow needs the GPU renderer, which the next start chooses."})},
 }};
 // clang-format on
 
@@ -2532,6 +2539,7 @@ constexpr std::array<std::string_view, kSettingCount> kSettingNames{
     "smooth-motion",
     "first-run",
     "selection-bar",
+    "enhanced-graphics",
 };
 
 /// Tells whether every row stands at its setting's place and is named by

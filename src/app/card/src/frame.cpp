@@ -148,6 +148,27 @@ std::string check_blend_reduce(const Batch& batch, std::size_t position) {
     return {};
 }
 
+/// Returns what is wrong with a blur batch, or nothing.
+///
+/// @param batch the batch
+/// @param position the batch's position in the frame
+/// @return the fault; empty for none
+std::string check_blur(const Batch& batch, std::size_t position) {
+    if (batch.source == TargetHandle{})
+        return batch_name(position) + "a blur of no render target";
+    if (batch.source == batch.target)
+        return batch_name(position) + "a blur of a render target into itself";
+    if (batch.blend != Blend::none && batch.blend != Blend::alpha_premultiplied)
+        return batch_name(position) + "a blur blends only by none or premultiplied alpha";
+    if (batch.destination.width <= 0 || batch.destination.height <= 0)
+        return batch_name(position) + "an empty destination";
+    if (!finite(batch.colour))
+        return batch_name(position) + "a blur colour that is not a number";
+    if (batch.scissored && (batch.scissor.width <= 0 || batch.scissor.height <= 0))
+        return batch_name(position) + "an empty scissor";
+    return {};
+}
+
 } // namespace
 
 void append_quad(
@@ -229,6 +250,9 @@ std::string check_frame(const CardFrame& frame) {
             break;
         case Operation::blend_reduce:
             fault = check_blend_reduce(batch, position);
+            break;
+        case Operation::blur:
+            fault = check_blur(batch, position);
             break;
         }
         if (!fault.empty())

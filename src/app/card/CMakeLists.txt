@@ -60,10 +60,12 @@ if(OA_BUILD_PLATFORM)
   # The executor (card/executor.hpp): texture pages and render targets made,
   # updated and destroyed on SDL's renderer, and a frame run on it with
   # SDL_RenderGeometryRaw and the renderer's blend modes, one call for each
-  # run of batches that share their state. Only the Full tier reaches it.
+  # run of batches that share their state, and on SDL's GPU renderer the
+  # blur through the embedded shader. Only the Full tier reaches it.
   add_library(oa-app-card-executor src/executor.cpp)
   add_library(oa::app::card_executor ALIAS oa-app-card-executor)
-  target_link_libraries(oa-app-card-executor PUBLIC oa-app-card SDL3::SDL3 PRIVATE oa-options)
+  target_link_libraries(oa-app-card-executor PUBLIC oa-app-card SDL3::SDL3
+    PRIVATE oa-app-card-shaders oa-options)
   if(BUILD_TESTING)
     # Frames run on SDL's software renderer over a surface and read back
     # against a reference rasteriser on the processor: textured and

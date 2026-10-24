@@ -50,6 +50,8 @@ inline constexpr std::string_view edge_stickiness = "open-annihilation.window-ed
 inline constexpr std::string_view middle_click_pan = "open-annihilation.middle-click-pan";
 /// 1 or 0 (EngineSettings::escape_opens_menu).
 inline constexpr std::string_view escape_opens_menu = "open-annihilation.escape-opens-menu";
+/// 1 or 0 (EngineSettings::enhanced_graphics).
+inline constexpr std::string_view enhanced_graphics = "open-annihilation.enhanced-graphics";
 /// 1 or 0 (EngineSettings::selection_bar).
 inline constexpr std::string_view selection_bar = "open-annihilation.selection-bar";
 /// Units per player, decimal (EngineSettings::unit_limit).
@@ -998,6 +1000,11 @@ struct EngineSettings {
     /// How strongly explosions' flashes light the battlefield; a mod's
     /// profile may hold them lower still (ui.explosion-flash).
     ExplosionFlash explosion_flash{ExplosionFlash::full};
+    /// Shots and explosions glow, their light blurred over what is around
+    /// them, while the graphics card draws the battlefield (Hardware
+    /// acceleration Full) on SDL's GPU renderer, which a start with it on
+    /// chooses first. It changes only what the frames show, never the game.
+    bool enhanced_graphics{};
     /// How units are drawn farther out than zoomed_out_after: as at any
     /// zoom, or as dots. Never icons, which the dialog shows but does not
     /// offer yet.

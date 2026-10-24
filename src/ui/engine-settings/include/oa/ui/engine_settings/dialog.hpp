@@ -302,7 +302,8 @@ enum class Setting : uint8_t {
     /// and the OA buttons again. It changes no setting. During a game the
     /// button is locked, and the choice is made from the main menu.
     welcome_setup,
-    selection_bar, ///< Selection bar: a switch
+    selection_bar,     ///< Selection bar: a switch
+    enhanced_graphics, ///< Enhanced graphics: a switch
 };
 
 /// Returns the settings a section shows, top to bottom.

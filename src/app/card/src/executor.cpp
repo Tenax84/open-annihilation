@@ -4,6 +4,8 @@
 // Running card command lists on SDL's renderer.
 #include "oa/app/card/executor.hpp"
 
+#include "oa/app/card/shaders.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -42,6 +44,22 @@ constexpr std::array<uint8_t, 3> target_check_colour{0x5A, 0xA5, 0x3C};
 /// textures: it run-length encodes a static texture, and a copy of a part
 /// of one then scans the whole.
 constexpr std::string_view software_renderer_name = "software";
+
+/// The name SDL gives its GPU renderer, the one renderer that runs the
+/// card's own fragment shaders.
+constexpr std::string_view gpu_renderer_name = "gpu";
+
+/// The fragment uniforms of the blur (blur.frag.hlsl): one texel across or
+/// down in texture coordinates, then two floats the shader leaves unread,
+/// which round the slot up to the sixteen bytes a uniform slot is laid out in.
+struct BlurPass {
+    float step_x{};
+    float step_y{};
+    float unused_x{};
+    float unused_y{};
+};
+
+static_assert(sizeof(BlurPass) == 4 * sizeof(float));
 
 /// A handle's low bits hold its slot, one more than the index, and its high
 /// bits the slot's generation when it was handed out.
@@ -179,10 +197,88 @@ bool Executor::open(SDL_Renderer* renderer, uint32_t texture_limit) {
     capabilities_.pixel_art_sampling = SDL_SetTextureScaleMode(probe, SDL_SCALEMODE_PIXELART);
 #endif
     SDL_DestroyTexture(probe);
+    make_blur();
     // A refusal of the composed mode or the sampling mode is answered by
-    // the fallback, not an error.
+    // the fallback, and one of the blur by leaving it off, not an error.
     SDL_ClearError();
     return true;
+}
+
+void Executor::make_blur() noexcept {
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+    const char* name = SDL_GetRendererName(renderer_);
+    if (name == nullptr || std::string_view(name) != gpu_renderer_name)
+        return;
+    auto* device = static_cast<SDL_GPUDevice*>(SDL_GetPointerProperty(
+        SDL_GetRendererProperties(renderer_), SDL_PROP_RENDERER_GPU_DEVICE_POINTER, nullptr
+    ));
+    if (device == nullptr)
+        return;
+    // The form the device takes, of those the build compiled the shader to;
+    // a build without the compiler holds none.
+    const ShaderCode code = blur_shader();
+    const SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(device);
+    SDL_GPUShaderCreateInfo shader{};
+    if ((formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0 && !code.spirv.empty()) {
+        shader.code = code.spirv.data();
+        shader.code_size = code.spirv.size();
+        shader.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        shader.entrypoint = "main";
+    } else if ((formats & SDL_GPU_SHADERFORMAT_DXIL) != 0 && !code.dxil.empty()) {
+        shader.code = code.dxil.data();
+        shader.code_size = code.dxil.size();
+        shader.format = SDL_GPU_SHADERFORMAT_DXIL;
+        shader.entrypoint = "main";
+    } else if ((formats & SDL_GPU_SHADERFORMAT_MSL) != 0 && !code.msl.empty()) {
+        shader.code = code.msl.data();
+        shader.code_size = code.msl.size();
+        shader.format = SDL_GPU_SHADERFORMAT_MSL;
+        shader.entrypoint = "main0";
+    } else {
+        return;
+    }
+    shader.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
+    shader.num_samplers = code.sampler_count;
+    shader.num_uniform_buffers = code.uniform_buffer_count;
+    blur_shader_ = SDL_CreateGPUShader(device, &shader);
+    if (blur_shader_ == nullptr)
+        return;
+    gpu_device_ = device;
+    // The texture a draw names is the shader's first sampler, which the
+    // renderer binds itself; the states add none.
+    for (SDL_GPURenderState*& state : blur_states_) {
+        SDL_GPURenderStateCreateInfo create{};
+        create.fragment_shader = blur_shader_;
+        state = SDL_CreateGPURenderState(renderer_, &create);
+        if (state == nullptr) {
+            free_blur();
+            return;
+        }
+    }
+    blur_steps_.fill(0.0F);
+    capabilities_.blur = true;
+#endif
+}
+
+void Executor::free_blur() noexcept {
+    capabilities_.blur = false;
+    blur_steps_.fill(0.0F);
+    // The states and the shader go with the renderer's device; once the
+    // renderer is gone, which SDL_GetRendererName tells, they are gone too.
+    const bool renderer_alive = renderer_ != nullptr && SDL_GetRendererName(renderer_) != nullptr;
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+    for (SDL_GPURenderState*& state : blur_states_) {
+        if (state != nullptr && renderer_alive)
+            SDL_DestroyGPURenderState(state);
+        state = nullptr;
+    }
+#else
+    blur_states_.fill(nullptr);
+#endif
+    if (blur_shader_ != nullptr && gpu_device_ != nullptr && renderer_alive)
+        SDL_ReleaseGPUShader(gpu_device_, blur_shader_);
+    blur_shader_ = nullptr;
+    gpu_device_ = nullptr;
 }
 
 void Executor::close() noexcept {
@@ -198,6 +294,7 @@ void Executor::close() noexcept {
     targets_.clear();
     free_targets_.clear();
     scratch_.clear();
+    free_blur();
     renderer_ = nullptr;
 }
 
@@ -635,8 +732,12 @@ std::string Executor::check_handles(const CardFrame& frame, const SDL_Texture* f
         const Batch& batch = frame.batches[position];
         std::string fault = target_fault(position, batch.target, "drawn into");
         if (fault.empty() &&
-            (batch.operation == Operation::resolve || batch.operation == Operation::blend_reduce))
+            (batch.operation == Operation::resolve || batch.operation == Operation::blend_reduce ||
+             batch.operation == Operation::blur))
             fault = target_fault(position, batch.source, "the source");
+        if (fault.empty() && batch.operation == Operation::blur && !capabilities_.blur)
+            fault = "batch " + std::to_string(position) +
+                    ": a blur, which this renderer cannot run (Capabilities::blur)";
         if (fault.empty() && batch.operation == Operation::blend_reduce) {
             const Target* source = find_target(batch.source);
             const Rect& part = batch.source_part;
@@ -1004,6 +1105,66 @@ bool Executor::run_blend_reduce(Run& run, const Batch& batch) {
     return true;
 }
 
+bool Executor::run_blur(Run& run, const Batch& batch) {
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+    Target* source = find_target(batch.source);
+    Target* destination = batch.target == TargetHandle{} ? nullptr : find_target(batch.target);
+    if (!bind(run, destination) || !set_clip(run, batch.scissored, batch.scissor) ||
+        !set_texture_blend(source->texture, source->blend, blend_mode(batch.blend)))
+        return false;
+    // The destination is written, so its own half, if it has one, is stale.
+    if (destination != nullptr)
+        destination->halved_in = 0;
+    // One texel of the source's texture along the line, given to the state
+    // only when it changes: SDL hands the queued draws to the card before
+    // a state they use changes.
+    const std::size_t way = batch.blur_down ? 1 : 0;
+    const uint32_t texels =
+        batch.blur_down ? source->height * source->factor : source->width * source->factor;
+    const float step = 1.0F / static_cast<float>(texels);
+    SDL_GPURenderState* state = blur_states_[way];
+    if (blur_steps_[way] != step) {
+        const BlurPass pass{batch.blur_down ? 0.0F : step, batch.blur_down ? step : 0.0F};
+        if (!SDL_SetGPURenderStateFragmentUniforms(state, 0, &pass, sizeof(pass)))
+            return fail("SDL_SetGPURenderStateFragmentUniforms of the blur");
+        blur_steps_[way] = step;
+    }
+    // The colour reaches the shader as the vertices' colour, which a
+    // texture's draw takes from its colour and alpha modulation.
+    const Colour& colour = batch.colour;
+    if (!SDL_SetTextureColorModFloat(source->texture, colour.red, colour.green, colour.blue) ||
+        !SDL_SetTextureAlphaModFloat(source->texture, colour.alpha))
+        return fail("SDL_SetTextureColorModFloat of a blurred render target");
+    if (!SDL_SetGPURenderState(renderer_, state))
+        return fail("SDL_SetGPURenderState of the blur");
+    const SDL_FRect landed{
+        static_cast<float>(batch.destination.x),
+        static_cast<float>(batch.destination.y),
+        static_cast<float>(batch.destination.width),
+        static_cast<float>(batch.destination.height)
+    };
+    const bool drawn = SDL_RenderTexture(renderer_, source->texture, nullptr, &landed);
+    // The renderer's own shaders and the target's whole colour are put back
+    // whatever the draw did, so that later draws, resolves and halvings
+    // read the target as it is.
+    const bool cleared = SDL_SetGPURenderState(renderer_, nullptr);
+    const bool put_back = SDL_SetTextureColorModFloat(source->texture, 1.0F, 1.0F, 1.0F) &&
+                          SDL_SetTextureAlphaModFloat(source->texture, 1.0F);
+    if (!drawn)
+        return fail("SDL_RenderTexture of a render target through the blur");
+    if (!cleared)
+        return fail("SDL_SetGPURenderState putting back the renderer's own shaders");
+    if (!put_back)
+        return fail("SDL_SetTextureColorModFloat putting back a render target's colour");
+    ++counts_.blurs;
+    return true;
+#else
+    std::ignore = run;
+    std::ignore = batch;
+    return refuse("a blur needs SDL 3.4 or later");
+#endif
+}
+
 bool Executor::restore(Run& run) {
     if (!bind(run, nullptr))
         return false;
@@ -1099,6 +1260,9 @@ bool Executor::run_frame(const CardFrame& frame, SDL_Texture* final_target) {
             break;
         case Operation::blend_reduce:
             ran = run_blend_reduce(run, batch);
+            break;
+        case Operation::blur:
+            ran = run_blur(run, batch);
             break;
         }
         if (!ran) {

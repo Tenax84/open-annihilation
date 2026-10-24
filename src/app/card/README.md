@@ -36,7 +36,13 @@ existing behaviour changes.
   each pixel the mean of four, LINEAR at twice the scale, then the part
   LINEAR over it at alpha `1 - log2(1 / scale)`, the scale across from one
   half to 1, so that at one half the result is the box of four pixels, at
-  1 the part itself, and between the weights change evenly with the scale.
+  1 the part itself, and between the weights change evenly with the scale;
+  or a `blur`, which draws a render target's texture whole into a
+  rectangle of another target through the glow's blur shader, each pixel
+  the weighted mean of nine texels in a line across, or down where
+  `blur_down`, times the batch's colour, by `none` or
+  `alpha_premultiplied`, on a renderer that runs the shader
+  (`Capabilities::blur`); a frame with a blur is refused on any other.
   Every batch names the target it draws into: a `TargetHandle`, or none
   for the frame's final target.
 - `append_quad` adds a quad as two triangles that share the diagonal from
@@ -70,7 +76,14 @@ existing behaviour changes.
   the renderer read every vertex to decide, and finds whether the renderer
   takes the pixel-art sampling mode (`Capabilities::pixel_art_sampling`);
   where it does not, or on SDL before 3.4, a `pixel_art` draw reads the
-  nearest texel.
+  nearest texel. On SDL's GPU renderer (SDL 3.4 and later) it makes the
+  blur shader from the form its device takes, SPIR-V, DXIL or Metal
+  source, and two render states of it, one across and one down
+  (`Capabilities::blur`); where the renderer is another, the device takes
+  none of the forms the build holds or a call fails, the blur stays off. A
+  blur sets its state's step of one texel only when it changes, since SDL
+  hands the queued draws to the card before a state they use changes, and
+  puts the renderer's own shaders back after its draw.
 - `create_page`, `update_page` (the whole level or a part, from bytes with
   a pitch in bytes) and `destroy_page`. A page has 1 to `most_page_levels`
   levels, each a texture of level 0 halved once more (`level_edge`), which
@@ -134,7 +147,7 @@ The build compiles them with SDL_shadercross (`OA_SHADERCROSS`, found under
 (`cmake/OaEmbedShader.cmake`); a build without the compiler embeds them
 empty. `blur_shader()` is the glow's blur: each pixel the weighted mean of
 nine texels in a line across or down, in five LINEAR reads, times the
-vertex colour.
+vertex colour. The executor runs it as `Operation::blur`.
 
 ## State
 
@@ -228,7 +241,7 @@ bytes of the supersampled targets, which it never checks.
   into memory on SDL's `direct3d` renderer, once at creation. The design's
   4x4 check target for that renderer, drawn into from the new target and
   read back instead, waits for the slice that wires the fallbacks.
-- The shaders are compiled and embedded, but nothing draws with them yet:
-  the executor makes no GPU render state and no batch names an effect.
-  SDL_shadercross is built by hand into `local/deps`; no bootstrap script
+- The blur runs only on SDL's GPU renderer, which the software renderer
+  the test runs on is not, so `app-card-frame` does not cover it.
+- SDL_shadercross is built by hand into `local/deps`; no bootstrap script
   builds it, so a build without it has no effects.

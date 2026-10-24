@@ -240,7 +240,25 @@ struct SpriteStageInputs {
     /// The display gamma's table, applied to every flat colour as the
     /// pages apply it to their texels; null for a gamma of 1.
     const std::array<uint8_t, 256>* gamma{};
+    /// The glow's pass (Enhanced graphics): only what gives light is
+    /// emitted, each draw adding its light to the glow target, which is
+    /// cleared transparent, and leaving its alpha 0. A shot's frame
+    /// (SpriteDraw::glows) at glow_sprite_level and an explosion's flash
+    /// from its lit cell at glow_flash_level, both by premultiplied alpha
+    /// at a vertex alpha of 0, which adds their colour; a shot's beam
+    /// (LineDraw::glows) glow_line_widening times as wide, in its colour at
+    /// an alpha of 0. Nothing is emitted under a cell out of sight or never
+    /// mapped, nor any other draw.
+    bool glow{};
 };
+
+/// The share of a shot's frame's colour the glow's pass adds.
+inline constexpr float glow_sprite_level = 0.8F;
+/// The share of an explosion's flash's light the glow's pass adds.
+inline constexpr float glow_flash_level = 0.6F;
+/// How many times wider than the frame draws it a beam is in the glow's
+/// pass, so that the blur spreads a beam of one pixel into a halo.
+inline constexpr float glow_line_widening = 3.0F;
 
 /// What the sprite stage did.
 struct SpriteStageResult {

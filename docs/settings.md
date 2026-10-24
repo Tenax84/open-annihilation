@@ -464,6 +464,16 @@ the game draws its text and how the modern fonts draw it.
   more than you chose. It changes only what your screen shows, never the
   game, and takes effect at once, in a multiplayer game or a replay too.
   Choose Reduced or Off if flashing light is uncomfortable for you.
+- **Enhanced graphics**, Off by default. On, shots and explosions glow:
+  lasers, lightning, plasma and flame shots and the flashes of explosions
+  spread a soft light over what is around them. The glow is drawn only
+  while the graphics card draws the battlefield (Hardware acceleration
+  Full), and only on the card's newest drawing interface, which the game
+  chooses at the start after you turn the setting on; until you restart,
+  or where that interface cannot start, the battlefield looks as without
+  it. Shots' 3D models do not glow yet. It changes only what your screen
+  shows, never the game, and takes effect at once where the interface is
+  in use. Turn it off if the glow distracts you or the frame rate drops.
 - **Zoomed out units**, Rendered or Dots, Rendered by default; Icons is
   shown but cannot be chosen yet. It says how units are drawn when the
   view is zoomed out farther than After zoom. Rendered draws every unit,
