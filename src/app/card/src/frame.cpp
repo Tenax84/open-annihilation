@@ -164,6 +164,8 @@ std::string check_blur(const Batch& batch, std::size_t position) {
         return batch_name(position) + "an empty destination";
     if (!finite(batch.colour))
         return batch_name(position) + "a blur colour that is not a number";
+    if (!std::isfinite(batch.blur_reach) || batch.blur_reach <= 0.0F)
+        return batch_name(position) + "a blur reach that is not above 0";
     if (batch.scissored && (batch.scissor.width <= 0 || batch.scissor.height <= 0))
         return batch_name(position) + "an empty scissor";
     return {};

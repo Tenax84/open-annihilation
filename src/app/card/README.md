@@ -40,7 +40,7 @@ existing behaviour changes.
   or a `blur`, which draws a render target's texture whole into a
   rectangle of another target through the glow's blur shader, each pixel
   the weighted mean of nine texels in a line across, or down where
-  `blur_down`, times the batch's colour, by `none` or
+  `blur_down`, `blur_reach` texels apart, times the batch's colour, by `none` or
   `alpha_premultiplied`, on a renderer that runs the shader
   (`Capabilities::blur`); a frame with a blur is refused on any other.
   Every batch names the target it draws into: a `TargetHandle`, or none
@@ -81,7 +81,7 @@ existing behaviour changes.
   source, and two render states of it, one across and one down
   (`Capabilities::blur`); where the renderer is another, the device takes
   none of the forms the build holds or a call fails, the blur stays off. A
-  blur sets its state's step of one texel only when it changes, since SDL
+  blur sets its state's step of `blur_reach` texels only when it changes, since SDL
   hands the queued draws to the card before a state they use changes, and
   puts the renderer's own shaders back after its draw.
 - `create_page`, `update_page` (the whole level or a part, from bytes with
@@ -146,7 +146,8 @@ The build compiles them with SDL_shadercross (`OA_SHADERCROSS`, found under
 `local/deps/shadercross-install` when not given) and embeds the result
 (`cmake/OaEmbedShader.cmake`); a build without the compiler embeds them
 empty. `blur_shader()` is the glow's blur: each pixel the weighted mean of
-nine texels in a line across or down, in five LINEAR reads, times the
+nine texels in a line across or down, a given step apart, in five LINEAR
+reads, times the
 vertex colour. The executor runs it as `Operation::blur`.
 
 ## State
