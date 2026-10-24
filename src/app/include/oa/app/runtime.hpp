@@ -9285,6 +9285,24 @@ class Runtime final : public menu::Host,
     /// @return true when the frame draws the glow
     bool ensure_full_glow_targets(uint32_t battlefield_width, uint32_t battlefield_height);
 
+    /// Makes the Full tier's edge smoothing target where Enhanced graphics
+    /// is on, the card runs the fxaa (card::Capabilities::fxaa) and the
+    /// frame asks for it: one target of the battlefield's size at factor 1,
+    /// which the battlefield is drawn into and the fxaa draws onto the
+    /// window; made again when the size changes, and freed where the frame
+    /// asks for none. A target the renderer or the memory guard refuses is
+    /// not asked for again at that size, logged once.
+    ///
+    /// @param asked the frame draws the battlefield at zoom 1 or nearer with no world target
+    /// @param battlefield_width layout pixels across the battlefield
+    /// @param battlefield_height layout pixels down it
+    /// @return true when the frame draws the battlefield through the edge smoothing
+    bool ensure_full_fxaa_target(
+        bool asked,
+        uint32_t battlefield_width,
+        uint32_t battlefield_height
+    );
+
     /// Opens the card's executor on the renderer at its texture limit,
     /// unless it is open, and runs the Full function test on it once per
     /// opening: a page of two levels drawn 1:1 NEAREST and its level 1

@@ -28,4 +28,13 @@ struct ShaderCode {
 /// texel across or down in texture coordinates, then two unused.
 ShaderCode blur_shader() noexcept;
 
+/// The edge smoothing (fxaa.frag.hlsl), fast approximate anti-aliasing: a
+/// pixel on an edge between bright and dark read a fraction of a texel
+/// across the edge, by how near it lies to the edge's step, times the
+/// vertex colour; a pixel off any edge kept. It reads the drawn texture,
+/// drawn texel for texel, with a LINEAR sampler, and in uniform slot 0 two
+/// pairs of floats: one texel across and down in texture coordinates, then
+/// two unused.
+ShaderCode fxaa_shader() noexcept;
+
 } // namespace oa::app::card

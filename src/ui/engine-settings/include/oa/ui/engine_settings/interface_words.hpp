@@ -411,7 +411,8 @@ inline constexpr std::string_view interface_words[] = {
     "Shared game - still running",
     "Sharing",
     "Sharp",
-    "Shots and explosions glow while the graphics card draws the battlefield.",
+    "Shots and explosions glow and edges are smoothed while the graphics card draws the "
+    "battlefield.",
     "Show Active Only ({active}/{total})",
     "Show performance statistics",
     "Signing key",
@@ -464,7 +465,7 @@ inline constexpr std::string_view interface_words[] = {
     "The download failed",
     "The first press clears the selection, the second opens the menu.",
     "The game's own text and unit names, where its data has them in the language.",
-    "The glow needs the GPU renderer, which the next start chooses.",
+    "The glow and edge smoothing need the GPU renderer, which the next start chooses.",
     "The largest whole-number scale that fits: smaller menus, every pixel square.",
     "The menus fill the window, every pixel as wide as the next.",
     "The menus fill the window, unfiltered, as the game always drew them.",

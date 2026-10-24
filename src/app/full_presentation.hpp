@@ -283,6 +283,22 @@ struct Runtime::FullPresentation {
     /// remembered is left, for ensure_full_glow_targets to decide.
     void destroy_glow_targets() noexcept;
 
+    // The edge smoothing (Enhanced graphics, with no world target): the
+    // battlefield drawn into this target from its corner, then drawn
+    // through the card's fxaa onto the battlefield
+    // (Runtime::ensure_full_fxaa_target).
+    card::TargetHandle fxaa_target{};
+    uint32_t fxaa_width{};  ///< the target's size across, in layout pixels; 0 for none
+    uint32_t fxaa_height{}; ///< the target's size down
+    /// The renderer or the memory guard refused a target of this size, so
+    /// the frame draws no edge smoothing until the size changes.
+    uint32_t refused_fxaa_width{};
+    uint32_t refused_fxaa_height{};
+
+    /// Destroys the edge smoothing's target and forgets its size; a refusal
+    /// remembered is left, for ensure_full_fxaa_target to decide.
+    void destroy_fxaa_target() noexcept;
+
     card::CardFrame frame;              ///< the frame being built, its memory kept between frames
     FullFrameVertices frame_vertices{}; ///< the vertices of the frame being built, or the last
     /// The match's frame of the most vertices, which the log names as the

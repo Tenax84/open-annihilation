@@ -18,7 +18,7 @@ find_program(OA_SHADERCROSS shadercross
   DOC "SDL_shadercross, which compiles the card's fragment shaders")
 set(oa_card_shader_sources)
 # Each shader: its name, the textures it reads and its uniform slots.
-foreach(oa_card_shader IN ITEMS "blur;1;1")
+foreach(oa_card_shader IN ITEMS "blur;1;1" "fxaa;1;1")
   list(GET oa_card_shader 0 oa_card_shader_name)
   list(GET oa_card_shader 1 oa_card_shader_samplers)
   list(GET oa_card_shader 2 oa_card_shader_uniform_buffers)
@@ -61,7 +61,8 @@ if(OA_BUILD_PLATFORM)
   # updated and destroyed on SDL's renderer, and a frame run on it with
   # SDL_RenderGeometryRaw and the renderer's blend modes, one call for each
   # run of batches that share their state, and on SDL's GPU renderer the
-  # blur through the embedded shader. Only the Full tier reaches it.
+  # blur and the edge smoothing through the embedded shaders. Only the Full
+  # tier reaches it.
   add_library(oa-app-card-executor src/executor.cpp)
   add_library(oa::app::card_executor ALIAS oa-app-card-executor)
   target_link_libraries(oa-app-card-executor PUBLIC oa-app-card SDL3::SDL3

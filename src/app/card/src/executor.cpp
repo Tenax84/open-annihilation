@@ -61,6 +61,54 @@ struct BlurPass {
 
 static_assert(sizeof(BlurPass) == 4 * sizeof(float));
 
+/// The fragment uniforms of the edge smoothing (fxaa.frag.hlsl): one texel
+/// across and down in texture coordinates, then two floats the shader
+/// leaves unread, which round the slot up to sixteen bytes.
+struct FxaaPass {
+    float texel_x{};
+    float texel_y{};
+    float unused_x{};
+    float unused_y{};
+};
+
+static_assert(sizeof(FxaaPass) == 4 * sizeof(float));
+
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+/// Makes a fragment shader on a GPU device in the form it takes, of those
+/// the build compiled the shader to; a build without the compiler holds
+/// none.
+///
+/// @param device the GPU renderer's device
+/// @param code the shader's forms
+/// @return the shader; null where the device takes none of its forms or SDL refused
+SDL_GPUShader* make_fragment_shader(SDL_GPUDevice* device, const ShaderCode& code) noexcept {
+    const SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(device);
+    SDL_GPUShaderCreateInfo shader{};
+    if ((formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0 && !code.spirv.empty()) {
+        shader.code = code.spirv.data();
+        shader.code_size = code.spirv.size();
+        shader.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        shader.entrypoint = "main";
+    } else if ((formats & SDL_GPU_SHADERFORMAT_DXIL) != 0 && !code.dxil.empty()) {
+        shader.code = code.dxil.data();
+        shader.code_size = code.dxil.size();
+        shader.format = SDL_GPU_SHADERFORMAT_DXIL;
+        shader.entrypoint = "main";
+    } else if ((formats & SDL_GPU_SHADERFORMAT_MSL) != 0 && !code.msl.empty()) {
+        shader.code = code.msl.data();
+        shader.code_size = code.msl.size();
+        shader.format = SDL_GPU_SHADERFORMAT_MSL;
+        shader.entrypoint = "main0";
+    } else {
+        return nullptr;
+    }
+    shader.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
+    shader.num_samplers = code.sampler_count;
+    shader.num_uniform_buffers = code.uniform_buffer_count;
+    return SDL_CreateGPUShader(device, &shader);
+}
+#endif
+
 /// A handle's low bits hold its slot, one more than the index, and its high
 /// bits the slot's generation when it was handed out.
 constexpr uint32_t handle_slot_bits = 16;
@@ -197,14 +245,14 @@ bool Executor::open(SDL_Renderer* renderer, uint32_t texture_limit) {
     capabilities_.pixel_art_sampling = SDL_SetTextureScaleMode(probe, SDL_SCALEMODE_PIXELART);
 #endif
     SDL_DestroyTexture(probe);
-    make_blur();
+    make_shaders();
     // A refusal of the composed mode or the sampling mode is answered by
-    // the fallback, and one of the blur by leaving it off, not an error.
+    // the fallback, and one of an effect by leaving it off, not an error.
     SDL_ClearError();
     return true;
 }
 
-void Executor::make_blur() noexcept {
+void Executor::make_shaders() noexcept {
 #if SDL_VERSION_ATLEAST(3, 4, 0)
     const char* name = SDL_GetRendererName(renderer_);
     if (name == nullptr || std::string_view(name) != gpu_renderer_name)
@@ -214,56 +262,37 @@ void Executor::make_blur() noexcept {
     ));
     if (device == nullptr)
         return;
-    // The form the device takes, of those the build compiled the shader to;
-    // a build without the compiler holds none.
-    const ShaderCode code = blur_shader();
-    const SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(device);
-    SDL_GPUShaderCreateInfo shader{};
-    if ((formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0 && !code.spirv.empty()) {
-        shader.code = code.spirv.data();
-        shader.code_size = code.spirv.size();
-        shader.format = SDL_GPU_SHADERFORMAT_SPIRV;
-        shader.entrypoint = "main";
-    } else if ((formats & SDL_GPU_SHADERFORMAT_DXIL) != 0 && !code.dxil.empty()) {
-        shader.code = code.dxil.data();
-        shader.code_size = code.dxil.size();
-        shader.format = SDL_GPU_SHADERFORMAT_DXIL;
-        shader.entrypoint = "main";
-    } else if ((formats & SDL_GPU_SHADERFORMAT_MSL) != 0 && !code.msl.empty()) {
-        shader.code = code.msl.data();
-        shader.code_size = code.msl.size();
-        shader.format = SDL_GPU_SHADERFORMAT_MSL;
-        shader.entrypoint = "main0";
-    } else {
-        return;
-    }
-    shader.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
-    shader.num_samplers = code.sampler_count;
-    shader.num_uniform_buffers = code.uniform_buffer_count;
-    blur_shader_ = SDL_CreateGPUShader(device, &shader);
-    if (blur_shader_ == nullptr)
-        return;
     gpu_device_ = device;
-    // The texture a draw names is the shader's first sampler, which the
+    // The texture a draw names is each shader's first sampler, which the
     // renderer binds itself; the states add none.
-    for (SDL_GPURenderState*& state : blur_states_) {
-        SDL_GPURenderStateCreateInfo create{};
+    SDL_GPURenderStateCreateInfo create{};
+    blur_shader_ = make_fragment_shader(device, blur_shader());
+    if (blur_shader_ != nullptr) {
         create.fragment_shader = blur_shader_;
-        state = SDL_CreateGPURenderState(renderer_, &create);
-        if (state == nullptr) {
-            free_blur();
-            return;
+        bool made = true;
+        for (SDL_GPURenderState*& state : blur_states_) {
+            state = SDL_CreateGPURenderState(renderer_, &create);
+            made = made && state != nullptr;
         }
+        blur_steps_.fill(0.0F);
+        capabilities_.blur = made;
     }
-    blur_steps_.fill(0.0F);
-    capabilities_.blur = true;
+    fxaa_shader_ = make_fragment_shader(device, fxaa_shader());
+    if (fxaa_shader_ != nullptr) {
+        create.fragment_shader = fxaa_shader_;
+        fxaa_state_ = SDL_CreateGPURenderState(renderer_, &create);
+        fxaa_texel_.fill(0.0F);
+        capabilities_.fxaa = fxaa_state_ != nullptr;
+    }
 #endif
 }
 
-void Executor::free_blur() noexcept {
+void Executor::free_shaders() noexcept {
     capabilities_.blur = false;
+    capabilities_.fxaa = false;
     blur_steps_.fill(0.0F);
-    // The states and the shader go with the renderer's device; once the
+    fxaa_texel_.fill(0.0F);
+    // The states and the shaders go with the renderer's device; once the
     // renderer is gone, which SDL_GetRendererName tells, they are gone too.
     const bool renderer_alive = renderer_ != nullptr && SDL_GetRendererName(renderer_) != nullptr;
 #if SDL_VERSION_ATLEAST(3, 4, 0)
@@ -272,12 +301,17 @@ void Executor::free_blur() noexcept {
             SDL_DestroyGPURenderState(state);
         state = nullptr;
     }
+    if (fxaa_state_ != nullptr && renderer_alive)
+        SDL_DestroyGPURenderState(fxaa_state_);
 #else
     blur_states_.fill(nullptr);
 #endif
-    if (blur_shader_ != nullptr && gpu_device_ != nullptr && renderer_alive)
-        SDL_ReleaseGPUShader(gpu_device_, blur_shader_);
+    fxaa_state_ = nullptr;
+    for (SDL_GPUShader* shader : {blur_shader_, fxaa_shader_})
+        if (shader != nullptr && gpu_device_ != nullptr && renderer_alive)
+            SDL_ReleaseGPUShader(gpu_device_, shader);
     blur_shader_ = nullptr;
+    fxaa_shader_ = nullptr;
     gpu_device_ = nullptr;
 }
 
@@ -294,7 +328,7 @@ void Executor::close() noexcept {
     targets_.clear();
     free_targets_.clear();
     scratch_.clear();
-    free_blur();
+    free_shaders();
     renderer_ = nullptr;
 }
 
@@ -733,11 +767,14 @@ std::string Executor::check_handles(const CardFrame& frame, const SDL_Texture* f
         std::string fault = target_fault(position, batch.target, "drawn into");
         if (fault.empty() &&
             (batch.operation == Operation::resolve || batch.operation == Operation::blend_reduce ||
-             batch.operation == Operation::blur))
+             batch.operation == Operation::blur || batch.operation == Operation::fxaa))
             fault = target_fault(position, batch.source, "the source");
         if (fault.empty() && batch.operation == Operation::blur && !capabilities_.blur)
             fault = "batch " + std::to_string(position) +
                     ": a blur, which this renderer cannot run (Capabilities::blur)";
+        if (fault.empty() && batch.operation == Operation::fxaa && !capabilities_.fxaa)
+            fault = "batch " + std::to_string(position) +
+                    ": an fxaa, which this renderer cannot run (Capabilities::fxaa)";
         if (fault.empty() && batch.operation == Operation::blend_reduce) {
             const Target* source = find_target(batch.source);
             const Rect& part = batch.source_part;
@@ -1165,6 +1202,65 @@ bool Executor::run_blur(Run& run, const Batch& batch) {
 #endif
 }
 
+bool Executor::run_fxaa(Run& run, const Batch& batch) {
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+    Target* source = find_target(batch.source);
+    Target* destination = batch.target == TargetHandle{} ? nullptr : find_target(batch.target);
+    if (!bind(run, destination) || !set_clip(run, batch.scissored, batch.scissor) ||
+        !set_texture_blend(source->texture, source->blend, blend_mode(batch.blend)))
+        return false;
+    // The destination is written, so its own half, if it has one, is stale.
+    if (destination != nullptr)
+        destination->halved_in = 0;
+    // One texel of the source's texture across and down, given to the
+    // state only when it changes: SDL hands the queued draws to the card
+    // before a state they use changes.
+    const std::array<float, 2> texel{
+        1.0F / static_cast<float>(source->width * source->factor),
+        1.0F / static_cast<float>(source->height * source->factor)
+    };
+    if (fxaa_texel_ != texel) {
+        const FxaaPass pass{texel[0], texel[1]};
+        if (!SDL_SetGPURenderStateFragmentUniforms(fxaa_state_, 0, &pass, sizeof(pass)))
+            return fail("SDL_SetGPURenderStateFragmentUniforms of the edge smoothing");
+        fxaa_texel_ = texel;
+    }
+    // The colour reaches the shader as the vertices' colour, which a
+    // texture's draw takes from its colour and alpha modulation.
+    const Colour& colour = batch.colour;
+    if (!SDL_SetTextureColorModFloat(source->texture, colour.red, colour.green, colour.blue) ||
+        !SDL_SetTextureAlphaModFloat(source->texture, colour.alpha))
+        return fail("SDL_SetTextureColorModFloat of a smoothed render target");
+    if (!SDL_SetGPURenderState(renderer_, fxaa_state_))
+        return fail("SDL_SetGPURenderState of the edge smoothing");
+    const SDL_FRect landed{
+        static_cast<float>(batch.destination.x),
+        static_cast<float>(batch.destination.y),
+        static_cast<float>(batch.destination.width),
+        static_cast<float>(batch.destination.height)
+    };
+    const bool drawn = SDL_RenderTexture(renderer_, source->texture, nullptr, &landed);
+    // The renderer's own shaders and the target's whole colour are put back
+    // whatever the draw did, so that later draws, resolves and halvings
+    // read the target as it is.
+    const bool cleared = SDL_SetGPURenderState(renderer_, nullptr);
+    const bool put_back = SDL_SetTextureColorModFloat(source->texture, 1.0F, 1.0F, 1.0F) &&
+                          SDL_SetTextureAlphaModFloat(source->texture, 1.0F);
+    if (!drawn)
+        return fail("SDL_RenderTexture of a render target through the edge smoothing");
+    if (!cleared)
+        return fail("SDL_SetGPURenderState putting back the renderer's own shaders");
+    if (!put_back)
+        return fail("SDL_SetTextureColorModFloat putting back a render target's colour");
+    ++counts_.fxaa_passes;
+    return true;
+#else
+    std::ignore = run;
+    std::ignore = batch;
+    return refuse("an fxaa needs SDL 3.4 or later");
+#endif
+}
+
 bool Executor::restore(Run& run) {
     if (!bind(run, nullptr))
         return false;
@@ -1263,6 +1359,9 @@ bool Executor::run_frame(const CardFrame& frame, SDL_Texture* final_target) {
             break;
         case Operation::blur:
             ran = run_blur(run, batch);
+            break;
+        case Operation::fxaa:
+            ran = run_fxaa(run, batch);
             break;
         }
         if (!ran) {

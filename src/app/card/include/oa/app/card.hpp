@@ -10,7 +10,9 @@
 // fills a render target with a colour; a resolve draws a render target,
 // reduced from its supersampling factor to its own size, into a rectangle
 // of another target; a blur draws a render target through the glow's blur
-// shader into a rectangle of another. The executor (card/executor.hpp)
+// shader into a rectangle of another; an fxaa draws a render target texel
+// for texel through the edge smoothing shader into a rectangle of another.
+// The executor (card/executor.hpp)
 // makes the pages and targets and runs the list on SDL's renderer. Nothing here is reached by
 // the standard tier or the Basic tier: only the Full tier builds and runs
 // frames, the terrain's first.
@@ -201,10 +203,18 @@ enum class Operation : uint8_t {
     /// Batch::blur_down, times the batch's colour. Only a renderer that
     /// runs the shader takes it (Capabilities::blur).
     blur,
+    /// Draws a render target's texture, whole, into a rectangle of another
+    /// target through the edge smoothing (shaders.hpp, fast approximate
+    /// anti-aliasing): each pixel on an edge between bright and dark read a
+    /// fraction of a texel across the edge, each pixel off any edge as it
+    /// is, times the batch's colour. A rectangle of the texture's own size
+    /// lands it texel for texel, as the shader reads it. Only a renderer
+    /// that runs the shader takes it (Capabilities::fxaa).
+    fxaa,
 };
 
 /// The number of operations; an Operation value is below it.
-inline constexpr uint8_t operation_count = 5;
+inline constexpr uint8_t operation_count = 6;
 
 /// The least a blend_reduce scales its part by, across and down; the most
 /// is 1.
@@ -215,7 +225,8 @@ inline constexpr double smallest_blend_reduce_scale = 0.5;
 /// source, destination, blend (none, alpha or alpha_premultiplied) and
 /// scissor; a blend_reduce the source, source_part, destination and
 /// scissor, its blend none; a blur the source, destination, blend (none or
-/// alpha_premultiplied), scissor, blur_down and colour. Fields an operation
+/// alpha_premultiplied), scissor, blur_down and colour; an fxaa the source,
+/// destination, scissor and colour, its blend none. Fields an operation
 /// does not use are left at their defaults.
 struct Batch {
     Operation operation{Operation::draw};
@@ -251,7 +262,8 @@ struct Batch {
     /// part's half is whole pixels of the texture's half and no renderer
     /// truncates a fraction.
     Rect source_part{};
-    /// What a clear fills with; what a blur multiplies each pixel by.
+    /// What a clear fills with; what a blur or an fxaa multiplies each
+    /// pixel by.
     Colour colour{};
     /// A blur's line runs down the source; false runs it across.
     bool blur_down{};
@@ -310,7 +322,9 @@ void append_quad(
 /// down outside smallest_blend_reduce_scale to 1, a blur of no source,
 /// into its own source, with a blend other than none or
 /// alpha_premultiplied, an empty destination or a colour that is not a
-/// number, a shift that is not a number or lies a whole pixel or more from
+/// number, an fxaa of no source, into its own source, with a blend other
+/// than none, an empty destination or a colour that is not a number, a
+/// shift that is not a number or lies a whole pixel or more from
 /// 0, or one on a batch that is neither a resolve nor a blend_reduce, or a
 /// vertex that is not finite or lies beyond largest_coordinate. The
 /// executor refuses such a frame whole and draws nothing of it.
