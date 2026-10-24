@@ -2303,25 +2303,31 @@ bool Runtime::present_full_match_layers(bool dialogs) {
         // painters' quads.
         if (!fog_in_target)
             append_fog_over(over_view, over_target, over_scissor);
-        // The glow, where its pass drew anything: blurred across into the
-        // second target and down back into the first, then added over
+        // The glow, where its pass drew anything: each round of the blur
+        // (glow_blur_reaches) across into the second target and down back
+        // into the first, the last down at glow_strength, then added over
         // everything the battlefield shows, below the painters' quads. The
         // targets' alpha stays 0, so premultiplied alpha adds their colour.
         if (glowing && full.drawn_glow_draws != 0) {
             const card::Rect whole{
                 0, 0, static_cast<int32_t>(full.glow_width), static_cast<int32_t>(full.glow_height)
             };
-            card::Batch across;
-            across.operation = card::Operation::blur;
-            across.source = full.glow_targets[0];
-            across.target = full.glow_targets[1];
-            across.destination = whole;
-            frame.batches.push_back(across);
-            card::Batch down = across;
-            down.source = full.glow_targets[1];
-            down.target = full.glow_targets[0];
-            down.blur_down = true;
-            frame.batches.push_back(down);
+            for (const float reach : glow_blur_reaches) {
+                card::Batch across;
+                across.operation = card::Operation::blur;
+                across.source = full.glow_targets[0];
+                across.target = full.glow_targets[1];
+                across.destination = whole;
+                across.blur_reach = reach;
+                frame.batches.push_back(across);
+                card::Batch down = across;
+                down.source = full.glow_targets[1];
+                down.target = full.glow_targets[0];
+                down.blur_down = true;
+                frame.batches.push_back(down);
+            }
+            frame.batches.back().colour =
+                card::Colour{glow_strength, glow_strength, glow_strength, glow_strength};
             card::Batch added;
             added.operation = card::Operation::resolve;
             added.source = full.glow_targets[0];
