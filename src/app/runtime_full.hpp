@@ -349,6 +349,18 @@ SpriteStageResult emit_sprites(
 /// @return the sampling
 [[nodiscard]] card::Sampling sprite_sampling(float zoom) noexcept;
 
+/// Returns the level of a sprite page a frame is drawn from: zoomed out,
+/// where the sampling is linear, the deepest level of the page whose texels
+/// still cover a target pixel or more, so that each pixel reads no more
+/// than the texels around it and a shrunk frame does not shimmer; level 0
+/// otherwise.
+///
+/// @param sampling how the page is sampled (sprite_sampling)
+/// @param pixels_per_texel target pixels one texel of level 0 covers across
+///     (pixels_per_map_pixel)
+/// @return the level, below oa::present::gpu_world::page_level_count
+[[nodiscard]] uint8_t sprite_page_level(card::Sampling sampling, float pixels_per_texel) noexcept;
+
 /// Returns how wide a thin line is drawn: `max(1, zoom)` layout pixels, at
 /// the view's scale, so that it stays about one screen pixel wide zoomed
 /// out and grows with the zoom zoomed in.

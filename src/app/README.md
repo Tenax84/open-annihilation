@@ -2111,8 +2111,13 @@ hosts them on the OA layer.
   for no tier, the sprite pages made ahead at a shared game's loading
   screen, smooth panning and native density for the fog passes and the
   painters' quads (they draw on the camera's map pixel at density 1), the
-  sprite pages' level 1 (the stage samples level 0 linear when zoomed
-  out), and the golden images.
+  reduced levels of the models' texture pages, and the golden images.
+  The sprite pages are made with `page_level_count` levels, the reduced
+  ones computed from level 0 over what each upload writes
+  (`reduce_page_area`), and zoomed out the stage draws a frame from the
+  deepest level whose texels still cover a target pixel
+  (`sprite_page_level`), so that shrunk trees, wrecks and explosions do
+  not shimmer.
   `app-full-terrain` checks the level rule and the quads over a small map
   on three pages, one batch per page whatever the grid's order;
   `app-full-supersampling` the world target's plan at every kind of zoom

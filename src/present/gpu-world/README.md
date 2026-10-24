@@ -289,11 +289,17 @@ the page bytes under the limit throughout.
 
 ### Limitations
 
-The pages hold level 0 only: level 1, the exact half-size box the design
-draws sprites from when zoomed out, follows, and the cells are aligned for
-it; until then the Full tier's sprite stage samples level 0 linear when
-zoomed out. The gray table is the caller's, as the palette is; the pages
-build neither.
+The pages hold level 0. `reduce_page_area` computes the reduced levels,
+`page_level_count` of them with level 0: each texel the average of the
+2^L by 2^L texels of level 0 under it, in every channel, rounded once with
+halves up, over an area that `level_aligned` grows to the level's whole
+texels. Two frames lie at least four transparent texels apart, so neither
+a texel of level 1 or 2 nor a linear read inside a frame's rectangle at
+those levels takes anything of a neighbour; level 3 could, and is not
+made. The Full tier uploads the levels over what each upload writes and
+draws a zoomed-out frame from the deepest level whose texels still cover
+a target pixel. No test holds the reduced levels yet. The gray table is
+the caller's, as the palette is; the pages build neither.
 
 ## Model meshes
 

@@ -843,7 +843,7 @@ card::PageHandle Runtime::FullPresentation::card_page(uint32_t page) {
     card::PageDescription description;
     description.width = size;
     description.height = size;
-    description.level_count = 1;
+    description.level_count = gw::page_level_count;
     slot.handle = executor.create_page(description);
     if (slot.handle == card::PageHandle{})
         throw FullCardError(
@@ -875,14 +875,37 @@ void Runtime::FullPresentation::upload_sprite_pages() {
             continue;
         const uint32_t pitch = page.size * card::texel_bytes;
         bool uploaded = true;
-        if (slot.revision == 0) {
-            uploaded = executor.update_page(slot.handle, 0, nullptr, page.texels.data(), pitch);
-        } else if (!page.dirty.empty()) {
-            const card::Rect part{page.dirty.x, page.dirty.y, page.dirty.width, page.dirty.height};
+        // The whole page the first time, then what was written since.
+        const gw::TexelRect written =
+            slot.revision == 0 ? gw::TexelRect{0, 0, static_cast<uint16_t>(page.size),
+                                               static_cast<uint16_t>(page.size)}
+                               : page.dirty;
+        if (!written.empty()) {
+            const card::Rect part{written.x, written.y, written.width, written.height};
             const uint8_t* first =
                 page.texels.data() +
-                (std::size_t{page.dirty.y} * page.size + page.dirty.x) * card::texel_bytes;
+                (std::size_t{written.y} * page.size + written.x) * card::texel_bytes;
             uploaded = executor.update_page(slot.handle, 0, &part, first, pitch);
+        }
+        // The reduced levels a zoomed-out frame is drawn from, each over the
+        // written texels grown to its whole texels.
+        for (uint8_t level = 1; uploaded && !written.empty() && level < gw::page_level_count;
+             ++level) {
+            const gw::TexelRect area = gw::level_aligned(written, level, page.size);
+            const uint32_t width = area.width >> level;
+            const uint32_t height = area.height >> level;
+            level_texels.resize(std::size_t{width} * height * card::texel_bytes);
+            if (!gw::reduce_page_area(page, level, area, level_texels))
+                throw FullCardError("a sprite page's reduced level could not be computed");
+            const card::Rect part{
+                area.x >> level,
+                area.y >> level,
+                static_cast<int32_t>(width),
+                static_cast<int32_t>(height),
+            };
+            uploaded = executor.update_page(
+                slot.handle, level, &part, level_texels.data(), width * card::texel_bytes
+            );
         }
         if (!uploaded)
             throw FullCardError("a sprite page could not be filled: " + executor.error());

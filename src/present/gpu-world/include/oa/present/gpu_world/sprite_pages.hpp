@@ -19,7 +19,8 @@
 // frame's rectangle begins frame_gutter texels inside the cell's corner.
 // So a level 1 of a page computed with the exact 2x2 box holds each frame's
 // texels within its own cell with a one-texel gutter around them. The pages
-// keep level 0 only for now; the cells are aligned for level 1 to follow.
+// hold level 0; reduce_page_area computes the reduced levels the card draws
+// a zoomed-out frame from.
 
 #include "oa/formats/gaf.hpp"
 #include "oa/present/gpu_world/texel.hpp"
@@ -144,6 +145,42 @@ struct Page {
     /// The texels written since clear_dirty; empty when none were.
     TexelRect dirty{};
 };
+
+/// Levels of a page the card draws from: level 0 and its two reductions,
+/// each texel of level L the average of the 2^L by 2^L texels of level 0
+/// under it (reduce_page_area). Two frames lie at least 2 * frame_gutter
+/// transparent texels apart, so no texel of level 1 or 2 holds texels of two
+/// frames, and a linear read inside a frame's rectangle at either level
+/// reads nothing of a neighbour's; a texel of level 3 could.
+inline constexpr uint8_t page_level_count = 3;
+
+/// Returns a rectangle of level 0 grown to whole texels of a level: its
+/// corner rounded down and its far edges rounded up to multiples of
+/// 2^level, held within the page.
+///
+/// @param area the texels of level 0
+/// @param level the level, below page_level_count
+/// @param page_size the page's side in texels, a power of two
+/// @return the grown rectangle, in texels of level 0
+[[nodiscard]] TexelRect level_aligned(TexelRect area, uint8_t level, uint32_t page_size) noexcept;
+
+/// Writes the texels of a level of a page that lie under an area of level
+/// 0: each the average of the 2^level by 2^level texels of level 0 under
+/// it, in every channel, rounded once to the nearest with halves up. The
+/// texels are premultiplied, so the average filters without dark fringes.
+///
+/// @param page the page, its level-0 texels
+/// @param level the level, 1 to page_level_count - 1
+/// @param area the area of level 0, its corner and sides multiples of
+///     2^level, as level_aligned gives it
+/// @param[out] texels the level's texels under the area, rows top to bottom
+///     with no padding: (area.width >> level) * (area.height >> level)
+///     texels of texel_bytes
+/// @return false, writing nothing, when the level, the area or the room in
+///     `texels` is wrong
+[[nodiscard]] bool reduce_page_area(
+    const Page& page, uint8_t level, TexelRect area, std::span<uint8_t> texels
+) noexcept;
 
 /// The sizes the pages keep to.
 struct Limits {

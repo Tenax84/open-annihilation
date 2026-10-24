@@ -282,6 +282,8 @@ struct Runtime::FullPresentation {
     }};
     uint64_t gray_generation{}; ///< the pages' palette generation the gray table was built for
     std::vector<FullCardPage> card_pages; ///< the card's pages, by the sprite pages' index
+    /// The texels of a sprite page's reduced level on their way to the card.
+    std::vector<uint8_t> level_texels;
     full::SpriteStageResult sprites{};    ///< what the sprite stage did on the last frame built
 
     /// Sets the sprite pages' palette and gray table to the match's.

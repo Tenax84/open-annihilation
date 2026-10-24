@@ -578,4 +578,60 @@ void SpritePages::write_slot(uint32_t entry, const formats::gaf::RenderedFrame& 
     ++page.revision;
 }
 
+TexelRect level_aligned(TexelRect area, uint8_t level, uint32_t page_size) noexcept {
+    if (area.empty() || level >= page_level_count)
+        return area;
+    const uint32_t step = 1U << level;
+    const uint32_t left = area.x / step * step;
+    const uint32_t top = area.y / step * step;
+    const uint32_t right =
+        std::min(page_size, (uint32_t{area.x} + area.width + step - 1) / step * step);
+    const uint32_t bottom =
+        std::min(page_size, (uint32_t{area.y} + area.height + step - 1) / step * step);
+    if (right <= left || bottom <= top)
+        return {};
+    return {
+        static_cast<uint16_t>(left),
+        static_cast<uint16_t>(top),
+        static_cast<uint16_t>(right - left),
+        static_cast<uint16_t>(bottom - top),
+    };
+}
+
+bool reduce_page_area(
+    const Page& page, uint8_t level, TexelRect area, std::span<uint8_t> texels
+) noexcept {
+    if (level == 0 || level >= page_level_count || area.empty())
+        return false;
+    const uint32_t step = 1U << level;
+    if (area.x % step != 0 || area.y % step != 0 || area.width % step != 0 ||
+        area.height % step != 0 || uint32_t{area.x} + area.width > page.size ||
+        uint32_t{area.y} + area.height > page.size ||
+        page.texels.size() < size_t{page.size} * page.size * texel_bytes)
+        return false;
+    const uint32_t width = area.width >> level;
+    const uint32_t height = area.height >> level;
+    if (texels.size() < size_t{width} * height * texel_bytes)
+        return false;
+    const size_t row_bytes = size_t{page.size} * texel_bytes;
+    const uint32_t samples = step * step;
+    const uint8_t* const source = page.texels.data();
+    uint8_t* out = texels.data();
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x, out += texel_bytes) {
+            std::array<uint32_t, texel_bytes> sums{};
+            for (uint32_t row = 0; row < step; ++row) {
+                const uint8_t* in = source + (size_t{area.y} + y * step + row) * row_bytes +
+                                    (size_t{area.x} + x * step) * texel_bytes;
+                for (uint32_t column = 0; column < step; ++column, in += texel_bytes)
+                    for (size_t channel = 0; channel < texel_bytes; ++channel)
+                        sums[channel] += in[channel];
+            }
+            for (size_t channel = 0; channel < texel_bytes; ++channel)
+                out[channel] = static_cast<uint8_t>((sums[channel] + samples / 2) / samples);
+        }
+    }
+    return true;
+}
+
 } // namespace oa::present::gpu_world

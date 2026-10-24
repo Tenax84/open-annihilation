@@ -70,6 +70,7 @@ struct BatchKey {
     card::Sampling sampling{card::Sampling::nearest};
     /// The batch draws a feature's frames, cut off where the map ends.
     bool on_map{};
+    uint8_t level{}; ///< the page's level the batch reads
 
     friend bool operator==(const BatchKey&, const BatchKey&) = default;
 };
@@ -204,7 +205,7 @@ class Emitter {
         batch.operation = card::Operation::draw;
         batch.target = view_.target;
         batch.page = key.page;
-        batch.level = 0;
+        batch.level = key.level;
         batch.blend = key.blend;
         batch.sampling = key.sampling;
         batch.scissored = true;
@@ -308,6 +309,18 @@ card::Sampling sprite_sampling(float zoom) noexcept {
     return zoom < 1.0F ? card::Sampling::linear : card::Sampling::pixel_art;
 }
 
+uint8_t sprite_page_level(card::Sampling sampling, float pixels_per_texel) noexcept {
+    if (sampling != card::Sampling::linear || !(pixels_per_texel > 0.0F))
+        return 0;
+    uint8_t level = 0;
+    float covered = pixels_per_texel;
+    while (level + 1 < gpu::page_level_count && covered * 2.0F <= 1.0F) {
+        covered *= 2.0F;
+        ++level;
+    }
+    return level;
+}
+
 float line_width(const SceneView& view) noexcept {
     return std::max(1.0F, view.zoom) * view.scale;
 }
@@ -378,6 +391,7 @@ struct SpriteFrame::Impl {
     std::vector<Placed> placed{};
     Emitter emitter;
     card::Sampling sampling{card::Sampling::nearest};
+    uint8_t level{}; ///< the pages' level the sprites are drawn from
     float zoom{1.0F};
     float width{1.0F}; ///< a line's width in target pixels
     bool greys{};      ///< the pages hold a gray table
@@ -408,6 +422,7 @@ struct SpriteFrame::Impl {
                 decoded_from.emplace(decoded, source);
         placed.reserve(inputs.list->sprites.size());
         sampling = sprite_sampling(inputs.view.zoom);
+        level = sprite_page_level(sampling, pixels_per_map_pixel(inputs.view));
         zoom = inputs.view.zoom;
         width = line_width(inputs.view);
         greys = pages.has_gray_table();
@@ -461,10 +476,10 @@ struct SpriteFrame::Impl {
             sprite.shadow ? oa::present::model::shadow_level_strength(inputs.list->shadow_level)
                           : 1.0F;
         const card::Colour opaque{strength, strength, strength, strength};
-        const float level = translucent_level * strength;
-        const card::Colour translucent{level, level, level, level};
+        const float half = translucent_level * strength;
+        const card::Colour translucent{half, half, half, half};
         emitter.quad(
-            {page, card::Blend::alpha_premultiplied, sampling, sprite.on_map},
+            {page, card::Blend::alpha_premultiplied, sampling, sprite.on_map, level},
             emitter.place_x(left),
             emitter.place_y(top),
             static_cast<float>(sprite.frame->width) * zoom * view.scale,
@@ -513,7 +528,7 @@ struct SpriteFrame::Impl {
         const float light =
             inputs.list->flash_strength == FlashStrength::reduced ? reduced_flash_light : 1.0F;
         emitter.quad(
-            {page, card::Blend::lighten, sampling},
+            {page, card::Blend::lighten, sampling, false, level},
             emitter.place_x(left),
             emitter.place_y(top),
             static_cast<float>(sprite.frame->width) * zoom * view.scale,
