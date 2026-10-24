@@ -3,7 +3,7 @@
 
 // One pass of the glow's blur, run as the fragment shader of SDL's GPU
 // renderer: each pixel the weighted mean of nine texels in a line across
-// or down the picture, a given step apart, times the vertex colour. Two passes, one across and
+// or down the picture, times the vertex colour. Two passes, one across and
 // one down, blur the picture both ways. The texture and its sampler are the
 // ones the draw binds; the sampler reads LINEAR, so that each of the five
 // reads takes two texels at once.
@@ -12,8 +12,8 @@ SamplerState picture_sampler : register(s0, space2);
 
 // The pass, in fragment uniform slot 0.
 cbuffer Pass : register(b0, space3) {
-    // The step between reads across (reach / width, 0) or down
-    // (0, reach / height), in texture coordinates, a reach of 1 one texel.
+    // One texel across (1 / width, 0) or down (0, 1 / height), in texture
+    // coordinates.
     float2 texel_step;
     float2 unused;
 };

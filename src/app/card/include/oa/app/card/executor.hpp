@@ -498,8 +498,8 @@ class Executor {
 
     /// Runs a blur batch: draws the source's texture whole into the
     /// destination through the blur's render state across or down, at the
-    /// batch's colour, setting the state's step of Batch::blur_reach texels
-    /// only when it changes, and leaves the renderer with no render state.
+    /// batch's colour, setting the state's step of one texel only when it
+    /// changes, and leaves the renderer with no render state.
     ///
     /// @param[in,out] run the run
     /// @param batch the batch
@@ -568,7 +568,7 @@ class Executor {
     SDL_GPUShader* blur_shader_{};     ///< the blur's fragment shader on that device
     /// The blur's render states, the line across first and down second.
     std::array<SDL_GPURenderState*, 2> blur_states_{};
-    /// The step each state was last given, in texture
+    /// The step of one texel each state was last given, in texture
     /// coordinates; 0 for none yet.
     std::array<float, 2> blur_steps_{};
 };

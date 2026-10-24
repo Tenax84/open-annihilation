@@ -49,9 +49,8 @@ constexpr std::string_view software_renderer_name = "software";
 /// card's own fragment shaders.
 constexpr std::string_view gpu_renderer_name = "gpu";
 
-/// The fragment uniforms of the blur (blur.frag.hlsl): the step between
-/// its reads, Batch::blur_reach texels across or down in texture
-/// coordinates, then two floats the shader leaves unread,
+/// The fragment uniforms of the blur (blur.frag.hlsl): one texel across or
+/// down in texture coordinates, then two floats the shader leaves unread,
 /// which round the slot up to the sixteen bytes a uniform slot is laid out in.
 struct BlurPass {
     float step_x{};
@@ -1116,13 +1115,13 @@ bool Executor::run_blur(Run& run, const Batch& batch) {
     // The destination is written, so its own half, if it has one, is stale.
     if (destination != nullptr)
         destination->halved_in = 0;
-    // The step of blur_reach texels of the source's texture along the line,
-    // given to the state only when it changes: SDL hands the queued draws to the card before
+    // One texel of the source's texture along the line, given to the state
+    // only when it changes: SDL hands the queued draws to the card before
     // a state they use changes.
     const std::size_t way = batch.blur_down ? 1 : 0;
     const uint32_t texels =
         batch.blur_down ? source->height * source->factor : source->width * source->factor;
-    const float step = batch.blur_reach / static_cast<float>(texels);
+    const float step = 1.0F / static_cast<float>(texels);
     SDL_GPURenderState* state = blur_states_[way];
     if (blur_steps_[way] != step) {
         const BlurPass pass{batch.blur_down ? 0.0F : step, batch.blur_down ? step : 0.0F};

@@ -253,20 +253,12 @@ struct SpriteStageInputs {
 };
 
 /// The share of a shot's frame's colour the glow's pass adds.
-inline constexpr float glow_sprite_level = 1.0F;
+inline constexpr float glow_sprite_level = 0.8F;
 /// The share of an explosion's flash's light the glow's pass adds.
-inline constexpr float glow_flash_level = 1.0F;
+inline constexpr float glow_flash_level = 0.6F;
 /// How many times wider than the frame draws it a beam is in the glow's
 /// pass, so that the blur spreads a beam of one pixel into a halo.
-inline constexpr float glow_line_widening = 4.0F;
-/// The glow's blur, in rounds of a blur across and one down, each reading
-/// its texels this many of the glow target's texels apart
-/// (card::Batch::blur_reach): the first softens the light, the second
-/// spreads it wider.
-inline constexpr std::array<float, 2> glow_blur_reaches{1.0F, 2.5F};
-/// What the last pass of the glow's blur multiplies the light by, which
-/// the spreading had thinned; the brightest of it goes white.
-inline constexpr float glow_strength = 2.2F;
+inline constexpr float glow_line_widening = 3.0F;
 
 /// What the sprite stage did.
 struct SpriteStageResult {
