@@ -9272,6 +9272,19 @@ class Runtime final : public menu::Host,
         uint32_t texture_limit
     );
 
+    /// Makes the Full tier's glow targets where Enhanced graphics is on and
+    /// the card runs the blur (card::Capabilities::blur): two targets of
+    /// half the battlefield's size, rounded up, at factor 1, which the
+    /// glow's pass draws into, blurs across from the first into the second
+    /// and down back into the first; made again when the size changes, and
+    /// freed where the setting is off. Targets the renderer or the memory
+    /// guard refuses are not asked for again at that size, logged once.
+    ///
+    /// @param battlefield_width layout pixels across the battlefield
+    /// @param battlefield_height layout pixels down it
+    /// @return true when the frame draws the glow
+    bool ensure_full_glow_targets(uint32_t battlefield_width, uint32_t battlefield_height);
+
     /// Opens the card's executor on the renderer at its texture limit,
     /// unless it is open, and runs the Full function test on it once per
     /// opening: a page of two levels drawn 1:1 NEAREST and its level 1

@@ -28,6 +28,7 @@
 // It is reached only when the tier decided for the frame is Full.
 #include "oa/app/runtime.hpp"
 
+#include "engine_settings_state.hpp"
 #include "full_fog.hpp"
 #include "full_presentation.hpp"
 #include "graphics_report.hpp"
@@ -843,7 +844,7 @@ card::PageHandle Runtime::FullPresentation::card_page(uint32_t page) {
     card::PageDescription description;
     description.width = size;
     description.height = size;
-    description.level_count = 1;
+    description.level_count = gw::page_level_count;
     slot.handle = executor.create_page(description);
     if (slot.handle == card::PageHandle{})
         throw FullCardError(
@@ -875,14 +876,37 @@ void Runtime::FullPresentation::upload_sprite_pages() {
             continue;
         const uint32_t pitch = page.size * card::texel_bytes;
         bool uploaded = true;
-        if (slot.revision == 0) {
-            uploaded = executor.update_page(slot.handle, 0, nullptr, page.texels.data(), pitch);
-        } else if (!page.dirty.empty()) {
-            const card::Rect part{page.dirty.x, page.dirty.y, page.dirty.width, page.dirty.height};
+        // The whole page the first time, then what was written since.
+        const gw::TexelRect written =
+            slot.revision == 0 ? gw::TexelRect{0, 0, static_cast<uint16_t>(page.size),
+                                               static_cast<uint16_t>(page.size)}
+                               : page.dirty;
+        if (!written.empty()) {
+            const card::Rect part{written.x, written.y, written.width, written.height};
             const uint8_t* first =
                 page.texels.data() +
-                (std::size_t{page.dirty.y} * page.size + page.dirty.x) * card::texel_bytes;
+                (std::size_t{written.y} * page.size + written.x) * card::texel_bytes;
             uploaded = executor.update_page(slot.handle, 0, &part, first, pitch);
+        }
+        // The reduced levels a zoomed-out frame is drawn from, each over the
+        // written texels grown to its whole texels.
+        for (uint8_t level = 1; uploaded && !written.empty() && level < gw::page_level_count;
+             ++level) {
+            const gw::TexelRect area = gw::level_aligned(written, level, page.size);
+            const uint32_t width = area.width >> level;
+            const uint32_t height = area.height >> level;
+            level_texels.resize(std::size_t{width} * height * card::texel_bytes);
+            if (!gw::reduce_page_area(page, level, area, level_texels))
+                throw FullCardError("a sprite page's reduced level could not be computed");
+            const card::Rect part{
+                area.x >> level,
+                area.y >> level,
+                static_cast<int32_t>(width),
+                static_cast<int32_t>(height),
+            };
+            uploaded = executor.update_page(
+                slot.handle, level, &part, level_texels.data(), width * card::texel_bytes
+            );
         }
         if (!uploaded)
             throw FullCardError("a sprite page could not be filled: " + executor.error());
@@ -958,6 +982,15 @@ void Runtime::FullPresentation::destroy_world_target() noexcept {
     world_target_height = 0;
     world_target_factor = 0;
     world_target_bytes = 0;
+}
+
+void Runtime::FullPresentation::destroy_glow_targets() noexcept {
+    for (card::TargetHandle& glow_target : glow_targets) {
+        executor.destroy_target(glow_target);
+        glow_target = {};
+    }
+    glow_width = 0;
+    glow_height = 0;
 }
 
 void Runtime::free_full_match_state() noexcept {
@@ -1037,6 +1070,10 @@ void Runtime::free_full_match_textures() noexcept {
     full.refused_world_width = 0;
     full.refused_world_height = 0;
     full.refused_world_factor = 0;
+    full.destroy_glow_targets();
+    full.refused_glow_width = 0;
+    full.refused_glow_height = 0;
+    full.drawn_glow_draws = 0;
     full.supersample = 1;
     full.drawn_plan = {};
     full.atlas = {};
@@ -1319,6 +1356,47 @@ void Runtime::ensure_full_world_target(
     full.supersample_asked = asked;
 }
 
+bool Runtime::ensure_full_glow_targets(uint32_t battlefield_width, uint32_t battlefield_height) {
+    auto& full = *full_;
+    const bool asked = engine_settings_ && engine_settings_->current.enhanced_graphics &&
+                       full.executor.capabilities().blur;
+    if (!asked || battlefield_width == 0 || battlefield_height == 0) {
+        full.destroy_glow_targets();
+        return false;
+    }
+    const uint32_t width = (battlefield_width + 1U) / 2U;
+    const uint32_t height = (battlefield_height + 1U) / 2U;
+    if (full.glow_width == width && full.glow_height == height)
+        return true;
+    full.destroy_glow_targets();
+    if (full.refused_glow_width == width && full.refused_glow_height == height)
+        return false;
+    const auto refuse = [&](const std::string& why) {
+        full.destroy_glow_targets();
+        full.refused_glow_width = width;
+        full.refused_glow_height = height;
+        std::cout << graphics_log_prefix << "the full tier's glow targets of " << width << "x"
+                  << height << " could not be made (" << why << "); the frame draws no glow\n"
+                  << std::flush;
+        return false;
+    };
+    if (!accelerated_buffer_fits(2U * uint64_t{width} * height * bytes_per_texel))
+        return refuse("too little memory");
+    for (card::TargetHandle& target : full.glow_targets) {
+        target = full.executor.create_target(width, height, 1);
+        if (target == card::TargetHandle{})
+            return refuse(full.executor.error());
+    }
+    full.glow_width = width;
+    full.glow_height = height;
+    full.refused_glow_width = 0;
+    full.refused_glow_height = 0;
+    std::cout << graphics_log_prefix << "the full tier draws the glow through two targets of "
+              << width << "x" << height << '\n'
+              << std::flush;
+    return true;
+}
+
 void Runtime::ensure_full_executor() {
     auto& full = *full_;
     if (!full.executor.is_open()) {
@@ -1359,6 +1437,11 @@ void Runtime::ensure_full_executor() {
         full.refused_world_width = 0;
         full.refused_world_height = 0;
         full.refused_world_factor = 0;
+        full.glow_targets = {};
+        full.glow_width = 0;
+        full.glow_height = 0;
+        full.refused_glow_width = 0;
+        full.refused_glow_height = 0;
         full.supersample = 1;
     }
     if (!full.function_tested) {
@@ -1709,6 +1792,14 @@ bool Runtime::present_full_match_layers(bool dialogs) {
             );
         };
 
+        // The glow (Enhanced graphics), where the card runs the blur: its
+        // targets at half the battlefield's size, which the stages' glow
+        // pass draws into.
+        const bool glowing = ensure_full_glow_targets(bf_w, bf_h);
+        // Layout pixels to the glow targets' pixels.
+        constexpr float glow_scale = 0.5F;
+        full.drawn_glow_draws = 0;
+
         // The stages, over the last list the planner built: what they read,
         // and the sight the sprite stage tells the fog's state from; none
         // when the match cannot say, which draws every sprite in colour.
@@ -1801,6 +1892,30 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                         }
                     }
                     full.sprites = sprites.finish();
+                }
+                // The glow's pass: what gives light, again, into the first
+                // glow target at half the battlefield's layout pixels from
+                // its corner, after the target is cleared transparent.
+                if (glowing) {
+                    card::Batch clear;
+                    clear.operation = card::Operation::clear;
+                    clear.target = full.glow_targets[0];
+                    clear.colour = card::Colour{0.0F, 0.0F, 0.0F, 0.0F};
+                    frame.batches.push_back(clear);
+                    full::SpriteStageInputs glow_inputs = sprite_inputs;
+                    glow_inputs.glow = true;
+                    glow_inputs.view.origin_x = 0.0F;
+                    glow_inputs.view.origin_y = 0.0F;
+                    glow_inputs.view.scale = glow_scale;
+                    glow_inputs.view.target = full.glow_targets[0];
+                    full::SpriteFrame glow(glow_inputs, full.sprite_pages, hooks, frame);
+                    const std::size_t before = frame.vertices.size();
+                    for (const WorldDraw& draw : models.draws.draws)
+                        if (full::sprite_kind(draw.kind))
+                            glow.emit(draw);
+                    const full::SpriteStageResult glowed = glow.finish();
+                    full.drawn_glow_draws = glowed.sprites + glowed.lines;
+                    full.frame_vertices.sprites += frame.vertices.size() - before;
                 }
                 if (full.sprites.pages_overflowed && !full.overflow_logged) {
                     full.overflow_logged = true;
@@ -2188,6 +2303,41 @@ bool Runtime::present_full_match_layers(bool dialogs) {
         // painters' quads.
         if (!fog_in_target)
             append_fog_over(over_view, over_target, over_scissor);
+        // The glow, where its pass drew anything: blurred across into the
+        // second target and down back into the first, then added over
+        // everything the battlefield shows, below the painters' quads. The
+        // targets' alpha stays 0, so premultiplied alpha adds their colour.
+        if (glowing && full.drawn_glow_draws != 0) {
+            const card::Rect whole{
+                0, 0, static_cast<int32_t>(full.glow_width), static_cast<int32_t>(full.glow_height)
+            };
+            card::Batch across;
+            across.operation = card::Operation::blur;
+            across.source = full.glow_targets[0];
+            across.target = full.glow_targets[1];
+            across.destination = whole;
+            frame.batches.push_back(across);
+            card::Batch down = across;
+            down.source = full.glow_targets[1];
+            down.target = full.glow_targets[0];
+            down.blur_down = true;
+            frame.batches.push_back(down);
+            card::Batch added;
+            added.operation = card::Operation::resolve;
+            added.source = full.glow_targets[0];
+            added.target = over_target;
+            added.blend = card::Blend::alpha_premultiplied;
+            added.destination = {
+                painted.x,
+                painted.y,
+                static_cast<int32_t>(static_cast<float>(full.glow_width) / glow_scale),
+                static_cast<int32_t>(static_cast<float>(full.glow_height) / glow_scale)
+            };
+            added.scissored = over_scissor != nullptr;
+            if (over_scissor != nullptr)
+                added.scissor = *over_scissor;
+            frame.batches.push_back(added);
+        }
         world_quads = append_world_quads(frame, full.world_quads, painted, over_target);
         full.build_ns = nanoseconds_since(build_start) - full.stage_ns;
         const auto execute_start = std::chrono::steady_clock::now();

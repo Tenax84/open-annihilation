@@ -384,9 +384,10 @@ void Runtime::plan_match_projectiles(
     if (!match_)
         return;
     // Each line and sprite joins the frame's draws in the order the pass
-    // draws them.
+    // draws them, each a shot's own light, which the Full tier's glow
+    // spreads.
     const auto line = [&](int x0, int y0, int x1, int y1, const std::array<uint8_t, 3>& color) {
-        draws.lines.push_back({x0, y0, x1, y1, color, 0});
+        draws.lines.push_back({x0, y0, x1, y1, color, 0, true});
         add_world_draw(draws, WorldDrawKind::line, draws.lines.size() - 1);
     };
     // A sprite stands over the map pixels of its point at any scale.
@@ -396,7 +397,7 @@ void Runtime::plan_match_projectiles(
         if (decoded == nullptr)
             return;
         draws.sprites.push_back(
-            {decoded, place_world_point(viewport, position, HeightLift::nearest)}
+            {decoded, place_world_point(viewport, position, HeightLift::nearest), false, false, true}
         );
         add_world_draw(draws, WorldDrawKind::sprite, draws.sprites.size() - 1);
     };

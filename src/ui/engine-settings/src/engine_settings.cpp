@@ -607,6 +607,8 @@ EngineSettings read_settings(
         settings.escape_opens_menu = *number > 0;
     if (const auto number = stored_number(values, key::selection_bar))
         settings.selection_bar = *number > 0;
+    if (const auto number = stored_number(values, key::enhanced_graphics))
+        settings.enhanced_graphics = *number > 0;
     if (const auto number = stored_number(values, key::unit_limit))
         settings.unit_limit = clamped(
             *number,
@@ -801,6 +803,14 @@ void write_settings(
         switch_text(chosen.selection_bar),
         chosen.selection_bar != opened.selection_bar,
         chosen.selection_bar == defaults.selection_bar,
+        restored
+    );
+    store(
+        values,
+        key::enhanced_graphics,
+        switch_text(chosen.enhanced_graphics),
+        chosen.enhanced_graphics != opened.enhanced_graphics,
+        chosen.enhanced_graphics == defaults.enhanced_graphics,
         restored
     );
     store(

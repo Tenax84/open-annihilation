@@ -9,8 +9,9 @@
 // scissor, into the frame's final target or into a render target; a clear
 // fills a render target with a colour; a resolve draws a render target,
 // reduced from its supersampling factor to its own size, into a rectangle
-// of another target. The executor (card/executor.hpp) makes the pages and
-// targets and runs the list on SDL's renderer. Nothing here is reached by
+// of another target; a blur draws a render target through the glow's blur
+// shader into a rectangle of another. The executor (card/executor.hpp)
+// makes the pages and targets and runs the list on SDL's renderer. Nothing here is reached by
 // the standard tier or the Basic tier: only the Full tier builds and runs
 // frames, the terrain's first.
 #pragma once
@@ -194,10 +195,16 @@ enum class Operation : uint8_t {
     /// part itself; between, weights that change evenly with the scale,
     /// so nothing pops as the scale eases.
     blend_reduce,
+    /// Draws a render target's texture, whole, into a rectangle of another
+    /// target through the glow's blur (shaders.hpp): each pixel the
+    /// weighted mean of nine texels in a line across, or down where
+    /// Batch::blur_down, times the batch's colour. Only a renderer that
+    /// runs the shader takes it (Capabilities::blur).
+    blur,
 };
 
 /// The number of operations; an Operation value is below it.
-inline constexpr uint8_t operation_count = 4;
+inline constexpr uint8_t operation_count = 5;
 
 /// The least a blend_reduce scales its part by, across and down; the most
 /// is 1.
@@ -207,8 +214,9 @@ inline constexpr double smallest_blend_reduce_scale = 0.5;
 /// scissor and index range; a clear the target and colour; a resolve the
 /// source, destination, blend (none, alpha or alpha_premultiplied) and
 /// scissor; a blend_reduce the source, source_part, destination and
-/// scissor, its blend none. Fields an operation does not use are left at
-/// their defaults.
+/// scissor, its blend none; a blur the source, destination, blend (none or
+/// alpha_premultiplied), scissor, blur_down and colour. Fields an operation
+/// does not use are left at their defaults.
 struct Batch {
     Operation operation{Operation::draw};
     /// The target drawn into, cleared or resolved into; none for the frame's
@@ -243,7 +251,10 @@ struct Batch {
     /// part's half is whole pixels of the texture's half and no renderer
     /// truncates a fraction.
     Rect source_part{};
-    Colour colour{}; ///< what a clear fills with
+    /// What a clear fills with; what a blur multiplies each pixel by.
+    Colour colour{};
+    /// A blur's line runs down the source; false runs it across.
+    bool blur_down{};
 };
 
 /// One frame's command list.
@@ -296,11 +307,13 @@ void append_quad(
 /// alpha_premultiplied, a blend_reduce of no source, into its own source,
 /// with a blend other than none, of a part that is empty, lies left of or
 /// above the texture or is not on even pixels, or at a scale across or
-/// down outside smallest_blend_reduce_scale to 1, a shift that is not a
-/// number or lies a whole pixel or more from 0, or one on a batch that is
-/// neither a resolve nor a blend_reduce, or a vertex that is not finite or
-/// lies beyond largest_coordinate. The executor refuses such a
-/// frame whole and draws nothing of it.
+/// down outside smallest_blend_reduce_scale to 1, a blur of no source,
+/// into its own source, with a blend other than none or
+/// alpha_premultiplied, an empty destination or a colour that is not a
+/// number, a shift that is not a number or lies a whole pixel or more from
+/// 0, or one on a batch that is neither a resolve nor a blend_reduce, or a
+/// vertex that is not finite or lies beyond largest_coordinate. The
+/// executor refuses such a frame whole and draws nothing of it.
 ///
 /// @param frame the frame
 /// @return what is wrong, naming the batch, index or vertex; empty when nothing is

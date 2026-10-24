@@ -70,6 +70,7 @@ struct BatchKey {
     card::Sampling sampling{card::Sampling::nearest};
     /// The batch draws a feature's frames, cut off where the map ends.
     bool on_map{};
+    uint8_t level{}; ///< the page's level the batch reads
 
     friend bool operator==(const BatchKey&, const BatchKey&) = default;
 };
@@ -158,7 +159,8 @@ class Emitter {
         frame_.batches[last_].index_count += indices_per_quad;
     }
 
-    /// Appends a line's quad (append_line_quad) to the untextured batch.
+    /// Appends a line's quad (append_line_quad) to the untextured batch of
+    /// a blend.
     ///
     /// @param x0 the first pixel's centre column, in target pixels
     /// @param y0 its centre row
@@ -166,8 +168,19 @@ class Emitter {
     /// @param y1 its centre row
     /// @param width pixels across the line
     /// @param colour the line's colour
-    void line(float x0, float y0, float x1, float y1, float width, const card::Colour& colour) {
-        open(BatchKey{});
+    /// @param blend how the line combines with what is under it
+    void line(
+        float x0,
+        float y0,
+        float x1,
+        float y1,
+        float width,
+        const card::Colour& colour,
+        card::Blend blend = card::Blend::none
+    ) {
+        BatchKey key;
+        key.blend = blend;
+        open(key);
         append_line_quad(frame_, x0, y0, x1, y1, width, colour);
         frame_.batches[last_].index_count += indices_per_quad;
     }
@@ -204,7 +217,7 @@ class Emitter {
         batch.operation = card::Operation::draw;
         batch.target = view_.target;
         batch.page = key.page;
-        batch.level = 0;
+        batch.level = key.level;
         batch.blend = key.blend;
         batch.sampling = key.sampling;
         batch.scissored = true;
@@ -308,6 +321,18 @@ card::Sampling sprite_sampling(float zoom) noexcept {
     return zoom < 1.0F ? card::Sampling::linear : card::Sampling::pixel_art;
 }
 
+uint8_t sprite_page_level(card::Sampling sampling, float pixels_per_texel) noexcept {
+    if (sampling != card::Sampling::linear || !(pixels_per_texel > 0.0F))
+        return 0;
+    uint8_t level = 0;
+    float covered = pixels_per_texel;
+    while (level + 1 < gpu::page_level_count && covered * 2.0F <= 1.0F) {
+        covered *= 2.0F;
+        ++level;
+    }
+    return level;
+}
+
 float line_width(const SceneView& view) noexcept {
     return std::max(1.0F, view.zoom) * view.scale;
 }
@@ -378,6 +403,7 @@ struct SpriteFrame::Impl {
     std::vector<Placed> placed{};
     Emitter emitter;
     card::Sampling sampling{card::Sampling::nearest};
+    uint8_t level{}; ///< the pages' level the sprites are drawn from
     float zoom{1.0F};
     float width{1.0F}; ///< a line's width in target pixels
     bool greys{};      ///< the pages hold a gray table
@@ -408,8 +434,9 @@ struct SpriteFrame::Impl {
                 decoded_from.emplace(decoded, source);
         placed.reserve(inputs.list->sprites.size());
         sampling = sprite_sampling(inputs.view.zoom);
+        level = sprite_page_level(sampling, pixels_per_map_pixel(inputs.view));
         zoom = inputs.view.zoom;
-        width = line_width(inputs.view);
+        width = line_width(inputs.view) * (inputs.glow ? glow_line_widening : 1.0F);
         greys = pages.has_gray_table();
     }
 
@@ -421,7 +448,7 @@ struct SpriteFrame::Impl {
         // A frame drawn too far out for shadows draws no feature's shadow,
         // and a feature's frames show only over the map.
         if ((sprite.shadow && !shadows_drawn(*inputs.list)) ||
-            (sprite.on_map && !emitter.map_shown()))
+            (sprite.on_map && !emitter.map_shown()) || (inputs.glow && !sprite.glows))
             return;
         if (sprite.frame == nullptr || hooks.card_page == nullptr) {
             ++result.refused;
@@ -433,6 +460,9 @@ struct SpriteFrame::Impl {
         // whatever height the point was lifted by.
         const CellFog fog =
             cell_fog(inputs.sight, view.camera_x + sprite.place.x, view.camera_y + sprite.place.y);
+        // The glow lights nothing the fog hides.
+        if (inputs.glow && fog != CellFog::seen)
+            return;
         const bool greyed = fog == CellFog::unseen && greys && !inputs.sight.dithered;
         const auto mode = greyed ? gpu::DrawMode::greyed : gpu::DrawMode::opaque;
         const uint64_t key = frame_key(sprite.frame, decoded_from);
@@ -461,10 +491,12 @@ struct SpriteFrame::Impl {
             sprite.shadow ? oa::present::model::shadow_level_strength(inputs.list->shadow_level)
                           : 1.0F;
         const card::Colour opaque{strength, strength, strength, strength};
-        const float level = translucent_level * strength;
-        const card::Colour translucent{level, level, level, level};
+        const float half = translucent_level * strength;
+        const card::Colour translucent{half, half, half, half};
+        // The glow's pass adds the frame's colour, its alpha 0.
+        const card::Colour glowing{glow_sprite_level, glow_sprite_level, glow_sprite_level, 0.0F};
         emitter.quad(
-            {page, card::Blend::alpha_premultiplied, sampling, sprite.on_map},
+            {page, card::Blend::alpha_premultiplied, sampling, sprite.on_map, level},
             emitter.place_x(left),
             emitter.place_y(top),
             static_cast<float>(sprite.frame->width) * zoom * view.scale,
@@ -473,7 +505,7 @@ struct SpriteFrame::Impl {
             static_cast<float>(rect.y) / size,
             static_cast<float>(rect.x + rect.width) / size,
             static_cast<float>(rect.y + rect.height) / size,
-            blended ? translucent : opaque
+            inputs.glow ? glowing : blended ? translucent : opaque
         );
         ++result.sprites;
         if (greyed)
@@ -484,6 +516,8 @@ struct SpriteFrame::Impl {
     /// pages, which the lighten blend makes light what is under it, the
     /// vertex colour halving each texel's light at FlashStrength::reduced
     /// and the vertex alpha 0, so that the texels' own alpha of 0 is kept.
+    /// The glow's pass adds the light instead, at glow_flash_level, by
+    /// premultiplied alpha, which at an alpha of 0 adds the colour.
     ///
     /// @param sprite the flash
     void emit_lit(const SpriteDraw& sprite) {
@@ -511,9 +545,12 @@ struct SpriteFrame::Impl {
         const float left = static_cast<float>(sprite.place.x - sprite.frame->origin_x) * zoom;
         const float top = static_cast<float>(sprite.place.y - sprite.frame->origin_y) * zoom;
         const float light =
-            inputs.list->flash_strength == FlashStrength::reduced ? reduced_flash_light : 1.0F;
+            (inputs.list->flash_strength == FlashStrength::reduced ? reduced_flash_light : 1.0F) *
+            (inputs.glow ? glow_flash_level : 1.0F);
+        const card::Blend blend =
+            inputs.glow ? card::Blend::alpha_premultiplied : card::Blend::lighten;
         emitter.quad(
-            {page, card::Blend::lighten, sampling},
+            {page, blend, sampling, false, level},
             emitter.place_x(left),
             emitter.place_y(top),
             static_cast<float>(sprite.frame->width) * zoom * view.scale,
@@ -547,7 +584,7 @@ struct SpriteFrame::Impl {
                 emit_lit(list.sprites[draw.index]);
             break;
         case WorldDrawKind::pixel_square: {
-            if (draw.index >= list.squares.size())
+            if (inputs.glow || draw.index >= list.squares.size())
                 break;
             const SquareDraw& square = list.squares[draw.index];
             if (square.right <= square.left || square.bottom <= square.top)
@@ -571,19 +608,26 @@ struct SpriteFrame::Impl {
             if (draw.index >= list.lines.size())
                 break;
             const LineDraw& line = list.lines[draw.index];
+            if (inputs.glow && !line.glows)
+                break;
+            card::Colour colour = flat_colour(line.color, inputs.gamma);
+            // The glow's pass adds the beam's colour, its alpha 0.
+            if (inputs.glow)
+                colour.alpha = 0.0F;
             emitter.line(
                 emitter.place_x(static_cast<float>(line.x0) + 0.5F),
                 emitter.place_y(static_cast<float>(line.y0) + 0.5F),
                 emitter.place_x(static_cast<float>(line.x1) + 0.5F),
                 emitter.place_y(static_cast<float>(line.y1) + 0.5F),
                 width,
-                flat_colour(line.color, inputs.gamma)
+                colour,
+                inputs.glow ? card::Blend::alpha_premultiplied : card::Blend::none
             );
             ++result.lines;
             break;
         }
         case WorldDrawKind::selection_line: {
-            if (draw.index >= list.lines.size() || inputs.palette == nullptr)
+            if (inputs.glow || draw.index >= list.lines.size() || inputs.palette == nullptr)
                 break;
             // The line's pixels are map pixels about the camera, which the
             // bridge writes back at the zoom.

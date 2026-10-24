@@ -929,6 +929,14 @@ void RendererHost::create(
 void RendererHost::make_renderer(const std::string& failed_driver, bool rebuilding) {
     DriverNames names;
     render_policy::CreationInputs inputs = driver_inputs(names);
+    // The driver asked for first, where SDL has it, ahead of the others in
+    // SDL's order; the inputs view the same names.
+    if (!preferred_driver_.empty() && !inputs.render_driver_named)
+        std::stable_partition(
+            names.sdl_order.begin(), names.sdl_order.end(), [&](std::string_view driver) {
+                return driver == preferred_driver_;
+            }
+        );
     if (!rebuilding)
         named_ = inputs.render_driver_named;
     // The records are advice: the walk skips the drivers they hold failed

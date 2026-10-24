@@ -20,6 +20,9 @@
 #include <string>
 #include <vector>
 
+// SDL before 3.4 names no GPU render state; the executor makes none there.
+struct SDL_GPURenderState;
+
 namespace oa::app::card {
 
 /// Most pages alive at once.
@@ -62,6 +65,12 @@ struct Capabilities {
     /// mode; where false, on SDL before 3.4 or a renderer that refuses the
     /// mode, a pixel_art draw reads the nearest texel.
     bool pixel_art_sampling{};
+    /// Operation::blur runs: the renderer is SDL's GPU renderer (SDL 3.4
+    /// and later), its device takes one of the forms the blur shader was
+    /// built in (shaders.hpp), and the shader and its two render states,
+    /// one across and one down, were made. Where false a frame with a blur
+    /// is refused.
+    bool blur{};
     uint32_t texture_limit{}; ///< the largest texture edge it makes; 0 for no limit
 };
 
@@ -79,6 +88,7 @@ struct Counts {
     uint64_t clears{};           ///< clear batches run
     uint64_t resolves{};         ///< resolve batches run
     uint64_t blend_reductions{}; ///< blend_reduce batches run
+    uint64_t blurs{};            ///< blur batches run
     uint64_t halvings{};         ///< render targets halved into their half
     /// Flushes of the renderer after the pages' writes reached
     /// most_unflushed_update_bytes.
@@ -101,8 +111,10 @@ class Executor {
 
     /// Binds the executor to a renderer, closing it first if it was open:
     /// composes the darken blend mode and finds whether the renderer takes
-    /// it and the pixel-art sampling mode, and tells the renderer to clamp
-    /// texture coordinates where SDL offers the call.
+    /// it and the pixel-art sampling mode, tells the renderer to clamp
+    /// texture coordinates where SDL offers the call, and on SDL's GPU
+    /// renderer makes the blur's shader and render states
+    /// (Capabilities::blur), whose failure only leaves the blur off.
     ///
     /// @param renderer the renderer
     /// @param texture_limit the largest texture edge the renderer makes, in texels; 0 for no limit
@@ -484,6 +496,25 @@ class Executor {
     /// @return false when SDL refused
     bool run_resolve(Run& run, const Batch& batch);
 
+    /// Runs a blur batch: draws the source's texture whole into the
+    /// destination through the blur's render state across or down, at the
+    /// batch's colour, setting the state's step of one texel only when it
+    /// changes, and leaves the renderer with no render state.
+    ///
+    /// @param[in,out] run the run
+    /// @param batch the batch
+    /// @return false when SDL refused
+    bool run_blur(Run& run, const Batch& batch);
+
+    /// Makes the blur's shader and its two render states on SDL's GPU
+    /// renderer, for open; leaves Capabilities::blur false where the
+    /// renderer is another, its device takes none of the shader's forms or
+    /// a call fails.
+    void make_blur() noexcept;
+
+    /// Destroys the blur's render states and shader.
+    void free_blur() noexcept;
+
     /// Runs a blend_reduce batch: halves the source unless done this run
     /// with the source not written since, draws the part's half LINEAR
     /// into the destination, then the part LINEAR over it at alpha 1 - t,
@@ -533,6 +564,13 @@ class Executor {
     /// Texel bytes written to the pages since the last frame ran or the
     /// renderer was last flushed.
     uint64_t unflushed_update_bytes_{};
+    SDL_GPUDevice* gpu_device_{};      ///< the GPU renderer's device; null on any other
+    SDL_GPUShader* blur_shader_{};     ///< the blur's fragment shader on that device
+    /// The blur's render states, the line across first and down second.
+    std::array<SDL_GPURenderState*, 2> blur_states_{};
+    /// The step of one texel each state was last given, in texture
+    /// coordinates; 0 for none yet.
+    std::array<float, 2> blur_steps_{};
 };
 
 } // namespace oa::app::card

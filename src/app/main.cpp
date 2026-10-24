@@ -530,6 +530,10 @@ struct HostDisplay {
         }
         report_window_size(window, desktop, steam_game_mode);
         set_window_icon(window);
+        // Enhanced graphics' glow runs on SDL's GPU renderer alone, which
+        // the walk then tries first.
+        if (start.enhanced_graphics)
+            renderer_host.prefer_driver(oa::platform::render_probe::gpu_renderer);
         renderer_host.create(window, start_faults(options));
         // A check's OA_PIXEL_DENSITY grows the drawing surface now, after the
         // size is chosen and before the first frame, so the setup and the

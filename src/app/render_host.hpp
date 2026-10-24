@@ -399,6 +399,15 @@ class RendererHost {
     /// Destroys the renderer (destroy).
     ~RendererHost();
 
+    /// Names a render driver the walks try first, ahead of SDL's order, as
+    /// Enhanced graphics asks for SDL's GPU renderer, which alone runs the
+    /// card's shaders; empty, or a driver SDL lacks, keeps SDL's order.
+    /// SDL_RENDER_DRIVER overrides it, and a record of the driver failed
+    /// skips it as any other. Set before create.
+    ///
+    /// @param driver SDL's name for the driver
+    void prefer_driver(std::string_view driver) { preferred_driver_ = driver; }
+
     /// Makes the renderer of a window and describes it
     /// (describe_game_renderer), on Windows before Vista with only direct3d
     /// capable (oa::platform::running_on_windows_before_vista);
@@ -819,6 +828,7 @@ class RendererHost {
     render_policy::TierInputs tier_{};     ///< what the tier is decided from
     render_policy::StartInputs machine_{}; ///< what the starting rung is sized from
     bool named_{};                         ///< SDL_RENDER_DRIVER named the drivers at the start
+    std::string preferred_driver_{};       ///< the driver the walks try first (prefer_driver)
     /// A flag asks for the adapter under SDL_RENDER_DRIVER, which otherwise
     /// reads none.
     bool adapter_asked_{};

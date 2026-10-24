@@ -240,7 +240,25 @@ struct SpriteStageInputs {
     /// The display gamma's table, applied to every flat colour as the
     /// pages apply it to their texels; null for a gamma of 1.
     const std::array<uint8_t, 256>* gamma{};
+    /// The glow's pass (Enhanced graphics): only what gives light is
+    /// emitted, each draw adding its light to the glow target, which is
+    /// cleared transparent, and leaving its alpha 0. A shot's frame
+    /// (SpriteDraw::glows) at glow_sprite_level and an explosion's flash
+    /// from its lit cell at glow_flash_level, both by premultiplied alpha
+    /// at a vertex alpha of 0, which adds their colour; a shot's beam
+    /// (LineDraw::glows) glow_line_widening times as wide, in its colour at
+    /// an alpha of 0. Nothing is emitted under a cell out of sight or never
+    /// mapped, nor any other draw.
+    bool glow{};
 };
+
+/// The share of a shot's frame's colour the glow's pass adds.
+inline constexpr float glow_sprite_level = 0.8F;
+/// The share of an explosion's flash's light the glow's pass adds.
+inline constexpr float glow_flash_level = 0.6F;
+/// How many times wider than the frame draws it a beam is in the glow's
+/// pass, so that the blur spreads a beam of one pixel into a halo.
+inline constexpr float glow_line_widening = 3.0F;
 
 /// What the sprite stage did.
 struct SpriteStageResult {
@@ -348,6 +366,18 @@ SpriteStageResult emit_sprites(
 /// @param zoom screen pixels per map pixel
 /// @return the sampling
 [[nodiscard]] card::Sampling sprite_sampling(float zoom) noexcept;
+
+/// Returns the level of a sprite page a frame is drawn from: zoomed out,
+/// where the sampling is linear, the deepest level of the page whose texels
+/// still cover a target pixel or more, so that each pixel reads no more
+/// than the texels around it and a shrunk frame does not shimmer; level 0
+/// otherwise.
+///
+/// @param sampling how the page is sampled (sprite_sampling)
+/// @param pixels_per_texel target pixels one texel of level 0 covers across
+///     (pixels_per_map_pixel)
+/// @return the level, below oa::present::gpu_world::page_level_count
+[[nodiscard]] uint8_t sprite_page_level(card::Sampling sampling, float pixels_per_texel) noexcept;
 
 /// Returns how wide a thin line is drawn: `max(1, zoom)` layout pixels, at
 /// the view's scale, so that it stays about one screen pixel wide zoomed
