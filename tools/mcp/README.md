@@ -83,9 +83,8 @@ The controls' names are the ones the game's GUI files give, and
 `game_launch` starts the executable it is given, else the one
 `OA_EXECUTABLE` names, else the newest `open-annihilation` under the
 repository's `build*` folders; it answers the path and when that file was
-built. It never builds: run [run.sh](../../run.sh) or
-[run.bat](../../run.bat), or build the `oa-game` target, first, so that
-the game is the current source's. The installation
+built. It never builds: run [run.sh](../../run.sh), or build the
+`oa-game` target, first, so that the game is the current source's. The installation
 is `game_dir`, else `OA_GAME_DIR`; without either the game uses the folder
 chosen before. `--skip-intro` is passed unless `skip_intro` is false.
 

@@ -326,7 +326,7 @@ class Game:
         executable = Path(executable) if executable else (
             Path(os.environ["OA_EXECUTABLE"]) if os.environ.get("OA_EXECUTABLE") else find_executable())
         if executable is None or not executable.is_file():
-            raise ToolError("no open-annihilation executable: build it (./run.sh or run.bat) or name it "
+            raise ToolError("no open-annihilation executable: build it (./run.sh) or name it "
                             "with the executable argument or OA_EXECUTABLE")
         executable = executable.resolve()
         self.disconnect()
