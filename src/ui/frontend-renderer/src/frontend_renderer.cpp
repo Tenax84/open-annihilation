@@ -840,6 +840,58 @@ void shade_rectangle(Surface& surface, const Rectangle& rectangle, GrayedShade& 
     }
 }
 
+// Draws a grayed-out button's frame and darkens the frame's rectangle through
+// `shade`, as blit then shade_rectangle over that rectangle would: a covered
+// pixel takes its palette entry's darkened colour, found once per entry, and
+// an uncovered one its drawn colour's.
+void blit_grayed(
+    Surface& surface,
+    const FramePixels& frame,
+    int x,
+    int y,
+    const PaletteBytes& palette,
+    const uint8_t* light_row,
+    GrayedShade& shade
+) {
+    const auto pixel_count = static_cast<std::size_t>(frame.width) * frame.height;
+    if (frame.pixels.size() != pixel_count || frame.coverage.size() != pixel_count) {
+        throw std::runtime_error("rendered GAF frame has inconsistent buffers");
+    }
+    const auto frame_w = static_cast<int64_t>(frame.width);
+    const auto frame_h = static_cast<int64_t>(frame.height);
+    const auto first_column = std::max<int64_t>(0, -static_cast<int64_t>(x));
+    const auto first_row = std::max<int64_t>(0, -static_cast<int64_t>(y));
+    const auto end_column = std::min<int64_t>(frame_w, static_cast<int64_t>(surface.width) - x);
+    const auto end_row = std::min<int64_t>(frame_h, static_cast<int64_t>(surface.height) - y);
+    if (first_column >= end_column || first_row >= end_row ||
+        surface.rgb.size() < static_cast<std::size_t>(surface.width) * surface.height * 3U)
+        return;
+    std::array<std::array<uint8_t, 3>, palette_color_count> darkened{};
+    std::array<bool, palette_color_count> found{};
+    const auto* pixels = frame.pixels.data();
+    const auto* coverage = frame.coverage.data();
+    for (auto row = first_row; row < end_row; ++row) {
+        const auto source = static_cast<std::size_t>(row * frame_w);
+        auto* out = surface.rgb.data() + (static_cast<std::size_t>(y + row) * surface.width +
+                                          static_cast<std::size_t>(x + first_column)) *
+                                             3U;
+        for (auto column = first_column; column < end_column; ++column, out += 3) {
+            const auto offset = source + static_cast<std::size_t>(column);
+            if (coverage[offset] == 0) {
+                shade.darken(out);
+                continue;
+            }
+            const auto entry = light_row != nullptr ? light_row[pixels[offset]] : pixels[offset];
+            if (!found[entry]) {
+                darkened[entry] = palette_rgb(palette, entry);
+                shade.darken(darkened[entry].data());
+                found[entry] = true;
+            }
+            std::memcpy(out, darkened[entry].data(), 3U);
+        }
+    }
+}
+
 [[nodiscard]] int aligned_text_x(
     const ui::gui_layout::Gadget& gadget,
     std::string_view text,
@@ -1382,6 +1434,44 @@ void render_screen_into(
                     "': " + rendered.error->message
                 );
             }
+            // A grayed-out button is grayed and darkened too, except one that
+            // cycles its frames or plain CHECKBOX art.
+            constexpr uint32_t checkbox_art_attribute = 0x80U;
+            const auto attributes = static_cast<uint32_t>(gadget.common.attributes);
+            const bool staged = button_fields != nullptr && button_fields->stages != 0;
+            const bool shaded =
+                (attributes & ui::gui_layout::attribute::cycle_frames) == 0 &&
+                (staged || (attributes & ui::gui_layout::attribute::scroll_step_mask) != 0 ||
+                 (attributes & checkbox_art_attribute) == 0);
+            const bool grayed =
+                condition == ButtonCondition::disabled && shaded && shade_palette != nullptr;
+            if (grayed) {
+                // The gray table is PALETTE.PAL's, else the shaded palette's.
+                if (!grayed_shade)
+                    grayed_shade.emplace(
+                        *shade_palette,
+                        remembered_gray_table(
+                            resources.game_palette.has_value() ? *resources.game_palette
+                                                               : *shade_palette
+                        ),
+                        resources.shade_table,
+                        grayed_shade_row
+                    );
+                // A button without a caption darkens its frame as it draws it.
+                if (grayed_shade->usable() &&
+                    (button_fields == nullptr || button_fields->text.empty())) {
+                    blit_grayed(
+                        result,
+                        *pixels,
+                        gadget.common.x,
+                        gadget.common.y,
+                        active_palette,
+                        light_row,
+                        *grayed_shade
+                    );
+                    continue;
+                }
+            }
             // The frame keeps its own size at the gadget's corner, however
             // the authored rectangle differs: NEWGAME's 160x160 side emblems
             // fill their frames from 132x106 Side0 and 129x104 Side1.
@@ -1401,29 +1491,8 @@ void render_screen_into(
                 underline,
                 state != nullptr && state->game_text
             );
-            // A grayed-out button is grayed and darkened too, except one that
-            // cycles its frames or plain CHECKBOX art.
-            constexpr uint32_t checkbox_art_attribute = 0x80U;
-            const auto attributes = static_cast<uint32_t>(gadget.common.attributes);
-            const bool staged = button_fields != nullptr && button_fields->stages != 0;
-            const bool shaded =
-                (attributes & ui::gui_layout::attribute::cycle_frames) == 0 &&
-                (staged || (attributes & ui::gui_layout::attribute::scroll_step_mask) != 0 ||
-                 (attributes & checkbox_art_attribute) == 0);
-            if (condition == ButtonCondition::disabled && shaded && shade_palette != nullptr) {
-                // The gray table is PALETTE.PAL's, else the shaded palette's.
-                if (!grayed_shade)
-                    grayed_shade.emplace(
-                        *shade_palette,
-                        remembered_gray_table(
-                            resources.game_palette.has_value() ? *resources.game_palette
-                                                               : *shade_palette
-                        ),
-                        resources.shade_table,
-                        grayed_shade_row
-                    );
+            if (grayed)
                 shade_rectangle(result, gadget_rectangle(resolved_gadget), *grayed_shade);
-            }
             continue;
         }
         if (portrait_hit)
