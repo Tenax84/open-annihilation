@@ -2312,7 +2312,7 @@ bool Runtime::present_full_match_layers(bool dialogs) {
             const card::Rect whole{
                 0, 0, static_cast<int32_t>(full.glow_width), static_cast<int32_t>(full.glow_height)
             };
-            for (const float reach : glow_blur_reaches) {
+            for (const float reach : full::glow_blur_reaches) {
                 card::Batch across;
                 across.operation = card::Operation::blur;
                 across.source = full.glow_targets[0];
@@ -2326,8 +2326,8 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                 down.blur_down = true;
                 frame.batches.push_back(down);
             }
-            frame.batches.back().colour =
-                card::Colour{glow_strength, glow_strength, glow_strength, glow_strength};
+            constexpr float strength = full::glow_strength;
+            frame.batches.back().colour = card::Colour{strength, strength, strength, strength};
             card::Batch added;
             added.operation = card::Operation::resolve;
             added.source = full.glow_targets[0];
