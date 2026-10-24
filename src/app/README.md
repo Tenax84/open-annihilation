@@ -2025,9 +2025,8 @@ hosts them on the OA layer.
   `glow_flash_level` and a shot's beam (`LineDraw::glows`, lasers and
   lightning) `glow_line_widening` times as wide, none under a cell out of
   sight or never mapped; then, where anything was drawn, the target is
-  blurred across into the second and down back into the first, once for
-  each reach of `glow_blur_reaches`, the last pass at `glow_strength`, and
-  added over the battlefield by premultiplied alpha, under the painters' quads.
+  blurred across into the second and down back into the first and added
+  over the battlefield by premultiplied alpha, under the painters' quads.
   Last the painters' quads (`paint_world_level`,
   `paint_world_blend`, `paint_world_minimum`): the kill board's shade of
   the world under it and the light of the local player's row, the +stats

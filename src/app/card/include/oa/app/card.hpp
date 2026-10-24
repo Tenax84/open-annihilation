@@ -198,8 +198,7 @@ enum class Operation : uint8_t {
     /// Draws a render target's texture, whole, into a rectangle of another
     /// target through the glow's blur (shaders.hpp): each pixel the
     /// weighted mean of nine texels in a line across, or down where
-    /// Batch::blur_down, Batch::blur_reach texels apart, times the batch's
-    /// colour. Only a renderer that
+    /// Batch::blur_down, times the batch's colour. Only a renderer that
     /// runs the shader takes it (Capabilities::blur).
     blur,
 };
@@ -216,7 +215,7 @@ inline constexpr double smallest_blend_reduce_scale = 0.5;
 /// source, destination, blend (none, alpha or alpha_premultiplied) and
 /// scissor; a blend_reduce the source, source_part, destination and
 /// scissor, its blend none; a blur the source, destination, blend (none or
-/// alpha_premultiplied), scissor, blur_down, blur_reach and colour. Fields an operation
+/// alpha_premultiplied), scissor, blur_down and colour. Fields an operation
 /// does not use are left at their defaults.
 struct Batch {
     Operation operation{Operation::draw};
@@ -256,10 +255,6 @@ struct Batch {
     Colour colour{};
     /// A blur's line runs down the source; false runs it across.
     bool blur_down{};
-    /// How many of the source's texels apart a blur reads its texels: 1
-    /// reads neighbours, 2 every other texel, which spreads the picture
-    /// twice as far; never 0 or less.
-    float blur_reach{1.0F};
 };
 
 /// One frame's command list.
@@ -314,8 +309,8 @@ void append_quad(
 /// above the texture or is not on even pixels, or at a scale across or
 /// down outside smallest_blend_reduce_scale to 1, a blur of no source,
 /// into its own source, with a blend other than none or
-/// alpha_premultiplied, an empty destination, a colour that is not a
-/// number or a reach that is not above 0, a shift that is not a number or lies a whole pixel or more from
+/// alpha_premultiplied, an empty destination or a colour that is not a
+/// number, a shift that is not a number or lies a whole pixel or more from
 /// 0, or one on a batch that is neither a resolve nor a blend_reduce, or a
 /// vertex that is not finite or lies beyond largest_coordinate. The
 /// executor refuses such a frame whole and draws nothing of it.
