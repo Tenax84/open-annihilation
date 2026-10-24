@@ -837,6 +837,22 @@ auto pointed_look(const Box& box) noexcept {
     );
 }
 
+/// Returns the parts of a screen's interaction its drawing shows.
+///
+/// @param shown the interaction
+/// @return the hover, the press, the focus, whether it shows and a
+///     finger's shift
+auto pointed_look(const kit::Interaction& shown) noexcept {
+    return std::make_tuple(
+        shown.hovered,
+        shown.pressed,
+        shown.focused,
+        shown.focus_shown,
+        shown.finger_shift.x,
+        shown.finger_shift.y
+    );
+}
+
 /// Counts a look an input moved in a screen's revision, so that a press
 /// that hit no button but took the hover with it is drawn too.
 ///
@@ -2409,22 +2425,6 @@ class RegisteredKitScreen final : public LayerScreen {
     }
 
   private:
-
-    /// Returns the parts of the screen's interaction its drawing shows.
-    ///
-    /// @param shown the interaction
-    /// @return the hover, the press, the focus, whether it shows and a
-    ///     finger's shift
-    static auto pointed_look(const kit::Interaction& shown) noexcept {
-        return std::make_tuple(
-            shown.hovered,
-            shown.pressed,
-            shown.focused,
-            shown.focus_shown,
-            shown.finger_shift.x,
-            shown.finger_shift.y
-        );
-    }
 
     /// Takes a pointer's move, press or release, as pointer does, before
     /// the look it moved is counted.
