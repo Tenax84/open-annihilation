@@ -89,9 +89,6 @@
   "src/sim/match-runtime/src/match.cpp": {
    "tier-heap-container": 2
   },
-  "src/sim/match-runtime/src/targeting.cpp": {
-   "tier-heap-container": 1
-  },
   "src/sim/match-runtime/src/tick_missions_ground.cpp": {
    "tier-heap-container": 1
   },
