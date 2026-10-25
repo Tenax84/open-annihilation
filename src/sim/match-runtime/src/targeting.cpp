@@ -188,7 +188,7 @@ class TargetHost final : public sim::combat_state::IntelligenceHost,
         return match.fields(slot(source.identity)).definition->sight_distance;
     }
 
-    std::span<const sim::combat_state::TargetUnit>
+    std::span<sim::combat_state::TargetUnit>
     gather_nearby(uint8_t owner, const std::array<uint32_t, 3>& center, int32_t radius) override {
         if (owner >= match.sightings_.size()) {
             match.fault_.note("target partition outside player sightings");

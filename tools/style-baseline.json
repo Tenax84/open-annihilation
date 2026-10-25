@@ -11,7 +11,7 @@
    "tier-virtual": 16
   },
   "src/sim/combat-state/src/combat_state.cpp": {
-   "tier-heap-container": 3
+   "tier-heap-container": 2
   },
   "src/sim/gameplay-input/include/oa/sim/gameplay_input/input.hpp": {
    "tier-heap-container": 1
