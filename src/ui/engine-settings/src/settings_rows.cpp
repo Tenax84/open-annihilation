@@ -45,7 +45,7 @@ using Stepper = kit::Stepper<SettingsModel>;
 using Hint = std::array<std::string_view, 2>;
 
 /// The number of settings: Setting's enumerators.
-constexpr std::size_t kSettingCount = static_cast<std::size_t>(Setting::enhanced_graphics) + 1;
+constexpr std::size_t kSettingCount = static_cast<std::size_t>(Setting::menu_style) + 1;
 
 // ---------------------------------------------------------------------------
 // The sections' rows.
@@ -88,11 +88,12 @@ constexpr std::array<Setting, 11> kGraphicsRows{
     Setting::zoomed_out_units,
     Setting::zoomed_out_after,
 };
-/// User Interface's rows: how the menus scale, the window's frame, the
-/// HUD's scaling, the size Open Annihilation's own screens are drawn at,
-/// then whether Escape opens the game menu and whether a match shows the
-/// selection bar.
-constexpr std::array<Setting, 6> kUserInterfaceRows{
+/// User Interface's rows: which menus show, how they scale, the window's
+/// frame, the HUD's scaling, the size Open Annihilation's own screens are
+/// drawn at, then whether Escape opens the game menu and whether a match
+/// shows the selection bar.
+constexpr std::array<Setting, 7> kUserInterfaceRows{
+    Setting::menu_style,
     Setting::menu_scaling,
     Setting::window_frame,
     Setting::hud_scaling,
@@ -332,6 +333,12 @@ constexpr std::array<std::string_view, 3> kMenuScalingCaptions{
 static_assert(
     kMenuScalingCaptions.size() == menu_scaling_choices.size(),
     "every way of Menu scaling has its caption"
+);
+/// Menu style's captions, in menu_style_choices' order.
+constexpr std::array<std::string_view, 2> kMenuStyleCaptions{"Classic", "Open Annihilation"};
+static_assert(
+    kMenuStyleCaptions.size() == menu_style_choices.size(),
+    "every style of Menu style has its caption"
 );
 /// Explosion flash's captions, in explosion_flash_choices' order.
 constexpr std::array<std::string_view, 3> kExplosionFlashCaptions{"Off", "Reduced", "Full"};
@@ -1535,6 +1542,26 @@ std::string menu_scaling_hint(const SettingsModel& model, std::size_t line) {
     return {};
 }
 
+/// Returns a line of Menu style's hint, by the style chosen.
+std::string menu_style_hint(const SettingsModel& model, std::size_t line) {
+    // Which menus the style shows, and when they change.
+    switch (model.settings->menu_style) {
+    case MenuStyle::classic:
+        return line_of(
+            {"The game's own menus, as it always drew them.",
+             "Takes effect on the main menu."},
+            line
+        );
+    case MenuStyle::open_annihilation:
+        return line_of(
+            {"Open Annihilation's own menus over the game's.",
+             "Takes effect on the main menu."},
+            line
+        );
+    }
+    return {};
+}
+
 /// Returns a line of Explosion flash's hint, by the level.
 std::string explosion_flash_hint(const SettingsModel& model, std::size_t line) {
     // What the level chosen draws; a mod's profile may draw less.
@@ -2452,6 +2479,11 @@ constexpr std::array<SettingRow, kSettingCount> kDeclared{{
          {"Shots and explosions glow and edges are smoothed while the graphics card draws "
           "the battlefield.",
           "The glow and edge smoothing need the GPU renderer, which the next start chooses."})},
+    {.setting = S::menu_style,
+     .spec = changing(kit::levels("menu-style", "Menu style",
+                                  LevelStrip<MenuStyle, 2, menu_style_choices, &E::menu_style, kMenuStyleCaptions, &table_word<menu_style_words, MenuStyle>>::stepper(),
+                                  menu_style_level_width),
+                      &menu_style_hint, &lines<2>)},
 }};
 // clang-format on
 
@@ -2541,6 +2573,7 @@ constexpr std::array<std::string_view, kSettingCount> kSettingNames{
     "first-run",
     "selection-bar",
     "enhanced-graphics",
+    "menu-style",
 };
 
 /// Tells whether every row stands at its setting's place and is named by

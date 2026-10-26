@@ -17,6 +17,7 @@
 
 #include "campaign_menu.hpp"
 #include "column_menu.hpp"
+#include "engine_settings_state.hpp"
 #include "briefing_menu.hpp"
 #include "load_game_menu.hpp"
 #include "multiplayer_menu.hpp"
@@ -25,6 +26,7 @@
 
 #include "oa/app/runtime.hpp"
 #include "oa/app/view_rules.hpp"
+#include "oa/ui/engine_settings.hpp"
 #include "oa/ui/frontend/main_menu.hpp"
 #include "oa/ui/frontend_dialogs.hpp"
 #include "oa/ui/frontend_multiplayer/screens.hpp"
@@ -146,7 +148,7 @@ bool Runtime::main_menu_covers_front_end() {
 bool Runtime::oa_menu_may_show() {
     // The game's message boxes are drawn in the front end's picture, which
     // the menus cover: while one shows, the menu steps aside.
-    return !options_.classic_main_menu && !frame_owned_by_package() &&
+    return oa_menus_chosen_ && !options_.classic_main_menu && !frame_owned_by_package() &&
            oa::ui::frontend_dialogs::dialog_count() == 0 && oa_layer().screen_fonts() != nullptr;
 }
 
@@ -174,6 +176,11 @@ bool Runtime::press_menu_gadget(Screen shown, std::string_view name, int32_t mou
 }
 
 void Runtime::keep_main_menu_screen() {
+    // Menu style takes effect on the main menu once the settings dialog,
+    // which puts each setting in effect as it changes, has closed.
+    if (screen_ == Screen::main_menu && engine_settings_dialog() == nullptr)
+        oa_menus_chosen_ = engine_settings_ && engine_settings_->current.menu_style ==
+                                                   oa::ui::engine_settings::MenuStyle::open_annihilation;
     const auto shows = [this] {
         return screen_ == Screen::main_menu && !main_menu_overlay_ && oa_menu_may_show();
     };

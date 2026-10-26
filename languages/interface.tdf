@@ -1826,6 +1826,14 @@
 	it=Cerchio;
 	}
 
+[Classic]
+	{
+	de=Klassisch;
+	fr=Classique;
+	es=Clásico;
+	it=Classico;
+	}
+
 [Clear Session Description]
 	{
 	de=Sitzungsbeschreibung leeren;
@@ -5226,6 +5234,14 @@
 	it=Scala del menu;
 	}
 
+[Menu style]
+	{
+	de=Menüstil;
+	fr=Style des menus;
+	es=Estilo de los menús;
+	it=Stile dei menu;
+	}
+
 [Mex snap radius]
 	{
 	de=Einrastradius für Metallextraktoren;
@@ -6264,6 +6280,14 @@
 	fr=Open Annihilation {range};
 	es=Open Annihilation {range};
 	it=Open Annihilation {range};
+	}
+
+[Open Annihilation's own menus over the game's.]
+	{
+	de=Die eigenen Menüs von Open Annihilation über denen des Spiels.;
+	fr=Les menus propres à Open Annihilation, par-dessus ceux du jeu.;
+	es=Los menús propios de Open Annihilation sobre los del juego.;
+	it=I menu propri di Open Annihilation sopra quelli del gioco.;
 	}
 
 [Open Annihilation's own settings: controls, graphics, the interface's size, downloads and your files.]
@@ -8322,6 +8346,14 @@
 	it=Ha effetto dal prossimo avvio.;
 	}
 
+[Takes effect on the main menu.]
+	{
+	de=Wirkt im Hauptmenü.;
+	fr=Prend effet au menu principal.;
+	es=Surte efecto en el menú principal.;
+	it=Ha effetto nel menu principale.;
+	}
+
 [Team Number Alliances]
 	{
 	de=Bündnisse nach Teamnummer;
@@ -8776,6 +8808,14 @@
 	fr=Le jeu se lance quand même avec ces fichiers, mais les parties en réseau avec d'autres joueurs peuvent ne pas démarrer, et les enregistrements peuvent ne pas se rejouer pareil. Copie à nouveau le contenu depuis une autre source pour corriger ça.;
 	es=El juego sigue funcionando con estos archivos, pero las partidas en red con otros jugadores pueden no empezar, y las grabaciones pueden no repetirse igual. Vuelve a copiar el contenido desde otro origen para corregirlo.;
 	it=Il gioco funziona comunque con questi file, ma le partite in rete con altri giocatori possono non iniziare, e le registrazioni possono non ripetersi allo stesso modo. Copia di nuovo i contenuti da un'altra fonte per sistemarli.;
+	}
+
+[The game's own menus, as it always drew them.]
+	{
+	de=Die eigenen Menüs des Spiels, wie es sie immer gezeichnet hat.;
+	fr=Les menus propres au jeu, tels qu'il les a toujours dessinés.;
+	es=Los menús propios del juego, tal como siempre los dibujó.;
+	it=I menu propri del gioco, come li ha sempre disegnati.;
 	}
 
 [The game's own text and unit names, where its data has them in the language.]

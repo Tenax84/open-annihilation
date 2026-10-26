@@ -29,6 +29,11 @@ inline constexpr std::array<ChoiceWord<ExplosionFlash>, 3> explosion_flash_words
     {ExplosionFlash::reduced, "reduced"},
     {ExplosionFlash::full, "full"},
 }};
+/// Menu style's words, in menu_style_choices' order.
+inline constexpr std::array<ChoiceWord<MenuStyle>, 2> menu_style_words{{
+    {MenuStyle::classic, "classic"},
+    {MenuStyle::open_annihilation, "open-annihilation"},
+}};
 /// Zoomed out units' words, for the ways a player may choose: Icons, which
 /// the dialog shows but does not offer yet, has none.
 inline constexpr std::array<ChoiceWord<ZoomedOutUnits>, 2> zoomed_out_units_words{{

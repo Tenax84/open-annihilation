@@ -514,11 +514,20 @@ and which a value you choose always replaces:
 
 ![The top of the User Interface section: Menu scaling Sharp, Window frame Hidden in play, HUD scaling On and the Interface size row.](images/settings/user-interface.png)
 
-The User Interface section says how Open Annihilation's own screens, the
-window and the side panel are drawn, whether Escape opens the game menu,
-and whether a match shows the selection bar. Each setting takes effect at once, except Interface size, which
-applies when you press OK.
+The User Interface section says which menus show, how Open Annihilation's
+own screens, the window and the side panel are drawn, whether Escape opens
+the game menu, and whether a match shows the selection bar. Each setting
+takes effect at once, except Menu style, which takes effect on the main
+menu once the settings close, and Interface size, which applies when you
+press OK.
 
+- **Menu style**, Classic or Open Annihilation, Classic by default.
+  - **Classic**: the game's own menus, as 3.1c draws them, with the
+    Library and Settings buttons in the main menu's corner.
+  - **Open Annihilation**: Open Annihilation's own screens over the
+    game's: the main menu, Single Player, New Campaign, Skirmish,
+    Multiplayer, Load Game, the briefing, Settings and the Library.
+  `--classic-main-menu` keeps the game's own menus whatever it says.
 - **Menu scaling**, Sharp, Whole steps or Unfiltered, Sharp by default. It
   says how the menus, drawn at 640x480, fill the window, and how a game in
   full screen drawn at a Screen size of its own fills the screen, and takes

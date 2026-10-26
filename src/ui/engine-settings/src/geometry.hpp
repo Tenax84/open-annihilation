@@ -175,6 +175,10 @@ inline constexpr int32_t pad_haptics_level_width = 41;
 /// border: room for Whole steps, its widest caption, with three clear
 /// columns each side.
 inline constexpr int32_t menu_scaling_level_width = 71;
+/// Menu style's level strip's segment width, inside the strip's 1-pixel
+/// border: room for Open Annihilation, its widest caption, with three clear
+/// columns each side.
+inline constexpr int32_t menu_style_level_width = 100;
 /// Explosion flash's level strip's segment width, inside the strip's
 /// 1-pixel border: room for Reduced, its widest caption, with three clear
 /// columns each side.

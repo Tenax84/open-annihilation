@@ -577,14 +577,16 @@ them.
   press the focused button; every other key goes on to MAINMENU.GUI, whose
   quick keys and Escape stay the game's. Automation lists the buttons as
   `oa.main-menu.single-player` and so on.
-- **When it shows.** On the main menu, outside a match, while no package
-  owns the frame, no add-on's overlay stands over the menu and no message
-  box of the game's shows: those boxes are drawn in the front end's
-  picture, so the menu steps aside while one is open. MAINMENU.GUI's
-  Library and Settings buttons neither show nor take input under it.
-  `--classic-main-menu` keeps the game's own menu, and so does every check
-  and every unattended run, which drive MAINMENU.GUI's buttons where 3.1c
-  has them.
+- **When it shows.** On the main menu, outside a match, while Menu style
+  is Open Annihilation as the main menu last read it with no settings
+  dialog open (`Runtime::oa_menus_chosen_`), no package owns the frame, no
+  add-on's overlay stands over the menu and no message box of the game's
+  shows: those boxes are drawn in the front end's picture, so the menu
+  steps aside while one is open. MAINMENU.GUI's Library and Settings
+  buttons neither show nor take input under it. Menu style Classic, the
+  default, and `--classic-main-menu` keep the game's own menu, and so does
+  every check and every unattended run, which drive MAINMENU.GUI's buttons
+  where 3.1c has them.
 - **Layout.** The measures are given for a window 1080 rows high and taken
   at every other window's height, or at its width when it is narrower than
   1000 of those rows; the background covers the window, cut mostly on the
@@ -645,7 +647,8 @@ Under them the plate shows the main menu's version label.
   Escape and the code that shows Any Mission stay the game's. Automation
   lists the buttons as `oa.single-player-menu.new-campaign` and so on, and
   not SINGLE.GUI's records under them.
-- **When it shows.** As the main menu: not with `--classic-main-menu`,
+- **When it shows.** As the main menu: not with Menu style Classic or
+  `--classic-main-menu`,
   while a package owns the frame, or while a message box of the game's is
   open. Its frames are left out as the main menu's are
   (`Runtime::main_menu_covers_front_end`).
@@ -697,7 +700,8 @@ chosen side, campaign and difficulty glow amber on gunmetal grounds.
   and on, `side-earlier` and `side-later`, the rows shown as `campaign-1`
   and on, `difficulty-easy`, `difficulty-medium`, `difficulty-hard`,
   `previous-menu` and `start`.
-- **When it shows.** As the main menu: not with `--classic-main-menu`,
+- **When it shows.** As the main menu: not with Menu style Classic or
+  `--classic-main-menu`,
   while a package owns the frame, or while a message box of the game's is
   open. Any Mission keeps NEWGAME.GUI as the game shows it. Its frames are
   left out as the main menu's are (`Runtime::main_menu_covers_front_end`).
@@ -746,7 +750,8 @@ START, and the version plate.
   `metal-` and `energy-` for each slot played, `commander-previous` and
   `commander-next` and so on for each rule, `select-map`, `previous-menu`
   and `start`.
-- **When it shows.** As the other menus: not with `--classic-main-menu`,
+- **When it shows.** As the other menus: not with Menu style Classic or
+  `--classic-main-menu`,
   while a package owns the frame, or while a message box of the game's is
   open. The map selection shows over SKIRMISH.GUI as the game shows it.
 
@@ -843,7 +848,8 @@ LOAD, and the version plate.
   it; every other key goes on to LOADGAME.GUI, whose quick keys and Escape
   stay the game's. Automation lists `oa.load-game-menu.save-1` and on,
   `previous-menu` and `load`.
-- **When it shows.** As the other menus: not with `--classic-main-menu`,
+- **When it shows.** As the other menus: not with Menu style Classic or
+  `--classic-main-menu`,
   while a package owns the frame, or while a message box of the game's is
   open, such as the one for a save that cannot be loaded. The save dialog,
   and the load dialog over a match, are the game's.
@@ -885,7 +891,8 @@ panel, PREVIOUS MENU and START, and the version plate.
   End scroll the briefing; every other key goes on to MSNBRIEF.GUI, whose
   Return and Escape stay the game's. Automation lists
   `oa.briefing-menu.more`, `narration`, `previous-menu` and `start`.
-- **When it shows.** As the other menus: not with `--classic-main-menu`,
+- **When it shows.** As the other menus: not with Menu style Classic or
+  `--classic-main-menu`,
   while a package owns the frame, or while a message box of the game's is
   open. The briefing opened from the pause menu of a match, BRIEFING.GUI,
   is the game's.
@@ -943,8 +950,8 @@ SELPROV.GUI, where the screen stays open until the game leaves SELPROV.GUI (`Run
 the menus' art and steel. Under a smaller OPEN ANNIHILATION title and a
 SETTINGS heading it has a CATEGORIES panel, the chosen category's panel and
 a DETAILS panel, then RESTORE DEFAULTS and UNDO on the left, CANCEL and OK
-on the right, and the version plate. With `--classic-main-menu`, and in a
-match, the dialog shows in its own look as before.
+on the right, and the version plate. With Menu style Classic or
+`--classic-main-menu`, and in a match, the dialog shows in its own look as before.
 
 - **Categories.** Sound, Music, Graphics and Game Speeds, the game's own
   options, then Controls, Interface, Language & Text and Engine Limits,
@@ -1019,8 +1026,8 @@ steel. Under a smaller OPEN ANNIHILATION title and a LIBRARY heading, with
 the refresh button at the heading's right, it has a LIBRARY panel of tabs,
 the chosen tab's panel and a DETAILS panel, then the tab's button on the
 left (UPDATE ALL, or ADD REGISTRY… on Registries), SETTINGS and CLOSE on
-the right, and the version plate. With `--classic-main-menu` the Library
-shows in its own look as before (`Runtime::LibraryScreen`).
+the right, and the version plate. With Menu style Classic or
+`--classic-main-menu` the Library shows in its own look as before (`Runtime::LibraryScreen`).
 
 - **Tabs.** Active, then under a divider Mods, Maps and Updates, then
   under another Registries, each with a small picture and its count; an

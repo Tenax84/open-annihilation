@@ -304,6 +304,8 @@ enum class Setting : uint8_t {
     welcome_setup,
     selection_bar,     ///< Selection bar: a switch
     enhanced_graphics, ///< Enhanced graphics: a switch
+    /// Menu style: a strip of Classic and Open Annihilation
+    menu_style,
 };
 
 /// Returns the settings a section shows, top to bottom.

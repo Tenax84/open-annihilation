@@ -185,6 +185,7 @@ of range is clamped. A switch is On for any number above 0: a word such as
 | `open-annihilation.hardware-acceleration` | `off`, `basic` or `full`; a whole number from an earlier version reads as `off` at 0 or below, else `full` | `full` with the player's own file, else `off` |
 | `open-annihilation.vertical-sync` | 0 or 1 | 0 |
 | `open-annihilation.smooth-motion` | 0 or 1 | 1 |
+| `open-annihilation.menu-style` | `classic` or `open-annihilation` | `classic` |
 | `open-annihilation.menu-scaling` | `sharp`, `whole-steps` or `unfiltered` | `sharp` |
 | `open-annihilation.native-density` | 0 or 1 | 0; 1 where the platform opens every window at native density |
 | `open-annihilation.explosion-flash` | `off`, `reduced` or `full` | `full` |

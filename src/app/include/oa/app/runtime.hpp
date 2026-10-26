@@ -5506,8 +5506,9 @@ class Runtime final : public menu::Host,
     /// @return true while it is
     [[nodiscard]] bool oa_briefing_menu_shown();
 
-    /// Tells whether Open Annihilation's menus may cover the game's: not
-    /// while the run takes the game's own menus
+    /// Tells whether Open Annihilation's menus may cover the game's: only
+    /// while Menu style is Open Annihilation as the main menu last took it
+    /// (oa_menus_chosen_), and not while the run takes the game's own menus
     /// (Options::classic_main_menu), a package owns the frame, a message
     /// box of the game's shows, or the OA layer has no fonts.
     ///
@@ -16254,6 +16255,10 @@ class Runtime final : public menu::Host,
     // The main menu's version label as Open Annihilation's main menu last
     // read it; the Single Player menu shows it too.
     std::string menu_version_;
+    // Menu style is Open Annihilation as the main menu last took it, with no
+    // settings dialog open (keep_main_menu_screen): the menus follow a change
+    // of the setting from there, never under the dialog.
+    bool oa_menus_chosen_ = false;
     // What Open Annihilation's Multiplayer screen keeps while it steps
     // aside: the address typed, whether it was first read from the stored
     // one, and how far TCP.GUI is in taking it.

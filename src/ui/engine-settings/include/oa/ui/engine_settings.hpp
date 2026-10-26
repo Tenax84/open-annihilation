@@ -52,6 +52,8 @@ inline constexpr std::string_view middle_click_pan = "open-annihilation.middle-c
 inline constexpr std::string_view escape_opens_menu = "open-annihilation.escape-opens-menu";
 /// 1 or 0 (EngineSettings::enhanced_graphics).
 inline constexpr std::string_view enhanced_graphics = "open-annihilation.enhanced-graphics";
+/// "classic" or "open-annihilation" (EngineSettings::menu_style).
+inline constexpr std::string_view menu_style = "open-annihilation.menu-style";
 /// 1 or 0 (EngineSettings::selection_bar).
 inline constexpr std::string_view selection_bar = "open-annihilation.selection-bar";
 /// Units per player, decimal (EngineSettings::unit_limit).
@@ -499,6 +501,23 @@ inline constexpr std::array<MenuScaling, 3> menu_scaling_choices{
     MenuScaling::sharp,
     MenuScaling::whole_steps,
     MenuScaling::unfiltered,
+};
+
+/// Menu style: which screens the front end's menus show.
+enum class MenuStyle : uint8_t {
+    /// The game's own menus, MAINMENU.GUI and the screens it opens, as 3.1c
+    /// draws them.
+    classic,
+    /// Open Annihilation's own screens over the game's menus: the main menu,
+    /// Single Player, New Campaign, Skirmish, Multiplayer, Load Game, the
+    /// briefing, Settings and the Library.
+    open_annihilation,
+};
+
+/// The styles of Menu style, in the order the dialog offers them.
+inline constexpr std::array<MenuStyle, 2> menu_style_choices{
+    MenuStyle::classic,
+    MenuStyle::open_annihilation,
 };
 
 /// Interface size: how large Open Annihilation's own screens (Settings, its
@@ -992,6 +1011,9 @@ struct EngineSettings {
     bool smooth_motion{true};
     /// How the menus are enlarged to the window.
     MenuScaling menu_scaling{MenuScaling::sharp};
+    /// Which screens the front end's menus show; the game's own unless the
+    /// player chooses Open Annihilation's.
+    MenuStyle menu_style{MenuStyle::classic};
     /// The window opens at the display's own pixel density, from the next
     /// start: on macOS the Retina resolution, elsewhere the display's scale.
     /// Always on where the platform opens every window so
