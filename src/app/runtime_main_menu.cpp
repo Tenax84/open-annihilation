@@ -16,8 +16,9 @@
 // MAINMENU.GUI shows under the box.
 //
 // The game's own main menu is given LIBRARY and SETTINGS buttons of its own
-// look (Runtime::add_main_menu_entries): copies of SINGLE and INTRO one
-// button's step above them, each on a copy of its button's plate.
+// look (Runtime::add_main_menu_entries): copies of SINGLE and INTRO, with
+// copies of their plates one button's step above them, and the six buttons
+// stand on three rows of two.
 
 #include "campaign_menu.hpp"
 #include "column_menu.hpp"
@@ -95,8 +96,7 @@ ColumnMenuLook main_menu_look() {
     return look;
 }
 
-/// One button MAINMENU.GUI is given: the record it copies and stands one
-/// button's step above, its record name, its caption in English and its
+/// One button MAINMENU.GUI is given: the record it copies, its record name, its caption in English and its
 /// quick key.
 struct AddedEntry {
     std::string_view copied{};
@@ -105,8 +105,8 @@ struct AddedEntry {
     char quick_key{};
 };
 
-/// The buttons MAINMENU.GUI is given: LIBRARY above SINGLE, SETTINGS above
-/// INTRO.
+/// The buttons MAINMENU.GUI is given, each made from a copy of the button
+/// it names, on a copy of that button's plate one button's step above it.
 constexpr std::array<AddedEntry, 2> added_entries{{
     {menu::resource_name(menu::Button::single_player), Runtime::main_menu_library_record, "LIBRARY", 'L'},
     {menu::resource_name(menu::Button::intro), Runtime::main_menu_settings_record, "SETTINGS", 'T'},
@@ -122,6 +122,18 @@ constexpr int32_t kPlateBottom = 6;
 /// The rows from one main-menu button to the next when MAINMENU.GUI has no
 /// MULTI under SINGLE to measure them by: SINGLE's 393 to MULTI's 430.
 constexpr int32_t kEntryStep = 37;
+
+/// The main menu's buttons once MAINMENU.GUI is given LIBRARY and SETTINGS,
+/// left to right and top to bottom on three rows of two: the left column is
+/// SINGLE's, the right INTRO's, the top row the plates added above them.
+constexpr std::array<std::string_view, 6> entry_order{{
+    menu::resource_name(menu::Button::single_player),
+    menu::resource_name(menu::Button::multiplayer),
+    Runtime::main_menu_settings_record,
+    Runtime::main_menu_library_record,
+    menu::resource_name(menu::Button::intro),
+    menu::resource_name(menu::Button::exit),
+}};
 
 /// Copies a rectangle of a picture onto another place of it, the colours and,
 /// on a paletted picture, the indices.
@@ -182,6 +194,9 @@ void Runtime::add_main_menu_entries() {
             return;
         copied[at] = *found;
     }
+    const int16_t left_x = gadgets[copied[0]].common.x;
+    const int16_t right_x = gadgets[copied[1]].common.x;
+    const int32_t top_y = gadgets[copied[0]].common.y - step;
     for (std::size_t at = 0; at < added_entries.size(); ++at) {
         const AddedEntry& entry = added_entries[at];
         oa::ui::gui_layout::Gadget gadget = gadgets[copied[at]];
@@ -205,6 +220,14 @@ void Runtime::add_main_menu_entries() {
         button.status = 0;
         button.grayed_out = false;
         gadgets.push_back(std::move(gadget));
+    }
+    for (std::size_t at = 0; at < entry_order.size(); ++at) {
+        const auto found = gui_record_named(gadgets, entry_order[at]);
+        if (!found)
+            continue;
+        auto& common = gadgets[*found].common;
+        common.x = at % 2 == 0 ? left_x : right_x;
+        common.y = static_cast<int16_t>(top_y + static_cast<int32_t>(at / 2) * step);
     }
     main_menu_entries_ = true;
 }

@@ -547,12 +547,15 @@ While Menu style is Classic, MAINMENU.GUI, the game's own main menu, has
 two buttons more, LIBRARY and SETTINGS, in its own look
 (`Runtime::add_main_menu_entries`, `runtime_main_menu.cpp`).
 
-- **What they are.** Records of MAINMENU.GUI, copies of SINGLE and INTRO:
-  LIBRARY stands above SINGLE and SETTINGS above INTRO, one button's step
-  (SINGLE to MULTI) higher, with the game's button art, font, hover and
-  press. Each stands on a copy of its button's plate from the menu's
-  picture, the plate's 10 columns left and 9 right of the button and 7
-  rows above it and 6 below; the pipes beside the plate are not copied.
+- **What they are.** Records of MAINMENU.GUI, copies of SINGLE and INTRO,
+  with the game's button art, font, hover and press. A copy of SINGLE's
+  and of INTRO's plate from the menu's picture is added one button's step
+  (SINGLE to MULTI) above each, the plate's 10 columns left and 9 right
+  of the button and 7 rows above it and 6 below; the pipes beside the
+  plate are not copied. The six buttons then stand on the six plates,
+  three rows of two, left to right and top to bottom: SINGLE and MULTI,
+  SETTINGS and LIBRARY, INTRO and EXIT. The left column is SINGLE's, the
+  right INTRO's.
   Their captions come from the interface catalogue; their quick keys are
   L and T. Automation lists them as `LIBRARY` and `SETTINGS`, as the
   game's own buttons are listed.

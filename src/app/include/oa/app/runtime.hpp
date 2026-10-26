@@ -5528,9 +5528,10 @@ class Runtime final : public menu::Host,
     [[nodiscard]] bool oa_main_menu_shown();
 
     /// Adds MAINMENU.GUI's LIBRARY and SETTINGS buttons as the main menu
-    /// loads: copies of SINGLE and INTRO, each one button's step above the
-    /// button it copies, on a copy of that button's plate from the menu's
-    /// picture (main_menu_entries_). Not with `--classic-main-menu`, under
+    /// loads: copies of SINGLE and INTRO, with a copy of each one's plate
+    /// from the menu's picture one button's step above it, and stands the
+    /// six buttons on three rows of two, SINGLE and MULTI, SETTINGS and
+    /// LIBRARY, INTRO and EXIT (main_menu_entries_). Not with `--classic-main-menu`, under
     /// an extension's overlay, or on a MAINMENU.GUI without SINGLE and INTRO
     /// or without room above them; the main menu then keeps its corner
     /// buttons (EngineSettingsMenuHost).

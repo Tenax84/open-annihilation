@@ -523,9 +523,10 @@ press OK.
 
 - **Menu style**, Classic or Open Annihilation, Classic by default.
   - **Classic**: the game's own menus, as 3.1c draws them. The main menu
-    has two buttons more in its own look, LIBRARY above SINGLE and
-    SETTINGS above INTRO, which open the Library and Settings over the
-    whole window.
+    has two buttons more in its own look, SETTINGS and LIBRARY, which
+    open Settings and the Library over the whole window. The buttons
+    stand on three rows of two: SINGLE and MULTI, SETTINGS and LIBRARY,
+    INTRO and EXIT.
   - **Open Annihilation**: Open Annihilation's own screens over the
     game's: the main menu, Single Player, New Campaign, Skirmish,
     Multiplayer, Load Game, the briefing, Settings and the Library.
