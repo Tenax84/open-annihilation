@@ -6,15 +6,20 @@
 #include "oa/data/content_bundles.hpp"
 #include "oa/data/content_bundles/record.hpp"
 #include "oa/formats/hpi.hpp"
+#include "oa/platform/dataless.hpp"
 #include "oa/platform/files.hpp"
 #include "oa/ui/engine_settings.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <iostream>
+#include <mutex>
+#include <span>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace oa::app {
 namespace {
@@ -963,6 +968,148 @@ std::vector<std::string> registry_content_bundles(const fs::path& user) {
     return ids;
 }
 
+namespace {
+
+struct ArchiveWaitState {
+    ArchiveWait progress{};
+    bool reporting{};
+    EvictedArchiveHold hold{};
+    void* hold_context{};
+    oa::platform::FileResidenceProbe probe{};
+    void* probe_context{};
+    mutable std::mutex line_mutex;
+    std::string line;
+};
+
+ArchiveWaitState& archive_wait_state() {
+    static ArchiveWaitState state;
+    return state;
+}
+
+/// Reads one byte of an evicted file, after the check's hold. The read is
+/// what makes macOS download the file.
+void read_evicted_byte(const fs::path& path) {
+    const ArchiveWaitState& wait = archive_wait_state();
+    if (wait.hold != nullptr)
+        wait.hold(path, wait.hold_context);
+    std::ifstream input(path, std::ios::binary);
+    char byte = 0;
+    if (input)
+        input.read(&byte, 1);
+}
+
+/// Counts the files that are not on this computer and reads one byte of each
+/// on macOS, so the download happens on this thread. The dialog's line and
+/// bar follow the count. Only a compose that shows its wait looks, and only
+/// on a system that keeps files elsewhere.
+void fetch_evicted_archives(const std::vector<fs::path>& folders) {
+    const ArchiveWaitState& wait = archive_wait_state();
+    if (!wait.reporting || !oa::platform::host_reports_dataless_files())
+        return;
+    const oa::platform::FileResidenceProbe probe =
+        wait.probe != nullptr ? wait.probe : oa::platform::system_file_residence;
+    std::vector<fs::path> evicted;
+    std::ignore =
+        oa::platform::count_evicted_files(folders, probe, wait.probe_context, &evicted, nullptr);
+    if (evicted.empty())
+        return;
+    if (wait.progress.line != nullptr)
+        wait.progress.line(wait.progress.context, icloud_download_line);
+    {
+        std::lock_guard lock(archive_wait_state().line_mutex);
+        archive_wait_state().line = std::string(icloud_download_line);
+    }
+    const int32_t whole = static_cast<int32_t>(evicted.size());
+    if (wait.progress.amounts != nullptr)
+        wait.progress.amounts(wait.progress.context, 0, whole);
+    int32_t fetched = 0;
+    for (const fs::path& path : evicted) {
+        if (wait.progress.stopped != nullptr && wait.progress.stopped(wait.progress.context))
+            return;
+        read_evicted_byte(path);
+        ++fetched;
+        if (wait.progress.amounts != nullptr)
+            wait.progress.amounts(wait.progress.context, fetched, whole);
+    }
+}
+
+} // namespace
+
+void set_archive_wait(const ArchiveWait* progress) noexcept {
+    ArchiveWaitState& state = archive_wait_state();
+    if (progress == nullptr) {
+        state.progress = {};
+        state.reporting = false;
+        std::lock_guard lock(state.line_mutex);
+        state.line.clear();
+        return;
+    }
+    state.progress = *progress;
+    state.reporting = true;
+}
+
+void set_evicted_archive_hold(EvictedArchiveHold hold, void* context) noexcept {
+    archive_wait_state().hold = hold;
+    archive_wait_state().hold_context = context;
+}
+
+void set_archive_residence_probe(oa::platform::FileResidenceProbe probe, void* context) noexcept {
+    archive_wait_state().probe = probe;
+    archive_wait_state().probe_context = context;
+}
+
+std::string archive_wait_line() {
+    const ArchiveWaitState& state = archive_wait_state();
+    std::lock_guard lock(state.line_mutex);
+    return state.line;
+}
+
+void plant_icloud_wait_copy(const fs::path& user) {
+    const oa::data::content_bundles::Bundle* base =
+        oa::data::content_bundles::find_bundle(oa::data::content_bundles::default_base_game_id);
+    if (base == nullptr)
+        throw std::runtime_error("icloud wait: the base game is not known");
+    const fs::path folder = bundle_directory(user, *base);
+    fs::create_directories(folder);
+    const std::vector<uint8_t> text{'o', 'k'};
+    const oa::HpiWriteFile file{"readme.txt", text};
+    const std::vector<uint8_t> archive = oa::write_hpi(std::span<const oa::HpiWriteFile>(&file, 1));
+    const std::string hash(64, '0');
+    std::ofstream record(
+        folder / std::string(oa::data::content_bundles::content_record_name),
+        std::ios::binary | std::ios::trunc
+    );
+    record << "oa-content 1\n";
+    record << "bundle " << base->id << '\n';
+    record << "source G05\n";
+    for (const oa::data::content_bundles::ContentFile& item : base->files) {
+        record << "file " << item.copy_name << '\n';
+        record << "size 1\n";
+        record << "modified 1\n";
+        record << "sha256 " << hash << '\n';
+        const fs::path placed = folder / path_from_utf8(item.copy_name);
+        fs::create_directories(placed.parent_path());
+        std::ofstream out(placed, std::ios::binary | std::ios::trunc);
+        const std::string_view name = item.copy_name;
+        const auto dot = name.rfind('.');
+        const std::string_view extension =
+            dot == std::string_view::npos ? std::string_view{} : name.substr(dot);
+        const bool archive_file = extension == ".hpi" || extension == ".HPI" ||
+                                  extension == ".ufo" || extension == ".ccx" || extension == ".gp3";
+        if (archive_file)
+            out.write(
+                reinterpret_cast<const char*>(archive.data()),
+                static_cast<std::streamsize>(archive.size())
+            );
+        else
+            out.put('x');
+        if (!out)
+            throw std::runtime_error("icloud wait: a recorded file was not written");
+    }
+    if (!record)
+        throw std::runtime_error("icloud wait: the content record was not written");
+}
+
 std::optional<GameDirectory> compose_managed_content(
     const ManagedMount& request, const oa::platform::preferences::Values& values
 ) {
@@ -1026,6 +1173,7 @@ std::optional<GameDirectory> compose_managed_content(
     install.folders = folders;
     install.profile = std::move(resolved_profile.profile);
     install.profile_warnings = std::move(resolved_profile.warnings);
+    fetch_evicted_archives(folders);
     discover_archives(installation, install, resolved_profile.file);
     if (!install.profile_errors.empty()) {
         std::string message = "the mod profile cannot be used:";

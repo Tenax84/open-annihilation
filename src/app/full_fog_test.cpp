@@ -12,7 +12,10 @@
 // camera between tiles, through a placement, and at two levels; the black
 // pass and the dithered pass with their runs merged and their alphas; the
 // fog mask, its texels the cells at the tile corners, read LINEAR through
-// its quad to the alphas the corners interpolate to; and what is refused.
+// its quad to the alphas the corners interpolate to; what is refused; and
+// the Classic fog: its shapes covering the FOG.GAF art, the dither's
+// checkerboard, and its black, greyed and dithered passes drawing exactly
+// the processor's tiles.
 #include "full_fog.hpp"
 
 #include "oa/present/world_renderer/world_fog.hpp"
@@ -27,6 +30,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <random>
 #include <span>
 #include <utility>
@@ -1210,6 +1214,364 @@ void refusals_add_nothing() {
     OA_CHECK(frame.vertices.empty() && frame.indices.empty() && frame.batches.empty());
 }
 
+/// A FOG.GAF tile set of seeded shapes: each tile's texels opaque at
+/// random, in three palette indices.
+///
+/// @return the tiles
+wr::FogTileSet seeded_tiles() {
+    std::mt19937 random(test_seed + 2);
+    wr::FogTileSet tiles;
+    tiles.art.assign(2 * wr::FogTileSet::tiles_per_bank, {});
+    for (auto& art : tiles.art)
+        for (std::size_t texel = 0; texel < art.opaque.size(); ++texel) {
+            art.opaque[texel] = random() % 3 != 0 ? 1 : 0;
+            art.index[texel] = static_cast<uint8_t>(random() % 3);
+        }
+    return tiles;
+}
+
+/// The Classic shapes cover each tile's opaque texels once, in their own
+/// palette index and within one quarter, and nothing else; a tile's runs
+/// that match the row above grow one rectangle.
+void classic_shapes_cover_the_art() {
+    const wr::FogTileSet tiles = seeded_tiles();
+    fog::ClassicShapes shapes;
+    fog::build_classic_shapes(tiles, shapes);
+    OA_CHECK(shapes.built());
+    for (const auto bank : {wr::FogTileSet::black, wr::FogTileSet::gray})
+        for (int32_t variant = 0; variant < wr::fog_tile_variants; ++variant)
+            for (uint8_t mask = 1; mask < wr::fog_mask_full; ++mask) {
+                const wr::FogTileArt& art = tiles.at(bank, variant, mask);
+                std::array<uint8_t, tile_edge * tile_edge> covered{};
+                for (const fog::ShapeBox& box : shapes.at(bank, variant, mask)) {
+                    OA_CHECK(box.width >= 1 && box.height >= 1);
+                    OA_CHECK(box.x / 16 == (box.x + box.width - 1) / 16);
+                    OA_CHECK(box.y / 16 == (box.y + box.height - 1) / 16);
+                    for (int32_t y = box.y; y < box.y + box.height; ++y)
+                        for (int32_t x = box.x; x < box.x + box.width; ++x) {
+                            const auto texel = static_cast<std::size_t>(y * tile_edge + x);
+                            OA_CHECK(art.opaque[texel] != 0 && art.index[texel] == box.index);
+                            ++covered[texel];
+                        }
+                }
+                for (std::size_t texel = 0; texel < covered.size(); ++texel)
+                    OA_CHECK(covered[texel] == (art.opaque[texel] != 0 ? 1 : 0));
+            }
+    // A solid quarter of one index is one rectangle.
+    wr::FogTileSet solid;
+    solid.art.assign(2 * wr::FogTileSet::tiles_per_bank, {});
+    for (int32_t y = 0; y < tile_edge / 2; ++y)
+        for (int32_t x = 0; x < tile_edge / 2; ++x)
+            solid.at(wr::FogTileSet::black, 0, 1)
+                .opaque[static_cast<std::size_t>(y * tile_edge + x)] = 1;
+    fog::build_classic_shapes(solid, shapes);
+    const auto one = shapes.at(wr::FogTileSet::black, 0, 1);
+    OA_CHECK(one.size() == 1);
+    if (one.size() == 1)
+        OA_CHECK(one[0].x == 0 && one[0].y == 0 && one[0].width == 16 && one[0].height == 16);
+    OA_CHECK(shapes.at(wr::FogTileSet::black, 0, 2).empty());
+    // Masks and variants past the shapes, and art not loaded, have none.
+    OA_CHECK(shapes.at(wr::FogTileSet::black, 0, 0).empty());
+    OA_CHECK(shapes.at(wr::FogTileSet::black, 0, wr::fog_mask_full).empty());
+    OA_CHECK(shapes.at(wr::FogTileSet::gray, wr::fog_tile_variants, 1).empty());
+    fog::build_classic_shapes(wr::FogTileSet{}, shapes);
+    OA_CHECK(!shapes.built() && shapes.at(wr::FogTileSet::black, 0, 1).empty());
+}
+
+/// The dither's page clears the texels whose column and row sum to an even
+/// number, as the processor clears map pixels from a tile's even corner.
+void dither_page_is_the_checkerboard() {
+    std::vector<card::Texel> texels;
+    fog::build_dither_texels(texels);
+    OA_CHECK(texels.size() == std::size_t{fog::dither_page_edge} * fog::dither_page_edge);
+    for (uint32_t y = 0; y < fog::dither_page_edge; ++y)
+        for (uint32_t x = 0; x < fog::dither_page_edge; ++x) {
+            const card::Texel& texel = texels[std::size_t{y} * fog::dither_page_edge + x];
+            const uint8_t expected = ((x + y) & 1U) == 0 ? 255 : 0;
+            OA_CHECK(
+                texel.red == expected && texel.green == expected && texel.blue == expected &&
+                texel.alpha == expected
+            );
+        }
+}
+
+/// What a Classic pass should draw at each map pixel under a grid's tiles.
+struct ClassicField {
+    int32_t left{}; ///< the map pixel of the grid's first column
+    int32_t top{};  ///< and of its first row
+    int32_t width{};
+    int32_t height{};
+    std::vector<int32_t> drawn; ///< -1 for nothing; else a palette index, or 256 for the fill
+
+    /// Returns a pixel's place in drawn, or none past the grid.
+    [[nodiscard]] std::optional<std::size_t> at(int32_t x, int32_t z) const {
+        if (x < left || z < top || x >= left + width || z >= top + height)
+            return std::nullopt;
+        return static_cast<std::size_t>(z - top) * static_cast<std::size_t>(width) +
+               static_cast<std::size_t>(x - left);
+    }
+};
+
+/// The fill a ClassicField holds for a whole tile.
+constexpr int32_t whole_fill = 256;
+
+/// Works out what the processor draws of one layer of a grid, as
+/// draw_fog_grid does: a whole tile filled, a partial one through its
+/// FOG.GAF tile of the bank.
+///
+/// @param grid the fog grid
+/// @param tiles the tile art
+/// @param bank black for the never-mapped layer, gray for the greyed one
+/// @param camera_x map pixel at the view's left edge
+/// @param camera_z map pixel at the view's top edge
+/// @return the field over the grid's tiles
+ClassicField classic_field(
+    const wr::FogGrid& grid,
+    const wr::FogTileSet& tiles,
+    wr::FogTileSet::Bank bank,
+    int32_t camera_x,
+    int32_t camera_z
+) {
+    ClassicField field;
+    field.left = camera_x + grid.offset_x;
+    field.top = camera_z + grid.offset_z;
+    field.width = grid.width * tile_edge;
+    field.height = grid.height * tile_edge;
+    field.drawn.assign(static_cast<std::size_t>(field.width) * field.height, -1);
+    for (int32_t row = 0; row < grid.height; ++row)
+        for (int32_t column = 0; column < grid.width; ++column) {
+            const wr::FogTile& tile = grid.at(column, row);
+            const uint8_t mask = bank == wr::FogTileSet::black
+                                     ? tile.unmapped
+                                     : (tile.unmapped == wr::fog_mask_full ? 0 : tile.unseen);
+            if (mask == 0)
+                continue;
+            const int32_t variant = (row + column + grid.variant_phase) & 3;
+            for (int32_t y = 0; y < tile_edge; ++y)
+                for (int32_t x = 0; x < tile_edge; ++x) {
+                    const auto texel = static_cast<std::size_t>(y * tile_edge + x);
+                    int32_t value = -1;
+                    if (mask == wr::fog_mask_full)
+                        value = whole_fill;
+                    else if (tiles.at(bank, variant, mask).opaque[texel] != 0)
+                        value = tiles.at(bank, variant, mask).index[texel];
+                    field.drawn
+                        [static_cast<std::size_t>(row * tile_edge + y) * field.width +
+                         static_cast<std::size_t>(column * tile_edge + x)] = value;
+                }
+        }
+    return field;
+}
+
+/// The Classic passes over grids of mixed sight, at an aligned camera and
+/// one between tiles: the black pass draws exactly the processor's black
+/// tiles in their palette colours and whole tiles in the fill, the greyed
+/// pass the greyed terrain once under exactly the processor's gray tiles
+/// within the map, at its tile's texels, and the dithered form the dither's
+/// page under the same pixels, each texel at its pixel's place in its tile.
+void classic_passes_draw_the_processors_tiles() {
+    const Atlas built = build_atlas();
+    const Sight sight = mixed_sight();
+    const wr::FogTileSet tiles = seeded_tiles();
+    fog::ClassicShapes shapes;
+    fog::build_classic_shapes(tiles, shapes);
+    std::array<card::Colour, OA_PALETTE_COLORS> palette{};
+    for (std::size_t index = 0; index < palette.size(); ++index)
+        palette[index] = {static_cast<float>(index) / 255.0F, 0.25F, 0.5F, 0.0F};
+    const card::Colour fill{0.75F, 0.125F, 0.0F, 0.5F};
+    const card::Colour dither{0.0F, 0.5F, 0.25F, 0.0F};
+    const auto map_width = static_cast<int32_t>(map_tiles_wide) * tile_edge;
+    const auto map_height = static_cast<int32_t>(map_tiles_high) * tile_edge;
+    // Quads of each pass over every camera: each draws some.
+    std::array<uint32_t, 3> passes_drawn{};
+    for (const auto& [camera_x, camera_z] :
+         {std::pair{0, 0}, std::pair{45, 23}, std::pair{128, 64}, std::pair{150, 77}}) {
+        const auto grid = sight.fog(camera_x, camera_z);
+        const auto placement = plain(camera_x, camera_z);
+
+        // Reads a quad's map rectangle back.
+        struct Box {
+            int32_t x{};
+            int32_t z{};
+            int32_t width{};
+            int32_t height{};
+        };
+
+        const auto box_of = [&](const Quad& quad) {
+            const auto x = static_cast<int32_t>(std::lround(quad.corners[0].x));
+            const auto z = static_cast<int32_t>(std::lround(quad.corners[0].y));
+            return Box{
+                x + camera_x,
+                z + camera_z,
+                static_cast<int32_t>(std::lround(quad.corners[2].x)) - x,
+                static_cast<int32_t>(std::lround(quad.corners[2].y)) - z
+            };
+        };
+
+        // The black pass.
+        {
+            const ClassicField field =
+                classic_field(grid, tiles, wr::FogTileSet::black, camera_x, camera_z);
+            card::CardFrame frame;
+            const uint32_t appended = fog::append_unmapped_classic(
+                frame, grid, shapes, fill, palette, placement, {}, nullptr
+            );
+            const auto quads = quads_of(frame);
+            OA_CHECK(appended == quads.size());
+            passes_drawn[0] += appended;
+            std::vector<int32_t> drawn(field.drawn.size(), -1);
+            for (const auto& quad : quads) {
+                OA_CHECK(frame.batches[quad.batch].page == card::PageHandle{});
+                OA_CHECK(frame.batches[quad.batch].blend == card::Blend::alpha);
+                const card::Colour& colour = quad.corners[0].colour;
+                OA_CHECK(colour.alpha == 1.0F);
+                int32_t value = whole_fill;
+                if (!(colour.red == fill.red && colour.green == fill.green))
+                    value = static_cast<int32_t>(std::lround(colour.red * 255.0F));
+                const Box box = box_of(quad);
+                for (int32_t z = box.z; z < box.z + box.height; ++z)
+                    for (int32_t x = box.x; x < box.x + box.width; ++x) {
+                        const auto at = field.at(x, z);
+                        OA_CHECK(at.has_value());
+                        if (!at)
+                            continue;
+                        OA_CHECK(drawn[*at] == -1);
+                        drawn[*at] = value;
+                    }
+            }
+            OA_CHECK(drawn == field.drawn);
+        }
+
+        // The greyed pass, and its dithered form.
+        const ClassicField field =
+            classic_field(grid, tiles, wr::FogTileSet::gray, camera_x, camera_z);
+        {
+            card::CardFrame frame;
+            const fog::GreyedLevel levels[] = {{0, card::Sampling::nearest, 1.0F}};
+            const uint32_t appended = fog::append_unseen_terrain_classic(
+                frame, grid, shapes, built.atlas, built.pages, levels, placement, {}, nullptr
+            );
+            const auto quads = quads_of(frame);
+            OA_CHECK(appended == quads.size());
+            passes_drawn[1] += appended;
+            std::vector<uint8_t> covered(field.drawn.size(), 0);
+            const auto& atlas = built.atlas;
+            for (const auto& quad : quads) {
+                OA_CHECK(near(quad.corners[0].colour.alpha, 1.0F));
+                const Box box = box_of(quad);
+                OA_CHECK(box.x >= 0 && box.z >= 0);
+                OA_CHECK(box.x / tile_edge == (box.x + box.width - 1) / tile_edge);
+                OA_CHECK(box.z / tile_edge == (box.z + box.height - 1) / tile_edge);
+                for (int32_t z = box.z; z < box.z + box.height; ++z)
+                    for (int32_t x = box.x; x < box.x + box.width; ++x) {
+                        const auto at = field.at(x, z);
+                        OA_CHECK(at.has_value());
+                        if (!at)
+                            continue;
+                        OA_CHECK(field.drawn[*at] != -1 && covered[*at] == 0);
+                        covered[*at] = 1;
+                    }
+                const auto slot =
+                    atlas.grid
+                        [static_cast<std::size_t>(box.z / tile_edge) * atlas.grid_width +
+                         static_cast<std::size_t>(box.x / tile_edge)];
+                const auto rect = gw::tile_rect(atlas, slot, 0);
+                OA_CHECK(rect.has_value());
+                if (!rect)
+                    continue;
+                OA_CHECK(frame.batches[quad.batch].page == built.pages[rect->page]);
+                const auto& level = atlas.pages[rect->page].levels[0];
+                OA_CHECK(near(
+                    quad.corners[0].u * static_cast<float>(level.width),
+                    static_cast<float>(rect->x + static_cast<uint32_t>(box.x % tile_edge))
+                ));
+                OA_CHECK(near(
+                    quad.corners[2].v * static_cast<float>(level.height),
+                    static_cast<float>(
+                        rect->y + static_cast<uint32_t>(box.z % tile_edge + box.height)
+                    )
+                ));
+            }
+            // Every pixel the processor greys on the map is covered.
+            for (int32_t z = field.top; z < field.top + field.height; ++z)
+                for (int32_t x = field.left; x < field.left + field.width; ++x) {
+                    const auto at = field.at(x, z);
+                    const bool on_map = x >= 0 && z >= 0 && x < map_width && z < map_height;
+                    OA_CHECK(covered[*at] == (on_map && field.drawn[*at] != -1 ? 1 : 0));
+                }
+        }
+        {
+            card::CardFrame frame;
+            const card::PageHandle page{9};
+            const uint32_t appended = fog::append_unseen_dither_classic(
+                frame, grid, shapes, page, dither, placement, {}, nullptr
+            );
+            const auto quads = quads_of(frame);
+            OA_CHECK(appended == quads.size());
+            passes_drawn[2] += appended;
+            std::vector<uint8_t> covered(field.drawn.size(), 0);
+            for (const auto& quad : quads) {
+                const auto& batch = frame.batches[quad.batch];
+                OA_CHECK(batch.page == page && batch.sampling == card::Sampling::nearest);
+                OA_CHECK(
+                    quad.corners[0].colour.green == dither.green &&
+                    quad.corners[0].colour.alpha == 1.0F
+                );
+                const Box box = box_of(quad);
+                // The page's texel under the box's corner is its pixel's
+                // place in its fog tile.
+                const int32_t in_x = ((box.x - field.left) % tile_edge + tile_edge) % tile_edge;
+                const int32_t in_z = ((box.z - field.top) % tile_edge + tile_edge) % tile_edge;
+                OA_CHECK(near(
+                    quad.corners[0].u * static_cast<float>(fog::dither_page_edge),
+                    static_cast<float>(in_x)
+                ));
+                OA_CHECK(near(
+                    quad.corners[0].v * static_cast<float>(fog::dither_page_edge),
+                    static_cast<float>(in_z)
+                ));
+                for (int32_t z = box.z; z < box.z + box.height; ++z)
+                    for (int32_t x = box.x; x < box.x + box.width; ++x) {
+                        const auto at = field.at(x, z);
+                        OA_CHECK(at.has_value());
+                        if (at) {
+                            OA_CHECK(covered[*at] == 0);
+                            covered[*at] = 1;
+                        }
+                    }
+            }
+            for (std::size_t at = 0; at < covered.size(); ++at)
+                OA_CHECK(covered[at] == (field.drawn[at] != -1 ? 1 : 0));
+        }
+    }
+    OA_CHECK(passes_drawn[0] != 0 && passes_drawn[1] != 0 && passes_drawn[2] != 0);
+    // Unbuilt shapes and an empty grid draw nothing.
+    card::CardFrame frame;
+    const fog::GreyedLevel levels[] = {{0, card::Sampling::nearest, 1.0F}};
+    const fog::ClassicShapes none;
+    const auto grid = sight.fog(0, 0);
+    OA_CHECK(
+        fog::append_unmapped_classic(frame, grid, none, fill, palette, plain(0, 0), {}, nullptr) ==
+        0
+    );
+    OA_CHECK(
+        fog::append_unseen_terrain_classic(
+            frame, grid, none, built.atlas, built.pages, levels, plain(0, 0), {}, nullptr
+        ) == 0
+    );
+    OA_CHECK(
+        fog::append_unseen_dither_classic(
+            frame, {}, shapes, {9}, dither, plain(0, 0), {}, nullptr
+        ) == 0
+    );
+    OA_CHECK(
+        fog::append_unseen_dither_classic(
+            frame, grid, shapes, {}, dither, plain(0, 0), {}, nullptr
+        ) == 0
+    );
+    OA_CHECK(frame.vertices.empty() && frame.batches.empty());
+}
+
 } // namespace
 
 int main() {
@@ -1223,12 +1585,16 @@ int main() {
     level_quads_follow_the_tables();
     mask_reads_the_corner_alphas();
     refusals_add_nothing();
+    classic_shapes_cover_the_art();
+    dither_page_is_the_checkerboard();
+    classic_passes_draw_the_processors_tiles();
     if (oa::test::check_exit_status() != 0)
         return 1;
     std::puts(
         "full fog: the greyed pass covers the ground out of sight once at its tiles' texels, "
         "the black and dithered passes their tiles with runs merged, at the corner alphas; "
-        "the fog mask reads the corner alphas across each tile; shade and light levels as quads"
+        "the fog mask reads the corner alphas across each tile; shade and light levels as quads; "
+        "the Classic passes draw the processor's FOG.GAF tiles"
     );
     return 0;
 }

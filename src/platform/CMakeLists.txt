@@ -4,8 +4,8 @@
 # Host services: token locks, clock, threads, heap, performance counters,
 # file/log streams, the log folder, the machine the game runs on and the
 # system's memory.
-add_library(oa-platform-shims src/allocator.cpp src/crash.cpp src/files.cpp src/file_clone.cpp
-  src/lock.cpp src/log_files.cpp
+add_library(oa-platform-shims src/allocator.cpp src/crash.cpp src/dataless.cpp src/files.cpp
+  src/file_clone.cpp src/lock.cpp src/log_files.cpp
   src/machine.cpp src/memory_status.cpp src/perf.cpp src/system.cpp src/system_memory.cpp)
 add_library(oa::platform::shims ALIAS oa-platform-shims)
 target_include_directories(oa-platform-shims PUBLIC include)
@@ -13,6 +13,15 @@ target_compile_features(oa-platform-shims PUBLIC cxx_std_20)
 target_link_libraries(oa-platform-shims PUBLIC oa-base-threads oa-options)
 if(WIN32)
   target_link_libraries(oa-platform-shims PRIVATE psapi)
+endif()
+# Files iCloud has moved off the Mac (dataless.hpp): macOS only. iOS and
+# every other system build the part that reports none and fetches nothing.
+if(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  enable_language(OBJCXX)
+  target_sources(oa-platform-shims PRIVATE src/dataless_mac.mm)
+  target_compile_definitions(oa-platform-shims PRIVATE OA_MACOS_DATALESS_FILES=1)
+  set_target_properties(oa-platform-shims PROPERTIES OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED ON)
+  target_link_libraries(oa-platform-shims PRIVATE "-framework Foundation")
 endif()
 
 if(BUILD_TESTING)

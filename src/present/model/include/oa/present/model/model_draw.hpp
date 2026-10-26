@@ -202,6 +202,8 @@ struct ModelRenderer {
     /// The composite's start size, and whether a model larger than it is cut
     /// to it rather than the composite growing: composite_side by
     /// composite_side, growing, as in 3.1c. init_composite_buffer reads it.
+    /// The size is in game pixels: drawn at more samples, a model is cut at
+    /// the size times the samples.
     data::limits::ModelComposite composite_limits{};
     /// A mobile unit's moving pieces are drawn over its image only once it is
     /// built, as a building's are (ui.interface-fixes nanoframe-raster);
@@ -226,7 +228,10 @@ struct LinkedDraw {
 /// clamp_oversize the buffer later grows to fit a larger model; with it the
 /// buffer keeps its size, a model's per-frame copy is cut to the buffer's
 /// width and height from its top left, and a larger image or silhouette that
-/// would be built in the buffer is not drawn. The composite's key byte is
+/// would be built in the buffer is not drawn. A renderer that draws at more
+/// samples a game pixel (ModelRenderer::samples) grows its buffer under
+/// clamp_oversize to the size times the samples and cuts there, so that it
+/// cuts a model where the game's pixels cut it. The composite's key byte is
 /// image_key; every image copied in has key 1.
 ///
 /// @param[in,out] renderer drawing context

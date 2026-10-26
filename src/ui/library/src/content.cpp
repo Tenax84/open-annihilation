@@ -8,6 +8,7 @@
 
 #include "oa/data/content_bundles.hpp"
 #include "oa/data/content_bundles/content_choice.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/ui/kit/layout.hpp"
 #include "oa/ui/library/text.hpp"
 #include "screen_controls.hpp"
@@ -708,6 +709,66 @@ bool locked_by_command_line(
 }
 
 } // namespace
+
+BrainWorksWith
+brain_works_with(const Inputs& inputs, const BrainFacts& facts, const TextHooks& text) {
+    BrainWorksWith read;
+    if (facts.works_with.empty()) {
+        read.any = true;
+        return read;
+    }
+    read.fits = false;
+    for (const WorksWith& item : facts.works_with) {
+        if (item.id == "*") {
+            read.any = true;
+            read.fits = true;
+            break;
+        }
+        std::string label;
+        if (item.id == supported_base) {
+            label = std::string(shown(text, words::base_supported));
+            if (inputs.played.id.empty())
+                read.fits = true;
+        } else {
+            label = item.name.empty() ? item.id : item.name;
+            formats::oamut::Condition condition;
+            condition.id = item.id;
+            condition.range_text = item.range;
+            if (!item.range.empty()) {
+                const std::optional<formats::oamut::VersionRange> parsed =
+                    formats::oamut::parse_version_range(item.range);
+                if (!parsed) {
+                    read.names.push_back(std::move(label));
+                    continue;
+                }
+                condition.range = *parsed;
+            }
+            if (formats::oamut::condition_met(condition, inputs.played.id, inputs.played.version))
+                read.fits = true;
+        }
+        read.names.push_back(std::move(label));
+    }
+    return read;
+}
+
+std::string
+brain_unfit_reason(const Inputs& inputs, const BrainFacts& facts, const TextHooks& text) {
+    if (const std::optional<formats::oamod::EngineRange> range =
+            formats::oamod::parse_engine_range(facts.requires_engine)) {
+        if (!formats::oamod::engine_range_met(*range, inputs.engine))
+            return filled(text, words::blocked_engine, {{"range", engine_text(*range, text)}});
+    }
+    const BrainWorksWith works = brain_works_with(inputs, facts, text);
+    if (!works.fits)
+        return filled(text, words::made_for, {{"names", join_or(text, works.names)}});
+    for (const std::string& expansion : facts.requires_expansions) {
+        if (std::find(inputs.content.enabled.begin(), inputs.content.enabled.end(), expansion) !=
+            inputs.content.enabled.end())
+            continue;
+        return filled(text, words::chip_needs, {{"name", bundle_name(text, expansion)}});
+    }
+    return {};
+}
 
 void note_content(Library& library) {
     const std::string base = resolved_base(library.inputs.content.base_id);

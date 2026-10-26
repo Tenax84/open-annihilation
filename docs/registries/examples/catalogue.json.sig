@@ -1,1 +1,1 @@
-ed25519 rfc8032-test-1 aH4msqq9LenAoc0MXx+SBXSjW6Lm7r7w9gjpzSzc8JwqDSp4cQu+T7eR/U10rXFEFL1vnYsx1Vwqqq26szpiCA==
+ed25519 rfc8032-test-1 CdUVi0qGZroOjleTN/wmLGzSj9EIvJ83rHELk80hWa9EycrmAe0RfW26d8/EF1fgALOvBkFcnXSDLfXJFYFbDw==

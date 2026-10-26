@@ -8,39 +8,41 @@
 // while the dying unit still names its owner. A shot launched from another
 // machine's report is reported with the reported aim, which its record does
 // not keep; burst shots and meteors, creations and completions are reported
-// where they happen.
+// where they happen. Each new unit is reported created by the unit that
+// started it, or by none, right after it is created. Listeners hear each
+// event after the primary table, in
+// the order they were added, and the same skirmish reaches the pins with
+// them set.
 #include "combat_fixture.hpp"
+#include "event_skirmish.hpp"
 
-#include "oa/base/game_loop.hpp"
 #include "oa/sim/match_runtime/event_hooks.hpp"
-#include "oa/sim/match_runtime/match_trace.hpp"
-#include "oa/sim/state_hash.hpp"
 #include "oa/sim/weapon_execution/interceptor.hpp"
 #include "oa/sim/weapon_execution/projectile_pool.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <iostream>
 #include <optional>
+#include <span>
+#include <string_view>
 #include <vector>
 
 namespace {
 
 using namespace combat_fixture;
-namespace trace = oa::sim::trace;
 using sim::match_runtime::EventHooks;
+using sim::match_runtime::EventListenerId;
 using sim::match_runtime::KillOutcome;
 using sim::match_runtime::ShotSource;
-
-constexpr uint32_t match_ticks = 360;
-constexpr uint32_t halfway_tick = 180;
-
-// match-determinism's pinned digests (tests/determinism_test.cpp); the run
-// with hooks must reach the same.
-constexpr uint64_t pinned_halfway_state = 0x60f37308a7eb5e14ull;
-constexpr uint64_t pinned_final_state = 0xf7ca3a754b0db9c8ull;
-constexpr uint64_t pinned_final_total = 0x0e75170de962eee6ull;
+using event_skirmish::pinned_final_state;
+using event_skirmish::pinned_final_total;
+using event_skirmish::pinned_halfway_state;
+using event_skirmish::play;
+using event_skirmish::Run;
 
 // The fixture's gun, and the kinds apply_damage_event takes.
 constexpr uint32_t gun_registry_index = 1;
@@ -92,14 +94,70 @@ struct DeathReport {
     bool settled_elsewhere{};
 };
 
+struct CreatedByReport {
+    uint16_t unit{};
+    uint16_t builder{};
+};
+
+struct EndedReport {
+    uint16_t unit{};
+    uint8_t kind{};
+    bool done{};
+};
+
+struct CarryReport {
+    uint16_t unit{};
+    uint16_t carrier{};
+    bool loaded{};
+};
+
+struct WreckReport {
+    uint16_t unit{};
+    uint16_t feature{};
+    uint32_t plot{};
+};
+
+struct PathFailedReport {
+    uint16_t unit{};
+    uint8_t kind{};
+};
+
+struct GivenReport {
+    uint16_t unit{};
+    uint16_t copy{};
+    uint8_t from{};
+    uint8_t to{};
+    bool live_at_call{};
+};
+
+struct SeenChangeReport {
+    uint8_t player{};
+    std::vector<sim::detection::SightedUnit> gained;
+    std::vector<sim::detection::SightedUnit> lost;
+};
+
+// Order of creation, created-by and finished reports. A created-by report
+// sits immediately after its unit's created report, and a building created
+// finished is reported finished after that.
+enum class BirthStep : uint8_t { created, created_by, finished };
+
 // Keeps what every hook reported.
 struct Recorder {
     std::vector<CreatedReport> created;
+    std::vector<CreatedByReport> created_by;
     std::vector<FinishedReport> finished;
     std::vector<ShotReport> shots;
     std::vector<DetonationReport> detonations;
     std::vector<DamageReport> damage;
     std::vector<DeathReport> deaths;
+    std::vector<GivenReport> given;
+    std::vector<uint16_t> idle;
+    std::vector<EndedReport> ended;
+    std::vector<CarryReport> carried;
+    std::vector<WreckReport> wrecks;
+    std::vector<PathFailedReport> path_failed;
+    std::vector<BirthStep> births;
+    std::vector<SeenChangeReport> seen;
 
     /// Returns hooks that report into this recorder.
     ///
@@ -108,17 +166,61 @@ struct Recorder {
         EventHooks hooks;
         hooks.context = this;
         hooks.unit_created = [](void* context, const World& world, uint16_t unit) {
+            auto* recorder = static_cast<Recorder*>(context);
             const auto& record = world.units[unit];
-            static_cast<Recorder*>(context)->created.push_back(
-                {unit, record.type_index, record.owner_index}
-            );
+            recorder->created.push_back({unit, record.type_index, record.owner_index});
+            recorder->births.push_back(BirthStep::created);
+        };
+        hooks.unit_created_by = [](void* context, const World&, uint16_t unit, uint16_t builder) {
+            auto* recorder = static_cast<Recorder*>(context);
+            recorder->created_by.push_back({unit, builder});
+            recorder->births.push_back(BirthStep::created_by);
         };
         hooks.unit_finished =
             [](void* context, const World& world, uint16_t unit, uint16_t builder) {
-                static_cast<Recorder*>(context)->finished.push_back(
+                auto* recorder = static_cast<Recorder*>(context);
+                recorder->finished.push_back(
                     {unit, builder, world.units[unit].build_remaining == 0.0F}
                 );
+                recorder->births.push_back(BirthStep::finished);
             };
+        hooks.unit_given = [](void* context,
+                              const World& world,
+                              uint16_t unit,
+                              uint16_t copy,
+                              uint8_t from,
+                              uint8_t to) {
+            static_cast<Recorder*>(context)->given.push_back(
+                {unit, copy, from, to, (world.units[unit].flags & OA_UNIT_FLAG_LIVE) != 0}
+            );
+        };
+        hooks.unit_idle = [](void* context, const World&, uint16_t unit) {
+            static_cast<Recorder*>(context)->idle.push_back(unit);
+        };
+        hooks.order_ended =
+            [](void* context, const World&, uint16_t unit, uint8_t kind, bool done) {
+                static_cast<Recorder*>(context)->ended.push_back({unit, kind, done});
+            };
+        hooks.unit_carried =
+            [](void* context, const World&, uint16_t unit, uint16_t carrier, bool loaded) {
+                static_cast<Recorder*>(context)->carried.push_back({unit, carrier, loaded});
+            };
+        hooks.wreck_placed =
+            [](void* context, const World&, uint16_t unit, uint16_t feature, uint32_t plot) {
+                static_cast<Recorder*>(context)->wrecks.push_back({unit, feature, plot});
+            };
+        hooks.seen_changed = [](void* context,
+                                const World&,
+                                uint8_t player,
+                                std::span<const sim::detection::SightedUnit> gained,
+                                std::span<const sim::detection::SightedUnit> lost) {
+            static_cast<Recorder*>(context)->seen.push_back(
+                {player, {gained.begin(), gained.end()}, {lost.begin(), lost.end()}}
+            );
+        };
+        hooks.path_failed = [](void* context, const World&, uint16_t unit, uint8_t kind) {
+            static_cast<Recorder*>(context)->path_failed.push_back({unit, kind});
+        };
         hooks.shot_placed = [](void* context,
                                const World&,
                                const Projectile& shot,
@@ -185,88 +287,184 @@ bool same_point(const FixedVec3& a, const FixedVec3& b) {
     return a.x == b.x && a.y == b.y && a.z == b.z;
 }
 
-/// Tells whether a unit slot holds a live unit.
+/// Tells whether two optional aims are the same point, or both absent.
 ///
-/// @param world canonical state
-/// @param slot unit slot
-/// @return true when the slot has a type and the live flag
-bool live(const World& world, uint32_t slot) {
-    return world.units[slot].type_index != 0 && (world.units[slot].flags & OA_UNIT_FLAG_LIVE) != 0;
+/// @param a first aim
+/// @param b second aim
+/// @return true when both are absent or both name the same point
+bool same_aim(const std::optional<FixedVec3>& a, const std::optional<FixedVec3>& b) {
+    if (a.has_value() != b.has_value())
+        return false;
+    return !a || same_point(*a, *b);
 }
 
-/// Returns the total section digest of the match's current state.
+/// Tells whether two creation reports name the same unit.
 ///
-/// @param match match to sample
-/// @param[in,out] sides scratch table of one entry per unit slot
-/// @return the total section's 64-bit digest
-uint64_t total_digest(const sim::match_runtime::Match& match, std::vector<trace::UnitSide>& sides) {
-    const auto& world = match.state();
-    sides.assign(world.unit_slot_count, {});
-    sim::match_runtime::fill_trace_sides(match, sides);
-    const trace::RandomState random{match.random_state(), match.lcg_state()};
-    const auto digest = trace::tick_digest(world, sides.data(), random);
-    return digest.sections[static_cast<size_t>(trace::Section::total)].value;
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const CreatedReport& left, const CreatedReport& right) {
+    return left.unit == right.unit && left.type_index == right.type_index &&
+           left.owner == right.owner;
 }
 
-/// Digests the match state as the savegame check does, with a default clock,
-/// the camera at the origin and no meteor storm.
+/// Tells whether two created-by reports name the same unit and builder.
 ///
-/// @param match match to digest
-/// @return the match-state digest
-uint64_t state_digest(sim::match_runtime::Match& match) {
-    const base::game_loop::Timing timing{};
-    return trace::match_state_hash(match, timing, 0, 0, nullptr);
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const CreatedByReport& left, const CreatedByReport& right) {
+    return left.unit == right.unit && left.builder == right.builder;
 }
 
-struct Run {
-    std::vector<uint64_t> totals; // each tick's total section digest
-    uint64_t halfway_state{};
-    uint64_t final_state{};
-    std::vector<uint16_t> units; // the six spawned slots, in spawn order
-    std::vector<uint8_t> owners; // their owners
-    uint16_t gunner{};
-    uint16_t target{};
-};
-
-/// Plays match-determinism's skirmish: player 0's first two units attack
-/// player 1's first, which attacks player 0's first back; player 1's second
-/// unit marches on player 0's side; each player's third unit patrols across
-/// the map.
+/// Tells whether two hand-over reports name the same gift.
 ///
-/// @param hooks event hooks set before the first unit is created
-/// @return each tick's total digest, both state digests and the units
-Run play(const EventHooks& hooks) {
-    Fixture f;
-    f.match->event_hooks = hooks;
-    auto& gunner = f.spawn(0, 48, 48);
-    auto& second = f.spawn(0, 48, 112);
-    auto& scout = f.spawn(0, 64, 208);
-    auto& target = f.spawn(1, 176, 64);
-    auto& marcher = f.spawn(1, 208, 128);
-    auto& patroller = f.spawn(1, 200, 208);
-    Run run;
-    for (const auto* slot : {&gunner, &second, &scout, &target, &marcher, &patroller}) {
-        run.units.push_back(slot->unit_index);
-        run.owners.push_back(slot->record.owner_index);
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const GivenReport& left, const GivenReport& right) {
+    return left.unit == right.unit && left.copy == right.copy && left.from == right.from &&
+           left.to == right.to && left.live_at_call == right.live_at_call;
+}
+
+/// Tells whether two finished reports name the same completion.
+///
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const FinishedReport& left, const FinishedReport& right) {
+    return left.unit == right.unit && left.builder == right.builder &&
+           left.finished_at_call == right.finished_at_call;
+}
+
+/// Tells whether two shot reports name the same placed shot.
+///
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const ShotReport& left, const ShotReport& right) {
+    return left.source == right.source && left.def == right.def &&
+           left.origin_unit == right.origin_unit && same_aim(left.aim, right.aim) &&
+           same_point(left.record_target, right.record_target) &&
+           left.target_unit == right.target_unit;
+}
+
+/// Tells whether two detonation reports name the same blast.
+///
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const DetonationReport& left, const DetonationReport& right) {
+    return left.def == right.def && left.direct_unit == right.direct_unit;
+}
+
+/// Tells whether two damage reports name the same health event.
+///
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const DamageReport& left, const DamageReport& right) {
+    return left.target == right.target && left.source == right.source &&
+           left.amount == right.amount && left.kind == right.kind &&
+           left.health_at_call == right.health_at_call;
+}
+
+/// Tells whether two death reports name the same death.
+///
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const DeathReport& left, const DeathReport& right) {
+    return left.unit == right.unit && left.owner == right.owner &&
+           left.type_index == right.type_index && left.live_at_call == right.live_at_call &&
+           left.settled_elsewhere == right.settled_elsewhere;
+}
+
+/// Tells whether two ended-order reports name the same order.
+///
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const EndedReport& left, const EndedReport& right) {
+    return left.unit == right.unit && left.kind == right.kind && left.done == right.done;
+}
+
+/// Tells whether two carry reports name the same link change.
+///
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const CarryReport& left, const CarryReport& right) {
+    return left.unit == right.unit && left.carrier == right.carrier && left.loaded == right.loaded;
+}
+
+/// Tells whether two wreck reports name the same corpse.
+///
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const WreckReport& left, const WreckReport& right) {
+    return left.unit == right.unit && left.feature == right.feature && left.plot == right.plot;
+}
+
+/// Tells whether two sighted lists name the same slots and generations.
+///
+/// @param left one list
+/// @param right the other list
+/// @return true when they match entry for entry
+bool same_sighted(
+    const std::vector<sim::detection::SightedUnit>& left,
+    const std::vector<sim::detection::SightedUnit>& right
+) {
+    if (left.size() != right.size())
+        return false;
+    for (std::size_t index = 0; index < left.size(); ++index)
+        if (left[index].unit != right[index].unit ||
+            left[index].generation != right[index].generation)
+            return false;
+    return true;
+}
+
+/// Tells whether two recorders kept the same seen-list changes.
+///
+/// @param left first recorder
+/// @param right second recorder
+/// @return true when every seen_changed report matches
+bool same_seen(const Recorder& left, const Recorder& right) {
+    if (left.seen.size() != right.seen.size())
+        return false;
+    for (std::size_t index = 0; index < left.seen.size(); ++index) {
+        if (left.seen[index].player != right.seen[index].player)
+            return false;
+        if (!same_sighted(left.seen[index].gained, right.seen[index].gained) ||
+            !same_sighted(left.seen[index].lost, right.seen[index].lost))
+            return false;
     }
-    run.gunner = gunner.unit_index;
-    run.target = target.unit_index;
-    CHECK(f.match->issue_attack(run.gunner, run.target, true));
-    CHECK(f.match->issue_attack(second.unit_index, run.target, true));
-    CHECK(f.match->issue_attack(run.target, run.gunner, true));
-    f.match->issue_ground_move(marcher.unit_index, {96 << 16, 0, 128 << 16}, false);
-    f.match->issue_patrol(scout.unit_index, {200 << 16, 0, 40 << 16}, false);
-    f.match->issue_patrol(patroller.unit_index, {40 << 16, 0, 176 << 16}, false);
-    std::vector<trace::UnitSide> sides;
-    for (uint32_t tick = 1; tick <= match_ticks; ++tick) {
-        f.run(1);
-        run.totals.push_back(total_digest(*f.match, sides));
-        if (tick == halfway_tick)
-            run.halfway_state = state_digest(*f.match);
-    }
-    run.final_state = state_digest(*f.match);
-    CHECK(!live(f.match->state(), run.gunner) && !live(f.match->state(), run.target));
-    return run;
+    return true;
+}
+
+/// Tells whether two path-failure reports name the same unit and order.
+///
+/// @param left first report
+/// @param right second report
+/// @return true when every field is equal
+bool operator==(const PathFailedReport& left, const PathFailedReport& right) {
+    return left.unit == right.unit && left.kind == right.kind;
+}
+
+/// Tells whether two recorders kept the same reports, entry for entry.
+///
+/// @param left first recorder
+/// @param right second recorder
+/// @return true when every list matches
+bool same_records(const Recorder& left, const Recorder& right) {
+    return left.created == right.created && left.created_by == right.created_by &&
+           left.finished == right.finished && left.shots == right.shots &&
+           left.detonations == right.detonations && left.damage == right.damage &&
+           left.deaths == right.deaths && left.given == right.given && left.idle == right.idle &&
+           left.ended == right.ended && left.carried == right.carried &&
+           left.wrecks == right.wrecks && left.path_failed == right.path_failed &&
+           left.births == right.births && same_seen(left, right);
 }
 
 /// The skirmish with every hook set plays exactly as without, to
@@ -301,12 +499,26 @@ void skirmish_reports_every_kind() {
     // Each spawned unit once, in order, with its type and owner filled; the
     // fixture's type is mobile, so none is finished at creation.
     CHECK(recorder.created.size() == run.units.size());
-    for (std::size_t i = 0; i < run.units.size(); ++i)
+    CHECK(recorder.created_by.size() == recorder.created.size());
+    CHECK(recorder.births.size() == recorder.created.size() * 2);
+    CHECK(recorder.given.empty());
+    for (std::size_t i = 0; i < run.units.size(); ++i) {
         CHECK(
             recorder.created[i].unit == run.units[i] && recorder.created[i].type_index == 1 &&
             recorder.created[i].owner == run.owners[i]
         );
+        // Created by no unit, once, immediately after unit_created.
+        CHECK(recorder.births[i * 2] == BirthStep::created);
+        CHECK(recorder.births[i * 2 + 1] == BirthStep::created_by);
+        CHECK(recorder.created_by[i].unit == run.units[i] && recorder.created_by[i].builder == 0);
+    }
     CHECK(recorder.finished.empty());
+    // The fixture's type has no default mission, so a unit that runs out of
+    // orders is not given one and is never reported idle. An order that does
+    // end belongs to a unit the skirmish spawned.
+    CHECK(recorder.idle.empty());
+    for (const auto& ended : recorder.ended)
+        CHECK(spawned(run, ended.unit));
 
     // The guns' shots, each from a spawned unit, aimed at a point and a unit.
     CHECK(recorder.shots_from(ShotSource::weapon) > 0);
@@ -500,6 +712,8 @@ void creations_and_completions_are_reported() {
     const auto commander = static_cast<uint16_t>(oa::world_unit_slot(&world, started.unit));
     CHECK(recorder.created.size() == 1 && recorder.created.front().unit == commander);
     CHECK(recorder.finished.empty());
+    CHECK(recorder.created_by.size() == 1 && recorder.created_by.front().unit == commander);
+    CHECK(recorder.created_by.front().builder == 0);
 
     // A frame, then its builder's link: finished once, by the builder.
     auto* frame = f.match->create({0, 1, {fx(48), fx(32), fx(48)}, false, 1, 0});
@@ -530,11 +744,21 @@ void creations_and_completions_are_reported() {
     world.unit_defs[1].bm_code = 1;
     CHECK(building != nullptr);
     CHECK(recorder.created.size() == 4 && recorder.created.back().unit == building->unit_index);
+    CHECK(
+        recorder.created_by.size() == 4 && recorder.created_by.back().unit == building->unit_index
+    );
+    CHECK(recorder.created_by.back().builder == 0);
     CHECK(recorder.finished.size() == 3);
     CHECK(
         recorder.finished.back().unit == building->unit_index &&
         recorder.finished.back().builder == building->unit_index
     );
+    // Created, then created by no unit, then finished by itself.
+    CHECK(recorder.births.size() >= 3);
+    const auto last = recorder.births.size();
+    CHECK(recorder.births[last - 3] == BirthStep::created);
+    CHECK(recorder.births[last - 2] == BirthStep::created_by);
+    CHECK(recorder.births[last - 1] == BirthStep::finished);
     f.match->finish_unit(building->unit_index, building->unit_index);
     CHECK(recorder.finished.size() == 3);
     std::cout << "creations and completions are reported passed\n";
@@ -570,6 +794,199 @@ void settled_deaths_and_other_kinds_are_reported() {
     std::cout << "settled deaths and other kinds are reported passed\n";
 }
 
+/// The skirmish with a primary recorder and two listener recorders plays as
+/// without, and each listener keeps the primary's reports.
+void listeners_change_nothing() {
+    Recorder primary;
+    Recorder first;
+    Recorder second;
+    const Run plain = play({});
+    const EventHooks listeners[] = {first.hooks(), second.hooks()};
+    const Run hooked = play(primary.hooks(), listeners);
+    CHECK(plain.totals == hooked.totals);
+    CHECK(plain.halfway_state == hooked.halfway_state);
+    CHECK(plain.final_state == hooked.final_state);
+    CHECK(hooked.halfway_state == pinned_halfway_state);
+    CHECK(hooked.final_state == pinned_final_state);
+    CHECK(hooked.totals.back() == pinned_final_total);
+    CHECK(same_records(first, primary));
+    CHECK(same_records(second, primary));
+    std::cout << "listeners change nothing passed\n";
+}
+
+// Which table heard an event, and the unit it named.
+struct Heard {
+    int table{};
+    const char* event{};
+    uint16_t unit{};
+};
+
+// A table index and the log its hooks append to.
+struct Ear {
+    std::vector<Heard>* log{};
+    int table{};
+};
+
+/// Returns hooks that append this ear's table, the event and the unit.
+///
+/// @param ear the listener's log and table index
+/// @return creation, damage and death hooks
+EventHooks hearing(Ear& ear) {
+    EventHooks hooks;
+    hooks.context = &ear;
+    hooks.unit_created = [](void* context, const World&, uint16_t unit) {
+        const auto* heard = static_cast<const Ear*>(context);
+        heard->log->push_back({heard->table, "created", unit});
+    };
+    hooks.unit_damaged =
+        [](void* context, const World&, uint16_t target, uint16_t, int16_t, uint8_t) {
+            const auto* heard = static_cast<const Ear*>(context);
+            heard->log->push_back({heard->table, "damaged", target});
+        };
+    hooks.unit_died = [](void* context, const World&, uint16_t unit, const KillOutcome&, bool) {
+        const auto* heard = static_cast<const Ear*>(context);
+        heard->log->push_back({heard->table, "died", unit});
+    };
+    return hooks;
+}
+
+/// One creation, one damage event and one death are heard by the primary
+/// table, then the first listener, then the second.
+void listeners_hear_in_order() {
+    Fixture f;
+    std::vector<Heard> log;
+    std::array<Ear, 3> ears{Ear{&log, 0}, Ear{&log, 1}, Ear{&log, 2}};
+    f.match->event_hooks = hearing(ears[0]);
+    CHECK(f.match->add_event_listener(hearing(ears[1])) != 0);
+    CHECK(f.match->add_event_listener(hearing(ears[2])) != 0);
+    auto& victim = f.spawn(1, 176, 64);
+    f.match->apply_damage_event(victim, nullptr, 5, weapon_kind, 0);
+    const KillOutcome outcome{sim::match_runtime::DeathKind::weapon, 50, 1};
+    f.match->apply_kill(victim.unit_index, outcome, 0, 0);
+
+    CHECK(log.size() == 9);
+    int created = 0;
+    int damaged = 0;
+    int died = 0;
+    for (std::size_t index = 0; index < log.size(); index += 3) {
+        const auto& primary = log[index];
+        const auto& first = log[index + 1];
+        const auto& second = log[index + 2];
+        CHECK(primary.table == 0 && first.table == 1 && second.table == 2);
+        CHECK(std::string_view{primary.event} == first.event);
+        CHECK(std::string_view{primary.event} == second.event);
+        CHECK(primary.unit == first.unit && primary.unit == second.unit);
+        CHECK(primary.unit == victim.unit_index);
+        if (std::string_view{primary.event} == "created")
+            ++created;
+        else if (std::string_view{primary.event} == "damaged")
+            ++damaged;
+        else if (std::string_view{primary.event} == "died")
+            ++died;
+    }
+    CHECK(created == 1 && damaged == 1 && died == 1);
+    std::cout << "listeners hear in order passed\n";
+}
+
+/// Eight listeners take distinct ids, a ninth is refused, and removing one
+/// leaves the rest in order. A later id is new, and 0 removes nothing.
+void listener_list_is_bounded() {
+    Fixture f;
+    std::vector<Heard> log;
+    std::array<Ear, 8> ears{};
+    std::array<EventListenerId, 8> ids{};
+    for (int table = 0; table < 8; ++table) {
+        ears[static_cast<std::size_t>(table)] = Ear{&log, table};
+        ids[static_cast<std::size_t>(table)] =
+            f.match->add_event_listener(hearing(ears[static_cast<std::size_t>(table)]));
+        CHECK(ids[static_cast<std::size_t>(table)] != 0);
+    }
+    for (int table = 0; table < 8; ++table)
+        for (int other = table + 1; other < 8; ++other)
+            CHECK(ids[static_cast<std::size_t>(table)] != ids[static_cast<std::size_t>(other)]);
+    CHECK(f.match->add_event_listener(hearing(ears[0])) == 0);
+    CHECK(f.match->event_listener_count() == 8);
+
+    const auto removed = ids[2];
+    CHECK(f.match->remove_event_listener(removed));
+    CHECK(!f.match->remove_event_listener(removed));
+    CHECK(!f.match->remove_event_listener(0));
+    CHECK(f.match->event_listener_count() == 7);
+
+    log.clear();
+    (void)f.spawn(0, 48, 48);
+    const int order[] = {0, 1, 3, 4, 5, 6, 7};
+    CHECK(log.size() == 7);
+    for (std::size_t index = 0; index < log.size(); ++index)
+        CHECK(log[index].table == order[index] && std::string_view{log[index].event} == "created");
+
+    Ear later{&log, 8};
+    const auto added = f.match->add_event_listener(hearing(later));
+    CHECK(added != 0);
+    for (const auto id : ids)
+        CHECK(added != id);
+    std::cout << "listener list is bounded passed\n";
+}
+
+/// Replacing the primary table and then clearing it, as a shot counter and
+/// the director do, leaves every listener hearing every event.
+void primary_swap_keeps_listeners() {
+    Fixture f;
+    Recorder primary;
+    Recorder replacement;
+    Recorder first;
+    Recorder second;
+    f.match->event_hooks = primary.hooks();
+    CHECK(f.match->add_event_listener(first.hooks()) != 0);
+    CHECK(f.match->add_event_listener(second.hooks()) != 0);
+
+    const auto saved = f.match->event_hooks;
+    f.match->event_hooks = replacement.hooks();
+    const auto during = f.spawn(0, 48, 48).unit_index;
+    f.match->event_hooks = saved;
+    const auto restored = f.spawn(0, 80, 48).unit_index;
+    f.match->event_hooks = {};
+    const auto cleared = f.spawn(0, 112, 48).unit_index;
+
+    CHECK(replacement.created.size() == 1 && replacement.created.front().unit == during);
+    CHECK(primary.created.size() == 1 && primary.created.front().unit == restored);
+    CHECK(first.created.size() == 3 && second.created.size() == 3);
+    CHECK(first.created[0].unit == during && first.created[1].unit == restored);
+    CHECK(first.created[2].unit == cleared);
+    CHECK(same_records(first, second));
+    std::cout << "primary swap keeps listeners passed\n";
+}
+
+/// Listeners with an all-null primary table reach the pins, and each records
+/// every created unit and every death.
+void listeners_alone_change_nothing() {
+    Recorder first;
+    Recorder second;
+    Recorder third;
+    const EventHooks listeners[] = {first.hooks(), second.hooks(), third.hooks()};
+    const Run run = play({}, listeners);
+    CHECK(run.halfway_state == pinned_halfway_state);
+    CHECK(run.final_state == pinned_final_state);
+    CHECK(run.totals.back() == pinned_final_total);
+    CHECK(same_records(first, second));
+    CHECK(same_records(second, third));
+    CHECK(first.created.size() == run.units.size());
+    for (std::size_t index = 0; index < run.units.size(); ++index)
+        CHECK(first.created[index].unit == run.units[index]);
+    bool gunner = false;
+    bool target = false;
+    CHECK(!first.deaths.empty());
+    for (const auto& death : first.deaths) {
+        CHECK(spawned(run, death.unit));
+        if (death.unit == run.gunner)
+            gunner = true;
+        if (death.unit == run.target)
+            target = true;
+    }
+    CHECK(gunner && target);
+    std::cout << "listeners alone change nothing passed\n";
+}
+
 } // namespace
 
 int main() {
@@ -580,6 +997,11 @@ int main() {
         meteors_and_bursts_are_reported();
         creations_and_completions_are_reported();
         settled_deaths_and_other_kinds_are_reported();
+        listeners_change_nothing();
+        listeners_hear_in_order();
+        listener_list_is_bounded();
+        primary_swap_keeps_listeners();
+        listeners_alone_change_nothing();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

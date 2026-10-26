@@ -16,6 +16,8 @@
 #include "oa/formats/fnt.hpp"
 
 #include "oa/sim/ai.hpp"
+#include "oa/sim/brains/seat.hpp"
+#include "oa/data/brain_library/library.hpp"
 #include "oa/data/campaign/campaign_file.hpp"
 #include "oa/data/defs/categories.hpp"
 #include "oa/sim/feature_runtime.hpp"
@@ -196,6 +198,12 @@ console::Console* Runtime::match_console() {
         host.kill_units_of_type = [](void* context, uint16_t type) {
             runtime_of(context)->console_kill_units_of_type(type);
         };
+        // The spawn command places a building as a mission's units are
+        // placed: on its footprint's grid, at the height its yard takes
+        // there. Any other unit keeps the pointer's point.
+        host.snap_build_position = [](void* context, uint16_t type, FixedVec3* position) {
+            runtime_of(context)->match_->snap_to_build_grid(type, *position);
+        };
         // Unit creation as the spawn command calls it: finished, on the ground.
         host.create_unit =
             [](void* context, uint8_t player, uint16_t type, const FixedVec3* position) {
@@ -251,15 +259,58 @@ console::Console* Runtime::match_console() {
             oa::sim::ai::computer_apply_limit(players, player, type, limit);
         };
         host.reload_ai_profiles = [](void* context) {
-            runtime_of(context)->reload_computer_profiles();
+            auto* runtime = runtime_of(context);
+            runtime->reload_computer_profiles();
+            if (runtime->match_ == nullptr)
+                return;
+            for (const BrainSeat& seat : runtime->seated_brains()) {
+                const auto outcome = oa::sim::brains::restart_brain(*runtime->match_, seat.player);
+                if (outcome != oa::sim::brains::RestartOutcome::restarted)
+                    continue;
+                std::cerr << "open-annihilation: brains: player " << static_cast<int>(seat.player)
+                          << " starts again with the reloaded profile\n";
+            }
         };
         // The report opens the named file "w+b" relative to the working
-        // directory; the report prints the map context's terrain and AI
-        // profile path slots.
+        // directory. A seated brain's report() is written, or one line when
+        // that brain has no report. A built-in seat keeps today's report,
+        // which prints the map context's terrain and AI profile path slots.
         host.write_ai_weights = [](void* context, uint8_t player, const char* path) {
             auto* runtime = runtime_of(context);
-            if (!runtime->match_)
+            if (!runtime->match_ || path == nullptr)
                 return;
+            if (oa::sim::brains::brain_seated(*runtime->match_, player)) {
+                std::vector<char> buffer(oa::data::script_host::string_length_limit);
+                const oa::sim::brains::ReportResult result =
+                    oa::sim::brains::brain_report(*runtime->match_, player, buffer);
+                if (result.outcome == oa::sim::brains::ReportOutcome::failed)
+                    return;
+                std::FILE* file = oa::platform::open_file(path, "w+b");
+                if (file == nullptr)
+                    return;
+                if (result.outcome == oa::sim::brains::ReportOutcome::absent) {
+                    std::string name = "brain";
+                    std::string version;
+                    for (const BrainSeat& seat : runtime->seated_brains()) {
+                        if (seat.player != player)
+                            continue;
+                        version = seat.version;
+                        const oa::data::brain_library::InstalledBrain* installed =
+                            oa::data::brain_library::find(runtime->installed_brains(), seat.id);
+                        if (installed != nullptr && !installed->manifest.name.empty())
+                            name = installed->manifest.name;
+                        else if (!seat.id.empty())
+                            name = seat.id;
+                        break;
+                    }
+                    const std::string line = name + " " + version + " gives no report.\n";
+                    std::fwrite(line.data(), 1, line.size(), file);
+                } else if (result.length > 0) {
+                    std::fwrite(buffer.data(), 1, result.length, file);
+                }
+                std::fclose(file);
+                return;
+            }
             std::FILE* file = oa::platform::open_file(path, "w+b");
             if (file == nullptr)
                 return;
@@ -666,7 +717,12 @@ void Runtime::submit_chat_line() {
         if (!runtime->match_ || runtime->refuse_take_line(text))
             return;
         const auto hooks = runtime->message_hooks();
-        oa::sim::messages::post_chat(runtime->match_->state(), speaker, text, kind, target, hooks);
+        auto& world = runtime->match_->state();
+        oa::sim::messages::post_chat(world, speaker, text, kind, target, hooks);
+        if (text != nullptr)
+            runtime->seat_chat_.hear_local(
+                world, speaker.index, text, world.game.chat_mode, world.game.chat_targets
+            );
         runtime->status_ = text;
         runtime->read_speed_lock_line(text);
     };

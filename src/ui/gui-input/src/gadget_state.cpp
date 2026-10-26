@@ -783,23 +783,16 @@ void focus_nearest(GadgetPanel& panel, int32_t direction) {
     int32_t score = direction;
     for (int32_t index = 1; index < end; ++index) {
         const auto& record = record_at(panel, index);
-        if (record.bytes[field::active] == 0 || (attributes(record) & attribute::no_focus) != 0)
-            continue;
         const auto type = ui::gui_layout::gadget_type_of(record);
-        const bool grayed = (record.bytes[field::button_flags] & 1) != 0;
-        if (type == gadget_type::button && grayed)
-            continue;
-        if (type == gadget_type::scroll_bar && i32(record, field::scroll_locked) != 0)
-            continue;
-        if (type != gadget_type::text_box && type != gadget_type::scroll_bar &&
-            type != gadget_type::button && type != gadget_type::hot_surface &&
-            type != gadget_type::list_box) {
-            continue;
-        }
-        if (type == gadget_type::scroll_bar &&
-            i16(record, field::width) < i16(record, field::height))
-            continue;
-        if (type == gadget_type::list_box && (attributes(record) & attribute::cycle_frames) != 0)
+        if (!ui::gui_layout::keyboard_focusable(
+                static_cast<int8_t>(record.bytes[field::active]),
+                attributes(record),
+                type,
+                (record.bytes[field::button_flags] & 1) != 0,
+                type == gadget_type::scroll_bar && i32(record, field::scroll_locked) != 0,
+                i16(record, field::width),
+                i16(record, field::height)
+            ))
             continue;
         if (direction == 0 || direction == 1) {
             score = i16(record, field::y) * row_stride + i16(record, field::x);

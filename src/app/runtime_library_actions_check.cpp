@@ -32,53 +32,84 @@
 // its folder, the question for a built-in registry's mod, CANCEL removing
 // nothing and UNINSTALL its folder with the copy ROLL BACK keeps, its row
 // staying not installed, and a mod of the player's own leaving the Library.
-// The fourth is
-// a run nobody watches, on SDL's dummy video driver without the prompts the
-// other runs show: a built-in registry's update waits in the inbox while the
-// Library is closed, then installs with no prompt once the Library shows,
-// the folder it drops deleted; an added registry's copy asks REPLACE MOD
-// over the Library, which waits for its answer, and REPLACE installs it; and
-// a file opened outside the game stays in the inbox.
+// The fourth plays No Mod. GET WITH on Gatehouse Keep asks, CANCEL queues
+// nothing and GET BOTH queues Gatehouse then Gatehouse Keep; with both
+// installed, uninstalling Gatehouse says Gatehouse Keep needs it. The
+// folders are then removed. Fast Builders follows: GET queues it, the
+// package installs under Mutators with its origin record. A .oamut handed
+// over as the system opens one, a dropped file, asks INSTALL MUTATOR, lands
+// under Mutators with a file origin, and the Library lists it; that folder
+// is then removed so Fast Builders is the row again. CHECK
+// WITH THIS MOD runs the fixture's fake checker and shows its verdict,
+// OPEN FOLDER and HOMEPAGE reach the recorders, and UNINSTALL asks and
+// removes the folder. The runtime's own verdict entries then dry-run made-up
+// packages on the Library's worker against the installed game: one that
+// changes every builder, one whose rule matches no unit, and one that
+// declares only the maps layer. Three made-up brains follow: GET installs
+// Steady Commander under Brains, USE BY DEFAULT writes the preference,
+// CHECK WITH THIS MOD runs each brain's fits on the Library's worker, and
+// UNINSTALL of the default clears the key. About forty more packages with
+// origin records then take one listing on a rebuild. The fifth is
+// a run nobody watches, on SDL's dummy
+// video driver without the prompts the other runs show: a built-in registry's
+// update waits in the inbox while the Library is closed, then installs with
+// no prompt once the Library shows, the folder it drops deleted; an added
+// registry's copy asks REPLACE MOD over the Library, which waits for its
+// answer, and REPLACE installs it; and a file opened outside the game stays
+// in the inbox.
 
 #include "library_host.hpp"
 #include "mod_install_state.hpp"
 #include "oa_layer.hpp"
 #include "oa_layer_check.hpp"
 #include "user_folder_state.hpp"
+#include "web_link_state.hpp"
 
 #include "oa/app/content/downloads.hpp"
 #include "oa/app/content/updates.hpp"
 #include "oa/app/game_directory.hpp"
+#include "oa/app/mutators_memory.hpp"
 #include "oa/app/package_install.hpp"
 #include "oa/app/package_install/inbox.hpp"
+#include "oa/app/package_install/oabrain.hpp"
 #include "oa/app/package_install/oamod.hpp"
+#include "oa/app/package_install/oamut.hpp"
 #include "oa/app/package_install/origin.hpp"
 #include "oa/app/runtime.hpp"
+#include "oa/platform/preferences.hpp"
+#include "oa/platform/system.hpp"
 #include "oa/app/user_folder.hpp"
 #include "oa/base/sha256.hpp"
+#include "oa/data/mutators/verdicts.hpp"
 #include "oa/formats/zip.hpp"
 #include "oa/ui/display_layout.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
 #include "oa/ui/engine_settings/prompt.hpp"
 #include "oa/ui/library/library.hpp"
+#include "oa/ui/library/text.hpp"
 #include "oa/ui/library/uninstall.hpp"
 #include "oa/ui/library/update_question.hpp"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <ostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -118,12 +149,28 @@ constexpr std::string_view kScree = "scree";
 constexpr std::string_view kArchipelago = "archipelago";
 /// A made-up language pack of the built-in registry, the one in use.
 constexpr std::string_view kPseudo = "en-XA";
+/// A made-up mutator the fourth run gets, checks and uninstalls.
+constexpr std::string_view kFast = "fast-builders";
+/// A made-up mutator whose rule changes every builder, checked for real.
+constexpr std::string_view kBuilders = "ridge-check-builders";
+/// A made-up mutator whose rule matches nothing, checked for real.
+constexpr std::string_view kQuiet = "ridge-check-quiet";
+/// A made-up mutator Gatehouse Keep needs, downloaded with it.
+constexpr std::string_view kGatehouse = "gatehouse";
+/// A made-up mutator that needs Gatehouse.
+constexpr std::string_view kGatehouseKeep = "gatehouse-keep";
+/// A made-up brain with no fits. GET installs it, and it becomes the default.
+constexpr std::string_view kSteady = "steady-commander";
+/// A made-up brain whose fits returns a reason.
+constexpr std::string_view kPicky = "picky-planner";
+/// A made-up brain whose fits raises an error.
+constexpr std::string_view kBroken = "broken-planner";
 /// The most frames a step of the check runs before it gives up.
 constexpr int kMostFrames = 400;
 /// The frames a step runs to show that something waits: nothing comes of it.
 constexpr int kWaitingFrames = 30;
-/// The run of the check that nobody watches, the last: the fourth.
-constexpr uint32_t kUnwatchedRun = 3;
+/// The run of the check that nobody watches, the last: the fifth.
+constexpr uint32_t kUnwatchedRun = 4;
 /// What the download queue says of a package the installer refused, which
 /// the installer's own reason replaces in the Library.
 constexpr std::string_view kQueueRefused = "The package was refused";
@@ -153,6 +200,18 @@ struct InstallFeed {
     library::Inputs inputs{};         ///< what the Library is built from
     uint64_t generation{1};           ///< moves whenever the check changes inputs
     std::vector<FeedQueued> queued{}; ///< what it was asked to queue, in order
+    /// Verdicts `keep_verdict` stored, keyed by the mutator's id.
+    std::map<std::string, oa::data::mutators::VerdictRecord> kept{};
+    int keep_count{0}; ///< how many times `keep_verdict` was called
+    /// The verdict the running check returns once `release` is set.
+    oa::data::mutators::VerdictRecord canned{};
+    std::atomic<bool> release{false};      ///< the check may return `canned`
+    std::atomic<bool> work_started{false}; ///< the worker has entered the check
+    /// The runtime, for the real verdict entries swapped in after the fixture.
+    Runtime* runtime{};
+    /// The installed packages are listed, as the worker's first search lists
+    /// them: false until the check lists them in a run.
+    bool listed{};
 };
 
 /// The fixture's inputs.
@@ -201,6 +260,62 @@ bool feed_built_in(void* context, std::string_view registry) {
         if (listed.id == registry)
             return listed.built_in;
     return false;
+}
+
+/// Tells whether the fixture lists the installed packages yet.
+///
+/// @param context the fixture
+/// @return true once the check has listed them
+bool feed_installed_listed(void* context) {
+    return static_cast<InstallFeed*>(context)->listed;
+}
+
+/// The verdict `keep_verdict` stored for a mutator. Called on the main thread.
+///
+/// @param context the fixture
+/// @param id the mutator's id
+/// @return the record, or nothing when none was kept
+std::optional<oa::data::mutators::VerdictRecord>
+feed_remembered(void* context, std::string_view id) {
+    const InstallFeed& fixture = *static_cast<const InstallFeed*>(context);
+    const auto found = fixture.kept.find(std::string(id));
+    if (found == fixture.kept.end())
+        return std::nullopt;
+    return found->second;
+}
+
+/// Stores a verdict the worker found. Called on the main thread.
+///
+/// @param context the fixture
+/// @param id the mutator's id
+/// @param record the verdict
+void feed_keep(
+    void* context, std::string_view id, const oa::data::mutators::VerdictRecord& record
+) {
+    InstallFeed& fixture = *static_cast<InstallFeed*>(context);
+    fixture.kept.insert_or_assign(std::string(id), record);
+    ++fixture.keep_count;
+}
+
+/// Starts a fake check. The work runs on the Library's worker: it waits until
+/// the fixture releases it, and returns nothing when the check is cancelled.
+///
+/// @param context the fixture
+/// @param id the mutator's id; the canned verdict does not depend on it
+/// @return the work, which reads `canned` once it is released
+std::function<std::optional<oa::data::mutators::VerdictRecord>(const std::atomic<bool>&)>
+feed_start(void* context, std::string_view /*id*/) {
+    auto* fixture = static_cast<InstallFeed*>(context);
+    return [fixture](
+               const std::atomic<bool>& cancel
+           ) -> std::optional<oa::data::mutators::VerdictRecord> {
+        fixture->work_started.store(true);
+        while (!fixture->release.load() && !cancel.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (cancel.load())
+            return std::nullopt;
+        return fixture->canned;
+    };
 }
 
 /// Returns one of the fixture's registries.
@@ -265,6 +380,237 @@ void write_package(const fs::path& file, const std::string& profile, int revisio
         reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size())
     );
     require(static_cast<bool>(out), "a package could not be written");
+}
+
+/// Writes Fast Builders as a small .oamut: its manifest, its entry and a note.
+///
+/// @param file the package
+void write_mutator(const fs::path& file) {
+    const std::string manifest = "oamut: 1\n"
+                                 "id: fast-builders\n"
+                                 "name: \"Fast Builders\"\n"
+                                 "version: \"1.0\"\n"
+                                 "author:\n"
+                                 "  name: \"Ada\"\n"
+                                 "description: \"Builds faster.\"\n"
+                                 "tags: [\"economy\"]\n"
+                                 "works-with: [\"*\"]\n"
+                                 "layers: [\"units\"]\n"
+                                 "entry: \"mutator.lua\"\n";
+    const std::string script = "return {}\n";
+    const std::string note = "Fast Builders\n";
+    const std::vector<uint8_t> manifest_bytes(manifest.begin(), manifest.end());
+    const std::vector<uint8_t> script_bytes(script.begin(), script.end());
+    const std::vector<uint8_t> note_bytes(note.begin(), note.end());
+    const std::vector<oa::formats::zip::NewEntry> listed{
+        {"oamut.yaml", manifest_bytes},
+        {"mutator.lua", script_bytes},
+        {"README.md", note_bytes},
+    };
+    std::vector<uint8_t> archive;
+    oa::formats::zip::ZipError error{};
+    require(oa::formats::zip::write_archive(listed, archive, error), "a mutator could not be made");
+    std::error_code made;
+    fs::create_directories(file.parent_path(), made);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(
+        reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size())
+    );
+    require(static_cast<bool>(out), "a mutator could not be written");
+}
+
+/// Writes a made-up mutator package: its manifest, its entry and a note.
+///
+/// @param file the package
+/// @param id its id
+/// @param name its name
+/// @param version its version
+/// @param requires_yaml lines inserted after works-with, or none
+void write_named_mutator(
+    const fs::path& file,
+    std::string_view id,
+    std::string_view name,
+    std::string_view version,
+    std::string_view requires_yaml
+) {
+    const std::string manifest = "oamut: 1\n"
+                                 "id: " +
+                                 std::string(id) +
+                                 "\n"
+                                 "name: \"" +
+                                 std::string(name) +
+                                 "\"\n"
+                                 "version: \"" +
+                                 std::string(version) +
+                                 "\"\n"
+                                 "author:\n"
+                                 "  name: \"Ada\"\n"
+                                 "description: \"A made-up mutator.\"\n"
+                                 "tags: [\"gameplay\"]\n"
+                                 "works-with: [\"*\"]\n" +
+                                 std::string(requires_yaml) +
+                                 "layers: [\"files\"]\n"
+                                 "entry: \"mutator.lua\"\n";
+    const std::string script = "return {}\n";
+    const std::string note = std::string(name) + "\n";
+    const std::vector<uint8_t> manifest_bytes(manifest.begin(), manifest.end());
+    const std::vector<uint8_t> script_bytes(script.begin(), script.end());
+    const std::vector<uint8_t> note_bytes(note.begin(), note.end());
+    const std::vector<oa::formats::zip::NewEntry> listed{
+        {"oamut.yaml", manifest_bytes},
+        {"mutator.lua", script_bytes},
+        {"README.md", note_bytes},
+    };
+    std::vector<uint8_t> archive;
+    oa::formats::zip::ZipError error{};
+    require(oa::formats::zip::write_archive(listed, archive, error), "a mutator could not be made");
+    std::error_code made;
+    fs::create_directories(file.parent_path(), made);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(
+        reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size())
+    );
+    require(static_cast<bool>(out), "a mutator could not be written");
+}
+
+/// Writes a made-up mutator whose script is a real rule, for a dry run.
+///
+/// @param file the package
+/// @param id its id
+/// @param name its name
+/// @param lua its entry
+/// @param layers the one layer it declares
+void write_checking_mutator(
+    const fs::path& file,
+    std::string_view id,
+    std::string_view name,
+    std::string_view lua,
+    std::string_view layers = "units"
+) {
+    const std::string manifest = "oamut: 1\n"
+                                 "id: " +
+                                 std::string(id) +
+                                 "\n"
+                                 "name: \"" +
+                                 std::string(name) +
+                                 "\"\n"
+                                 "version: \"1.0\"\n"
+                                 "author:\n"
+                                 "  name: \"Ridge Maker\"\n"
+                                 "description: \"A made-up mutator.\"\n"
+                                 "tags: [\"gameplay\"]\n"
+                                 "works-with: [\"*\"]\n"
+                                 "layers: [\"" +
+                                 std::string(layers) +
+                                 "\"]\n"
+                                 "entry: \"mutator.lua\"\n";
+    const std::vector<uint8_t> manifest_bytes(manifest.begin(), manifest.end());
+    const std::vector<uint8_t> script_bytes(lua.begin(), lua.end());
+    const std::string note = std::string(name) + "\n";
+    const std::vector<uint8_t> note_bytes(note.begin(), note.end());
+    const std::vector<oa::formats::zip::NewEntry> listed{
+        {"oamut.yaml", manifest_bytes},
+        {"mutator.lua", script_bytes},
+        {"README.md", note_bytes},
+    };
+    std::vector<uint8_t> archive;
+    oa::formats::zip::ZipError error{};
+    require(oa::formats::zip::write_archive(listed, archive, error), "a mutator could not be made");
+    std::error_code made;
+    fs::create_directories(file.parent_path(), made);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(
+        reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size())
+    );
+    require(static_cast<bool>(out), "a mutator could not be written");
+}
+
+/// Writes a made-up brain package: its manifest and its entry.
+///
+/// @param file the package
+/// @param id its id
+/// @param name its name
+/// @param lua its entry
+void write_brain(
+    const fs::path& file, std::string_view id, std::string_view name, std::string_view lua
+) {
+    const std::string manifest = "oabrain: 1\n"
+                                 "id: " +
+                                 std::string(id) +
+                                 "\n"
+                                 "name: \"" +
+                                 std::string(name) +
+                                 "\"\n"
+                                 "version: \"1.0\"\n"
+                                 "author:\n"
+                                 "  name: \"Ridge Maker\"\n"
+                                 "description: \"A made-up brain.\"\n"
+                                 "tags: [\"classic\"]\n"
+                                 "works-with: [\"*\"]\n"
+                                 "levels:\n"
+                                 "  - id: steady\n"
+                                 "    name: \"Steady\"\n"
+                                 "    difficulty: easy\n"
+                                 "entry: \"brain.lua\"\n";
+    const std::vector<uint8_t> manifest_bytes(manifest.begin(), manifest.end());
+    const std::vector<uint8_t> script_bytes(lua.begin(), lua.end());
+    const std::string note = std::string(name) + "\n";
+    const std::vector<uint8_t> note_bytes(note.begin(), note.end());
+    const std::vector<oa::formats::zip::NewEntry> listed{
+        {"oabrain.yaml", manifest_bytes},
+        {"brain.lua", script_bytes},
+        {"README.md", note_bytes},
+    };
+    std::vector<uint8_t> archive;
+    oa::formats::zip::ZipError error{};
+    require(oa::formats::zip::write_archive(listed, archive, error), "a brain could not be made");
+    std::error_code made;
+    fs::create_directories(file.parent_path(), made);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(
+        reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size())
+    );
+    require(static_cast<bool>(out), "a brain could not be written");
+}
+
+/// Copies requires.mutators from an installed mutator's manifest into its facts.
+///
+/// A line that is not a flow list is left unread. Fast Builders' manifest
+/// names none, so its facts stay empty of needs.
+///
+/// @param folder the installed folder
+/// @param[in,out] facts the facts; needs are appended
+void read_mutator_needs(const fs::path& folder, library::MutatorFacts& facts) {
+    std::ifstream manifest(folder / "oamut.yaml");
+    if (!manifest)
+        return;
+    std::string line;
+    while (std::getline(manifest, line)) {
+        const std::string::size_type marker = line.find("mutators:");
+        if (marker == std::string::npos)
+            continue;
+        std::string::size_type cursor = marker;
+        for (;;) {
+            const std::string::size_type open = line.find('"', cursor);
+            if (open == std::string::npos)
+                break;
+            const std::string::size_type close = line.find('"', open + 1);
+            if (close == std::string::npos)
+                break;
+            const std::string text = line.substr(open + 1, close - open - 1);
+            library::Prerequisite need;
+            const std::string::size_type space = text.find(' ');
+            if (space == std::string::npos) {
+                need.id = text;
+            } else {
+                need.id = text.substr(0, space);
+                need.range = text.substr(space + 1);
+            }
+            if (!need.id.empty())
+                facts.needs.push_back(std::move(need));
+            cursor = close + 1;
+        }
+    }
 }
 
 /// Returns the SHA-256 of a file.
@@ -342,6 +688,7 @@ void Runtime::check_library_install() {
     // The Library takes the fixture's feed from the first frame on, and the
     // runtime's own back as the check ends.
     InstallFeed fixture;
+    fixture.runtime = this;
     fixture.inputs.registries.push_back(feed_registry(kBuiltIn, "Check Built-in", true));
     fixture.inputs.registries.push_back(feed_registry(kAdded, "Check Added", false));
     fixture.inputs.registries.push_back(feed_registry(kAddedOther, "Check Added Two", false));
@@ -364,6 +711,7 @@ void Runtime::check_library_install() {
     host.feed = LibraryFeed{
         &fixture, feed_inputs, feed_generation, feed_enqueue, nullptr, nullptr, feed_built_in
     };
+    host.feed.installed_listed = feed_installed_listed;
     host.own_feed = false;
     host.refreshed = false;
 
@@ -405,9 +753,76 @@ void Runtime::check_library_install() {
                 shown.kept = library::Kept{backup->version, backup->revision};
             fixture.inputs.installed.push_back(std::move(shown));
         }
+        error.clear();
+        const fs::path mutators_root =
+            user_folder_ / std::string(install::oamut::mutators_folder_name);
+        if (fs::is_directory(mutators_root, error)) {
+            error.clear();
+            for (fs::directory_iterator entry{mutators_root, error}, end; !error && entry != end;
+                 entry.increment(error)) {
+                const fs::path folder = entry->path();
+                if (path_to_utf8(folder.filename()).starts_with('.'))
+                    continue;
+                const install::InstalledPackage held = install::oamut::read_installed(folder);
+                if (held.kind != install::FolderKind::package)
+                    continue;
+                const std::optional<install::Origin> record = install::read_origin(folder);
+                library::Installed shown;
+                shown.kind = library::Kind::mutator;
+                shown.key = held.id;
+                shown.folder = folder;
+                shown.name = held.name;
+                shown.version = held.version;
+                shown.revision = held.revision;
+                shown.author = held.author;
+                shown.description = held.description;
+                shown.mutator = library::MutatorFacts{};
+                read_mutator_needs(folder, *shown.mutator);
+                if (record && record->kind == install::OriginKind::catalogue) {
+                    shown.key = record->catalogue_id;
+                    shown.registry = record->registry;
+                    shown.release = record->release;
+                }
+                fixture.inputs.installed.push_back(std::move(shown));
+            }
+        }
+        error.clear();
+        const fs::path brains_root =
+            user_folder_ / std::string(install::oabrain::brains_folder_name);
+        if (fs::is_directory(brains_root, error)) {
+            error.clear();
+            for (fs::directory_iterator entry{brains_root, error}, end; !error && entry != end;
+                 entry.increment(error)) {
+                const fs::path folder = entry->path();
+                if (path_to_utf8(folder.filename()).starts_with('.'))
+                    continue;
+                const install::InstalledPackage held = install::oabrain::read_installed(folder);
+                if (held.kind != install::FolderKind::package)
+                    continue;
+                const std::optional<install::Origin> record = install::read_origin(folder);
+                library::Installed shown;
+                shown.kind = library::Kind::brain;
+                shown.key = held.id;
+                shown.folder = folder;
+                shown.name = held.name;
+                shown.version = held.version;
+                shown.revision = held.revision;
+                shown.author = held.author;
+                shown.description = held.description;
+                // Empty works-with is any mod. The check attaches the verdict.
+                shown.brain = library::BrainFacts{};
+                if (record && record->kind == install::OriginKind::catalogue) {
+                    shown.key = record->catalogue_id;
+                    shown.registry = record->registry;
+                    shown.release = record->release;
+                }
+                fixture.inputs.installed.push_back(std::move(shown));
+            }
+        }
         fixture.inputs.installed.insert(
             fixture.inputs.installed.end(), beside_mods.begin(), beside_mods.end()
         );
+        fixture.listed = true;
         ++fixture.generation;
     };
     const auto frame = [&] {
@@ -481,16 +896,50 @@ void Runtime::check_library_install() {
         }
         require(oa_layer().top() == nullptr, "a screen stayed over the main menu");
     };
-    // A run PLAY NOW in the Library began: the Library opens again over the
+    // A run PLAY NOW in the Library began, its feed not listing the
+    // installed packages yet. A notice raised as the main menu shows is not
+    // covered by the switch's work dialog, and the Library does not open
+    // over it. Once it is closed the work dialog shows, saying what was
+    // switched, and once the feed lists them the Library opens again over
+    // the main menu as it showed: on Mods, the mod played selected, the work
+    // dialog gone.
+    const auto reopened_after_listing = [&](std::string_view key, std::string_view line) {
+        settings::Notice told;
+        told.title = "CHECK NOTICE";
+        told.paragraphs.push_back({"A notice of the check's, raised at the start.", false});
+        UserFolderState::show_notice(*this, std::move(told), user_folder_, Screen::main_menu);
+        frames();
+        require(
+            saves_notice_shown() && oa_layer().find(WorkScreen::screen_name) == nullptr &&
+                oa_layer().find(library_screen_name) == nullptr,
+            "the switch's work dialog or the Library showed over a notice"
+        );
+        tap(SDLK_RETURN);
+        frames();
+        const std::optional<AutomationControl> said = named("oa.progress.body");
+        require(
+            top_is(WorkScreen::screen_name) && options_.restart_line == line && said &&
+                said->dialog == "oa.work" && said->text.find(line) != std::string::npos &&
+                oa_layer().find(library_screen_name) == nullptr,
+            "the switch's work dialog did not show what was switched before the feed listed the "
+            "installed packages"
+        );
+        list_installed();
+        frames();
+        const library::EntryId played{std::string(kBuiltIn), library::Kind::mod, std::string(key)};
+        require(
+            top_is(library_screen_name) && oa_layer().find(WorkScreen::screen_name) == nullptr &&
+                host.model.tab == library::Tab::mods && host.model.selected == played,
+            "the Library did not open again on Mods with the mod played selected"
+        );
+    };
+    // A run PLAY NOW in the Library began, its feed listing the installed
+    // packages but not yet the mod played: the Library opens again over the
     // main menu as it showed, on Mods, and selects the mod played once its
-    // feed lists it. A notice nobody asked for is closed.
-    const auto reopened_on = [&](std::string_view key) {
-        for (int count = 0; count < 12 && !top_is(library_screen_name); ++count) {
-            frame();
-            const LayerScreen* top = oa_layer().top();
-            if (top != nullptr && dynamic_cast<const NoticeScreen*>(top) != nullptr)
-                tap(SDLK_RETURN);
-        }
+    // feed lists it.
+    const auto reopened_before_listing = [&](std::string_view key) {
+        fixture.listed = true;
+        frames();
         const library::EntryId played{std::string(kBuiltIn), library::Kind::mod, std::string(key)};
         require(
             top_is(library_screen_name) && host.model.tab == library::Tab::mods &&
@@ -515,6 +964,73 @@ void Runtime::check_library_install() {
         close_library();
         frame();
         require(oa_layer().top() == nullptr, "the Library did not close");
+    };
+    // The Library as it shows, kept for the next run, and that run's wait
+    // for it. It opens again with its list scrolled as it was while the entry
+    // chosen is where it was, and that entry's row brought into view when it
+    // is not. A Library the run before kept is never handed to the next run,
+    // and one that cannot open by the end of the wait is dropped, so that it
+    // does not open once the main menu is free.
+    const auto kept_library_waits = [&] {
+        keep_library_for_restart();
+        const std::shared_ptr<const LibraryReturn> left = library_return();
+        library_kept_.reset();
+        require(
+            left != nullptr && left->selected && left->selected == host.model.selected &&
+                left->selected_row >= 0 && left->selected_row == host.selected_row(),
+            "the Library was not kept as it showed"
+        );
+        const auto reopened = [&](int32_t row) {
+            close_the_library();
+            auto moved = std::make_shared<LibraryReturn>(*left);
+            moved->selected_row = row;
+            moved->list_scroll = 7;
+            take_library_return(std::move(moved));
+            reopen_kept_library();
+            require(
+                top_is(library_screen_name) && host.model.selected == left->selected &&
+                    host.model.details_open == left->details_open &&
+                    host.state.details_page == left->details_page,
+                "the kept Library did not open again with its entry selected and its details"
+            );
+        };
+        reopened(left->selected_row);
+        require(
+            host.state.list_scroll == 7 && host.state.reveal_row == -1,
+            "the Library opened again did not keep its list's scroll"
+        );
+        reopened(left->selected_row + 1);
+        require(
+            host.state.reveal_row == host.selected_row(),
+            "the Library opened again did not bring the entry chosen into view"
+        );
+        frames();
+        close_the_library();
+
+        settings::Notice told;
+        told.title = "CHECK NOTICE";
+        told.paragraphs.push_back({"A notice of the check's, over the main menu.", false});
+        UserFolderState::show_notice(*this, std::move(told), user_folder_, Screen::main_menu);
+        take_library_return(left);
+        frames();
+        require(
+            saves_notice_shown() && oa_layer().find(library_screen_name) == nullptr &&
+                library_return_ != nullptr && library_return() == nullptr,
+            "a Library the run before kept opened over a notice, or was kept for the next run"
+        );
+        library_return_since_ = oa::platform::tick_ms() - kept_library_wait_ms;
+        frame();
+        require(
+            library_return_ == nullptr,
+            "a Library the run before kept was not dropped at the end of the wait"
+        );
+        tap(SDLK_RETURN);
+        frames();
+        require(
+            oa_layer().top() == nullptr,
+            "a Library the run before kept opened after the wait, once the main menu was free"
+        );
+        std::cout << "library install check: the Library kept for the next run waits for it\n";
     };
     // Shows an entry's details: its row selected, and at Compact its page.
     const auto show_entry = [&](std::string_view row) {
@@ -544,7 +1060,8 @@ void Runtime::check_library_install() {
                                     std::string_view registry,
                                     std::string_view key,
                                     std::string_view name,
-                                    int64_t release) {
+                                    int64_t release,
+                                    library::Kind kind = library::Kind::mod) {
         install::Origin origin{};
         origin.kind = install::OriginKind::catalogue;
         origin.registry = std::string(registry);
@@ -565,7 +1082,7 @@ void Runtime::check_library_install() {
         );
         library::QueueItem item;
         item.registry = std::string(registry);
-        item.kind = library::Kind::mod;
+        item.kind = kind;
         item.key = std::string(key);
         item.name = std::string(name);
         item.phase = library::QueueItem::Phase::installing;
@@ -970,7 +1487,7 @@ void Runtime::check_library_install() {
     case 1: {
         // 10. ROLL BACK's question over the Library says the game reloads
         // for the mod played; CANCEL changes nothing.
-        reopened_on(kRidge);
+        reopened_after_listing(kRidge, "Switching on Ridge…");
         require(
             playing(ridge) && mod_profile() != nullptr && mod_profile()->id == kRidge &&
                 revision_in(ridge) == 4,
@@ -1104,7 +1621,8 @@ void Runtime::check_library_install() {
     case 2: {
         // The update was put in place as the mod was switched, and is told.
         require(playing(mods / std::string(kLattice)), "the run does not play Lattice");
-        reopened_on(kLattice);
+        reopened_before_listing(kLattice);
+        kept_library_waits();
         require(
             revision_in(ridge) == 5 && recorded_from(ridge, kBuiltIn, 2) &&
                 revision_in(kept) == 4 && recorded_from(kept, kBuiltIn, 1) &&
@@ -1661,9 +2179,1096 @@ void Runtime::check_library_install() {
         // The last run plays No Mod, as the next start of the check does.
         preference_values_.erase(std::string(settings::key::mod_directory));
         preferences_dirty_ = true;
+        // A Library the run before kept, which this run has not opened, is
+        // not handed on: the next run opens none.
+        take_library_return(std::make_shared<const LibraryReturn>());
         request_soft_restart();
         std::cout << "library install check: run 2 found the held update made and queued the "
                      "updates\n";
+        return;
+    }
+    case 3: {
+        // 12. No Mod is played. GET WITH on Gatehouse Keep asks, CANCEL queues
+        // nothing and GET BOTH queues Gatehouse then Gatehouse Keep. With both
+        // installed, uninstalling Gatehouse says Gatehouse Keep needs it. Those
+        // folders are removed. GET on Fast Builders then queues it, the package
+        // installs under Mutators with its origin record, CHECK WITH THIS MOD
+        // runs the fixture's fake checker, OPEN FOLDER and HOMEPAGE reach the
+        // recorders, and UNINSTALL asks and removes the folder. Ridge stays
+        // as the previous run left it.
+        require(
+            library_return_ == nullptr, "the run was handed a Library the run before did not keep"
+        );
+        settle();
+        require(options_.layered_mod_folder.empty(), "the mutator run plays a mod");
+        require(revision_in(ridge) == 5, "the mutator run does not find Ridge's fifth revision");
+        const fs::path mutators_root =
+            user_folder_ / std::string(install::oamut::mutators_folder_name);
+        const fs::path fast_folder = mutators_root / std::string(kFast);
+        {
+            library::Listing gatehouse;
+            gatehouse.registry = std::string(kBuiltIn);
+            gatehouse.kind = library::Kind::mutator;
+            gatehouse.key = std::string(kGatehouse);
+            gatehouse.name = "Gatehouse";
+            gatehouse.version = "4.1";
+            gatehouse.release = 1;
+            gatehouse.size = 1024;
+            library::MutatorFacts gate_facts;
+            gate_facts.tags.push_back("gameplay");
+            gatehouse.mutator = std::move(gate_facts);
+            library::Listing keep;
+            keep.registry = std::string(kBuiltIn);
+            keep.kind = library::Kind::mutator;
+            keep.key = std::string(kGatehouseKeep);
+            keep.name = "Gatehouse Keep";
+            keep.version = "2.0";
+            keep.release = 1;
+            keep.size = 1024;
+            library::MutatorFacts keep_facts;
+            keep_facts.tags.push_back("gameplay");
+            keep_facts.needs.push_back({"gatehouse", ">= 4.0", "Gatehouse"});
+            keep.mutator = std::move(keep_facts);
+            fixture.inputs.listings.push_back(std::move(gatehouse));
+            fixture.inputs.listings.push_back(std::move(keep));
+            ++fixture.generation;
+            list_installed();
+            open_library(library::Tab::mutators);
+            frames();
+            require(top_is(library_screen_name), "the Library did not open for GET WITH");
+            show_entry("oa.library.row.check-builtin.gatehouse-keep");
+            const std::size_t queued_before = fixture.queued.size();
+            press_action("get-with");
+            {
+                const auto* asked = dynamic_cast<const QuestionScreen*>(oa_layer().top());
+                require(
+                    asked != nullptr && oa_layer().find(library_screen_name) != nullptr,
+                    "GET WITH did not ask over the Library"
+                );
+                const settings::Prompt& shown = asked->question();
+                require(shown.title == "Get Gatehouse Keep?", "GET WITH's title is wrong");
+                require(
+                    shown.paragraphs.size() == 1 &&
+                        shown.paragraphs[0].text ==
+                            "Gatehouse Keep needs Gatehouse 4.0 or later, which you don't have. "
+                            "Both download now, and Gatehouse goes above Gatehouse Keep in every "
+                            "list.",
+                    "GET WITH's paragraph is wrong"
+                );
+                require(
+                    shown.items.size() == 2 && shown.items[0].text == "Gatehouse 4.1" &&
+                        shown.items[0].aside == " · from Check Built-in" &&
+                        shown.items[1].text == "Gatehouse Keep 2.0" &&
+                        shown.items[1].aside == " · from Check Built-in",
+                    "GET WITH does not list both packages"
+                );
+                require(
+                    shown.buttons.size() == 2 && shown.buttons[0].id == "cancel" &&
+                        shown.buttons[1].id == "get-both" && shown.buttons[1].accent &&
+                        shown.marked == 0,
+                    "GET WITH is not CANCEL, marked, then GET BOTH"
+                );
+            }
+            require(
+                named("oa.prompt.get-both").has_value() && named("oa.prompt.cancel").has_value(),
+                "automation does not list oa.prompt.get-both"
+            );
+            click_named("oa.prompt.cancel");
+            frames();
+            require(
+                top_is(library_screen_name) && fixture.queued.size() == queued_before,
+                "CANCEL on GET WITH queued a package"
+            );
+            press_action("get-with");
+            click_named("oa.prompt.get-both");
+            frames();
+            require(
+                top_is(library_screen_name) && fixture.queued.size() == queued_before + 2 &&
+                    fixture.queued[queued_before].registry == kBuiltIn &&
+                    fixture.queued[queued_before].key == kGatehouse &&
+                    fixture.queued[queued_before].reason == content::DownloadReason::install &&
+                    fixture.queued[queued_before + 1].registry == kBuiltIn &&
+                    fixture.queued[queued_before + 1].key == kGatehouseKeep &&
+                    fixture.queued[queued_before + 1].reason == content::DownloadReason::install,
+                "GET BOTH did not queue Gatehouse then Gatehouse Keep"
+            );
+            std::cout << "library install check: GET BOTH queued gatehouse then gatehouse-keep\n";
+
+            const fs::path gate_folder = mutators_root / std::string(kGatehouse);
+            const fs::path keep_folder = mutators_root / std::string(kGatehouseKeep);
+            write_named_mutator(packages / "gatehouse.oamut", kGatehouse, "Gatehouse", "4.1", {});
+            post_catalogue(
+                packages / "gatehouse.oamut",
+                kBuiltIn,
+                kGatehouse,
+                "Gatehouse",
+                1,
+                library::Kind::mutator
+            );
+            installs_quietly("Gatehouse", kBuiltIn, kGatehouse);
+            write_named_mutator(
+                packages / "gatehouse-keep.oamut",
+                kGatehouseKeep,
+                "Gatehouse Keep",
+                "2.0",
+                "requires:\n  mutators: [\"gatehouse >= 4.0\"]\n"
+            );
+            post_catalogue(
+                packages / "gatehouse-keep.oamut",
+                kBuiltIn,
+                kGatehouseKeep,
+                "Gatehouse Keep",
+                1,
+                library::Kind::mutator
+            );
+            installs_quietly("Gatehouse Keep", kBuiltIn, kGatehouseKeep);
+            show_entry("oa.library.row.check-builtin.gatehouse");
+            press_action("uninstall");
+            {
+                const auto* asked = dynamic_cast<const QuestionScreen*>(oa_layer().top());
+                require(asked != nullptr, "UNINSTALL did not ask about Gatehouse");
+                const settings::Prompt& shown = asked->question();
+                require(
+                    shown.paragraphs.size() == 3 &&
+                        shown.paragraphs[0].text ==
+                            "Uninstall Gatehouse? Its folder, Mutators/gatehouse, is removed." &&
+                        shown.paragraphs[1].text ==
+                            "Gatehouse Keep needs it: it stays installed, and cannot be switched "
+                            "on until this is back." &&
+                        shown.paragraphs[2].text == "GET installs it again.",
+                    "uninstalling Gatehouse did not say Gatehouse Keep needs it"
+                );
+            }
+            click_named("oa.prompt.cancel");
+            frames();
+            require(fs::exists(gate_folder) && fs::exists(keep_folder), "CANCEL removed Gatehouse");
+            close_the_library();
+            std::error_code gate_error;
+            fs::remove_all(gate_folder, gate_error);
+            fs::remove_all(keep_folder, gate_error);
+            std::erase_if(fixture.inputs.listings, [](const library::Listing& listed) {
+                return listed.kind == library::Kind::mutator &&
+                       (listed.key == kGatehouse || listed.key == kGatehouseKeep);
+            });
+            list_installed();
+        }
+        std::error_code fast_error;
+        fs::remove_all(fast_folder, fast_error);
+
+        {
+            library::Listing listed;
+            listed.registry = std::string(kBuiltIn);
+            listed.kind = library::Kind::mutator;
+            listed.key = std::string(kFast);
+            listed.name = "Fast Builders";
+            listed.version = "2.0";
+            listed.revision = 1;
+            listed.release = 1;
+            listed.author = "Ada";
+            listed.summary = "Builds faster.";
+            listed.homepage = "https://example.test/fast-builders";
+            listed.size = 1024;
+            library::MutatorFacts facts;
+            facts.works_with.push_back({"*", {}, {}});
+            facts.layers.push_back("units");
+            facts.tags.push_back("economy");
+            listed.mutator = std::move(facts);
+            fixture.inputs.listings.push_back(std::move(listed));
+            ++fixture.generation;
+        }
+        list_installed();
+        open_library(library::Tab::mutators);
+        frames();
+        require(top_is(library_screen_name), "the Library did not open on Mutators");
+        show_entry("oa.library.row.check-builtin.fast-builders");
+        const std::size_t queued_before = fixture.queued.size();
+        press_action("get");
+        require(
+            fixture.queued.size() == queued_before + 1 &&
+                fixture.queued.back().registry == kBuiltIn && fixture.queued.back().key == kFast &&
+                fixture.queued.back().reason == content::DownloadReason::install,
+            "GET did not queue Fast Builders"
+        );
+        std::cout << "library install check: mutator queued\n";
+
+        const fs::path fast_file = packages / "fast-builders.oamut";
+        write_mutator(fast_file);
+        post_catalogue(fast_file, kBuiltIn, kFast, "Fast Builders", 1, library::Kind::mutator);
+        installs_quietly("Fast Builders", kBuiltIn, kFast);
+        {
+            const std::optional<install::Origin> record = install::read_origin(fast_folder);
+            require(
+                fs::exists(fast_folder) && record &&
+                    record->kind == install::OriginKind::catalogue &&
+                    record->registry == kBuiltIn && record->catalogue_id == kFast &&
+                    record->release == 1,
+                "Fast Builders is not under Mutators with its origin record"
+            );
+        }
+        std::cout << "library install check: mutator installed\n";
+
+        // An opened .oamut takes the same path as an opened .oamod: the system hands it to
+        // the game as a dropped file, as the Finder, the Files app and a drag onto the window
+        // do, which the game knows by its extension and posts to the inbox; the inbox asks,
+        // INSTALL puts it in Mutators under its id, whatever the file is called, with a file
+        // origin, and the Library lists the row. Removed again so the Fast Builders checks
+        // below still see that row alone.
+        close_the_library();
+        const fs::path opened_mutator = packages / "Steady Hands 1.0.OAMUT";
+        write_named_mutator(opened_mutator, "steady-hands", "Steady Hands", "1.0", {});
+        require(install::opens_file(opened_mutator), "the game does not open a .oamut file");
+        static std::string dropped_mutator;
+        dropped_mutator = path_to_utf8(opened_mutator);
+        SDL_Event drop{};
+        drop.type = SDL_EVENT_DROP_FILE;
+        drop.drop.windowID = SDL_GetWindowID(sdl_.window);
+        drop.drop.data = dropped_mutator.c_str();
+        require(SDL_PushEvent(&drop), "the opened mutator's drop could not be sent");
+        until_prompt("an opened mutator");
+        require(
+            says("Install the mutator Steady Hands 1.0?"),
+            "an opened mutator did not name itself in its question"
+        );
+        require(titled("INSTALL MUTATOR"), "an opened mutator did not ask INSTALL MUTATOR");
+        tap(SDLK_RETURN);
+        until_prompt("the opened mutator's notice");
+        require(titled("MUTATOR INSTALLED"), "an opened mutator was not installed");
+        tap(SDLK_RETURN);
+        require(state.prompt == nullptr, "Enter did not close the opened mutator's notice");
+        const fs::path steady_folder =
+            user_folder_ / std::string(install::oamut::mutators_folder_name) / "steady-hands";
+        {
+            const std::optional<install::Origin> record = install::read_origin(steady_folder);
+            require(
+                fs::is_regular_file(steady_folder / "oamut.yaml") && record &&
+                    record->kind == install::OriginKind::file &&
+                    record->sha256 == file_hash(opened_mutator),
+                "the opened mutator is not under Mutators with a file origin"
+            );
+        }
+        list_installed();
+        open_library(library::Tab::mutators);
+        frames();
+        require(
+            library::find_entry(
+                host.model, {std::string(), library::Kind::mutator, std::string("steady-hands")}
+            ) != nullptr,
+            "the Library does not list the opened mutator"
+        );
+        std::cout << "library install check: opened mutator installed\n";
+        close_the_library();
+        std::error_code steady_error;
+        fs::remove_all(steady_folder, steady_error);
+        require(!steady_error, "the opened mutator's folder could not be removed");
+        list_installed();
+        open_library(library::Tab::mutators);
+        frames();
+        show_entry("oa.library.row.check-builtin.fast-builders");
+
+        host.feed.remembered_verdict = feed_remembered;
+        host.feed.start_check = feed_start;
+        host.feed.keep_verdict = feed_keep;
+        ++fixture.generation;
+        frames();
+
+        const auto fast_entry = [&]() -> const library::Entry* {
+            return library::find_entry(
+                host.model, {std::string(kBuiltIn), library::Kind::mutator, std::string(kFast)}
+            );
+        };
+        const auto checked_value = [&]() -> std::string {
+            const library::Entry* shown_entry = fast_entry();
+            if (shown_entry == nullptr)
+                return {};
+            for (const library::Fact& fact : library::facts(host.model, *shown_entry))
+                if (fact.long_label == library::words::fact_checked)
+                    return fact.long_value;
+            return {};
+        };
+        const auto offers_check = [&]() -> bool {
+            const library::Entry* shown_entry = fast_entry();
+            if (shown_entry == nullptr)
+                return false;
+            for (const library::ActionButton& button :
+                 library::entry_actions(host.model, *shown_entry))
+                if (button.action == library::Action::check_with_mod)
+                    return true;
+            return false;
+        };
+        {
+            const library::Entry* shown_entry = fast_entry();
+            require(
+                shown_entry != nullptr && shown_entry->installed != nullptr && offers_check() &&
+                    library::status_line(host.model, *shown_entry) ==
+                        library::words::status_installed,
+                "CHECK WITH THIS MOD is not offered for the installed mutator"
+            );
+        }
+
+        const auto wait_until = [&](const auto& ready, std::string_view what) {
+            for (int count = 0; count < kMostFrames && !ready(); ++count)
+                frame();
+            require(ready(), what);
+        };
+
+        fixture.release.store(false);
+        fixture.work_started.store(false);
+        fixture.canned = {};
+        fixture.canned.verdict = oa::data::mutators::Verdict::compatible;
+        fixture.canned.counts.units_changed = 2u;
+        press_action("check-with-mod");
+        wait_until(
+            [&] { return fixture.work_started.load(); }, "the check did not start on the worker"
+        );
+        require(
+            checked_value().find("Checking with No Mod") != std::string::npos,
+            "the Checked fact did not say the check was running"
+        );
+        fixture.release.store(true);
+        wait_until([&] { return fixture.keep_count >= 1; }, "keep_verdict was not called");
+        require(
+            checked_value().find("changes 2 units") != std::string::npos,
+            "the Checked fact does not say changes 2 units"
+        );
+        std::cout << "library install check: mutator checked (fake verdict)\n";
+
+        fixture.release.store(false);
+        fixture.work_started.store(false);
+        fixture.canned = {};
+        fixture.canned.verdict = oa::data::mutators::Verdict::incompatible;
+        fixture.canned.reason = "needs a unit";
+        press_action("check-with-mod");
+        wait_until([&] { return fixture.work_started.load(); }, "the second check did not start");
+        fixture.release.store(true);
+        wait_until([&] { return fixture.keep_count >= 2; }, "the second verdict was not kept");
+        {
+            const library::Entry* shown_entry = fast_entry();
+            require(
+                shown_entry != nullptr && shown_entry->not_compatible &&
+                    checked_value().find("needs a unit") != std::string::npos,
+                "an incompatible verdict did not mark the row"
+            );
+        }
+
+        host.feed.remembered_verdict = nullptr;
+        host.feed.start_check = nullptr;
+        host.feed.keep_verdict = nullptr;
+        ++fixture.generation;
+        frames();
+        require(
+            checked_value().empty() && !offers_check(),
+            "null verdict entries still show Checked or CHECK WITH THIS MOD"
+        );
+
+        require(web_links_ != nullptr, "the run keeps no record of web links");
+        const std::size_t opened = user_folder_state().opened.size();
+        press_action("open-folder");
+        require(
+            user_folder_state().opened.size() == opened + 1 &&
+                kept_path(user_folder_state().opened.back()) == kept_path(fast_folder),
+            "OPEN FOLDER did not show Fast Builders' folder"
+        );
+        const std::size_t links = web_links_->requests.size();
+        press_action("homepage");
+        require(
+            web_links_->requests.size() == links + 1 &&
+                web_links_->requests.back() == "https://example.test/fast-builders",
+            "HOMEPAGE did not record Fast Builders' homepage"
+        );
+
+        press_action("uninstall");
+        {
+            const auto* asked = dynamic_cast<const QuestionScreen*>(oa_layer().top());
+            require(
+                asked != nullptr && oa_layer().find(library_screen_name) != nullptr,
+                "UNINSTALL did not ask over the Library"
+            );
+            const settings::Prompt& shown = asked->question();
+            require(shown.title == "Uninstall Fast Builders", "the question's title is wrong");
+            require(
+                shown.paragraphs.size() == 2 &&
+                    shown.paragraphs[0].text == "Uninstall Fast Builders? Its folder, "
+                                                "Mutators/fast-builders, is removed." &&
+                    shown.paragraphs[1].text == "GET installs it again.",
+                "the question does not say what it removes"
+            );
+            require(
+                shown.buttons.size() == 2 &&
+                    shown.buttons[0].id == library::uninstall_cancel_button_id &&
+                    shown.buttons[1].id == library::uninstall_button_id &&
+                    shown.buttons[1].accent && shown.marked == 0,
+                "the question is not CANCEL, marked, then UNINSTALL, primary"
+            );
+        }
+        frame();
+        require(
+            named("oa.prompt.uninstall").has_value(), "automation does not list oa.prompt.uninstall"
+        );
+        click_named("oa.prompt.uninstall");
+        for (int count = 0; count < kMostFrames &&
+                            (state.discarder.busy() || fs::exists(fs::symlink_status(fast_folder)));
+             ++count)
+            frame();
+        require(
+            !fs::exists(fs::symlink_status(fast_folder)),
+            "UNINSTALL did not remove Fast Builders' folder"
+        );
+        list_installed();
+        frames();
+        {
+            const library::Entry* shown_entry = fast_entry();
+            require(
+                shown_entry != nullptr && shown_entry->installed == nullptr &&
+                    shown_entry->state == library::State::get,
+                "Fast Builders is not shown as not installed"
+            );
+        }
+        std::cout << "library install check: mutator uninstalled\n";
+
+        // The fixture's checker is done. The runtime's own verdict entries
+        // stay on this feed, whose queue and inputs are still the fixture's,
+        // and two made-up packages are dry-run against the installed game.
+        // The fixture stays the feed's context. These call the runtime's own
+        // entries with that fixture's runtime, and they are written here so
+        // the private host is in reach.
+        host.feed.remembered_verdict = [](void* context, std::string_view id) {
+            return LibraryHost::own_remembered_verdict(
+                static_cast<InstallFeed*>(context)->runtime, id
+            );
+        };
+        host.feed.start_check = [](void* context, std::string_view id) {
+            return LibraryHost::own_start_check(static_cast<InstallFeed*>(context)->runtime, id);
+        };
+        host.feed.keep_verdict = [](void* context,
+                                    std::string_view id,
+                                    const oa::data::mutators::VerdictRecord& record) {
+            LibraryHost::own_keep_verdict(static_cast<InstallFeed*>(context)->runtime, id, record);
+        };
+        ++fixture.generation;
+        frames();
+
+        const auto entry_for = [&](std::string_view key) -> const library::Entry* {
+            return library::find_entry(
+                host.model, {std::string(kBuiltIn), library::Kind::mutator, std::string(key)}
+            );
+        };
+        const auto checked_for = [&](std::string_view key) -> std::string {
+            const library::Entry* shown_entry = entry_for(key);
+            if (shown_entry == nullptr)
+                return {};
+            for (const library::Fact& fact : library::facts(host.model, *shown_entry))
+                if (fact.long_label == library::words::fact_checked)
+                    return fact.long_value;
+            return {};
+        };
+        const auto verdict_words = [&] {
+            const fs::path path = user_folder_ / std::string(cache_folder_name) /
+                                  std::string(oa::data::mutators::verdicts_file_name);
+            std::ifstream verdicts(path);
+            require(static_cast<bool>(verdicts), "the verdict file is not there");
+            std::vector<std::string> words;
+            std::string line;
+            while (std::getline(verdicts, line)) {
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+                if (line.empty())
+                    continue;
+                std::size_t field = 0;
+                std::size_t start = 0;
+                std::string word;
+                for (std::size_t index = 0; index <= line.size(); ++index) {
+                    if (index == line.size() || line[index] == '\t') {
+                        if (field == 4)
+                            word = line.substr(start, index - start);
+                        start = index + 1;
+                        ++field;
+                    }
+                }
+                words.push_back(std::move(word));
+            }
+            return words;
+        };
+        const auto until_checked = [&](std::string_view key, std::string_view what) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+            while (std::chrono::steady_clock::now() < deadline) {
+                const std::string fact = checked_for(key);
+                if (fact.find("With No Mod:") != std::string::npos)
+                    return;
+                frame();
+            }
+            require(false, std::string(what) + ": " + checked_for(key));
+        };
+        const auto list_one = [&](std::string_view key, std::string_view name) {
+            library::Listing listed;
+            listed.registry = std::string(kBuiltIn);
+            listed.kind = library::Kind::mutator;
+            listed.key = std::string(key);
+            listed.name = std::string(name);
+            listed.version = "1.0";
+            listed.release = 1;
+            listed.author = "Ridge Maker";
+            listed.size = 1024;
+            library::MutatorFacts facts;
+            facts.works_with.push_back({"*", {}, {}});
+            facts.layers.push_back("units");
+            facts.tags.push_back("gameplay");
+            listed.mutator = std::move(facts);
+            fixture.inputs.listings.push_back(std::move(listed));
+            ++fixture.generation;
+            list_installed();
+            frames();
+        };
+
+        list_one(kBuilders, "Ridge Check Builders");
+        const fs::path builders_file = packages / "ridge-check-builders.oamut";
+        write_checking_mutator(
+            builders_file,
+            kBuilders,
+            "Ridge Check Builders",
+            "function mutate(ctx)\n"
+            "  return {\n"
+            "    rules = {\n"
+            "      where { builder = 1 }:change { workertime = scale(2) }\n"
+            "    }\n"
+            "  }\n"
+            "end\n"
+        );
+        post_catalogue(
+            builders_file, kBuiltIn, kBuilders, "Ridge Check Builders", 1, library::Kind::mutator
+        );
+        installs_quietly("Ridge Check Builders", kBuiltIn, kBuilders);
+        show_entry("oa.library.row.check-builtin.ridge-check-builders");
+        press_action("check-with-mod");
+        require(
+            checked_for(kBuilders).find("Checking with No Mod") != std::string::npos,
+            "the real check did not say it was running: " + checked_for(kBuilders)
+        );
+        until_checked(kBuilders, "the real check did not finish");
+        const std::string builders_fact = checked_for(kBuilders);
+        require(
+            builders_fact.find("changes") != std::string::npos &&
+                builders_fact.find("unit") != std::string::npos &&
+                builders_fact.find("no effect") == std::string::npos &&
+                builders_fact.find("changes 0") == std::string::npos,
+            "the Checked fact does not read a compatible unit count: " + builders_fact
+        );
+        {
+            const std::vector<std::string> words = verdict_words();
+            require(
+                words.size() == 1 && words[0] == "compatible",
+                "the verdict file does not hold one compatible line"
+            );
+        }
+        const uint32_t runs = mutator_dry_runs_;
+        require(runs >= 1, "the dry run did not count");
+        ++fixture.generation;
+        frames();
+        require(
+            checked_for(kBuilders) == builders_fact,
+            "rebuilding the Library changed the Checked fact"
+        );
+        require(mutator_dry_runs_ == runs, "rebuilding the Library started another dry run");
+        std::cout << "library install check: real verdict " << builders_fact << "\n";
+
+        list_one(kQuiet, "Ridge Check Quiet");
+        const fs::path quiet_file = packages / "ridge-check-quiet.oamut";
+        write_checking_mutator(
+            quiet_file,
+            kQuiet,
+            "Ridge Check Quiet",
+            "function mutate(ctx)\n"
+            "  return {\n"
+            "    rules = {\n"
+            "      where { unitname = is(\"NOUNIT\") }:change { maxdamage = 1 }\n"
+            "    }\n"
+            "  }\n"
+            "end\n"
+        );
+        post_catalogue(
+            quiet_file, kBuiltIn, kQuiet, "Ridge Check Quiet", 1, library::Kind::mutator
+        );
+        installs_quietly("Ridge Check Quiet", kBuiltIn, kQuiet);
+        show_entry("oa.library.row.check-builtin.ridge-check-quiet");
+        press_action("check-with-mod");
+        until_checked(kQuiet, "the quiet check did not finish");
+        const std::string quiet_fact = checked_for(kQuiet);
+        require(
+            quiet_fact.find("With No Mod: no effect") != std::string::npos,
+            "the quiet mutator does not read the no-effect words: " + quiet_fact
+        );
+        {
+            const std::vector<std::string> words = verdict_words();
+            require(
+                words.size() == 2 && words[0] == "compatible" && words[1] == "no-effect",
+                "the verdict file does not hold compatible then no-effect"
+            );
+        }
+        std::cout << "library install check: real verdict " << quiet_fact << "\n";
+
+        constexpr std::string_view kMaps = "ridge-check-maps";
+        list_one(kMaps, "Ridge Check Maps");
+        const fs::path maps_file = packages / "ridge-check-maps.oamut";
+        write_checking_mutator(
+            maps_file,
+            kMaps,
+            "Ridge Check Maps",
+            "function mutate(ctx)\n"
+            "  return {\n"
+            "    maps = function(map, ctx)\n"
+            "      map.header.gravity = 10\n"
+            "    end\n"
+            "  }\n"
+            "end\n",
+            "maps"
+        );
+        post_catalogue(maps_file, kBuiltIn, kMaps, "Ridge Check Maps", 1, library::Kind::mutator);
+        installs_quietly("Ridge Check Maps", kBuiltIn, kMaps);
+        show_entry("oa.library.row.check-builtin.ridge-check-maps");
+        press_action("check-with-mod");
+        until_checked(kMaps, "the maps check did not finish");
+        const std::string maps_fact = checked_for(kMaps);
+        require(
+            maps_fact.find("changes the map when a match starts") != std::string::npos &&
+                maps_fact.find("no effect") == std::string::npos,
+            "the maps mutator does not read the map words: " + maps_fact
+        );
+        {
+            const std::vector<std::string> words = verdict_words();
+            require(
+                words.size() == 3 && words[0] == "compatible" && words[1] == "no-effect" &&
+                    words[2] == "compatible",
+                "the verdict file does not hold the maps mutator as compatible"
+            );
+        }
+        std::cout << "library install check: real verdict " << maps_fact << "\n";
+
+        // Steady Commander is got and installed, then made the default.
+        // Picky Planner and Broken Planner are written into Brains and
+        // checked with the runtime's own feed. OPEN FOLDER and HOMEPAGE
+        // run while Steady Commander is still installed. UNINSTALL then
+        // removes it and clears the default key.
+        const fs::path brains_folder =
+            user_folder_ / std::string(install::oabrain::brains_folder_name);
+        const auto list_brain =
+            [&](std::string_view key, std::string_view name, std::string_view homepage) {
+                library::Listing listed;
+                listed.registry = std::string(kBuiltIn);
+                listed.kind = library::Kind::brain;
+                listed.key = std::string(key);
+                listed.name = std::string(name);
+                listed.version = "1.0";
+                listed.release = 1;
+                listed.author = "Ridge Maker";
+                listed.summary = "A made-up brain.";
+                listed.homepage = std::string(homepage);
+                listed.size = 1024;
+                library::BrainFacts facts;
+                facts.works_with.push_back({"*", {}, {}});
+                facts.tags.push_back("classic");
+                listed.brain = std::move(facts);
+                fixture.inputs.listings.push_back(std::move(listed));
+                ++fixture.generation;
+            };
+        const auto brain_entry = [&](std::string_view key) -> const library::Entry* {
+            return library::find_entry(
+                host.model, {std::string(kBuiltIn), library::Kind::brain, std::string(key)}
+            );
+        };
+        const auto brain_checked = [&](std::string_view key) -> std::string {
+            const library::Entry* shown_entry = brain_entry(key);
+            if (shown_entry == nullptr)
+                return {};
+            for (const library::Fact& fact : library::facts(host.model, *shown_entry))
+                if (fact.long_label == library::words::fact_checked)
+                    return fact.long_value;
+            return {};
+        };
+        list_brain(kSteady, "Steady Commander", "https://example.test/steady-commander");
+        list_installed();
+        open_library(library::Tab::brains);
+        frames();
+        require(top_is(library_screen_name), "the Library did not open on Brains");
+        show_entry("oa.library.row.check-builtin.steady-commander");
+        const std::size_t brains_queued = fixture.queued.size();
+        press_action("get");
+        require(
+            fixture.queued.size() == brains_queued + 1 &&
+                fixture.queued.back().registry == kBuiltIn &&
+                fixture.queued.back().key == kSteady &&
+                fixture.queued.back().reason == content::DownloadReason::install,
+            "GET did not queue Steady Commander"
+        );
+        std::cout << "library install check: brain queued " << kSteady << "\n";
+        const fs::path steady_file = packages / "steady-commander.oabrain";
+        const fs::path steady_brain_folder = brains_folder / std::string(kSteady);
+        write_brain(steady_file, kSteady, "Steady Commander", "return {}\n");
+        post_catalogue(steady_file, kBuiltIn, kSteady, "Steady Commander", 1, library::Kind::brain);
+        installs_quietly("Steady Commander", kBuiltIn, kSteady);
+        {
+            const std::optional<install::Origin> record = install::read_origin(steady_brain_folder);
+            require(
+                fs::is_regular_file(steady_brain_folder / "oabrain.yaml") &&
+                    fs::is_regular_file(steady_brain_folder / "brain.lua") && record &&
+                    record->kind == install::OriginKind::catalogue &&
+                    record->registry == kBuiltIn && record->catalogue_id == kSteady &&
+                    record->release == 1,
+                "Steady Commander is not under Brains with its origin record"
+            );
+        }
+        std::cout << "library install check: brain installed\n";
+        show_entry("oa.library.row.check-builtin.steady-commander");
+        press_action("use-by-default");
+        {
+            const auto saved = oa::platform::preferences::load(preference_path_);
+            const auto stored = saved.find(std::string(settings::key::brain_default));
+            require(
+                stored != saved.end() && stored->second == kSteady,
+                "USE BY DEFAULT did not store the brain"
+            );
+            std::cout << "library install check: open-annihilation.brain.default: "
+                      << stored->second << "\n";
+        }
+        fixture.inputs.default_brain = std::string(kSteady);
+        ++fixture.generation;
+        frames();
+        {
+            const library::Entry* shown_entry = brain_entry(kSteady);
+            require(
+                shown_entry != nullptr && shown_entry->is_default &&
+                    library::status_line(host.model, *shown_entry) ==
+                        library::words::status_installed_default,
+                "the default brain does not read Default"
+            );
+        }
+        std::cout << "library install check: brain made default\n";
+
+        const auto install_brain =
+            [&](std::string_view key, std::string_view name, std::string_view lua) {
+                list_brain(key, name, {});
+                const fs::path file = packages / (std::string(key) + ".oabrain");
+                write_brain(file, key, name, lua);
+                post_catalogue(file, kBuiltIn, key, name, 1, library::Kind::brain);
+                installs_quietly(name, kBuiltIn, key);
+                require(
+                    fs::is_regular_file(brains_folder / std::string(key) / "brain.lua"),
+                    std::string(name) + " is not under Brains"
+                );
+            };
+        install_brain(
+            kPicky,
+            "Picky Planner",
+            "return { fits = function() return \"No build list for this mod's third side\" end }\n"
+        );
+        install_brain(
+            kBroken,
+            "Broken Planner",
+            "return { fits = function() error(\"broken on purpose\") end }\n"
+        );
+        host.feed.remembered_brain_verdict = [](void* context, std::string_view id) {
+            return LibraryHost::own_remembered_brain_verdict(
+                static_cast<InstallFeed*>(context)->runtime, id
+            );
+        };
+        host.feed.start_brain_check = [](void* context, std::string_view id) {
+            return LibraryHost::own_start_brain_check(
+                static_cast<InstallFeed*>(context)->runtime, id
+            );
+        };
+        host.feed.keep_brain_verdict =
+            [](void* context, std::string_view id, const library::Verdict& verdict) {
+                LibraryHost::own_keep_brain_verdict(
+                    static_cast<InstallFeed*>(context)->runtime, id, verdict
+                );
+            };
+        ++fixture.generation;
+        frames();
+        const auto until_brain = [&](std::string_view key, std::string_view what) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+            while (std::chrono::steady_clock::now() < deadline) {
+                const std::string fact = brain_checked(key);
+                if (fact.find("With No Mod:") != std::string::npos)
+                    return;
+                frame();
+            }
+            require(false, std::string(what) + ": " + brain_checked(key));
+        };
+        const auto check_brain = [&](std::string_view key, std::string_view expect) {
+            show_entry("oa.library.row.check-builtin." + std::string(key));
+            press_action("check-with-mod");
+            require(
+                brain_checked(key).find("Checking with No Mod") != std::string::npos,
+                std::string(key) + " did not say it was running: " + brain_checked(key)
+            );
+            until_brain(key, std::string(key) + " was not checked");
+            const std::string fact = brain_checked(key);
+            require(fact.find(expect) != std::string::npos, std::string(key) + ": " + fact);
+            std::cout << "library install check: brain checked: " << fact << "\n";
+        };
+        check_brain(kSteady, "it fits this game");
+        check_brain(kPicky, "No build list for this mod's third side");
+        check_brain(kBroken, "broken on purpose");
+
+        show_entry("oa.library.row.check-builtin.steady-commander");
+        require(web_links_ != nullptr, "the run keeps no record of web links");
+        const std::size_t brain_opened = user_folder_state().opened.size();
+        press_action("open-folder");
+        require(
+            user_folder_state().opened.size() == brain_opened + 1 &&
+                kept_path(user_folder_state().opened.back()) == kept_path(steady_brain_folder),
+            "OPEN FOLDER did not show Steady Commander's folder"
+        );
+        const std::size_t brain_links = web_links_->requests.size();
+        press_action("homepage");
+        require(
+            web_links_->requests.size() == brain_links + 1 &&
+                web_links_->requests.back() == "https://example.test/steady-commander",
+            "HOMEPAGE did not record Steady Commander's homepage"
+        );
+        press_action("uninstall");
+        {
+            const auto* asked = dynamic_cast<const QuestionScreen*>(oa_layer().top());
+            require(
+                asked != nullptr && oa_layer().find(library_screen_name) != nullptr,
+                "UNINSTALL did not ask over the Library"
+            );
+            const settings::Prompt& shown = asked->question();
+            require(shown.title == "Uninstall Steady Commander", "the question's title is wrong");
+            require(
+                shown.paragraphs.size() == 3 &&
+                    shown.paragraphs[0].text ==
+                        "Uninstall Steady Commander? Its folder, Brains/steady-commander, is "
+                        "removed." &&
+                    shown.paragraphs[1].text ==
+                        "It is your default computer player: new computer seats go back to the "
+                        "built-in player." &&
+                    shown.paragraphs[2].text == "GET installs it again.",
+                "the question does not name the default brain"
+            );
+        }
+        frame();
+        require(
+            named("oa.prompt.uninstall").has_value(), "automation does not list oa.prompt.uninstall"
+        );
+        click_named("oa.prompt.uninstall");
+        for (int count = 0;
+             count < kMostFrames &&
+             (state.discarder.busy() || fs::exists(fs::symlink_status(steady_brain_folder)));
+             ++count)
+            frame();
+        require(
+            !fs::exists(fs::symlink_status(steady_brain_folder)),
+            "UNINSTALL did not remove Steady Commander's folder"
+        );
+        {
+            const auto saved = oa::platform::preferences::load(preference_path_);
+            const auto stored = preference_values_.find(std::string(settings::key::brain_default));
+            require(
+                saved.find(std::string(settings::key::brain_default)) == saved.end() &&
+                    stored == preference_values_.end(),
+                "uninstalling the default left the key"
+            );
+        }
+        std::cout << "library install check: brain uninstalled, default key gone\n";
+        host.feed.remembered_brain_verdict = nullptr;
+        host.feed.start_brain_check = nullptr;
+        host.feed.keep_brain_verdict = nullptr;
+        {
+            std::error_code brain_error;
+            fs::remove_all(brains_folder / std::string(kPicky), brain_error);
+            fs::remove_all(brains_folder / std::string(kBroken), brain_error);
+            require(!brain_error, "a brain folder could not be removed");
+        }
+        std::erase_if(fixture.inputs.listings, [](const library::Listing& listed) {
+            return listed.kind == library::Kind::brain;
+        });
+        fixture.inputs.default_brain.clear();
+        list_installed();
+
+        // About forty more packages, each with an origin record, so one
+        // rebuild resolves every shown list from one listing.
+        const fs::path bulk_root = user_folder_ / std::string(install::oamut::mutators_folder_name);
+        constexpr int kBulk = 40;
+        const std::string sha(64, '0');
+        for (int index = 1; index <= kBulk; ++index) {
+            std::string number = std::to_string(index);
+            if (number.size() < 2)
+                number.insert(number.begin(), '0');
+            const std::string id = "ridge-check-bulk-" + number;
+            const fs::path folder = bulk_root / id;
+            std::error_code made;
+            fs::create_directories(folder, made);
+            const std::string manifest = "oamut: 1\n"
+                                         "id: " +
+                                         id +
+                                         "\n"
+                                         "name: \"Ridge Check Bulk " +
+                                         number +
+                                         "\"\n"
+                                         "version: \"1.0\"\n"
+                                         "author:\n"
+                                         "  name: \"Ridge Maker\"\n"
+                                         "description: \"A made-up mutator.\"\n"
+                                         "tags: [\"gameplay\"]\n"
+                                         "works-with: [\"*\"]\n"
+                                         "layers: [\"units\"]\n"
+                                         "entry: \"mutator.lua\"\n";
+            const std::string origin = "oa-origin: 1\n"
+                                       "origin: file\n"
+                                       "sha256: \"" +
+                                       sha +
+                                       "\"\n"
+                                       "installed: \"2026-01-01\"\n";
+            const auto write_one = [](const fs::path& path, std::string_view bytes) {
+                std::ofstream out(path, std::ios::binary | std::ios::trunc);
+                out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+                require(static_cast<bool>(out), "a bulk mutator could not be written");
+            };
+            write_one(folder / "oamut.yaml", manifest);
+            write_one(folder / "mutator.lua", "return {}\n");
+            write_one(folder / ".oa-origin.yaml", origin);
+        }
+        // Eighty more of the player's own, copied by hand with no origin
+        // record, so each one's verdict key needs its folder digest: 120 and
+        // more in all, as a player who copied a mutator collection has.
+        constexpr int kOwn = 80;
+        const std::string filler(8192, 'x');
+        std::vector<fs::path> own_folders;
+        for (int index = 1; index <= kOwn; ++index) {
+            std::string number = std::to_string(index);
+            if (number.size() < 2)
+                number.insert(number.begin(), '0');
+            const std::string id = "ridge-check-own-" + number;
+            const fs::path folder = bulk_root / id;
+            std::error_code made;
+            fs::create_directories(folder / "files" / "units", made);
+            const std::string manifest = "oamut: 1\n"
+                                         "id: " +
+                                         id +
+                                         "\n"
+                                         "name: \"Ridge Check Own " +
+                                         number +
+                                         "\"\n"
+                                         "version: \"1.0\"\n"
+                                         "author:\n"
+                                         "  name: \"Ridge Maker\"\n"
+                                         "description: \"A made-up mutator.\"\n"
+                                         "tags: [\"gameplay\"]\n"
+                                         "works-with: [\"*\"]\n"
+                                         "layers: [\"files\", \"units\"]\n"
+                                         "entry: \"mutator.lua\"\n";
+            std::ofstream out(folder / "oamut.yaml", std::ios::binary | std::ios::trunc);
+            out << manifest;
+            std::ofstream lua(folder / "mutator.lua", std::ios::binary | std::ios::trunc);
+            lua << "return {}\n";
+            std::ofstream unit(folder / "files" / "units" / "RIDGE.FBI", std::ios::binary);
+            unit << filler;
+            require(
+                static_cast<bool>(out) && static_cast<bool>(lua) && static_cast<bool>(unit),
+                "a hand-copied mutator could not be written"
+            );
+            own_folders.push_back(folder);
+        }
+        list_installed();
+        std::size_t mutators_listed = 0;
+        for (const library::Installed& installed : fixture.inputs.installed)
+            if (installed.kind == library::Kind::mutator)
+                ++mutators_listed;
+        require(
+            mutators_listed >= static_cast<std::size_t>(kBulk + kOwn),
+            "the bulk mutators are not listed"
+        );
+        // The worker's search makes the folder digests off the main thread.
+        // This check's feed has no search, so it makes them as one would.
+        for (const fs::path& folder : own_folders)
+            require(
+                host.work.mutator_digests.digest(folder).has_value(),
+                "a hand-copied mutator has no folder digest"
+            );
+        const uint64_t listings_before = host.shown_listings;
+        const uint32_t prepares_before = mutator_prepares_;
+        const uint64_t reads_before = host.work.mutator_digests.reads();
+        const auto rebuild_started = std::chrono::steady_clock::now();
+        host.rebuild(*this);
+        const auto rebuild_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - rebuild_started
+        )
+                                    .count();
+        require(
+            host.shown_listings == listings_before + 1,
+            "a rebuild listed the Mutators folder more than once"
+        );
+        require(mutator_prepares_ == prepares_before, "a rebuild prepared a dry run");
+        require(
+            host.work.mutator_digests.reads() == reads_before,
+            "a rebuild read a mutator folder the search had digested"
+        );
+        require(rebuild_ms < 250, "a rebuild took " + std::to_string(rebuild_ms) + " ms");
+        // A download moves the feed's generation every frame, and the
+        // Library rebuilds each time. With nothing installed or searched
+        // since, a rebuild keeps the pass: it lists nothing, reads no package
+        // and stays well inside a frame.
+        constexpr int kFrames = 30;
+        const uint64_t listings_kept = host.shown_listings;
+        const auto frames_started = std::chrono::steady_clock::now();
+        for (int index = 0; index < kFrames; ++index)
+            host.rebuild(*this);
+        const auto frame_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                  std::chrono::steady_clock::now() - frames_started
+                              )
+                                  .count() /
+                              kFrames;
+        require(
+            host.shown_listings == listings_kept,
+            "a rebuild with nothing changed listed the Mutators folder"
+        );
+        require(mutator_prepares_ == prepares_before, "a kept rebuild prepared a dry run");
+        require(
+            host.work.mutator_digests.reads() == reads_before,
+            "a rebuild with nothing changed read a mutator folder"
+        );
+        require(
+            frame_us < 4000, "a kept rebuild took " + std::to_string(frame_us) + " microseconds"
+        );
+        const uint64_t picker_before = host.shown_listings;
+        const uint32_t picker_prepares = mutator_prepares_;
+        own_picker_inputs(this, oa::ui::mutator_picker::Setup::skirmish);
+        require(
+            host.shown_listings == picker_before + 1,
+            "the picker's list did not list the Mutators folder once"
+        );
+        require(mutator_prepares_ == picker_prepares, "the picker's list prepared a dry run");
+        require(
+            host.work.mutator_digests.reads() == reads_before,
+            "the picker's list read a mutator folder the search had digested"
+        );
+        mutator_picker_.reset();
+        // START hands the set on from one listing, whatever is installed.
+        replace_setup_mutators(
+            mutators_memory::Setup::skirmish,
+            {oa::ui::mutator_picker::Chosen{"ridge-check-own-01", {}, {}},
+             oa::ui::mutator_picker::Chosen{"ridge-check-own-40", {}, {}},
+             oa::ui::mutator_picker::Chosen{"ridge-check-bulk-07", {}, {}}}
+        );
+        const auto start_started = std::chrono::steady_clock::now();
+        hand_chosen_mutators(mutators_memory::Setup::skirmish);
+        const auto start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - start_started
+        )
+                                  .count();
+        require(
+            chosen_match_mutators().size() == 3, "START did not hand on the three chosen mutators"
+        );
+        require(start_ms < 250, "START's hand-off took " + std::to_string(start_ms) + " ms");
+        replace_setup_mutators(mutators_memory::Setup::skirmish, {});
+        forget_mutators(mutators_memory::Setup::skirmish);
+        choose_match_mutators({});
+        std::cout << "library install check: one listing in " << rebuild_ms
+                  << " ms, a kept rebuild in " << frame_us << " us, START's hand-off of three in "
+                  << start_ms << " ms with " << mutators_listed << " installed\n";
+
+        require(revision_in(ridge) == 5, "the mutator run changed Ridge");
+        // The worker has finished: both checks returned before this restart.
+        request_soft_restart();
         return;
     }
     default: {
@@ -1797,6 +3402,264 @@ void Runtime::check_library_install() {
         return;
     }
     }
+}
+
+void Runtime::check_library_update_question() {
+    // How many times UPDATE is confirmed. Each time the Library must already
+    // be showing its tabs two frames later, before the update leaves the list.
+    constexpr int kRounds = 50;
+    const auto require_step = [](bool ok, std::string_view what) {
+        if (!ok)
+            throw std::runtime_error("library update question check: " + std::string(what));
+    };
+    require_step(sdl_.window != nullptr, "the check needs the SDL presenter");
+    require_step(!user_folder_.empty(), "the run has no folder of the player's own");
+    require_step(
+        SDL_SetWindowSize(sdl_.window, 640, 480) && SDL_SyncWindow(sdl_.window),
+        std::string("the window did not take 640x480: ") + SDL_GetError()
+    );
+    apply_output_mode();
+
+    auto& state = mod_install_state();
+    state.check_shows_prompts = true;
+    const fs::path mods = user_folder_ / std::string(user_mods_folder_name);
+    const fs::path packages = user_folder_.parent_path() / "files";
+    const fs::path ridge = mods / std::string(kRidge);
+
+    InstallFeed fixture;
+    fixture.inputs.registries.push_back(feed_registry(kAdded, "Check Added", false));
+    fixture.inputs.engine = content::this_engine_rules().engine;
+    fixture.inputs.version_text = "v0.8.0";
+    LibraryHost& host = library_host();
+    const LibraryFeed own = host.feed;
+
+    struct OwnFeedBack {
+        LibraryHost& host;
+        LibraryFeed feed;
+
+        ~OwnFeedBack() {
+            host.feed = feed;
+            host.own_feed = true;
+            host.refreshed = false;
+        }
+    } own_back{host, own};
+
+    host.feed = LibraryFeed{
+        &fixture, feed_inputs, feed_generation, feed_enqueue, nullptr, nullptr, feed_built_in
+    };
+    host.own_feed = false;
+    host.refreshed = false;
+
+    bool running = true;
+    const auto frame = [&] {
+        run_frame(running);
+        require_step(running, "a frame ended the run");
+    };
+    // Two frames: the model follows the feed on the first, after the layer
+    // has ticked, and the Library lays itself out on the second. No longer.
+    const auto frames = [&] {
+        frame();
+        frame();
+    };
+    const auto named = [this](std::string_view name) -> std::optional<AutomationControl> {
+        std::vector<AutomationControl> controls;
+        oa_layer().automation_controls(controls);
+        for (const AutomationControl& control : controls)
+            if (control.name == name && control.visible && control.window_width > 0 &&
+                control.window_height > 0)
+                return control;
+        return std::nullopt;
+    };
+    const auto click_named = [&](std::string_view name) {
+        const std::optional<AutomationControl> control = named(name);
+        require_step(control.has_value(), std::string(name) + " is not shown");
+        const layout::Point pixel{
+            control->window_x + control->window_width / 2,
+            control->window_y + control->window_height / 2
+        };
+        for (const SDL_EventType type :
+             {SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+            SDL_Event event = window_pointer_event(
+                sdl_.window,
+                sdl_.renderer,
+                type,
+                pixel,
+                type == SDL_EVENT_MOUSE_MOTION ? 0 : SDL_BUTTON_LEFT
+            );
+            bool going = true;
+            dispatch_event(event, going);
+            require_step(going, "a click ended the run");
+        }
+        send_check_pointer(SDL_EVENT_MOUSE_MOTION, kRestingPointer, 0);
+    };
+    const auto top_is = [this](std::string_view name) {
+        const LayerScreen* top = oa_layer().top();
+        return top != nullptr && top->name() == name;
+    };
+    const auto press_action = [&](std::string_view word) {
+        const std::string action = "oa.library.action." + std::string(word);
+        if (!named(action))
+            click_named("oa.library.action");
+        click_named(action);
+    };
+    const auto on_details = [&] {
+        return top_is(library_screen_name) && named("oa.library.back").has_value() &&
+               !named("oa.library.tab.mods").has_value() &&
+               !named("oa.library.tab.updates").has_value();
+    };
+    const auto tabs_shown = [&] {
+        return top_is(library_screen_name) && named("oa.library.tab.mods").has_value() &&
+               named("oa.library.tab.updates").has_value() &&
+               dynamic_cast<const QuestionScreen*>(oa_layer().top()) == nullptr;
+    };
+
+    frames();
+    const fs::path package = packages / "ridge-check-added-1.oamod";
+    write_package(package, profile_text(kRidge, "Ridge", "1.0", 1), 1);
+    install::Origin origin{};
+    origin.kind = install::OriginKind::catalogue;
+    origin.registry = std::string(kAdded);
+    origin.catalogue_id = std::string(kRidge);
+    origin.release = 1;
+    origin.sha256 = file_hash(package);
+    install::post_package_file(package, origin);
+    std::optional<install::PackageOutcome> outcome;
+    for (int count = 0; count < kMostFrames && !outcome; ++count) {
+        tell_mod_installs();
+        std::vector<install::PackageOutcome> outcomes = install::take_package_outcomes();
+        if (!outcomes.empty())
+            outcome = outcomes.front();
+        require_step(
+            state.prompt == nullptr || state.stage != ModInstallState::Stage::asking,
+            "installing Ridge asked a question"
+        );
+    }
+    require_step(
+        outcome && outcome->result == install::OutcomeResult::installed &&
+            revision_in(ridge) == 1 && recorded_from(ridge, kAdded, 1),
+        "Ridge was not installed from the added registry"
+    );
+    for (int count = 0; count < kMostFrames && state.discarder.busy(); ++count)
+        tell_mod_installs();
+    require_step(!state.discarder.busy(), "installing Ridge left a folder of its own");
+
+    fixture.inputs.installed.clear();
+    std::error_code walk_error;
+    for (fs::directory_iterator folder_entry{mods, walk_error}, end;
+         !walk_error && folder_entry != end;
+         folder_entry.increment(walk_error)) {
+        const fs::path folder = folder_entry->path();
+        if (path_to_utf8(folder.filename()).starts_with('.'))
+            continue;
+        const install::InstalledPackage held = install::oamod::read_installed_mod(folder);
+        if (held.kind != install::FolderKind::package)
+            continue;
+        const std::optional<install::Origin> record = install::read_origin(folder);
+        library::Installed shown;
+        shown.kind = library::Kind::mod;
+        shown.key = held.id;
+        shown.folder = folder;
+        shown.name = held.name;
+        shown.version = held.version;
+        shown.revision = held.revision;
+        if (record && record->kind == install::OriginKind::catalogue) {
+            shown.key = record->catalogue_id;
+            shown.registry = record->registry;
+            shown.release = record->release;
+        }
+        shown.playing = package_target_in_use(install::mod_kind(), folder);
+        fixture.inputs.installed.push_back(std::move(shown));
+    }
+    oa::base::sha256::Digest old_rules{};
+    old_rules[0] = 0x9c;
+    oa::base::sha256::Digest new_rules{};
+    new_rules[0] = 0x51;
+    const auto offer_update = [&] {
+        library::UpdateNote update;
+        update.registry = std::string(kAdded);
+        update.kind = library::Kind::mod;
+        update.key = std::string(kRidge);
+        update.to_release = 2;
+        update.to_version = "1.0";
+        update.to_revision = 2;
+        update.size = 3355443;
+        update.rules = library::UpdateNote::Rules::changes;
+        update.from_rules = old_rules;
+        update.to_rules = new_rules;
+        fixture.inputs.updates.clear();
+        fixture.inputs.updates.push_back(std::move(update));
+        fixture.inputs.queue.clear();
+        ++fixture.generation;
+    };
+    offer_update();
+    open_library(library::Tab::updates);
+    frames();
+    require_step(top_is(library_screen_name), "the Library did not open");
+    const std::string ridge_row = "oa.library.row.check-added.ridge";
+    click_named(ridge_row);
+    require_step(on_details(), "Ridge's update did not open its details page");
+
+    // NOT NOW leaves the details page, so the player can answer again from it.
+    press_action("update");
+    frame();
+    require_step(
+        dynamic_cast<const QuestionScreen*>(oa_layer().top()) != nullptr &&
+            oa_layer().find(library_screen_name) != nullptr,
+        "the update question was not asked over the Library"
+    );
+    click_named("oa.prompt.not-now");
+    frames();
+    require_step(
+        on_details() && fixture.queued.empty(), "NOT NOW left the details page or queued the update"
+    );
+
+    for (int pass = 1; pass <= kRounds; ++pass) {
+        const std::string where = "round " + std::to_string(pass) + ": ";
+        require_step(on_details(), where + "the details page was not open");
+        press_action("update");
+        frame();
+        require_step(
+            dynamic_cast<const QuestionScreen*>(oa_layer().top()) != nullptr &&
+                oa_layer().find(library_screen_name) != nullptr,
+            where + "the update question was not asked over the Library"
+        );
+        click_named("oa.prompt.update");
+        frames();
+        require_step(tabs_shown(), where + "the Library's tabs were not shown after UPDATE");
+        require_step(
+            fixture.queued.size() == static_cast<std::size_t>(pass) &&
+                fixture.queued.back().registry == kAdded && fixture.queued.back().key == kRidge &&
+                fixture.queued.back().reason == content::DownloadReason::update,
+            where + "UPDATE did not queue the update"
+        );
+        click_named("oa.library.tab.mods");
+        require_step(
+            top_is(library_screen_name) && host.model.tab == library::Tab::mods,
+            where + "Mods could not be opened"
+        );
+        // The update is in place: its note is gone, so the row leaves Updates.
+        // The Library stays, with its tabs.
+        fixture.inputs.updates.clear();
+        ++fixture.generation;
+        frames();
+        require_step(
+            tabs_shown() && host.model.tab == library::Tab::mods,
+            where + "the Library was not on top with its tabs once the update was in place"
+        );
+        if (pass == kRounds)
+            break;
+        offer_update();
+        frames();
+        click_named("oa.library.tab.updates");
+        require_step(
+            top_is(library_screen_name) && host.model.tab == library::Tab::updates,
+            where + "Updates could not be opened again"
+        );
+        click_named(ridge_row);
+        require_step(on_details(), where + "the details page did not open again");
+    }
+    std::cout << "library update question check: the Library stayed open with its tabs for "
+              << kRounds << " rounds\n";
 }
 
 } // namespace oa::app

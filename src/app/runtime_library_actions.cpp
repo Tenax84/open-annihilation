@@ -77,9 +77,9 @@ constexpr std::string_view kNameHole = "{name}";
 /// @param name the mod's name
 /// @return the line, such as "Switching on Ridge…"
 std::string switching_line(bool on, std::string_view name) {
-    std::string line(oa::data::languages::interface_text(
-        on ? "Switching on {name}…" : "Switching off {name}…"
-    ));
+    std::string line(
+        oa::data::languages::interface_text(on ? "Switching on {name}…" : "Switching off {name}…")
+    );
     if (const std::size_t hole = line.find(kNameHole); hole != std::string::npos)
         line.replace(hole, kNameHole.size(), name);
     return line;
@@ -109,6 +109,10 @@ const install::PackageKind* package_kind_of(library::Kind kind) {
         return install::find_kind("oamap");
     case library::Kind::language:
         return install::find_kind("oalang");
+    case library::Kind::mutator:
+        return install::find_kind("oamut");
+    case library::Kind::brain:
+        return install::find_kind("oabrain");
     }
     return nullptr;
 }
@@ -227,7 +231,7 @@ void Runtime::library_entry_action(library::Action action, const library::EntryI
         restart_line_ = switching_line(true, library::entry_name(*found));
         std::string refusal;
         if (!switch_to_mod_folder(folder, refusal)) {
-            library_return_.reset();
+            library_kept_.reset();
             restart_line_.clear();
             status_ = refusal;
             library_log("PLAY NOW: " + refusal);
@@ -264,7 +268,7 @@ void Runtime::library_entry_action(library::Action action, const library::EntryI
         restart_line_ = switching_line(false, played_name);
         std::string refusal;
         if (!switch_to_mod_folder({}, refusal)) {
-            library_return_.reset();
+            library_kept_.reset();
             restart_line_.clear();
             status_ = refusal;
             library_log("SWITCH OFF: " + refusal);
@@ -368,7 +372,7 @@ void Runtime::library_uninstall(const library::EntryId& entry) {
         std::string(kind->root_folder) + "/" + path_to_utf8(folder.filename());
     const install::InstalledPackage expected = kind->read_installed(folder);
     oa::ui::kit::Question asked =
-        library::uninstall_question(*found, shown_folder, host.model.text);
+        library::uninstall_question(host.model, *found, shown_folder, host.model.text);
     int32_t uninstall_button = -1;
     for (std::size_t place = 0; place < asked.buttons.size(); ++place)
         if (asked.buttons[place].id == library::uninstall_button_id)
@@ -412,6 +416,15 @@ void Runtime::library_uninstall(const library::EntryId& entry) {
             return;
         }
         library_log("UNINSTALL: removed " + title + " from " + path_to_utf8(at));
+        // Uninstalling the default computer player clears the preference, so
+        // it does not keep naming a brain that is gone. The built-in player
+        // is the default again.
+        if (entry.kind == library::Kind::brain) {
+            const auto stored =
+                preference_values_.find(std::string(oa::ui::engine_settings::key::brain_default));
+            if (stored != preference_values_.end() && stored->second == entry.key)
+                set_default_brain({});
+        }
         // What reads the kind's folder reads it again, and the Library's
         // feed lists what is installed again.
         package_changed(*kind, at);
@@ -450,10 +463,25 @@ void Runtime::ask_before_updates(
         if (question.buttons[place].id == library::update_button_id)
             update_button = static_cast<int32_t>(place);
     QuestionScreen::Host answers;
+    // UPDATE leaves the details page at once. At the compact size that page
+    // has no tabs, and it would stay until a later refresh dropped the row
+    // from Updates. The player has confirmed, so the list and its tabs are
+    // there on the next tick, while this question closes and the download is
+    // queued. NOT NOW leaves the page where it is, and UPDATE asked from the
+    // list, or at a size with no details page, leaves the Library as it is.
     answers.answer = [this, entries, update_button](int32_t button) {
-        if (button == update_button)
-            for (const library::EntryId& each : entries)
-                std::ignore = request_update(each, true);
+        if (button != update_button)
+            return true;
+        if (library_ && library_->state.details_page) {
+            library::close_details(library_->model);
+            library_->state.details_page = false;
+            library_->state.menu = library::MenuKind::none;
+            library_->state.details_scroll = 0;
+            library_->state.interaction.focus_shown = false;
+            ++library_->model_revision;
+        }
+        for (const library::EntryId& each : entries)
+            std::ignore = request_update(each, true);
         return true;
     };
     // It goes with the main menu, as the Library and the settings it asks

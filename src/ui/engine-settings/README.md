@@ -44,9 +44,20 @@ the locks a running game puts on them (`settings_locks`).
 | | Smooth motion: whether the frames between two ticks show units, their pieces, projectiles, debris and particles part of the way from one tick to the next, or each frame the latest tick whole | Off, On | On | `open-annihilation.smooth-motion` |
 | | Native pixel density, from the next start | Off, On; always On where the platform opens every window at native density | Off | `open-annihilation.native-density` |
 | | Explosion flash; a mod's profile may draw the flashes lower still (`ui.explosion-flash`), and the lower of the two is drawn | Off, Reduced, Full | Full | `open-annihilation.explosion-flash` (`off`, `reduced` or `full`) |
+| | Fog of War: how the graphics card draws the fog's edges (Hardware acceleration Full); the processor always draws them Classic | Classic, Smooth | Smooth | `open-annihilation.fog-of-war` (`classic` or `smooth`; any other word reads as Smooth) |
 | | Enhanced graphics: shots and explosions glow, and edges are smoothed where Enhanced anti-aliasing is off, while the graphics card draws the battlefield (Full) on SDL's GPU renderer, which a start with it on chooses first | Off, On | Off | `open-annihilation.enhanced-graphics` |
 | | Zoomed out units: how units are drawn farther out than After zoom | Rendered, Dots; Icons shown faded, not offered | Rendered | `open-annihilation.zoomed-out-units` (`rendered` or `dots`; any other word, `icons` among them, reads as Rendered) |
 | | After zoom, a drop-down, locked "Needs Dots" while Zoomed out units is Rendered | 1/2, 1/3, 1/4, 1/6, 1/8, 1/12, 1/16 of normal size | 1/6 | `open-annihilation.zoomed-out-after` (`1/2`, `1/3`, `1/4`, `1/6`, `1/8`, `1/12` or `1/16`) |
+| | Allow Full 3D Mode: whether the camera may turn away from the classic view, with Full hardware acceleration | Off, On | On | `open-annihilation.allow-full-3d` |
+| | Unlocked Camera, locked "Needs Allow Full 3D Mode" while Allow Full 3D Mode is Off | Off, On | Off | `open-annihilation.unlocked-camera` |
+| | Coloured weapon lighting, in the classic and the rotated view | 0–200%, steps of 10% | 20% with Hardware acceleration Full, else 0%; leaving Full sets 0%, reaching it 20% | `open-annihilation.weapon-lighting.intensity`; without it, an earlier `open-annihilation.weapon-lighting` switch reads as 0% or 100% |
+| | Nanolathe glow, in the classic and the rotated view | 0–200%, steps of 10% | 20% with Hardware acceleration Full, else 0%; leaving Full sets 0%, reaching it 20% | `open-annihilation.nanolathe-lighting.intensity`; without it, an earlier `open-annihilation.nanolathe-lighting` switch reads as 0% or 100% |
+| | Wreck glow, in the classic and the rotated view | 0–200%, steps of 10% | 30% with Hardware acceleration Full, else 0%; leaving Full sets 0%, reaching it 30% | `open-annihilation.wreck-glow.intensity`; without it, an earlier `open-annihilation.wreck-glow` switch reads as 0% or 100% |
+| | Heat distortion, in the classic and the rotated view | 0–200%, steps of 10% | 40% with Hardware acceleration Full, else 0%; leaving Full sets 0%, reaching it 40% | `open-annihilation.heat-distortion.intensity`; without it, an earlier `open-annihilation.heat-distortion` switch reads as 0% or 100% |
+| | Water ripples, locked "Needs Full acceleration" while Hardware acceleration is not Full | 0–200%, steps of 10% | 60% | `open-annihilation.water-ripples.intensity` |
+| | Coastal waves, locked as Water ripples is | 0–200%, steps of 10% | 30% | `open-annihilation.coastal-waves.intensity` |
+| | Underwater shimmer, locked as Water ripples is | 0–200%, steps of 10% | 100% | `open-annihilation.underwater-shimmer.intensity` |
+| | Naval reflections, locked as Water ripples is | 0–200%, steps of 10% | 100% | `open-annihilation.naval-reflections.intensity` |
 | User Interface | Menu style: the game's own menus, or Open Annihilation's own screens over them; it takes effect on the main menu once the dialog has closed | Classic, Open Annihilation | Classic | `open-annihilation.menu-style` (`classic` or `open-annihilation`) |
 | | Menu scaling | Sharp, Whole steps, Unfiltered | Sharp | `open-annihilation.menu-scaling` (`sharp`, `whole-steps` or `unfiltered`) |
 | | Window frame: whether a window shows its title bar and borders while a game is played; the game menu, a panel it opens and every other screen show them | Hidden in play, Always shown | Hidden in play | `open-annihilation.window-frame` (`hidden-in-play` or `always-shown`) |
@@ -76,7 +87,7 @@ the locks a running game puts on them (`settings_locks`).
 | Game files, listed only in the main menu's dialog where the platform brings game files in | Include in device backups | Off, On | Off | `open-annihilation.game-files-backed-up` |
 | Downloads, listed in every dialog of the engine's settings, before System | Check for content updates | Automatically, Only when I open the Library, Never | Automatically | `open-annihilation.content-updates` (`automatically`, `library` or `never`); takes effect at OK, and Cancel and Restore defaults apply |
 | System, listed in every dialog of the engine's settings, after Downloads and before Developer | Your files: the player's own folder and buttons that open its Saves, Screenshots and Mods folders | changes no setting | | `open-annihilation.user-folder`, read at start (`src/app/include/oa/app/user_folder.hpp`) |
-| | File Type Registration, then one switch for each of the five types, the launch file's last, on Windows, Linux and macOS | Off, On | On | `open-annihilation.file-types.oamod`, `.oamap`, `.oalang`, `.oareg`, `.oalaunch` (`on` or `off`; only `off` turns one off). On Windows and Linux OK registers a type turned on and withdraws one turned off, at once; on macOS it changes the default opener of a switch that moved. Each switch acts on its own type alone (`engine_settings/file_types.hpp`) |
+| | File Type Registration, then one switch for each of the seven types, the launch file's last, on Windows, Linux and macOS | Off, On | On | `open-annihilation.file-types.oamod`, `.oamap`, `.oalang`, `.oareg`, `.oamut`, `.oabrain`, `.oalaunch` (`on` or `off`; only `off` turns one off). On Windows and Linux OK registers a type turned on and withdraws one turned off, at once; on macOS it changes the default opener of a switch that moved. Each switch acts on its own type alone (`engine_settings/file_types.hpp`) |
 | | File types, the text row on iOS in place of the switches | changes no setting | | none |
 | Developer | Enable Developer Mode | Off, On | Off | `open-annihilation.developer-mode` |
 | | Show performance statistics | Off, On | Off | `open-annihilation.frame-stats` |
@@ -357,7 +368,7 @@ locked during a shared game or a replay, its value set before the game kept
 in effect; Hardware acceleration never is, so that it can always be set to
 Off, and set to Basic or Full there it takes effect from the next game.
 
-`engine_settings/file_types.hpp` turns System's five file-type switches
+`engine_settings/file_types.hpp` turns System's seven file-type switches
 into the file types they choose, each switch its own type alone:
 `file_type_set` is the set a registration acts on (its complement is the
 set a withdrawal acts on), `set_file_type_switches` shows a set the system
@@ -459,8 +470,8 @@ and the footer never move. A section whose rows, with 8 clear pixels under
 the last row's line, are taller than the view scrolls by whole source
 pixels, and shows a scroll bar in the margin right of its rows: a well like
 a switch's, its thumb as tall as the view's share of the section and never
-under 16 pixels. Graphics, with ten rows, is taller than its view by
-395 pixels, Language & Text, with the Language drop-down, four switches and
+under 16 pixels. Graphics, with twenty-one rows, is taller than its view by
+972 pixels, Language & Text, with the Language drop-down, four switches and
 the Text size slider, by 129, User Interface, with its three switches, Menu
 scaling's strip and Interface size's drop-down, by 88, Touch, with its
 three strips, the Hold delay slider and two switches, by 121, and Controls,
@@ -1238,7 +1249,13 @@ drew when the kit was taken out of the dialog: a SHA-256 of each scene,
 with a stand-in font and with the installed game's fonts. The Developer
 scenes (at its top, with Developer Mode on and its first area open, and at
 scale 2) were recorded again when UI kit gallery joined Developer's rows,
-which moved its list down; no other scene changed.
+which moved its list down; no other scene changed. The Graphics scenes
+(at its top, locked, and at its end) were recorded again when Fog of War
+joined Graphics' rows, which shortened the scroll bar's thumb and put the
+row between Explosion flash and Zoomed out units, and again when the
+camera's switches and the effect sliders joined them, which shortened the
+thumb further and put the water sliders at the end; no other scene
+changed.
 
 `ui-engine-settings-dialog` also holds UI kit gallery's row: its label,
 its hint in two lines at Compact and one at Regular and Large, and SHOW,
@@ -1285,18 +1302,18 @@ with and without the player's own file, its six words each read and
 written alone, `150` with the modern fonts On, and as 100% read with them
 Off from the key or from a named file's default, the words it refuses
 (`0` among them) read as Auto, other keys left as they were, and Restore
-defaults; and the five file-type switches: on by default, only `off`
+defaults; and the seven file-type switches: on by default, only `off`
 turning one off, the launch file's switch stored alone as `off` and as `on`
-with the other four keys untouched, and erased by Restore defaults;
+with the other six keys untouched, and erased by Restore defaults;
 `ui-engine-settings-file-types` that each file-type switch stands for its
 own type alone, in the set a registration acts on, the set a withdrawal
 acts on and the opener change it asks for; that the launch file's switch
 turned off and on again, as OK applies it, registers and withdraws launch
 files alone: elsewhere than on Windows in a scratch XDG data folder (the
 launch file's desktop entry, icon and part of the MIME package go and come
-back, and no file of the other four, nor the program's icon, is written or
+back, and no file of the other six, nor the program's icon, is written or
 removed), and on Windows under a scratch key of `HKEY_CURRENT_USER` (the
-launch file's six values go and come back, the other four's 24 never
+launch file's six values go and come back, the other six's 36 never
 written or removed); and that on macOS, against a stand-in for the
 system's questions, it hands launch files alone back to the opener of
 plain text and takes them back, the switches then show what the system
@@ -1317,7 +1334,7 @@ order on every section); the OA button's icon at its size in both buttons, at re
 the pointer, held and twice as large, and the mark without it; with the
 installed game, the header's icon in its place and the mark without it;
 the sections' order and names, Developer at the foot under the divider,
-and System holding Your files, then File Type Registration's five
+and System holding Your files, then File Type Registration's seven
 switches, Launch files last, where the game registers file types at run
 time or the File types text row
 where the app declares them, and Engine Limits holding the unit limit, pathfinding and the skirmish
@@ -1329,7 +1346,7 @@ while the modern fonts are Off, lifted as they turn On; the Language
 drop-down's choices, each language named in itself, its field and list,
 the pointer and the keys on them, a press off the list, the command line's
 lock, and lists that scroll or open over their field;
-the Graphics section's ten rows, After zoom last, their places at every offset
+the Graphics section's twenty-one rows, Naval reflections last, their places at every offset
 and under every lock, the focus scrolling them into view, both forms of a
 locked row, Smooth motion's switch and its two hints, Zoomed out units' faded Icons and After zoom's lock, every status of Hardware acceleration, Full's included, and
 the requests to try the graphics card afresh; User Interface's five rows, Menu scaling, Window frame, HUD scaling, Interface size and Escape opens the game menu, Window frame's two ways and HUD scaling's two hints; Interface size's drop-down
@@ -1398,7 +1415,7 @@ fonts Off, turns them On and raises the size a stop, which the text style
 reads at once and OK saves, and chooses Deutsch from the Language
 drop-down, which puts German in effect at once, and steps back to English.
 On a 640 by 480 window it shows System at its top and its end in English
-and German, and finds File Type Registration and its five switches, Launch
+and German, and finds File Type Registration and its seven switches, Launch
 files among them, drawn with no text wider than its box or across another.
 With touch controls on it finds Touch listed between User Interface and
 Developer with its rows at their defaults, and a finger's press beside

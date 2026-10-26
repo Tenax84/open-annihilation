@@ -115,8 +115,14 @@ takes every MP3 file of the folder, sorted by name without case, as tracks
 `audio-music-session` checks both, and `audio-music-session-mod-install`
 the numbered files of the game folder `OA_MOD_GAME_DIR` names.
 An unknown 16-track data disc gets the game's default kinds: tracks 1-7 battle,
-8-16 building (calm). `sdl_music` decodes each track with `MusicDecoder` on
-the sound output's thread and maps the CD mixer line to the stream gain.
+8-16 building (calm). `sdl_music` opens each track and decodes it on a thread
+of its own; the sound output's callback only takes samples that are already
+decoded, so a file that is still downloading does not hold a frame. The CD
+mixer line maps to the stream gain. A track that cannot be read is skipped.
+`audio-sdl-music` makes each read of a track wait (`music_set_read_delay`),
+as a file iCloud is still downloading does: a play, a track change and a
+stop return at once, the frames' music calls stay quick, and the music
+starts when the read ends.
 `sdl_music_device_hold` keeps the music where it is while the application is
 inactive, and it plays on from there when the application is active again; in
 3.1c the CD player closes and a new track starts. `music_session` holds the game-side

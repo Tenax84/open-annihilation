@@ -48,6 +48,13 @@ download_build_list_entries(const data::limits::BuildLists& lists) noexcept {
     return entries < download_build_list_limit ? entries : download_build_list_limit;
 }
 
+/// Unit type records the catalog allocates, including the reserved slot.
+/// A match can load one fewer unit file than this.
+inline constexpr uint32_t max_unit_defs = 0x10000;
+
+/// Download files the catalog reads. One more is refused.
+inline constexpr uint32_t max_download_files = 0x1000;
+
 inline constexpr uint32_t download_menu_entries = 5;
 inline constexpr uint32_t download_unit_name_capacity = 0x20;
 

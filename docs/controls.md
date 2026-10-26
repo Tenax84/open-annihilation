@@ -2,6 +2,55 @@
 
 The keys a match answers, beyond the buttons on the order panel.
 
+## Pause and the game menu
+
+Pause toggles the simulation pause. On a Mac, Cmd+P does the same during a
+match, without needing a Pause key.
+
+F2 opens the game menu; Mac keyboards may require Fn+F2. In a local match,
+Resume or another press of F2 closes the menu and resumes the simulation,
+including a pause set with Pause or Cmd+P. In a shared match, closing the
+menu leaves the synchronized pause unchanged; use Pause or Cmd+P to toggle
+it.
+
+Escape first cancels an armed command, then clears the selection. With
+**Escape opens the game menu** enabled under Settings > Controls, another
+press opens the game menu when there is nothing left to cancel. Escape
+closes the open game menu as Resume does. Canceling a surrender dialog or
+closing a team panel does not clear an explicit simulation pause.
+
+## Unit information
+
+F1 opens the unit information panel for the build button or the unit under
+the pointer: its picture, costs and statistics. OK closes it, with either
+mouse button, and so do Enter, Escape and O. As in 3.1c, what drops the
+selection closes it too: a box dragged over open ground that selects
+nothing, a right click on the battlefield in the left-click interface, and
+a left click on open ground in the right-click interface, where a right
+click on the battlefield gives the selection its order and the panel stays
+open.
+
+While the panel is open it takes the pointer from the side column, as in
+3.1c: the side column's buttons and their keys do nothing until it closes.
+A click or a drag that starts on the panel is the panel's, so it never
+starts a selection box. The battlefield beside the panel, the minimap and
+the game's other keys work as usual. The same holds with touch controls and
+a gamepad.
+
+## The 3D camera
+
+With **Allow Full 3D Mode** on under Settings > Graphics and Full hardware
+acceleration, Alt and a left drag on the battlefield turns the camera
+about the point under the pointer (Option on a Mac), and Alt, Shift and a
+left drag pans it. Alt and a middle drag turns it too, and in the rotated
+view a middle drag pans while **Middle-click pans** is on. Alt+R puts the
+classic view back, and Alt+U turns **Unlocked Camera** on or off. While
+an order or a building is armed, Alt and a click places it unsnapped
+instead. The rotated view needs a graphics card SDL can draw on through
+Metal or Vulkan ([Graphics](settings.md#graphics)); with Hardware
+acceleration Off or Basic, or where neither can be used, Alt and its drags
+and keys keep their classic use.
+
 ## Groups
 
 Ctrl and a digit from 1 to 9 stores the selection in that group. Alt and
@@ -19,6 +68,15 @@ selected unit and does not follow it.
 A gamepad's group buttons do the same. With the groups grip held, a tap
 selects the group and a second tap centres on it. See
 [controllers.md](controllers.md).
+
+## Queueing with Shift
+
+An order given with Shift held joins the end of the selected units'
+queues. An order armed from its button, or a building being placed, stays
+armed for the next click while Shift is held. Letting Shift go returns to
+the default order, as in 3.1c: the next click gives the default order, and
+with the left-click interface one right click drops the selection. An
+order armed with none given yet stays armed when Shift is let go.
 
 ## The window's edge
 

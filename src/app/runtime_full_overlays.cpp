@@ -138,6 +138,8 @@ void Runtime::note_full_fog_grid(
     const auto* gamma = gamma_identity_ ? nullptr : &gamma_table_;
     fog.unmapped = full::flat_colour(fog_shading_.unmapped_rgb, gamma);
     fog.dither = full::flat_colour(fog_shading_.dither_rgb, gamma);
+    for (std::size_t index = 0; index < fog.palette.size(); ++index)
+        fog.palette[index] = full::flat_colour(fog_shading_.palette_rgb[index], gamma);
 }
 
 std::array<uint8_t, 3> Runtime::full_overlay_key() {

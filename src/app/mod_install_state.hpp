@@ -71,7 +71,8 @@ struct Runtime::ModInstallState {
     /// Without it, a run nobody watches takes only a catalogue language pack,
     /// a mod chosen in the Library while the Library is the top screen, and a
     /// catalogue map pack while the map browser is the top screen or GET MAP
-    /// shows over the battle room (get_map_shows).
+    /// shows over the battle room (get_map_shows), and a catalogue mutator
+    /// while GET MUTATORS shows there (get_mutators_shows).
     bool check_shows_prompts{};
     /// Prompts this run has shown.
     uint32_t prompts_shown{};
@@ -132,6 +133,17 @@ struct Runtime::ModInstallState {
     ///     while the multiplayer screens show
     /// @return true while it shows
     [[nodiscard]] static bool get_map_shows(const Runtime& runtime);
+
+    /// Tells whether GET MUTATORS shows over the battle room: the guest's
+    /// block, whose line or button stands for a mutator of the host's list
+    /// this machine lacks (runtime_get_mutators.cpp). A run nobody watches
+    /// installs a catalogue mutator while it shows, as it does a map pack
+    /// while GET MAP shows.
+    ///
+    /// @param runtime the runtime, whose OA layer holds the guest's block
+    ///     while the multiplayer screens show
+    /// @return true while it shows
+    [[nodiscard]] static bool get_mutators_shows(const Runtime& runtime);
 
     /// Ends a quiet install, or the install of a chosen mod while the
     /// Library shows: no prompt, and idle for the next package.

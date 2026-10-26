@@ -5,14 +5,19 @@
 // lists, what pointer, finger and key events do to them, and their drawing.
 // A work dialog is the same panel with one line and a bar or a spinner, and
 // no buttons. The arithmetic is the settings dialog's notices' and prompts',
-// moved here unchanged; a box's width and greatest height are its size class's.
+// moved here unchanged but for a question's buttons, which also fit their
+// captions in the fonts; a box's width and greatest height are its size class's.
 
 #include "oa/ui/kit/components_more.hpp"
 
 #include "oa/ui/kit/canvas.hpp"
 #include "oa/ui/kit/chrome.hpp"
+#include "oa/ui/kit/controls.hpp"
+#include "oa/ui/kit/text.hpp"
+#include "oa/ui/paint/painter.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -207,6 +212,32 @@ Measure measure_in(const Fonts* fonts, FontRole role) {
     return [fonts, role](std::string_view text) { return text_width(*fonts, role, text); };
 }
 
+/// The width a work dialog's line is fitted to. The smooth form measures the
+/// font it draws, in points, so a line that fits is not cut at the estimate
+/// of seven points a character. Without that form, the game font or the
+/// estimate is used.
+///
+/// @param canvas the canvas the dialog is drawn on
+/// @return the measure, in points
+Measure work_line_measure(const Canvas& canvas) {
+    if (canvas.smooth.fonts == nullptr || canvas.smooth.painter == nullptr)
+        return measure_in(canvas.fonts, FontRole::small);
+    const int32_t scale = canvas.smooth.scale_percent > 0 ? canvas.smooth.scale_percent : 100;
+    const int32_t pixels = std::max(
+        int32_t{1},
+        static_cast<int32_t>(std::lround(
+            static_cast<double>(smooth_text_points(FontRole::small)) * static_cast<double>(scale) /
+            100.0
+        ))
+    );
+    oa::platform::text_font::FontStack* fonts = canvas.smooth.fonts;
+    return [fonts, pixels, scale](std::string_view text) {
+        const int drawn =
+            oa::ui::paint::text_width(*fonts, text, pixels, smooth_text_bold(FontRole::small));
+        return static_cast<int32_t>((int64_t{drawn} * 100) / scale);
+    };
+}
+
 /// Returns a text as a notice shows it.
 ///
 /// @param look_up the caller's look-up; unset shows the text as given
@@ -296,9 +327,10 @@ question_button_name(std::string_view word, const QuestionButton& button, std::s
 ///
 /// @param question the question
 /// @param height its height
+/// @param fonts the fonts it is drawn in; null to estimate widths
 /// @return the list, without items
-DisplayList question_controls(const Question& question, int32_t height) {
-    const std::vector<Rect> rects = question_button_rects(question, height);
+DisplayList question_controls(const Question& question, int32_t height, const Fonts* fonts) {
+    const std::vector<Rect> rects = question_button_rects(question, height, fonts);
     const std::string_view word = question_word_of(question);
     DisplayList list;
     for (std::size_t index = 0; index < rects.size(); ++index) {
@@ -328,17 +360,24 @@ void add_body(
     std::string_view word,
     const Rect& title,
     const std::vector<PlacedLine>& lines,
-    std::string text
+    std::string text,
+    const std::vector<Rect>& more = {}
 ) {
     Rect over = title;
-    for (const PlacedLine& line : lines) {
-        const int32_t right = std::max(over.x + over.width, line.rect.x + line.rect.width);
-        const int32_t bottom = std::max(over.y + over.height, line.rect.y + line.rect.height);
-        over.x = std::min(over.x, line.rect.x);
-        over.y = std::min(over.y, line.rect.y);
+    const auto grow = [&over](const Rect& rect) {
+        if (rect.width <= 0 || rect.height <= 0)
+            return;
+        const int32_t right = std::max(over.x + over.width, rect.x + rect.width);
+        const int32_t bottom = std::max(over.y + over.height, rect.y + rect.height);
+        over.x = std::min(over.x, rect.x);
+        over.y = std::min(over.y, rect.y);
         over.width = right - over.x;
         over.height = bottom - over.y;
-    }
+    };
+    for (const PlacedLine& line : lines)
+        grow(line.rect);
+    for (const Rect& rect : more)
+        grow(rect);
     Control body;
     body.id = notice_body;
     body.rect = over;
@@ -379,6 +418,57 @@ HeaderLook header_of(std::string title, int32_t width) {
     header.title_width = title_rect(width).width;
     header.tracking = metrics.heading_tracking;
     return header;
+}
+
+/// Returns a question's title as its header shows it.
+///
+/// Measured as draw_header draws it: the regular font, the heading's
+/// tracking, and the title's rectangle, after the font's stand-ins. A game
+/// font draws the ellipsis as three stops, and the tracking counts each of
+/// them, so the recorded line is wider than the ellipsis counted as one
+/// character. A title that fits is unchanged. One that does not is cut
+/// between words and ends with the ellipsis; a word that does not fit on its
+/// own is cut by fit. With no fonts the title cannot be measured, so it is
+/// unchanged.
+///
+/// @param title the title, as given
+/// @param box_width the question's width
+/// @param fonts the fonts; null leaves the title
+/// @return the title the header draws
+std::string title_for_header(std::string_view title, int32_t box_width, const Fonts* fonts) {
+    if (fonts == nullptr || title.empty())
+        return std::string(title);
+    const int32_t room = title_rect(box_width).width;
+    // draw_boxed_text stands the line in, then measures that. Counting the
+    // ellipsis as one character leaves the three stops two columns over.
+    const Measure measure = [fonts](std::string_view shown) {
+        const std::string drawn = with_stand_ins(*fonts, FontRole::regular, shown);
+        return tracked_width(*fonts, FontRole::regular, drawn, metrics.heading_tracking);
+    };
+    if (room <= 0 || measure(title) <= room)
+        return std::string(title);
+    std::string kept;
+    std::string fitted;
+    std::size_t at = 0;
+    while (at < title.size()) {
+        while (at < title.size() && title[at] == ' ')
+            ++at;
+        if (at >= title.size())
+            break;
+        const std::size_t start = at;
+        while (at < title.size() && title[at] != ' ')
+            ++at;
+        const std::string word(title.substr(start, at - start));
+        const std::string next = kept.empty() ? word : kept + " " + word;
+        const std::string candidate = next + std::string(ellipsis);
+        if (measure(candidate) > room)
+            break;
+        kept = next;
+        fitted = candidate;
+    }
+    if (!fitted.empty())
+        return fitted;
+    return fit(title, room, measure);
 }
 
 /// Returns a button's look.
@@ -546,6 +636,27 @@ QuestionAnswer look_changed(bool redraw) {
     return {redraw ? QuestionAction::redraw : QuestionAction::none, -1};
 }
 
+/// Narrows a row of buttons until it and its gaps fit a room: a point at a
+/// time off the widest, so the widest come to one width. None is narrowed
+/// below button_width.
+///
+/// @param[in,out] widths the buttons' widths, left to right
+/// @param room the row's room, in points
+void narrow_row(std::vector<int32_t>& widths, int32_t room) {
+    if (widths.empty())
+        return;
+    int32_t total = static_cast<int32_t>(widths.size() - 1) * metrics.button_gap;
+    for (const int32_t width : widths)
+        total += width;
+    while (total > room) {
+        const auto widest = std::max_element(widths.begin(), widths.end());
+        if (*widest <= metrics.button_width)
+            return;
+        --*widest;
+        --total;
+    }
+}
+
 } // namespace
 
 PlacedNotice place_notice(const Notice& notice, const Measure& regular, const Measure& small) {
@@ -569,20 +680,58 @@ PlacedNotice place_notice(const Notice& notice, const Fonts* fonts) {
     );
 }
 
-std::vector<Rect> question_button_rects(const Question& question, int32_t height) {
+std::vector<Rect>
+question_button_rects(const Question& question, int32_t height, const Measure& small) {
     const int32_t top = button_top_of(height);
     const std::size_t count = std::min(question.buttons.size(), most_question_buttons);
+    std::vector<int32_t> widths(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const std::string& caption = question.buttons[index].caption;
+        const int32_t words = std::max(estimated_width(caption), small ? small(caption) : 0);
+        widths[index] = std::max(metrics.button_width, words + metrics.prompt_button_padding);
+    }
+    const int32_t width = box_width(question.size_class);
+    narrow_row(widths, width - 2 * metrics.padding);
     std::vector<Rect> rects(count);
-    int32_t right = box_width(question.size_class) - metrics.padding;
+    int32_t right = width - metrics.padding;
     for (std::size_t index = count; index-- > 0;) {
-        const int32_t width = std::max(
-            metrics.button_width,
-            estimated_width(question.buttons[index].caption) + metrics.prompt_button_padding
-        );
-        rects[index] = {right - width, top, width, metrics.button_height};
-        right -= width + metrics.button_gap;
+        rects[index] = {right - widths[index], top, widths[index], metrics.button_height};
+        right -= widths[index] + metrics.button_gap;
     }
     return rects;
+}
+
+std::vector<Rect>
+question_button_rects(const Question& question, int32_t height, const Fonts* fonts) {
+    return question_button_rects(question, height, measure_in(fonts, FontRole::small));
+}
+
+/// Places one question item on the row it starts at.
+///
+/// @param item the item
+/// @param row the badge's top
+/// @param room the name's room, in points
+/// @param small a text's width in the small font
+/// @return the placed item
+PlacedQuestionItem
+place_question_item(const QuestionItem& item, int32_t row, int32_t room, const Measure& small) {
+    constexpr int32_t kItemLine = 20;
+    PlacedQuestionItem placed;
+    placed.badge = {text_left, row, kItemLine, kItemLine};
+    placed.look = item.badge;
+    placed.text = {
+        text_left + kItemLine + metrics.list_row_gap,
+        row + (kItemLine - metrics.small_line) / 2,
+        room,
+        metrics.small_line,
+    };
+    const std::string combined = item.text + item.aside;
+    placed.shown = fit(combined, room, small);
+    placed.text_bytes = placed.shown.size();
+    if (placed.shown.size() >= item.text.size() &&
+        placed.shown.compare(0, item.text.size(), item.text) == 0)
+        placed.text_bytes = item.text.size();
+    return placed;
 }
 
 PlacedQuestion
@@ -590,23 +739,75 @@ place_question(const Question& question, const Measure& regular, const Measure& 
     const int32_t width = box_width(question.size_class);
     PlacedQuestion placed{};
     placed.title = title_rect(width);
-    PlacedText text = place_text(question.paragraphs, question.failure, regular, small, width);
-    int32_t bottom = text.bottom;
+    if (question.items.empty()) {
+        PlacedText text = place_text(question.paragraphs, question.failure, regular, small, width);
+        int32_t bottom = text.bottom;
+        if (question.progress >= 0) {
+            bottom += metrics.paragraph_gap;
+            placed.bar = {text_left, bottom, line_width_in(width), metrics.progress_bar_height};
+            bottom += metrics.progress_bar_height;
+        }
+        placed.height = height_for(bottom, question.size_class);
+        placed.footer_rule = footer_rule_of(placed.height);
+        const std::size_t all_lines = text.lines.size();
+        placed.lines = lines_that_fit(std::move(text.lines), placed.footer_rule);
+        const bool bar_cut = question.progress >= 0 && !fits_over(placed.bar, placed.footer_rule);
+        placed.cut = placed.lines.size() != all_lines || bar_cut;
+        // A bar the height cuts is left out.
+        if (bar_cut)
+            placed.bar = {};
+        placed.buttons = question_button_rects(question, placed.height, small);
+        return placed;
+    }
+
+    PlacedText text = place_text(question.paragraphs, std::string_view{}, regular, small, width);
+    int32_t row = text.bottom;
+    const int32_t line_width = line_width_in(width);
+    constexpr int32_t kItemLine = 20;
+    const int32_t room = std::max(line_width - kItemLine - metrics.list_row_gap, int32_t{0});
+    const bool paragraphs = !text.lines.empty();
+    if (paragraphs)
+        row += metrics.paragraph_gap;
+    // The design's prompts leave 4 points between item lines, so two badges never touch.
+    constexpr int32_t kItemGap = 4;
+    for (const QuestionItem& item : question.items) {
+        if (!placed.items.empty())
+            row += kItemGap;
+        placed.items.push_back(place_question_item(item, row, room, small));
+        row += kItemLine;
+    }
+    if (!question.failure.empty()) {
+        if (paragraphs || !question.items.empty())
+            row += metrics.paragraph_gap;
+        for (const std::string& line : wrap(question.failure, line_width, small)) {
+            text.lines.push_back(
+                PlacedLine{line, false, true, {text_left, row, line_width, metrics.small_line}}
+            );
+            row += metrics.small_line;
+        }
+    }
+    int32_t bottom = row;
     if (question.progress >= 0) {
         bottom += metrics.paragraph_gap;
-        placed.bar = {text_left, bottom, line_width_in(width), metrics.progress_bar_height};
+        placed.bar = {text_left, bottom, line_width, metrics.progress_bar_height};
         bottom += metrics.progress_bar_height;
     }
     placed.height = height_for(bottom, question.size_class);
     placed.footer_rule = footer_rule_of(placed.height);
     const std::size_t all_lines = text.lines.size();
+    const std::size_t all_items = placed.items.size();
     placed.lines = lines_that_fit(std::move(text.lines), placed.footer_rule);
+    std::vector<PlacedQuestionItem> fitting;
+    fitting.reserve(placed.items.size());
+    for (PlacedQuestionItem& item : placed.items)
+        if (fits_over(item.badge, placed.footer_rule))
+            fitting.push_back(std::move(item));
+    placed.items = std::move(fitting);
     const bool bar_cut = question.progress >= 0 && !fits_over(placed.bar, placed.footer_rule);
-    placed.cut = placed.lines.size() != all_lines || bar_cut;
-    // A bar the height cuts is left out.
+    placed.cut = placed.lines.size() != all_lines || placed.items.size() != all_items || bar_cut;
     if (bar_cut)
         placed.bar = {};
-    placed.buttons = question_button_rects(question, placed.height);
+    placed.buttons = question_button_rects(question, placed.height, small);
     return placed;
 }
 
@@ -667,23 +868,104 @@ DisplayList notice_list(const Notice& notice, const Fonts* fonts, const LookUp& 
     return list;
 }
 
+/// Appends one placed question item: its badge, then the name and the aside.
+///
+/// @param[in,out] list the display list
+/// @param item the item
+/// @param fonts the fonts the name's width is measured in; null draws the aside at the name's start
+void add_question_item(DisplayList& list, const PlacedQuestionItem& item, const Fonts* fonts) {
+    add_badge(list, item.badge, item.look);
+    const std::string_view shown = item.shown;
+    const std::size_t name_bytes = std::min(item.text_bytes, shown.size());
+    const std::string_view name = shown.substr(0, name_bytes);
+    const std::string_view aside = shown.substr(name_bytes);
+    const int32_t measured =
+        fonts == nullptr || name.empty() ? 0 : text_width(*fonts, FontRole::small, name);
+    const int32_t name_width = std::min(measured, std::max(item.text.width, int32_t{0}));
+    if (!name.empty() && name_width > 0) {
+        Item text;
+        text.role = Role::text;
+        text.rect = {item.text.x, item.text.y, name_width, item.text.height};
+        text.text = std::string(name);
+        text.font = FontRole::small;
+        text.align = Align::left;
+        text.colour = colour::text;
+        list.items.push_back(std::move(text));
+    }
+    const int32_t aside_width = std::max(item.text.width - name_width, int32_t{0});
+    if (!aside.empty() && aside_width > 0) {
+        Item text;
+        text.role = Role::text;
+        text.rect = {item.text.x + name_width, item.text.y, aside_width, item.text.height};
+        text.text = std::string(aside);
+        text.font = FontRole::small;
+        text.align = Align::left;
+        text.colour = colour::hint;
+        list.items.push_back(std::move(text));
+    }
+}
+
+/// Returns a question's body text. With no items it is the title, the
+/// paragraphs and the failure. With items, each item's name and aside is a
+/// line after the paragraphs and before the failure.
+///
+/// @param question the question
+/// @param title the title the header shows, already cut when it does not fit
+/// @param paragraphs the paragraphs, as shown
+/// @return the lines, joined by line breaks
+std::string question_body(
+    const Question& question, std::string title, const std::vector<std::string>& paragraphs
+) {
+    if (question.items.empty())
+        return body_text(std::move(title), paragraphs, question.failure);
+    std::string text = body_text(std::move(title), paragraphs, {});
+    for (const QuestionItem& item : question.items) {
+        text += '\n';
+        text += item.text;
+        text += item.aside;
+    }
+    if (!question.failure.empty()) {
+        text += '\n';
+        text += question.failure;
+    }
+    return text;
+}
+
 DisplayList question_list(const Question& question, const Fonts* fonts) {
     const PlacedQuestion placed = place_question(question, fonts);
     const int32_t width = box_width(question.size_class);
-    DisplayList list = question_controls(question, placed.height);
+    const std::string title = title_for_header(question.title, width, fonts);
+    DisplayList list = question_controls(question, placed.height, fonts);
     std::vector<std::string> paragraphs;
     for (const Paragraph& paragraph : question.paragraphs)
         paragraphs.push_back(paragraph.text);
+    std::vector<Rect> item_rects;
+    for (const PlacedQuestionItem& item : placed.items) {
+        item_rects.push_back(item.badge);
+        item_rects.push_back(item.text);
+    }
     add_body(
         list,
         question_word_of(question),
         placed.title,
         placed.lines,
-        body_text(question.title, paragraphs, question.failure)
+        question_body(question, title, paragraphs),
+        item_rects
     );
-    add_face_and_header(list, placed.height, width, question.title);
-    for (const PlacedLine& line : placed.lines)
-        add_text_line(list, line, line.text);
+    add_face_and_header(list, placed.height, width, title);
+    if (question.items.empty()) {
+        for (const PlacedLine& line : placed.lines)
+            add_text_line(list, line, line.text);
+    } else {
+        for (const PlacedLine& line : placed.lines)
+            if (!line.failure)
+                add_text_line(list, line, line.text);
+        for (const PlacedQuestionItem& item : placed.items)
+            add_question_item(list, item, fonts);
+        for (const PlacedLine& line : placed.lines)
+            if (line.failure)
+                add_text_line(list, line, line.text);
+    }
     add_footer(list, placed.footer_rule, width);
     if (placed.bar.width > 0)
         add_progress(list, placed.bar, question.progress, question_progress_whole);
@@ -777,34 +1059,37 @@ NoticeAction notice_key(Notice& notice, Key key) {
     }
 }
 
-QuestionAnswer question_pointer_move(Question& question, Point at, int32_t height) {
+QuestionAnswer
+question_pointer_move(Question& question, Point at, int32_t height, const Fonts* fonts) {
     if (question.pressed != no_control) {
         at.x += question.finger_shift_x;
         at.y += question.finger_shift_y;
     }
-    const ControlId hovered = hit(question_controls(question, height), at);
+    const ControlId hovered = hit(question_controls(question, height, fonts), at);
     if (hovered == question.hovered)
         return {};
     question.hovered = hovered;
     return look_changed(true);
 }
 
-QuestionAnswer question_pointer_down(Question& question, Point at, int32_t height) {
+QuestionAnswer
+question_pointer_down(Question& question, Point at, int32_t height, const Fonts* fonts) {
     question.finger_shift_x = 0;
     question.finger_shift_y = 0;
-    question.hovered = hit(question_controls(question, height), at);
+    question.hovered = hit(question_controls(question, height, fonts), at);
     if (question.hovered == no_control)
         return {};
     question.pressed = question.hovered;
     return look_changed(true);
 }
 
-QuestionAnswer
-question_finger_down(Question& question, Point finger, int32_t height, int32_t reach_px) {
+QuestionAnswer question_finger_down(
+    Question& question, Point finger, int32_t height, int32_t reach_px, const Fonts* fonts
+) {
     // The nearest button within reach, left to right, at its point nearest
     // the finger.
-    const Reached landed = reach(question_controls(question, height), finger, reach_px);
-    const QuestionAnswer pressed = question_pointer_down(question, landed.at, height);
+    const Reached landed = reach(question_controls(question, height, fonts), finger, reach_px);
+    const QuestionAnswer pressed = question_pointer_down(question, landed.at, height, fonts);
     if (pressed.action == QuestionAction::redraw) {
         question.finger_shift_x = landed.at.x - finger.x;
         question.finger_shift_y = landed.at.y - finger.y;
@@ -812,14 +1097,15 @@ question_finger_down(Question& question, Point finger, int32_t height, int32_t r
     return pressed;
 }
 
-QuestionAnswer question_pointer_up(Question& question, Point at, int32_t height) {
+QuestionAnswer
+question_pointer_up(Question& question, Point at, int32_t height, const Fonts* fonts) {
     if (question.pressed != no_control) {
         at.x += question.finger_shift_x;
         at.y += question.finger_shift_y;
     }
     question.finger_shift_x = 0;
     question.finger_shift_y = 0;
-    question.hovered = hit(question_controls(question, height), at);
+    question.hovered = hit(question_controls(question, height, fonts), at);
     const ControlId held = question.pressed;
     question.pressed = no_control;
     if (held == no_control)
@@ -890,14 +1176,58 @@ void draw_notice(const Canvas& canvas, const Notice& notice, const LookUp& look_
     draw_window_edge(canvas, whole);
 }
 
+/// Draws one placed question item: the badge, the name and the aside.
+///
+/// @param canvas where it is drawn
+/// @param item the item
+void draw_question_item(const Canvas& canvas, const PlacedQuestionItem& item) {
+    draw_badge(canvas, item.badge, item.look);
+    const std::string_view shown = item.shown;
+    const std::size_t name_bytes = std::min(item.text_bytes, shown.size());
+    const std::string_view name = shown.substr(0, name_bytes);
+    const std::string_view aside = shown.substr(name_bytes);
+    const int32_t measured = name.empty() ? 0 : measure_text(canvas, FontRole::small, name);
+    const int32_t name_width = std::min(measured, std::max(item.text.width, int32_t{0}));
+    if (!name.empty())
+        box_text(
+            canvas,
+            FontRole::small,
+            name,
+            {item.text.x, item.text.y, name_width, item.text.height},
+            Align::left,
+            colour::text
+        );
+    const int32_t aside_width = std::max(item.text.width - name_width, int32_t{0});
+    if (!aside.empty() && aside_width > 0)
+        box_text(
+            canvas,
+            FontRole::small,
+            aside,
+            {item.text.x + name_width, item.text.y, aside_width, item.text.height},
+            Align::left,
+            colour::hint
+        );
+}
+
 void draw_question(const Canvas& canvas, const Question& question) {
     const PlacedQuestion placed = place_question(question, canvas.fonts);
     const int32_t width = box_width(question.size_class);
     const Rect whole{0, 0, width, placed.height};
     draw_window_face(canvas, whole);
-    draw_header(canvas, header_of(question.title, width));
-    for (const PlacedLine& line : placed.lines)
-        draw_text_line(canvas, line, line.text);
+    draw_header(canvas, header_of(title_for_header(question.title, width, canvas.fonts), width));
+    if (question.items.empty()) {
+        for (const PlacedLine& line : placed.lines)
+            draw_text_line(canvas, line, line.text);
+    } else {
+        for (const PlacedLine& line : placed.lines)
+            if (!line.failure)
+                draw_text_line(canvas, line, line.text);
+        for (const PlacedQuestionItem& item : placed.items)
+            draw_question_item(canvas, item);
+        for (const PlacedLine& line : placed.lines)
+            if (line.failure)
+                draw_text_line(canvas, line, line.text);
+    }
     draw_footer_band(canvas, width, placed.footer_rule);
     if (placed.bar.width > 0)
         draw_progress(canvas, placed.bar, question.progress, question_progress_whole);
@@ -992,7 +1322,7 @@ DisplayList work_dialog_list(const WorkDialog& dialog, const Fonts* fonts) {
 }
 
 void draw_work_dialog(const Canvas& canvas, const WorkDialog& dialog) {
-    const PlacedWorkDialog placed = place_work_dialog(dialog, canvas.fonts);
+    const PlacedWorkDialog placed = place_work_dialog(dialog, work_line_measure(canvas));
     const int32_t width = box_width(dialog.size_class);
     const Rect whole{0, 0, width, placed.height};
     draw_window_face(canvas, whole);

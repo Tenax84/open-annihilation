@@ -55,6 +55,22 @@ void draw_mark(const Canvas& canvas, Mark mark, Point at, Colour ink);
 /// @param ink the colour of a one-colour icon; ignored for the badge and the bone
 void draw_state_icon(const Canvas& canvas, const Rect& rect, StateIcon icon, Colour ink);
 
+/// Draws a tag icon, filling a square of the rectangle's shorter side,
+/// centred in it.
+///
+/// The eight catalogue icons are strokes on a design of 24 units, each
+/// stroke 2.5 units wide with round ends, the same width as a state icon.
+/// They are worked out at the canvas's own pixels and drawn through
+/// blend_coverage, so a 2x drawing is not a doubled 1x drawing. A rectangle
+/// more than 1024 pixels on a side draws nothing, and so does an undrawable
+/// canvas. Pixels the icon does not cover are left as they are.
+///
+/// @param canvas where it is drawn
+/// @param rect the rectangle, in points
+/// @param icon which icon
+/// @param ink the colour of the strokes
+void draw_tag_icon(const Canvas& canvas, const Rect& rect, TagIcon icon, Colour ink);
+
 /// The app icon drawn as the small maker's mark on a Library row or a
 /// registry card. The spans point at pixels kept elsewhere for as long as
 /// the mark is set. An empty full picture leaves the drawn plate.
@@ -82,8 +98,37 @@ void set_open_annihilation_mark(OpenAnnihilationMark mark);
 /// @param around true draws it outside the control; false on the control's edge
 void draw_focus_ring(const Canvas& canvas, const Rect& control, bool around);
 
-/// Draws a button in one of the five looks. The caption is centred in the
-/// small font. A plain button that is not enabled draws the disabled look,
+/// Where a button that wears the OA badge draws the badge and its caption.
+struct ButtonMarkParts {
+    Rect mark{};    ///< the badge's square, at the left
+    Rect caption{}; ///< the caption's box, after the badge
+};
+
+/// Returns the corner radius of a filled button: a quarter of its shorter
+/// side, at least 2 points, so it grows with the button.
+///
+/// @param area the button
+/// @return the radius, in points
+[[nodiscard]] int32_t filled_radius(const Rect& area) noexcept;
+
+/// Places the OA badge and the caption in a button that wears the badge.
+///
+/// The padding is a fifth of the button's height, at least 2 points. The
+/// badge is a square as tall as the button less the padding above and below,
+/// the padding in from the left edge. The caption's box starts the padding
+/// after the badge and ends the padding before the right edge, as tall as
+/// the button, so the left padding, the gap and the right padding are even.
+///
+/// @param area the button
+/// @return the badge and the caption's box; empty boxes when the button is too small
+[[nodiscard]] ButtonMarkParts button_mark_parts(const Rect& area) noexcept;
+
+/// Draws a button in one of the six looks. A filled button has rounded
+/// corners (filled_radius), its edge and face drawn as two rounded shapes,
+/// and keeps them while it is not enabled. The caption is centred in the
+/// look's font, small unless it says regular. A look that wears the OA badge
+/// draws the badge at the left and the caption after it, keeping to its left
+/// edge (button_mark_parts); the caller fits the caption to that box. A plain button that is not enabled draws the disabled look,
 /// whatever the pointer is doing. A refresh mark draws a circular arrow in
 /// place of the caption: the quiet look's face while the pointer is over it,
 /// the plain look's disabled face while it cannot be pressed, and the arrow

@@ -5,6 +5,7 @@
 #include "oa/app/runtime.hpp"
 #include "oa/core/map_plot.h"
 #include "oa/sim/feature_runtime.hpp"
+#include "oa/ui/frontend_renderer/game_text.hpp"
 #include "oa/ui/gui_layout/gui_gadget.hpp"
 #include "oa/ui/hud/command_buttons.hpp"
 #include "oa/ui/hud/order_panel.hpp"
@@ -84,13 +85,38 @@ void Runtime::draw_build_captions() {
         return;
     constexpr uint8_t build_button_attributes =
         oa::ui::hud::kCommonUnitButton | oa::ui::hud::kCommonWeaponButton;
+    // Rows below a caption's pen its glyphs may be drawn on: more than they
+    // reach, so that no caption is cut off.
+    constexpr int caption_rows_below_pen = 32;
+    // A GUI font's lines are its 'I' and this many rows more apart.
+    constexpr int32_t gui_line_gap = 2;
+    // The counts are the buttons' captions, written as the gadget engine
+    // writes a caption: in hattfont12, the GUI's first font, where the
+    // button's attributes place it, which on every build page of the game
+    // is centred along its bottom; in source pixels, as the HUD's other
+    // labels are.
+    ensure_gui_font();
+    if (gui_font_.sequences.empty())
+        return;
+    const int32_t line_height = renderer::gui_font_baseline(gui_font_) + gui_line_gap;
     for (std::size_t index = 0; index < build_captions_.size(); ++index) {
-        const auto& gadget = match_hud_->layout.gadgets[index];
+        const auto& common = match_hud_->layout.gadgets[index].common;
+        const auto& caption = build_captions_[index];
         // A hidden button shows no count.
-        if (build_captions_[index].empty() || gadget.common.active == 0 ||
-            (static_cast<uint8_t>(gadget.common.common_attributes) & build_button_attributes) == 0)
+        if (caption.empty() || common.active == 0 ||
+            (static_cast<uint8_t>(common.common_attributes) & build_button_attributes) == 0)
             continue;
-        draw_hud_label(gadget.common.x + 4, gadget.common.y + 4, build_captions_[index], 255);
+        const auto pen = oa::ui::gui_layout::button_caption_pen(
+            {common.x, common.y, common.x + common.width - 1, common.y + common.height - 1},
+            static_cast<uint32_t>(common.attributes),
+            gui_text_width(gui_font_, caption, 1),
+            line_height,
+            match_button_condition(index) == renderer::ButtonCondition::pressed
+        );
+        if (pen)
+            overlay_gui_text(
+                gui_font_, hud_canvas(pen->x, pen->y), caption, caption_rows_below_pen, true, 1
+            );
     }
 }
 
@@ -134,7 +160,6 @@ void Runtime::activate_match_hud(std::size_t index, bool left_button) {
     case hud::BuildPanelClick::place:
         match_command_ = MatchCommand::build;
         pending_build_type_ = click.type;
-        build_queued_with_shift_ = false;
         status_ = "Place " + gadget_name + ": click the map";
         break;
     case hud::BuildPanelClick::queued:
@@ -345,6 +370,7 @@ bool Runtime::match_command_lit(std::size_t index) const {
 
 void Runtime::reset_match_command() {
     match_command_ = MatchCommand::none;
+    command_queued_with_shift_ = false;
     if (!match_hud_)
         return;
     const auto& gadgets = match_hud_->layout.gadgets;
@@ -365,8 +391,14 @@ bool Runtime::queueing() const {
 }
 
 void Runtime::finish_issued_command() {
-    if (!queueing())
+    if (!queueing()) {
         reset_match_command();
+        return;
+    }
+    // The command stays for the next click only while Shift is held.
+    const bool shift_held = (input_modifiers(ModifierUse::order) & SDL_KMOD_SHIFT) != 0;
+    if (match_command_ != MatchCommand::none && shift_held)
+        command_queued_with_shift_ = true;
 }
 
 void Runtime::play_match_interface_sound(std::string_view name) {
@@ -434,7 +466,7 @@ void Runtime::issue_pending_build(const oa::sim::ground_orders::Point& site, boo
             reset_match_command();
             pending_build_type_ = 0;
         } else if ((input_modifiers(ModifierUse::order) & SDL_KMOD_SHIFT) != 0) {
-            build_queued_with_shift_ = true;
+            command_queued_with_shift_ = true;
         }
     } catch (const std::exception& error) {
         status_ = std::string("build placement: ") + error.what();
@@ -442,18 +474,19 @@ void Runtime::issue_pending_build(const oa::sim::ground_orders::Point& site, boo
     }
 }
 
-void Runtime::end_build_on_shift_release() {
-    if (!build_queued_with_shift_)
+void Runtime::end_command_on_shift_release() {
+    if (!command_queued_with_shift_)
         return;
-    // Build mode ended some other way (a right press, Escape, CANCEL) takes
-    // the mark with it.
-    if (!match_ || match_command_ != MatchCommand::build || pending_build_type_ == 0) {
-        build_queued_with_shift_ = false;
+    // A command ended some other way (a right press, Escape, CANCEL, STOP or
+    // its button pressed again) takes the mark with it.
+    if (!match_ || (match_command_ == MatchCommand::none && pending_build_type_ == 0)) {
+        command_queued_with_shift_ = false;
         return;
     }
     if ((input_modifiers(ModifierUse::order) & SDL_KMOD_SHIFT) != 0)
         return;
-    build_queued_with_shift_ = false;
+    // What is armed by then goes, a command armed or a building chosen with
+    // Shift still held included.
     reset_match_command();
     pending_build_type_ = 0;
 }

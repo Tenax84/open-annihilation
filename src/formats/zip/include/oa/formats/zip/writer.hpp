@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The streaming zip writer: an archive written a piece at a time through a
-// hook, however large, as a package (.oamod, .oalang, .oamap) is made. It
+// hook, however large, as a package (.oamod, .oalang, .oamap, .oamut) is made. It
 // stores or deflates each entry as the bytes arrive, completes that entry's
 // local header in place, and writes the central directory at the end. The
 // same entries and options give the same bytes. Nothing it holds grows with

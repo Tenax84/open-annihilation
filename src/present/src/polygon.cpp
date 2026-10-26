@@ -93,11 +93,14 @@ int32_t vertex_attributes(const ShadedVertex& v, int32_t* out) noexcept {
 }
 
 // Per-thread span table. Rows no edge reaches (non-convex input) read as
-// empty.
-PolygonSpanRow* cleared_span_table() noexcept {
+// empty. A polygon writes and reads only the rows from its top to its
+// bottom, so only those are cleared, or all of them where that span is not
+// a count of rows the table holds.
+PolygonSpanRow* cleared_span_table(int32_t used) noexcept {
     static thread_local PolygonSpanRow rows[polygon_span_rows];
-    for (auto& row : rows)
-        row = PolygonSpanRow{};
+    const int32_t cleared = used >= 0 && used < polygon_span_rows ? used : polygon_span_rows;
+    for (int32_t row = 0; row < cleared; ++row)
+        rows[row] = PolygonSpanRow{};
     return rows;
 }
 
@@ -242,6 +245,26 @@ bool clip_to_sprite(const Sprite& target, Bounds& b, int32_t& last_row) noexcept
     return b.max_y != b.min_y;
 }
 
+// Plots one end of a span row, depth tested when the sprite has a depth
+// plane; an end outside the sprite is left out.
+void plot_span_end(Sprite& target, int32_t x, int32_t y, int32_t depth, uint8_t color) noexcept {
+    if (x < 0 || x >= static_cast<int32_t>(target.width) || y < 0 ||
+        y >= static_cast<int32_t>(target.height))
+        return;
+    const std::ptrdiff_t offset = sprite_offset(target, x, y);
+    uint8_t* pixel = static_cast<uint8_t*>(target.data) + offset;
+    if (target.aux == nullptr) {
+        *pixel = color;
+        return;
+    }
+    uint8_t* stored = static_cast<uint8_t*>(target.aux) + offset;
+    const uint8_t value = depth_byte(depth);
+    if (*stored <= value) {
+        *pixel = color;
+        *stored = value;
+    }
+}
+
 } // namespace
 
 void draw_range_ring(
@@ -312,7 +335,7 @@ int32_t fill_polygon(
                     unlock_display_surface();
                 return 1;
             }
-            PolygonSpanRow* rows = cleared_span_table();
+            PolygonSpanRow* rows = cleared_span_table(wrap_sub(b.max_y, b.min_y));
             scan_polygon(rows, vertices, count, b, clip.y1, clip.y2);
             for (int32_t y = first_row, r = first_row - b.min_y;
                  y < end_row && r < polygon_span_rows;
@@ -338,27 +361,10 @@ int32_t fill_polygon(
 }
 
 void plot_span_ends(int32_t y, const PolygonSpanRow& row, Sprite& target, uint8_t color) noexcept {
-    const int32_t span = wrap_sub(row.right, row.left);
-    if (span <= 0)
+    if (wrap_sub(row.right, row.left) <= 0)
         return;
-    const std::ptrdiff_t offset = sprite_offset(target, row.left, y);
-    uint8_t* pixel = static_cast<uint8_t*>(target.data) + offset;
-    if (target.aux == nullptr) {
-        pixel[0] = color;
-        pixel[span] = color;
-        return;
-    }
-    uint8_t* depth = static_cast<uint8_t*>(target.aux) + offset;
-    const uint8_t left = depth_byte(row.left_depth);
-    if (depth[0] <= left) {
-        pixel[0] = color;
-        depth[0] = left;
-    }
-    const uint8_t right = depth_byte(row.right_depth);
-    if (depth[span] <= right) {
-        pixel[span] = color;
-        depth[span] = right;
-    }
+    plot_span_end(target, row.left, y, row.left_depth, color);
+    plot_span_end(target, row.right, y, row.right_depth, color);
 }
 
 int32_t outline_depth_polygon(
@@ -369,7 +375,7 @@ int32_t outline_depth_polygon(
     const Bounds b = polygon_bounds(vertices, count);
     if (b.max_y == b.min_y)
         return 0;
-    PolygonSpanRow* rows = cleared_span_table();
+    PolygonSpanRow* rows = cleared_span_table(wrap_sub(b.max_y, b.min_y));
     scan_polygon(
         rows,
         vertices,
@@ -421,7 +427,7 @@ int32_t fill_depth_polygon(
     int32_t last_row = 0;
     if (!clip_to_sprite(target, b, last_row))
         return 0;
-    PolygonSpanRow* rows = cleared_span_table();
+    PolygonSpanRow* rows = cleared_span_table(wrap_sub(b.max_y, b.min_y));
     scan_polygon(rows, vertices, count, b, 0, last_row);
     emit_rows(rows, b.min_y, b.max_y, target, color, fill_depth_span);
     return 1;
@@ -478,7 +484,7 @@ int32_t fill_shaded_polygon(
     int32_t last_row = 0;
     if (!clip_to_sprite(target, b, last_row))
         return 0;
-    PolygonSpanRow* rows = cleared_span_table();
+    PolygonSpanRow* rows = cleared_span_table(wrap_sub(b.max_y, b.min_y));
     scan_polygon(rows, vertices, count, b, 0, last_row);
     emit_rows(rows, b.min_y, b.max_y, target, color, fill_shaded_span);
     return 1;

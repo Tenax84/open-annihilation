@@ -183,6 +183,10 @@ inline constexpr int32_t menu_style_level_width = 100;
 /// 1-pixel border: room for Reduced, its widest caption, with three clear
 /// columns each side.
 inline constexpr int32_t explosion_flash_level_width = 50;
+/// Fog of War's level strip's segment width, inside the strip's 1-pixel
+/// border: room for Classique and Klassisch, its widest captions, with
+/// three clear columns each side.
+inline constexpr int32_t fog_of_war_level_width = 56;
 /// Zoomed out units' level strip's segment width, inside the strip's
 /// 1-pixel border: room for Rendered, its widest caption, with three clear
 /// columns each side.

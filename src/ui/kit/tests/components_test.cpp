@@ -316,6 +316,80 @@ void buttons_match_the_five_looks() {
     );
 }
 
+void buttons_match_the_filled_look() {
+    // The deep green face, the held accent's edge and white text at rest;
+    // a lighter face and the accent's edge under the pointer; a darker face
+    // while held; the plain look's disabled colours when it cannot be
+    // pressed. Every one keeps its rounded corners: a quarter of the
+    // shorter side, 4 points on a 17-point button, so the corner pixel
+    // stays as it was.
+    OA_CHECK(kit::filled_radius(kButtonArea) == 4);
+    OA_CHECK(kit::filled_radius({0, 0, 180, 30}) == 7);
+    OA_CHECK(kit::filled_radius({0, 0, 8, 6}) == 2);
+
+    struct Pin {
+        bool hovered;
+        bool held;
+        std::array<uint8_t, 3> edge;
+        std::array<uint8_t, 3> face;
+    };
+
+    const Pin pins[] = {
+        {false, false, {0x8a, 0xb8, 0x30}, {0x3e, 0x52, 0x18}},
+        {true, false, {0x9c, 0xcc, 0x3c}, {0x49, 0x60, 0x1c}},
+        {true, true, {0x9c, 0xcc, 0x3c}, {0x35, 0x45, 0x14}},
+    };
+    for (const Pin& pin : pins) {
+        renderer::Surface surface = black(80, 40);
+        kit::draw_button(
+            canvas_on(surface),
+            kButtonArea,
+            button("A", kit::ButtonStyle::filled, pin.hovered, pin.held)
+        );
+        expect(surface, 10, 10, 0, 0, 0);
+        expect(surface, 49, 26, 0, 0, 0);
+        expect(surface, 30, 10, pin.edge[0], pin.edge[1], pin.edge[2]);
+        expect(surface, 10, 18, pin.edge[0], pin.edge[1], pin.edge[2]);
+        expect(surface, 12, 18, pin.face[0], pin.face[1], pin.face[2]);
+        expect(surface, 28, 13, 0xe7, 0xe8, 0xdf);
+    }
+    renderer::Surface disabled = black(80, 40);
+    kit::draw_button(
+        canvas_on(disabled), kButtonArea, button("A", kit::ButtonStyle::filled, false, false, false)
+    );
+    expect(disabled, 10, 10, 0, 0, 0);
+    expect(disabled, 30, 10, 0x3a, 0x40, 0x34);
+    expect(disabled, 12, 18, 0, 0, 0);
+}
+
+void badge_button_places_its_parts() {
+    // A fifth of the height pads the left, the gap after the badge and the right.
+    const kit::ButtonMarkParts parts = kit::button_mark_parts({10, 10, 120, 20});
+    OA_CHECK(parts.mark.x == 14 && parts.mark.y == 14);
+    OA_CHECK(parts.mark.width == 12 && parts.mark.height == 12);
+    OA_CHECK(parts.caption.x == 30 && parts.caption.y == 10);
+    OA_CHECK(parts.caption.width == 96 && parts.caption.height == 20);
+    const kit::ButtonMarkParts tall = kit::button_mark_parts({0, 0, 180, 30});
+    OA_CHECK(tall.mark.x == 6 && tall.mark.width == 18 && tall.caption.x == 30);
+    OA_CHECK(tall.caption.x + tall.caption.width == 174);
+    // A button too narrow for the badge and a gap places nothing.
+    const kit::ButtonMarkParts narrow = kit::button_mark_parts({0, 0, 20, 20});
+    OA_CHECK(narrow.mark.width == 0 && narrow.caption.width == 0);
+
+    // The badge is drawn in its own colours at the left of the filled face.
+    renderer::Surface surface = black(160, 40);
+    kit::ButtonLook look = button("Mutators", kit::ButtonStyle::filled, false, false);
+    look.oa_mark = true;
+    kit::draw_button(canvas_on(surface), {10, 10, 120, 20}, look);
+    expect(surface, 11, 20, 0x3e, 0x52, 0x18);
+    expect(surface, 128, 20, 0x3e, 0x52, 0x18);
+    const std::size_t centre = (static_cast<std::size_t>(20) * surface.width + 20) * 3;
+    OA_CHECK(
+        surface.rgb[centre] != 0x3e || surface.rgb[centre + 1] != 0x52 ||
+        surface.rgb[centre + 2] != 0x18
+    );
+}
+
 void switch_levels_and_slider_match() {
     renderer::Surface off = black(80, 40);
     kit::draw_switch(canvas_on(off), {10, 10, 52, 16}, {false, false, false, "OFF", "ON"});
@@ -1299,6 +1373,8 @@ void menu_icon_button_is_the_icon() {
 
 int main() {
     buttons_match_the_five_looks();
+    buttons_match_the_filled_look();
+    badge_button_places_its_parts();
     refresh_mark_turns();
     close_mark_draws_a_cross();
     refresh_turn_follows_time();

@@ -46,10 +46,11 @@ beside the in-game menu. It lists five sections:
 | Snap & chat | Wreck snap radius, Accessible chat, Resource bar background | 0 to the profile's most cells; Off or On; None, Text or Solid |
 
 A snap radius the profile gives no room shows "Set by the mod" and cannot
-be changed. Changes take effect at once; OK keeps them with the player's
-preferences and Cancel puts back what the dialog opened with. The
-patrolling and guarding choices apply from the next game. Restore defaults
-resets these options alone.
+be changed, and OK does not store it, so the radius starts at the
+profile's default once it has room. Changes take effect at once; OK keeps
+them with the player's preferences and Cancel puts back what the dialog
+opened with. The patrolling and guarding choices apply from the next game.
+Restore defaults resets these options alone.
 
 The whiteboard key, the megamap key, the build menu's facing display,
 VSync and the chat macro's text are kept with the same settings but are not

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <limits>
+#include <span>
 
 using namespace oa;
 using namespace oa::sim::detection;
@@ -183,7 +184,8 @@ void test_shared_radar() {
 struct SightingLists {
     uint16_t seen[slot_count]{};
     uint16_t radar[slot_count]{};
-    Sightings sightings{seen, radar, slot_count};
+    uint16_t pads[slot_count]{};
+    Sightings sightings{seen, radar, pads, slot_count};
 };
 
 // Files slots 1..7 for the viewer; `visible` is the viewer's sight test.
@@ -263,6 +265,74 @@ void test_sightings_lists() {
     world_destroy(w);
 }
 
+// The pad list holds the player's own finished, live, switched-on air bases
+// that are builders, in slot order; a search re-tests each listed pad and
+// measures its reach.
+void test_pad_list() {
+    World* w = make_world();
+    // Slots 1 and 2 are the viewer's here, 3..6 the enemy's.
+    auto& me = w->game.players[viewer];
+    me.alliance[viewer] = 1;
+    me.last_unit = oa_unit_ref_from_slot(enemy_first);
+    w->units[enemy_first].owner = oa_ref_from_index(viewer);
+    w->units[enemy_first].owner_index = viewer;
+    w->game.players[enemy].first_unit = oa_unit_ref_from_slot(enemy_first + 1);
+    w->unit_defs[plain].flags = repair_pad_flags;
+    w->unit_defs[stealthy].flags = OA_UNIT_DEF_FLAG_IS_AIRBASE;
+    auto& near_pad = place(*w, viewer_slot, plain, 100, sea_level, 0);
+    auto& far_pad = place(*w, enemy_first, plain, 0x1000, sea_level, 0);
+    auto& enemy_pad = place(*w, enemy_first + 1, plain, 50, sea_level, 0);
+    for (Unit* pad : {&near_pad, &far_pad, &enemy_pad})
+        pad->state_flags = OA_UNIT_STATE_ACTIVE;
+    const bool visible[slot_count]{};
+    SightingLists lists;
+    CHECK(file_all(lists, *w, visible) == 2);
+    CHECK(lists.sightings.pad_count == 2);
+    CHECK(lists.pads[0] == viewer_slot && lists.pads[1] == enemy_first);
+
+    // An unfinished, switched-off, dying or non-builder base is not filed.
+    near_pad.build_remaining = 0.5F;
+    file_all(lists, *w, visible);
+    CHECK(lists.sightings.pad_count == 1 && lists.pads[0] == enemy_first);
+    near_pad.build_remaining = 0.0F;
+    near_pad.state_flags = 0;
+    file_all(lists, *w, visible);
+    CHECK(lists.sightings.pad_count == 1);
+    near_pad.state_flags = OA_UNIT_STATE_ACTIVE;
+    near_pad.flags |= OA_UNIT_FLAG_DEATH_PENDING;
+    file_all(lists, *w, visible);
+    CHECK(lists.sightings.pad_count == 1);
+    near_pad.flags = OA_UNIT_FLAG_LIVE;
+    near_pad.type_index = stealthy;
+    near_pad.def = oa_ref_from_index(stealthy);
+    file_all(lists, *w, visible);
+    CHECK(lists.sightings.pad_count == 1);
+    near_pad.type_index = plain;
+    near_pad.def = oa_ref_from_index(plain);
+    file_all(lists, *w, visible);
+    CHECK(lists.sightings.pad_count == 2);
+
+    // The search keeps the filed pads in reach that are still switched on,
+    // in list order.
+    const FixedVec3 origin{0, fixed(sea_level), 0};
+    CHECK(pads_in_reach(lists.sightings, *w, origin) == 1);
+    CHECK(pad_in_reach(lists.sightings, *w, origin, 0) == viewer_slot);
+    CHECK(pad_in_reach(lists.sightings, *w, origin, 1) == 0);
+    const FixedVec3 between{fixed(0x800), fixed(sea_level), 0};
+    CHECK(pads_in_reach(lists.sightings, *w, between) == 2);
+    CHECK(pad_in_reach(lists.sightings, *w, between, 0) == viewer_slot);
+    CHECK(pad_in_reach(lists.sightings, *w, between, 1) == enemy_first);
+    // 0xf00 away is in reach, a world unit further is not.
+    const FixedVec3 edge{fixed(100 + repair_pad_reach), fixed(sea_level), 0};
+    CHECK(pads_in_reach(lists.sightings, *w, edge) == 2);
+    const FixedVec3 past{fixed(100 - repair_pad_reach - 1), fixed(sea_level), 0};
+    CHECK(pads_in_reach(lists.sightings, *w, past) == 0);
+    near_pad.state_flags = 0;
+    CHECK(pads_in_reach(lists.sightings, *w, between) == 1);
+    CHECK(pad_in_reach(lists.sightings, *w, between, 0) == enemy_first);
+    world_destroy(w);
+}
+
 void test_sighted_within() {
     World* w = make_world();
     auto& far = place(*w, enemy_first, plain, 100, sea_level, 0);
@@ -311,6 +381,236 @@ void test_finished_unit() {
     CHECK(finished_unit(unit));
 }
 
+uint8_t picture_of(uint32_t flags) {
+    uint8_t bits = 0;
+    if ((flags & radar_contact) != 0)
+        bits = static_cast<uint8_t>(bits | picture_radar);
+    if ((flags & sonar_contact) != 0)
+        bits = static_cast<uint8_t>(bits | picture_sonar);
+    if ((flags & jammed) != 0)
+        bits = static_cast<uint8_t>(bits | picture_jammed);
+    return bits;
+}
+
+// Heights above, at and below the sea; distances inside and outside sonar,
+// plain radar and a lifted radar reach; stealth, plain and typeless; owned
+// by the picture's viewer, the viewpoint and a third player.
+void test_stamp_picture_grid() {
+    World* w = make_world();
+    const int32_t heights[] = {sea_level + 8, sea_level, sea_level - 20};
+    const int32_t distances[] = {0, 30, 49, 50, 80, 100, 120, 150, 160};
+    const int32_t radar_reaches[] = {100 * 100, 150 * 150};
+    const uint8_t owners[] = {viewer, enemy, ally};
+    const uint16_t types[] = {plain, stealthy, 0};
+    const uint32_t seeds[] = {0u, jammed};
+    int viewpoint_units_stamped = 0;
+    for (const int32_t height : heights)
+        for (const int32_t distance : distances)
+            for (const int32_t radar_reach : radar_reaches)
+                for (const uint8_t owner : owners)
+                    for (const uint16_t type : types)
+                        for (const uint32_t seed : seeds) {
+                            auto& unit = place(
+                                *w,
+                                enemy_first,
+                                type == 0 ? static_cast<uint16_t>(plain) : type,
+                                distance,
+                                height,
+                                0
+                            );
+                            unit.owner_index = owner;
+                            unit.owner = oa_ref_from_index(owner);
+                            if (type == 0)
+                                unit.type_index = 0;
+                            unit.flags = OA_UNIT_FLAG_LIVE | seed;
+                            const uint32_t flags_before = unit.flags;
+                            ScanRecord scan = scanner_at_origin();
+                            scan.radar_range_squared = radar_reach;
+                            uint8_t bits = picture_of(seed);
+                            stamp_picture(scan, viewer, unit, *w, bits);
+                            Unit copy = unit;
+                            stamp_contact(scan, copy, *w);
+                            CHECK(bits == picture_of(copy.flags));
+                            CHECK(unit.flags == flags_before);
+                            // A viewer who is not the viewpoint still stamps the
+                            // viewpoint's units, and never its own.
+                            uint8_t other = picture_of(seed);
+                            stamp_picture(scan, enemy, unit, *w, other);
+                            CHECK(unit.flags == flags_before);
+                            if (owner == enemy) {
+                                CHECK(other == picture_of(seed));
+                            } else {
+                                copy = unit;
+                                copy.owner_index = ally;
+                                stamp_contact(scan, copy, *w);
+                                CHECK(other == picture_of(copy.flags));
+                                if (owner == viewer && (other & picture_radar) != 0)
+                                    ++viewpoint_units_stamped;
+                            }
+                        }
+    CHECK(viewpoint_units_stamped > 0);
+    auto& bare = place(*w, enemy_first, plain, 0, sea_level, 10);
+    bare.owner_index = enemy;
+    bare.def = 0;
+    bare.flags = OA_UNIT_FLAG_LIVE | radar_contact;
+    uint8_t bare_bits = picture_radar;
+    stamp_picture(scanner_at_origin(), viewer, bare, *w, bare_bits);
+    CHECK(bare_bits == picture_radar);
+    CHECK(bare.flags == (OA_UNIT_FLAG_LIVE | radar_contact));
+    world_destroy(w);
+}
+
+void test_jam_picture_and_seat_rule() {
+    uint8_t radar_bits = static_cast<uint8_t>(picture_radar | picture_sonar);
+    uint8_t sonar_bits = radar_bits;
+    jam_picture_radar(radar_bits);
+    jam_picture_sonar(sonar_bits);
+    CHECK(radar_bits == static_cast<uint8_t>(picture_sonar | picture_jammed));
+    CHECK(sonar_bits == static_cast<uint8_t>(picture_radar | picture_jammed));
+    Unit untouched{};
+    untouched.flags = OA_UNIT_FLAG_LIVE | radar_contact | sonar_contact;
+    CHECK(untouched.flags == (OA_UNIT_FLAG_LIVE | radar_contact | sonar_contact));
+
+    World* w = make_world();
+    auto& jammer = place(*w, enemy_first, plain, 0, sea_level, 0);
+    const auto& watcher = w->game.players[viewer];
+    jammer.owner_index = viewer;
+    CHECK(seat_jammer_jams(false, watcher, jammer));
+    CHECK(!seat_jammer_jams(true, watcher, jammer));
+    jammer.owner_index = enemy;
+    CHECK(seat_jammer_jams(false, watcher, jammer));
+    CHECK(seat_jammer_jams(true, watcher, jammer));
+    jammer.owner_index = ally;
+    // The viewer's row names the owner. The owner's row does not name the viewer.
+    w->game.players[viewer].alliance[ally] = 1;
+    CHECK(seat_jammer_jams(false, watcher, jammer));
+    CHECK(!seat_jammer_jams(true, watcher, jammer));
+    // The other way: the owner's row names the viewer, and the viewer's does not.
+    w->game.players[viewer].alliance[ally] = 0;
+    w->game.players[ally].alliance[viewer] = 1;
+    CHECK(seat_jammer_jams(false, watcher, jammer));
+    CHECK(seat_jammer_jams(true, watcher, jammer));
+    jammer.owner_index = OA_PLAYER_RECORD_COUNT;
+    CHECK(seat_jammer_jams(false, watcher, jammer));
+    CHECK(seat_jammer_jams(true, watcher, jammer));
+    world_destroy(w);
+}
+
+void test_created_picture_bits() {
+    Unit unit{};
+    unit.owner_index = viewer;
+    CHECK(created_picture_bits(unit, viewer) == picture_sonar);
+    CHECK(created_picture_bits(unit, enemy) == 0);
+    unit.owner_index = enemy;
+    CHECK(created_picture_bits(unit, viewer) == 0);
+    CHECK(created_picture_bits(unit, enemy) == picture_sonar);
+    unit.flags = radar_contact | sonar_contact | jammed;
+    CHECK(created_picture_bits(unit, enemy) == picture_sonar);
+}
+
+// One call diff_sighted made, in the order it made them.
+struct DiffCall {
+    bool gained{};
+    uint16_t unit{};
+    uint32_t generation{};
+    uint16_t mark{};
+};
+
+// Appends one call. The lists under test stay within a handful of entries.
+template <class Entry>
+void note_diff(DiffCall* log, int& count, bool gained, const Entry& entry, uint16_t mark) {
+    CHECK(count < 8);
+    log[count++] = DiffCall{gained, entry.unit, entry.generation, mark};
+}
+
+void test_diff_sighted() {
+    DiffCall log[8]{};
+    int count = 0;
+    const auto lost = [&](const auto& entry) { note_diff(log, count, false, entry, 0); };
+    const auto gained = [&](const auto& entry) { note_diff(log, count, true, entry, 0); };
+    const auto calls = [&]() {
+        return std::span<const DiffCall>{log, static_cast<std::size_t>(count)};
+    };
+
+    diff_sighted(std::span<const SightedUnit>{}, std::span<const SightedUnit>{}, lost, gained);
+    CHECK(count == 0);
+
+    const SightedUnit two[] = {{1, 4}, {3, 5}};
+    count = 0;
+    diff_sighted(std::span<const SightedUnit>{}, std::span<const SightedUnit>{two}, lost, gained);
+    CHECK(count == 2);
+    CHECK(log[0].gained && log[0].unit == 1 && log[0].generation == 4);
+    CHECK(log[1].gained && log[1].unit == 3 && log[1].generation == 5);
+
+    count = 0;
+    diff_sighted(std::span<const SightedUnit>{two}, std::span<const SightedUnit>{}, lost, gained);
+    CHECK(count == 2);
+    CHECK(!log[0].gained && log[0].unit == 1 && log[0].generation == 4);
+    CHECK(!log[1].gained && log[1].unit == 3 && log[1].generation == 5);
+
+    // Disjoint slots, then a shared slot between them, then a slot only the
+    // later list holds, then one only the earlier list holds.
+    const SightedUnit before[] = {{1, 1}, {4, 1}, {6, 1}};
+    const SightedUnit after[] = {{2, 1}, {4, 2}, {5, 1}};
+    count = 0;
+    diff_sighted(
+        std::span<const SightedUnit>{before}, std::span<const SightedUnit>{after}, lost, gained
+    );
+    const DiffCall interleaved[] = {
+        {false, 1, 1, 0},
+        {true, 2, 1, 0},
+        {false, 4, 1, 0},
+        {true, 4, 2, 0},
+        {true, 5, 1, 0},
+        {false, 6, 1, 0},
+    };
+    CHECK(calls().size() == 6);
+    for (int index = 0; index < count; ++index) {
+        CHECK(log[index].gained == interleaved[index].gained);
+        CHECK(log[index].unit == interleaved[index].unit);
+        CHECK(log[index].generation == interleaved[index].generation);
+    }
+
+    // The same slot with a new generation is lost, then gained.
+    const SightedUnit old_slot[] = {{2, 1}};
+    const SightedUnit new_slot[] = {{2, 2}};
+    count = 0;
+    diff_sighted(
+        std::span<const SightedUnit>{old_slot}, std::span<const SightedUnit>{new_slot}, lost, gained
+    );
+    CHECK(count == 2);
+    CHECK(!log[0].gained && log[0].unit == 2 && log[0].generation == 1);
+    CHECK(log[1].gained && log[1].unit == 2 && log[1].generation == 2);
+
+    count = 0;
+    diff_sighted(
+        std::span<const SightedUnit>{two}, std::span<const SightedUnit>{two}, lost, gained
+    );
+    CHECK(count == 0);
+
+    // An entry with a field past the slot and generation: the template reads
+    // those two, and the callable still sees the rest. A changed extra field
+    // on a matching slot is not a change.
+    struct Marked {
+        uint16_t unit{};
+        uint32_t generation{};
+        uint16_t mark{};
+    };
+
+    const Marked marked_before[] = {{2, 1, 9}, {4, 3, 8}};
+    const Marked marked_after[] = {{2, 1, 7}, {4, 4, 6}};
+    count = 0;
+    diff_sighted(
+        std::span<const Marked>{marked_before},
+        std::span<const Marked>{marked_after},
+        [&](const Marked& entry) { note_diff(log, count, false, entry, entry.mark); },
+        [&](const Marked& entry) { note_diff(log, count, true, entry, entry.mark); }
+    );
+    CHECK(count == 2);
+    CHECK(!log[0].gained && log[0].unit == 4 && log[0].generation == 3 && log[0].mark == 8);
+    CHECK(log[1].gained && log[1].unit == 4 && log[1].generation == 4 && log[1].mark == 6);
+}
+
 void test_expose_cloaker() {
     Unit unit{};
     unit.flags = OA_UNIT_FLAG_LIVE | cloak_ordered;
@@ -328,11 +628,16 @@ int main() {
     test_reach_is_exclusive();
     test_own_and_empty_units_are_skipped();
     test_jammers();
+    test_stamp_picture_grid();
+    test_jam_picture_and_seat_rule();
+    test_created_picture_bits();
     test_shared_radar();
     test_sightings_cadence();
     test_sightings_lists();
+    test_pad_list();
     test_sighted_within();
     test_expose_cloaker();
+    test_diff_sighted();
     test_finished_unit();
     if (failures)
         std::fprintf(stderr, "%d detection checks failed\n", failures);

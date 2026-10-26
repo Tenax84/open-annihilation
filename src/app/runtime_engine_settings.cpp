@@ -1180,6 +1180,10 @@ settings::ExplosionFlash Runtime::explosion_flash() const noexcept {
                             : settings::ExplosionFlash::full;
 }
 
+settings::FogOfWar Runtime::fog_of_war() const noexcept {
+    return engine_settings_ ? engine_settings_->current.fog_of_war : settings::FogOfWar::smooth;
+}
+
 bool Runtime::smooth_motion() const noexcept {
     return !engine_settings_ || engine_settings_->current.smooth_motion;
 }
@@ -1206,6 +1210,9 @@ void Runtime::apply_engine_settings(const settings::EngineSettings& chosen) {
     auto& state = engine_settings_state();
     const settings::EngineSettings before = state.current;
     state.current = chosen;
+    if (before.allow_full_3d != chosen.allow_full_3d ||
+        before.unlocked_camera != chosen.unlocked_camera)
+        apply_live_camera_settings(chosen.allow_full_3d, chosen.unlocked_camera);
     // Turning the wheel zoom off brings the battlefield back to its own scale.
     if (before.wheel_zoom && !chosen.wheel_zoom && match_)
         EngineSettingsState::ease_zoom_about_centre(*this, kDefaultBattlefieldZoom);
@@ -1259,8 +1266,11 @@ void Runtime::apply_engine_settings(const settings::EngineSettings& chosen) {
         show_frame_stats(chosen.frame_stats);
     // Off applies at once; so do Basic and Full, but in a shared game or a
     // replay, which keeps the tier it began with until it ends.
-    if (chosen.hardware_acceleration != before.hardware_acceleration)
+    if (chosen.hardware_acceleration != before.hardware_acceleration) {
         update_render_tier();
+        if (!full_presentation() && !options_.headless_check)
+            reset_live_renderer();
+    }
     apply_vertical_sync();
     // Menu scaling applies at once to a screen drawn as one frame, and to a
     // match drawn at a screen size and scaled to the screen: whole steps
@@ -1367,7 +1377,15 @@ void Runtime::load_profile_layers() {
     state.profile_source = folder_profile_source(
         options_.game_folders.empty() ? std::vector<fs::path>{options_.game_dir}
                                       : options_.game_folders,
-        ModChoice{{}, options_.mod_file, options_.accept_unimplemented_hacks, &preference_values_}
+        // The layered mod folder, so --mod-dir and a folder chosen in
+        // Settings are read again. An empty folder still uses the game
+        // install, which is what a run without a mod does.
+        ModChoice{
+            options_.layered_mod_folder,
+            options_.mod_file,
+            options_.accept_unimplemented_hacks,
+            &preference_values_
+        }
     );
     if (!state.profile_source)
         return;
@@ -1720,7 +1738,7 @@ settings::Dialog& Runtime::open_engine_settings_dialog(settings::DialogKind kind
         }
         settings::set_registered_pages(dialog, pages, preference_values_);
     }
-    // On macOS the five switches show what the system reports now, not the
+    // On macOS the six switches show what the system reports now, not the
     // stored preference. A start does not change an opener; only a switch
     // that moves, at OK, does.
     if (const std::optional<oa::platform::file_types::OpenerReport> report =
@@ -1760,7 +1778,7 @@ std::string kept_opener_hint_for(
     return settings::kept_opener_hint(dotted);
 }
 
-/// Sets the five switches from what the system reports, where a switch is the
+/// Sets the six switches from what the system reports, where a switch is the
 /// default opener. A question that fails leaves that switch as the dialog
 /// already shows it and is logged. The hint under File Type Registration
 /// names a type this copy still opens that OK asked off, and clears when the

@@ -3,6 +3,7 @@
 
 // Runtime construction, main loop and screen loading.
 #include "oa/app/runtime.hpp"
+#include "renderer_effect_events.hpp"
 #include "oa/app/view_rules.hpp"
 #include "oa/data/defs/layout.hpp"
 #include "map_picture_state.hpp"
@@ -33,6 +34,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -236,6 +238,8 @@ void Runtime::finish_screen_change(std::string_view name) {
 void Runtime::note_shown_frame() {
     note_launch_frame();
     finish_screen_change(screen_label(screen_));
+    if (screen_ == Screen::main_menu && !mutator_crash_offered_)
+        offer_mutator_crash_question();
     if (screen_ == Screen::main_menu && !main_menu_phase_logged()) {
         main_menu_phase_logged() = true;
         oa::platform::log_files::note_timing("main menu first frame");
@@ -302,12 +306,20 @@ Runtime::Runtime(
     uint32_t phase_began = oa::platform::tick_ms();
     load_preference_file();
     mark_phase("preferences", phase_began);
+    // Beside the preferences file, including one --preferences-file names.
+    // A leftover is kept in memory and the file is deleted, so the next
+    // start does not ask again.
+    open_mutator_sentinel();
     // The player's own folder, and the one-time move of the saved games into
     // it, before the frontend's preferences read the Image Output Directory
     // that defaults to it.
     phase_began = oa::platform::tick_ms();
     start_user_folder();
     mark_phase("user folder", phase_began);
+    // --mutator is resolved once the player's folder is known. A value that
+    // does not name an installed mutator, or an option it cannot take, ends
+    // the run here.
+    take_command_line_mutators();
     // Which copied files differ, for the main menu's notice and for the
     // Library and Settings. A named --game-dir still fills it; the notice
     // stays closed then. A bundle this start's setup already copied and
@@ -387,6 +399,11 @@ Runtime::Runtime(
             prepare_registries_check();
         if (options_.check_map_browser)
             prepare_map_browser_check();
+        if (options_.check_mutator_picker || options_.check_brain_picker ||
+            options_.check_brain_seat_buttons || options_.check_brain_campaign ||
+            options_.check_mutator_button || options_.check_mutator_room ||
+            options_.check_mutator_prompts)
+            prepare_mutator_picker_check();
         if (options_.check_map_pack_lists)
             prepare_map_pack_lists_check();
         if (options_.check_first_run)
@@ -450,8 +467,29 @@ void Runtime::run_progress(std::string_view line, const std::function<void(LongW
 }
 
 int Runtime::run() {
+    // Deletes the crash record when this call returns with no exception in
+    // flight. A fatal error that unwinds through run() leaves the file, so
+    // the next start can ask. This is not Runtime's destructor, which must
+    // not delete the file: a destructor would run on that unwind too.
+    struct MutatorSentinelOnReturn {
+        Runtime& runtime;
+        int depth = std::uncaught_exceptions();
+
+        ~MutatorSentinelOnReturn() {
+            if (std::uncaught_exceptions() == depth)
+                runtime.clear_mutator_sentinel();
+        }
+    };
+
+    [[maybe_unused]] MutatorSentinelOnReturn mutator_sentinel_on_return{*this};
+
     // The menu draws this window from here. A launch pump must not clear it.
     release_launch_window();
+    // The screens before the menu, the setup among them, may have dropped
+    // the window's events, so the window's state settles the pointer's hold
+    // here: a window that opened in full screen holds the pointer from the
+    // menu on, as one Alt+Enter switched to full screen does.
+    keep_pointer_on_screen(sdl_.window);
     take_pending_content();
     log_first_run_gate(false);
     int exit_code = 0;
@@ -481,15 +519,17 @@ int Runtime::run() {
                 return 0;
             }
             if (options_.check_director_render) {
-                check_director_render();
+                const int status = check_director_render();
                 flush_preferences();
-                return 0;
+                return status;
             }
             if (options_.check_interpolation) {
                 check_interpolation();
                 flush_preferences();
                 return 0;
             }
+            if (options_.check_live_renderer)
+                return check_live_renderer();
             if (options_.check_unit_playout) {
                 check_unit_playout();
                 flush_preferences();
@@ -519,6 +559,11 @@ int Runtime::run() {
                 run_headless_campaign(options_.match_ticks.value_or(kDefaultCampaignTicks));
             flush_preferences();
             return result;
+        }
+        if (!options_.brain_match.empty()) {
+            const int status = run_headless_brain_match(options_.match_ticks.value_or(0));
+            flush_preferences();
+            return status;
         }
         if (options_.match_ticks) {
             if (options_.frame_rate)
@@ -607,6 +652,51 @@ int Runtime::run() {
             flush_preferences();
             return 0;
         }
+        if (options_.check_mutator_picker) {
+            check_mutator_picker();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_brain_picker) {
+            check_brain_picker();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_brain_seat_buttons) {
+            check_brain_seat_buttons();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_brain_campaign) {
+            check_brain_campaign();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_mutator_prompts) {
+            check_mutator_prompts();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_saved_brains) {
+            check_saved_brains();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_mutator_button) {
+            check_mutator_button();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_mutator_room) {
+            check_mutator_room();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_brain_room) {
+            check_brain_room();
+            flush_preferences();
+            return 0;
+        }
         if (options_.check_mod_map_settings) {
             check_mod_map_settings();
             flush_preferences();
@@ -662,6 +752,11 @@ int Runtime::run() {
             flush_preferences();
             return 0;
         }
+        if (options_.check_library_update_question) {
+            check_library_update_question();
+            flush_preferences();
+            return 0;
+        }
         if (options_.check_renderer_ladder) {
             const int status = check_renderer_ladder();
             flush_preferences();
@@ -704,6 +799,36 @@ int Runtime::run() {
         }
         if (options_.check_unit_speech) {
             check_unit_speech();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_mutator_layer) {
+            check_mutator_layer();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_mutator_verdicts) {
+            check_mutator_verdicts();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_mutator_dry_run) {
+            check_mutator_dry_run();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_replay_loadout) {
+            check_replay_loadout();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_side_data_per_match) {
+            check_side_data_per_match();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_gadget_art_per_match) {
+            check_gadget_art_per_match();
             flush_preferences();
             return 0;
         }
@@ -804,6 +929,11 @@ int Runtime::run() {
         }
         if (options_.check_wreck_pick) {
             check_wreck_pick();
+            flush_preferences();
+            return 0;
+        }
+        if (options_.check_click_snap) {
+            check_click_snap();
             flush_preferences();
             return 0;
         }
@@ -981,9 +1111,10 @@ void Runtime::dispatch_event(SDL_Event& event, bool& running) {
         event.type == SDL_EVENT_RENDER_DEVICE_LOST)
         covered_shown_.reset();
     // A hardware keyboard's Cmd alternates stand for their keys while touch
-    // controls are on; the app lifecycle's events, which the watch acted on,
-    // reach no screen; the touch controls take fingers and the presses on
-    // their controls, and the gamepads their own events.
+    // controls are on. On desktop Macs, Cmd+P also supplies Pause in a match.
+    // The app lifecycle's events, which the watch acted on, reach no screen;
+    // the touch controls take fingers and the presses on their controls,
+    // and the gamepads their own events.
     remap_command_key(event);
     // The keypad's Enter is Return to everything after this, as it is in
     // 3.1c: it opens and sends the chat line and answers dialogs.
@@ -992,9 +1123,10 @@ void Runtime::dispatch_event(SDL_Event& event, bool& running) {
     // last one answered a panel with; the press records its own again.
     if (event.type == SDL_EVENT_KEY_DOWN)
         answered_key_ = 0;
-    // Shift let go after a building was queued ends build mode before any
-    // event that follows acts: a click just after the release is no build.
-    end_build_on_shift_release();
+    // Shift let go after an order or a building was queued with it returns
+    // to the default order before any event that follows acts: a click just
+    // after the release gives the default order.
+    end_command_on_shift_release();
     if (take_lifecycle_event(event))
         return;
     if (take_touch_event(event, running)) {
@@ -1054,9 +1186,9 @@ void Runtime::idle_tick() {
     // timers, camera and layout.
     tick_pad();
     tick_touch();
-    // QUEUE let go on the touch controls or the pad ends build mode as
-    // Shift does.
-    end_build_on_shift_release();
+    // QUEUE let go on the touch controls or the pad returns to the default
+    // order as Shift does.
+    end_command_on_shift_release();
     // Each game frame opens a profile window, and the pump, the
     // ticks and the drawing are charged as they end.
     const bool profiled = screen_ == Screen::match && match_;
@@ -1135,6 +1267,8 @@ void Runtime::move_match_camera() {
     if (screen_ != Screen::match || match_paused_)
         return;
     pan_match_camera();
+    if (live_renderer_active())
+        return;
     if (match_)
         follow_match_camera_unit();
     if (match_tracking_) {
@@ -1262,6 +1396,7 @@ void Runtime::advance_match_clock(uint32_t now_ms) {
             const uint32_t tick_before = match_timing_.tick;
             // A step the extension fails to run is reported as a simulation
             // error, and the frame's remaining steps are dropped.
+            const auto effect_capture = capture_match_effect_events();
             HookError step_error;
             const bool stepped =
                 call_hook<&Extension::simulation_step>(extension_, step_error, *this);
@@ -1300,10 +1435,14 @@ void Runtime::advance_match_clock(uint32_t now_ms) {
             // players this machine does not simulate reads where they are.
             // It throws nothing, so it costs the match no step.
             observe_unit_playout();
+            observe_match_effect_tick();
         }
     } catch (const std::exception& error) {
         report_match_tick_error(error.what());
     }
+    // A computer seat's chat is posted and sent here, after the ticks, so
+    // the log and the network do not run inside a tick.
+    flush_seat_chat();
     if (match_timing_.pending_steps != 0)
         oa::sim::messages::expire_oldest_message(match_->state().game);
     // The map's timed units are placed once a frame, as they come due.
@@ -1426,6 +1565,12 @@ void Runtime::move_frontend_focus(oa::ui::gui_input::FocusDirection direction) {
 
 void Runtime::load(Screen screen) {
     begin_screen_change(screen_label(screen));
+    // Leaving to the main menu ends both setups' chosen mutators, before a
+    // save waiting to load can start a campaign mission with them.
+    if (screen == Screen::main_menu) {
+        skirmish_mutators_.clear();
+        campaign_mutators_.clear();
+    }
     if (screen == Screen::main_menu && !pending_save_path_.empty()) {
         const fs::path pending = path_from_utf8(pending_save_path_);
         pending_save_path_.clear();
@@ -1442,6 +1587,35 @@ void Runtime::load(Screen screen) {
     // Screens over or after the match read the options the match changed.
     if (screen_ == Screen::match && match_)
         take_match_options(match_->state().game);
+    // SKIRMISH keeps its mutators across the map picker and a refused start,
+    // whether START refused it or the loading match did, and drops them when
+    // it is entered from anywhere else. NEWGAME and Any
+    // Mission drop theirs when Single Player or the main menu opens them.
+    if (screen == Screen::skirmish && screen_ != Screen::map_selection &&
+        screen_ != Screen::skirmish && screen_ != Screen::loading) {
+        skirmish_mutators_.clear();
+        const oa::data::brain_library::Setup skirmish_setup =
+            oa::data::brain_library::Setup::skirmish;
+        if (const std::optional<oa::data::brain_library::Seats> remembered =
+                remembered_brain_seats(skirmish_setup))
+            setup_brain_seats(skirmish_setup) = *remembered;
+        else
+            setup_brain_seats(skirmish_setup) = {};
+        reload_installed_brains();
+    }
+    if ((screen == Screen::new_campaign || screen == Screen::any_mission) &&
+        (screen_ == Screen::single_player || screen_ == Screen::main_menu)) {
+        campaign_mutators_.clear();
+        if (mutators_held_for_next_match())
+            cancel_loadout_once();
+        const oa::data::brain_library::Setup campaign_setup =
+            oa::data::brain_library::Setup::campaign;
+        if (const std::optional<oa::data::brain_library::Seats> remembered =
+                remembered_brain_seats(campaign_setup))
+            setup_brain_seats(campaign_setup) = *remembered;
+        else
+            setup_brain_seats(campaign_setup) = {};
+    }
     if (const auto* previous = screen_find(&screens_, screen_id(screen_));
         previous != nullptr && previous->leave != nullptr) {
         auto context = screen_context();

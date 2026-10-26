@@ -62,21 +62,27 @@ std::vector<LayoutPart> prompt_layout(const Prompt& prompt, const DialogFonts* f
     return parts;
 }
 
-PromptAnswer prompt_pointer_move(Prompt& prompt, int32_t x, int32_t y, int32_t height) {
-    return kit::question_pointer_move(prompt, {x, y}, height);
+PromptAnswer prompt_pointer_move(
+    Prompt& prompt, int32_t x, int32_t y, int32_t height, const DialogFonts* fonts
+) {
+    return kit::question_pointer_move(prompt, {x, y}, height, fonts);
 }
 
-PromptAnswer prompt_pointer_down(Prompt& prompt, int32_t x, int32_t y, int32_t height) {
-    return kit::question_pointer_down(prompt, {x, y}, height);
+PromptAnswer prompt_pointer_down(
+    Prompt& prompt, int32_t x, int32_t y, int32_t height, const DialogFonts* fonts
+) {
+    return kit::question_pointer_down(prompt, {x, y}, height, fonts);
+}
+
+PromptAnswer prompt_finger_down(
+    Prompt& prompt, int32_t x, int32_t y, int32_t height, int32_t reach, const DialogFonts* fonts
+) {
+    return kit::question_finger_down(prompt, {x, y}, height, reach, fonts);
 }
 
 PromptAnswer
-prompt_finger_down(Prompt& prompt, int32_t x, int32_t y, int32_t height, int32_t reach) {
-    return kit::question_finger_down(prompt, {x, y}, height, reach);
-}
-
-PromptAnswer prompt_pointer_up(Prompt& prompt, int32_t x, int32_t y, int32_t height) {
-    return kit::question_pointer_up(prompt, {x, y}, height);
+prompt_pointer_up(Prompt& prompt, int32_t x, int32_t y, int32_t height, const DialogFonts* fonts) {
+    return kit::question_pointer_up(prompt, {x, y}, height, fonts);
 }
 
 PromptAnswer prompt_key(Prompt& prompt, DialogKey key) {

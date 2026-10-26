@@ -6,6 +6,7 @@
 #include "oa/present/surface.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -159,6 +160,30 @@ void test_composite() {
     CHECK(shifted.pixels[1] == 3);
 }
 
+// A source reaching past the target's right and bottom edges draws only
+// the part inside it: none past its rows, none wrapped into the next row.
+void test_composite_past_the_target() {
+    constexpr uint8_t room_fill = 0xEE;
+    constexpr std::size_t size = 6 * 4;
+    constexpr std::size_t room = 64;
+    const auto source = depth_sprite(4, 4, 7, 10);
+    auto target = depth_sprite(6, 4, 3, 0);
+    target.pixels.resize(size + room, room_fill);
+    target.depth.resize(size + room, 0);
+    target.sprite.data = target.pixels.data();
+    target.sprite.aux = target.depth.data();
+    composite_depth_sprite(source.sprite, target.sprite, 4, 2, 0);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 6; ++x) {
+            const bool inside = x >= 4 && y >= 2;
+            const auto at = static_cast<std::size_t>(y * 6 + x);
+            CHECK(target.pixels[at] == (inside ? 7 : 3));
+            CHECK(target.depth[at] == (inside ? 10 : 0));
+        }
+    for (std::size_t i = size; i < size + room; ++i)
+        CHECK(target.pixels[i] == room_fill && target.depth[i] == 0);
+}
+
 void test_depth_masks() {
     std::array<uint8_t, 256> blue{};
     for (int i = 0; i < 256; ++i)
@@ -209,6 +234,7 @@ int main() {
     test_line_stretch_and_shrink();
     test_texture_rows();
     test_composite();
+    test_composite_past_the_target();
     test_depth_masks();
     test_step_all_cursors();
     if (failures != 0) {

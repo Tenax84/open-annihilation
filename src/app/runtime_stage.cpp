@@ -9,11 +9,17 @@
 #include "oa/app/runtime.hpp"
 #include "stage_state.hpp"
 
+#include "oa/app/frame_coordinates.hpp"
+
 #include "oa/core/unit.h"
+#include "oa/core/world.h"
+#include "oa/sim/gameplay_input/order_cursor.hpp"
 #include "oa/sim/ground_orders/goals.hpp"
 #include "oa/sim/match_runtime.hpp"
 #include "oa/sim/unit_spawn/spawn.hpp"
 #include "oa/sim/unit_spawn/spawn_runtime.hpp"
+
+#include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <array>
@@ -44,6 +50,26 @@ constexpr std::array<FacingName, 4> kFacingNames{
      {"east", oa::sim::unit_spawn::facing_east},
      {"north", oa::sim::unit_spawn::facing_north},
      {"west", oa::sim::unit_spawn::facing_west}}
+};
+
+/// A command an arm line names, and the command it arms.
+struct ArmedCommandName {
+    std::string_view name{};
+    MatchCommand command{};
+};
+
+/// The commands an arm line may name.
+constexpr std::array<ArmedCommandName, 10> kArmedCommands{
+    {{"none", MatchCommand::none},
+     {"move", MatchCommand::move},
+     {"attack", MatchCommand::attack},
+     {"patrol", MatchCommand::patrol},
+     {"guard", MatchCommand::guard},
+     {"repair", MatchCommand::repair},
+     {"reclaim", MatchCommand::reclaim},
+     {"capture", MatchCommand::capture},
+     {"load", MatchCommand::load},
+     {"unload", MatchCommand::unload}}
 };
 
 /// Returns a map pixel as a 16.16 world point on the ground.
@@ -154,6 +180,32 @@ bool Runtime::run_stage_direction(
                 units.push_back(member.unit);
         }
         return units;
+    };
+    // A pointer event at a point of the match canvas, sent as the window
+    // sends the player's.
+    const auto send_stage_pointer = [this](SDL_EventType type, uint8_t button, float x, float y) {
+        float window_x = x;
+        float window_y = y;
+        if (sdl_.renderer != nullptr && !frame_to_window(sdl_.renderer, x, y, &window_x, &window_y))
+            throw std::runtime_error(
+                std::string("the pointer could not reach the window: ") + SDL_GetError()
+            );
+        SDL_Event event{};
+        event.type = type;
+        if (type == SDL_EVENT_MOUSE_MOTION) {
+            event.motion.windowID = sdl_.window != nullptr ? SDL_GetWindowID(sdl_.window) : 0;
+            event.motion.x = window_x;
+            event.motion.y = window_y;
+        } else {
+            event.button.windowID = sdl_.window != nullptr ? SDL_GetWindowID(sdl_.window) : 0;
+            event.button.button = button;
+            event.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            event.button.clicks = 1;
+            event.button.x = window_x;
+            event.button.y = window_y;
+        }
+        bool running = true;
+        dispatch_event(event, running);
     };
     if (action == "group") {
         std::string name;
@@ -316,6 +368,122 @@ bool Runtime::run_stage_direction(
             ++ordered;
         }
         std::printf("stage: guard %s: %zu units on %s\n", group.c_str(), ordered, guarded.c_str());
+        return true;
+    }
+    if (action == "health") {
+        std::string group;
+        int32_t percent = -1;
+        if (!(line >> group >> percent) || percent < 1 || percent > 100)
+            throw std::runtime_error(where + ": health takes GROUP PERCENT, from 1 to 100");
+        // Each live unit left with that share of its type's health, rounded
+        // down, but never below 1.
+        std::size_t changed = 0;
+        auto& world = match_->state();
+        for (const auto unit : live_members(group)) {
+            auto& record = match_->world().slots[unit].record;
+            const auto* def = oa::world_unit_def_of(&world, &record);
+            if (def == nullptr)
+                continue;
+            const auto health = static_cast<int64_t>(def->max_damage) * percent / int64_t{100};
+            record.health = static_cast<int16_t>(std::max<int64_t>(health, 1));
+            ++changed;
+        }
+        std::printf("stage: health %s: %zu units at %d%%\n", group.c_str(), changed, percent);
+        return true;
+    }
+    if (action == "select") {
+        std::string group;
+        if (!(line >> group))
+            throw std::runtime_error(where + ": select takes GROUP");
+        // The local player's selection becomes the group's live units of the
+        // local player, as a box dragged round them makes it.
+        clear_local_selection();
+        std::size_t selected = 0;
+        for (const auto unit : live_members(group))
+            if (match_->world().slots[unit].record.owner_index == match_local_player_) {
+                adopt_selection(unit);
+                ++selected;
+            }
+        apply_match_hud_for_selection();
+        std::printf("stage: select %s: %zu units\n", group.c_str(), selected);
+        return true;
+    }
+    if (action == "interface") {
+        std::string kind;
+        if (!(line >> kind) || (kind != "left" && kind != "right"))
+            throw std::runtime_error(where + ": interface takes left or right");
+        match_->state().game.interface_type = kind == "left"
+                                                  ? oa::sim::gameplay_input::interface_left_click
+                                                  : oa::sim::gameplay_input::interface_right_click;
+        std::printf("stage: interface %s\n", kind.c_str());
+        return true;
+    }
+    if (action == "arm") {
+        std::string name;
+        line >> name;
+        const auto armed = std::find_if(
+            kArmedCommands.begin(), kArmedCommands.end(), [&name](const ArmedCommandName& entry) {
+                return entry.name == name;
+            }
+        );
+        if (armed == kArmedCommands.end())
+            throw std::runtime_error(
+                where + ": arm takes none, move, attack, patrol, guard, repair, reclaim, " +
+                "capture, load or unload"
+            );
+        // The command as its order button arms it; none goes back to the
+        // default order.
+        reset_match_command();
+        match_command_ = armed->command;
+        std::printf("stage: arm %s\n", name.c_str());
+        return true;
+    }
+    if (action == "hover") {
+        std::string group;
+        if (!(line >> group))
+            throw std::runtime_error(where + ": hover takes GROUP");
+        const auto members = live_members(group);
+        if (members.empty())
+            throw std::runtime_error(where + ": the group " + group + " has no live unit");
+        // The view centred on the group's first live unit and the pointer
+        // moved onto it, as the player's pointer moves.
+        const auto unit = members.front();
+        const auto& position = match_->world().slots[unit].unit->position;
+        set_camera_position(
+            static_cast<int32_t>(position[0] >> kStageFixedShift) - visible_map_width() / 2,
+            static_cast<int32_t>(position[2] >> kStageFixedShift) - visible_map_height() / 2,
+            0
+        );
+        render_match_surface();
+        const auto point =
+            project_match_point(live_viewport(match_camera_x_, match_camera_z_), position);
+        send_stage_pointer(
+            SDL_EVENT_MOUSE_MOTION, 0, static_cast<float>(point.x), static_cast<float>(point.y)
+        );
+        const auto cursor = pick_match_cursor();
+        const std::string cursor_name = cursor < kCursorNames.size()
+                                            ? std::string(kCursorNames[cursor])
+                                            : std::to_string(cursor);
+        std::printf(
+            "stage: hover %s: unit %u under the pointer, cursor %s\n",
+            group.c_str(),
+            static_cast<unsigned>(hovered_match_unit_),
+            cursor_name.c_str()
+        );
+        return true;
+    }
+    if (action == "press") {
+        std::string button;
+        if (!(line >> button) || (button != "left" && button != "right"))
+            throw std::runtime_error(where + ": press takes left or right");
+        // The button pressed and let go where the pointer is.
+        const uint8_t index = button == "left" ? SDL_BUTTON_LEFT : SDL_BUTTON_RIGHT;
+        status_.clear();
+        for (const auto type : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP})
+            send_stage_pointer(type, index, pointer_x_, pointer_y_);
+        std::printf(
+            "stage: press %s: %s\n", button.c_str(), status_.empty() ? "-" : status_.c_str()
+        );
         return true;
     }
     if (action == "activate" || action == "deactivate") {

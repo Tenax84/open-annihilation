@@ -349,6 +349,21 @@ void keep_pointer_on_screen(SDL_Window* window);
 /// @param window the game's window; null does nothing
 void release_pointer(SDL_Window* window);
 
+/// Drops every event waiting but a close, which is put back for whatever
+/// answers it next, as a screen that answers none of them does: the
+/// progress dialog while the game's archives load at start and while other
+/// work runs.
+///
+/// A dropped event that may change whether the pointer is kept on the
+/// game's window (changes_pointer_bounds) still has its say: the window's
+/// state then settles the hold (keep_pointer_on_screen). A window that
+/// opened in full screen, or took the focus, while its events were dropped
+/// holds the pointer as one Alt+Enter switched to full screen does.
+///
+/// @param window the game's window; null leaves the pointer as it is
+/// @return true when the player asked to close the window
+bool drop_window_events(SDL_Window* window);
+
 /// How far each edge of a window lies inside a display, in the desktop's
 /// coordinates: above 0 inside the display, 0 on the display's own edge, and
 /// below 0 past it, where the pointer cannot reach that edge of the window.
@@ -401,6 +416,41 @@ enum class PointerPlace : uint8_t {
 /// @return where the point lies
 [[nodiscard]] PointerPlace
 pointer_place(float x, float y, const SDL_Rect& window, const SDL_Rect& display) noexcept;
+
+/// Returns the point of a full-screen window the pointer touches, for the
+/// screen's edges.
+///
+/// In full screen with the input focus (keeps_pointer_on_screen) the window
+/// is the game's screen, and the pointer against one of its edges scrolls
+/// toward it, as against the screen's edge in 3.1c. A pointer on the
+/// window's display but past one of the window's edges touches that edge:
+/// it is taken on the window's last row or column on that side, and in a
+/// corner on both. macOS places a full-screen window below the camera
+/// housing of a MacBook's built-in display and leaves the strip beside the
+/// housing, above the window, to the menu bar. A pointer on the window is
+/// where it is.
+///
+/// @param window_flags the window's flags, as SDL_GetWindowFlags reports them
+/// @param window the window's contents, in the desktop's coordinates
+/// @param display the bounds of the window's display, in the desktop's coordinates
+/// @param x the pointer's column, in the desktop's coordinates
+/// @param y the pointer's row, in the desktop's coordinates
+/// @return the point, in the window's coordinates; none outside full screen,
+///         without the input focus, for an empty window, or for a pointer
+///         off the window's display
+[[nodiscard]] std::optional<SDL_FPoint> full_screen_pointer(
+    SDL_WindowFlags window_flags, const SDL_Rect& window, const SDL_Rect& display, float x, float y
+) noexcept;
+
+/// Reads the point of the game's window the pointer touches now
+/// (full_screen_pointer), from the pointer's place on the desktop, the
+/// window's place and size and the bounds of its display.
+///
+/// @param window the game's window; null gives none
+/// @return the point, in the window's coordinates; none as
+///         full_screen_pointer says, or when SDL reports no display, place
+///         or size for the window
+[[nodiscard]] std::optional<SDL_FPoint> read_full_screen_pointer(SDL_Window* window);
 
 /// What `--trace-input` writes of the game's window: where it lies on its
 /// display, its state, how the pointer is held, and where the pointer is.

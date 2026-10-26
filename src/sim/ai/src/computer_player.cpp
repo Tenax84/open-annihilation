@@ -8,8 +8,11 @@
 #include "oa/sim/unit_movement/movement.hpp"
 #include "oa/sim/simulation_state.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
+#include <string_view>
 
 namespace oa::sim::ai {
 namespace {
@@ -583,12 +586,28 @@ void run_structures(
     }
 }
 
+/// Tells whether a build list's entry is a round for its builder's first weapon to
+/// stockpile: the type's unit name holds MAKENUKE or MAKEANTI, as the build queue tells it.
+///
+/// @param type the entry's type; null for one outside the table
+/// @return true for a round
+bool stockpile_round(const ComputerType* type) noexcept {
+    if (type == nullptr)
+        return false;
+    const auto& name = type->unit_name;
+    const std::string_view text(name, std::find(std::begin(name), std::end(name), '\0'));
+    return text.find("MAKENUKE") != std::string_view::npos ||
+           text.find("MAKEANTI") != std::string_view::npos;
+}
+
 /// Runs the builders' task.
 ///
 /// Each builder places a weighted pick near the base; idle ones patrol home.
 /// Capturing builders (commanders) build only while the player has fewer than five
 /// build-capable units (ai.builder-withhold-threshold), and once idle circle the base
-/// from five. Runs again in 90 ticks.
+/// from five. A pick that is a round for the builder's weapon is not placed: it is
+/// queued as the structures task queues a factory's pick, and the builder stockpiles
+/// it. Runs again in 90 ticks.
 ///
 /// @param state computer players and their type table
 /// @param host squads, orders, placement queries, random stream and world
@@ -619,6 +638,12 @@ void run_construction(
         const auto pick = computer_pick_build(state, host, ai.player, slot);
         if (pick == 0)
             continue;
+        // A round is no unit to place: its type names a cost and little else, and the
+        // queue stockpiles it for the builder's first weapon.
+        if (stockpile_round(computer_type(state, pick))) {
+            (void)host.order_factory(host.context, slot, pick, 1);
+            continue;
+        }
         oa::FixedVec3 site{};
         bool placed = computer_place_build(state, host, ai, unit->position, pick, &site);
         if (captures) {
@@ -847,11 +872,16 @@ void computer_player_tick_orders(
     auto& ai = state->players[player];
     if (--ai.sort_countdown < 1) {
         ai.sort_countdown = static_cast<int32_t>(sort_interval_ticks);
+        if (const auto note = host.note_section)
+            note(host.context, player, section_sort);
         sort_squads(state, host, ai);
     }
     for (auto& task : ai.tasks) {
-        if (task.kind != TaskKind::none && task.next_tick <= tick_of(host))
+        if (task.kind != TaskKind::none && task.next_tick <= tick_of(host)) {
+            if (const auto note = host.note_section; note != nullptr && task.kind != TaskKind::idle)
+                note(host.context, player, static_cast<uint8_t>(static_cast<uint32_t>(task.squad)));
             run_task(state, host, ai, task);
+        }
     }
 }
 

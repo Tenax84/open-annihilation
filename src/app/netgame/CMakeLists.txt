@@ -25,8 +25,8 @@ target_include_directories(oa-app-netgame-options PUBLIC "${CMAKE_CURRENT_SOURCE
 target_link_libraries(oa-app-netgame-options PUBLIC oa::app::headers oa-app-netgame-launch oa-netgame-frontend
   oa-app-command-line oa-ui-frontend-renderer oa-ui-frontend-state oa-sim-scenario oa-ui-screen-registry
   oa-core-types
-  PRIVATE oa-netgame oa-options oa-formats-oamod oa-base-text oa-platform-shims oa-base-threads
-  oa-platform-file-types oa-data-content-bundles)
+  PRIVATE oa-netgame oa-options oa-formats-oamod oa-formats-oamut oa-base-text oa-platform-shims oa-base-threads
+  oa-platform-file-types oa-data-content-bundles oa-data-mutators)
 
 # The network rules a mod profile gives network play, which their test
 # reads without a running app.
@@ -113,7 +113,8 @@ if(BUILD_TESTING)
   target_link_libraries(oa-netgame-launch-switches-test PRIVATE oa-app-netgame-launch oa-options)
   add_test(NAME net-launch-switches COMMAND oa-netgame-launch-switches-test)
   add_executable(oa-netgame-options-test tests/options_test.cpp)
-  target_link_libraries(oa-netgame-options-test PRIVATE oa-app-netgame-options oa-app-game-options oa-netgame oa-options)
+  target_link_libraries(oa-netgame-options-test PRIVATE oa-app-netgame-options oa-app-game-options oa-netgame oa-options
+    oa-test-support)
   add_test(NAME netgame-game-options COMMAND oa-netgame-options-test)
   add_executable(oa-netgame-launch-file-test tests/launch_file_test.cpp)
   target_link_libraries(oa-netgame-launch-file-test PRIVATE oa-app-netgame-options oa-app-game-options
@@ -258,6 +259,54 @@ if(BUILD_TESTING AND TARGET oa-game AND IS_DIRECTORY "${OA_GAME_DIR}")
   # with no reason and exit status 0.
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
+    # The host seats one computer on Steady Commander at firm. A seated brain
+    # replaces the order tick, so this brain places four frames late in the
+    # build window and then stops, and the engine's computer player takes the
+    # strike. The log names that seat once, and the loopback's own pass line.
+    add_test(NAME native-net-loopback-brain COMMAND ${Python3_EXECUTABLE}
+      "${PROJECT_SOURCE_DIR}/tools/check_native_net_brain.py"
+      --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+      --scratch-root "${oa_netgame_checks}")
+    set_tests_properties(native-net-loopback-brain PROPERTIES
+      TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+      SKIP_RETURN_CODE 77)
+    # With fixed starts and a computer player on each machine, both computer
+    # seats play a brain that prints every player's start. The machines seat
+    # the players in different slots, and both brains read the start the
+    # host dealt each player.
+    add_test(NAME native-net-loopback-brain-starts COMMAND ${Python3_EXECUTABLE}
+      "${PROJECT_SOURCE_DIR}/tools/check_native_net_brain_starts.py"
+      --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+      --scratch-root "${oa_netgame_checks}")
+    set_tests_properties(native-net-loopback-brain-starts PROPERTIES
+      TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+      SKIP_RETURN_CODE 77)
+    # The three computer checks above, with Classic in each computer seat.
+    add_test(NAME native-net-loopback-computer-classic COMMAND ${Python3_EXECUTABLE}
+      "${PROJECT_SOURCE_DIR}/tools/check_native_classic_swap.py"
+      --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+      --scratch-root "${oa_netgame_checks}"
+      --brain "${PROJECT_SOURCE_DIR}/brains/classic"
+      loopback-computer)
+    set_tests_properties(native-net-loopback-computer-classic PROPERTIES
+      TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
+    add_test(NAME native-net-loopback-computer-watcher-classic COMMAND ${Python3_EXECUTABLE}
+      "${PROJECT_SOURCE_DIR}/tools/check_native_classic_swap.py"
+      --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+      --scratch-root "${oa_netgame_checks}"
+      --brain "${PROJECT_SOURCE_DIR}/brains/classic"
+      loopback-watcher)
+    set_tests_properties(native-net-loopback-computer-watcher-classic PROPERTIES
+      TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
+    add_test(NAME native-net-loopback-each-ai-classic COMMAND ${Python3_EXECUTABLE}
+      "${PROJECT_SOURCE_DIR}/tools/check_native_classic_swap.py"
+      --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+      --scratch-root "${oa_netgame_checks}"
+      --brain "${PROJECT_SOURCE_DIR}/brains/classic"
+      loopback-each-ai)
+    set_tests_properties(native-net-loopback-each-ai-classic PROPERTIES
+      TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT}
+      PASS_REGULAR_EXPRESSION "recording played back")
     add_test(NAME native-host-not-found COMMAND ${Python3_EXECUTABLE}
       "${PROJECT_SOURCE_DIR}/tools/check_native_host_not_found.py"
       --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
@@ -272,6 +321,27 @@ if(BUILD_TESTING AND TARGET oa-game AND IS_DIRECTORY "${OA_GAME_DIR}")
       --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
       --scratch-root "${oa_netgame_checks}")
     set_tests_properties(native-net-options PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
+    # The battle room's mutator layer, on two programs: a joiner without the
+    # package holds START, and one who has it builds the same layer.
+    add_test(NAME native-net-room-mutators COMMAND ${Python3_EXECUTABLE}
+      "${PROJECT_SOURCE_DIR}/tools/check_native_room_mutators.py"
+      --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+      --scratch-root "${oa_netgame_checks}"
+      --source "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(native-net-room-mutators PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
+    # A loopback recording carries the played loadout, and playback applies it
+    # or refuses. ridge-art-a changes no units. ridge-tough rewrites the
+    # commanders and ridge-add-unit adds one; the loopback reads both over
+    # the mutators' layer. The driver installs the packages and writes their
+    # origin records.
+    add_test(NAME native-replay-mutators COMMAND ${Python3_EXECUTABLE}
+      "${PROJECT_SOURCE_DIR}/tools/check_native_replay_mutators.py"
+      --native $<TARGET_FILE:oa-game> --game-dir "${OA_GAME_DIR}"
+      --art "${PROJECT_SOURCE_DIR}/tests/data/mutators/packages/ridge-art-a"
+      --tough "${PROJECT_SOURCE_DIR}/tests/data/mutators/packages/ridge-tough"
+      --added "${PROJECT_SOURCE_DIR}/tests/data/mutators/packages/ridge-add-unit"
+      --scratch-root "${oa_netgame_checks}")
+    set_tests_properties(native-replay-mutators PROPERTIES TIMEOUT ${OA_NATIVE_CHECK_TIMEOUT})
     # A launch file, TA Forever's or this game's, opens the battle room on
     # the file's map and rules. A file the game cannot use, or a map or mod
     # it names that is not installed, ends before a window with the status

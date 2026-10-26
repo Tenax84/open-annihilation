@@ -153,7 +153,10 @@ From macOS or Linux, `tools/build_windows.sh` cross-compiles the tree for
 x86-64 Windows with mingw-w64, including static zlib and SDL3 (for 32-bit
 x86 with `OA_MINGW_TRIPLE=i686-w64-mingw32`, and for Windows XP as well with
 `--xp`), and `tools/test_windows.sh` builds it in a container and runs its
-tests under Wine. [docs/development/testing.md](docs/development/testing.md) covers the other
+tests under Wine. When the host build's `oa-tool` is `build/oa-tool`, the
+script passes it as `-DOA_HOST_OA_TOOL`, so the cross build packs Classic
+beside the game. An empty `OA_HOST_OA_TOOL` leaves Classic unpacked.
+[docs/development/testing.md](docs/development/testing.md) covers the other
 builds, what CI runs, and writing a new test.
 
 ## Run
@@ -335,5 +338,5 @@ your GitHub account, so that your commits are credited to you.
 ## Questions
 
 Ask in a GitHub issue on this repository, or on the Open Annihilation
-Discord server, <https://discord.gg/GWgWTQKuv>. Credits are in
+Discord server, <https://discord.gg/KyUExvCnQ>. Credits are in
 [CONTRIBUTORS.md](CONTRIBUTORS.md).

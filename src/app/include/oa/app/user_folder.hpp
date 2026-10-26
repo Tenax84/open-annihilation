@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The player's own folder, "Open Annihilation" in their Documents folder:
-// where it is, the folders it holds (Saves, Screenshots, Films and Recordings,
-// each with a folder for each mod, and Mods), the one-time moves of saved
-// games from where earlier versions kept them, beside the preferences file and
+// where it is, the folders it holds (Saves, Screenshots, Films, Recordings
+// and Cache, each of the first four with a folder for each mod, and Mods),
+// the one-time moves of saved games from where earlier versions kept them,
+// beside the preferences file and
 // loose in Saves, and of recordings from beside the preferences file, and the
 // main menu's notice of the saved games' moves; and the warning, in the same
 // look, that a mod's games cannot start until its files are in its folder.
@@ -48,6 +49,9 @@ inline constexpr std::string_view default_id_folder_name = "default (mod)";
 /// The folder of the player's own folder whose mod folders the Mod setting
 /// offers besides the game folder's mods folder.
 inline constexpr std::string_view user_mods_folder_name = "Mods";
+/// The folder of the player's own folder that holds remembered mutator
+/// verdicts. Mutators themselves stay in the Mutators folder.
+inline constexpr std::string_view cache_folder_name = "Cache";
 
 /// The folder below the preferences file's folder, and below each mods/<id>
 /// folder there, that held saved games before they moved to Saves.

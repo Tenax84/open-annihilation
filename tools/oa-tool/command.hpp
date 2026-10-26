@@ -108,7 +108,7 @@ class Failure : public std::runtime_error {
 
 // The package command, defined in pack.cpp.
 
-/// Packs a folder as a .oamod, a .oalang or a .oamap.
+/// Packs a folder as a .oamod, a .oalang, a .oamap, a .oaexp, a .oamut or a .oabrain.
 ///
 /// One positional argument is the folder. `--out FILE` names the package,
 /// and `--force` replaces a file that already exists. `--game-dir DIR` is
@@ -145,6 +145,132 @@ class Failure : public std::runtime_error {
 ///         would be refused or a map does not fit the base game, or exit_usage
 ///         when the arguments are not the command's
 [[nodiscard]] int run_check(std::span<const std::string> arguments, Output& output);
+
+// The mutator commands, defined in mutator.cpp.
+
+/// Packs a mutator folder as a .oamut.
+///
+/// One positional argument is the folder. It must hold `oamut.yaml` at its
+/// top; another folder is a usage error. The other arguments are `run_pack`'s,
+/// and the package is packed by that command. `--game-dir` is a usage error.
+///
+/// @param arguments the folder and any options
+/// @param[in,out] output receives the packed line, and a usage line when the
+///        folder is not a mutator
+/// @return exit_done, or exit_usage when the folder holds no oamut.yaml or
+///         the arguments are not the command's
+/// @throws Failure when the folder cannot be packed
+[[nodiscard]] int run_mutator_pack(std::span<const std::string> arguments, Output& output);
+
+// The brain commands, defined in brain.cpp.
+
+/// Packs a brain folder as a .oabrain.
+///
+/// One positional argument is the folder. It must hold `oabrain.yaml` at its
+/// top; another folder is a usage error. The other arguments are `run_pack`'s,
+/// and the package is packed by that command. `--game-dir` is a usage error.
+///
+/// @param arguments the folder and any options
+/// @param[in,out] output receives the packed line, and a usage line when the
+///        folder is not a brain
+/// @return exit_done, or exit_usage when the folder holds no oabrain.yaml or
+///         the arguments are not the command's
+/// @throws Failure when the folder cannot be packed
+[[nodiscard]] int run_brain_pack(std::span<const std::string> arguments, Output& output);
+
+/// Loads a brain against a game and reports how it started.
+///
+/// One positional argument is a `.oabrain` or a folder whose top holds
+/// `oabrain.yaml`. The folder's name is the brain's id. `--game-dir` is
+/// required. `--mod` is a mod folder layered over the game. `--level`
+/// selects a level; the first is used when it is omitted. `--side` is the
+/// side whose commander the seat holds, from 0 to 255, and it is 0 when
+/// omitted. `--json` prints one object. The check seats the brain in a
+/// match of the game's definitions on a flat stand-in map and never ticks
+/// that match.
+///
+/// @param arguments the file or folder and the options
+/// @param[in,out] output receives the report, and a usage line when the
+///        arguments are not the command's
+/// @return exit_done when the brain was seated, exit_failed when it was not
+///         or the game cannot be mounted, or exit_usage when the arguments
+///         are not the command's
+[[nodiscard]] int run_brain_check(std::span<const std::string> arguments, Output& output);
+
+/// Converts an ONNX model to a .oann and reports the integer difference.
+///
+/// One positional argument is the model. `--calibrate` is required. `--out`
+/// names the .oann; without it the model's path is used with `.oann`.
+/// `--weights` is `int8` or `int16`. `--max-difference` refuses a larger
+/// difference and writes nothing. `--force` replaces an existing file.
+/// `--json` prints one object. A model that cannot be converted, or a
+/// difference past the limit, writes nothing.
+///
+/// @param arguments the model and the options
+/// @param[in,out] output receives the report, and a usage line when the
+///        arguments are not the command's
+/// @return exit_done when the file was written and every difference is within
+///         the limit, or exit_usage when the arguments are not the command's
+/// @throws Failure when the model cannot be converted or a difference passes
+///         the limit
+[[nodiscard]] int run_brain_net(std::span<const std::string> arguments, Output& output);
+
+/// Checks a .oamut and reports the facts a catalogue lists.
+///
+/// One positional argument is the package. A file of another kind is a usage
+/// error. The other arguments are `run_check`'s, and the report is that
+/// command's.
+///
+/// @param arguments the package and any options
+/// @param[in,out] output receives the report, and a usage line when the file
+///        is not a .oamut
+/// @return exit_done when the mutator would be installed, exit_failed when it
+///         would be refused, or exit_usage when the file is not a .oamut or
+///         the arguments are not the command's
+[[nodiscard]] int run_mutator_check(std::span<const std::string> arguments, Output& output);
+
+/// Imports TA: Mutation mutators into mutator folders.
+///
+/// Each positional argument is a `.tam` or a `.zip`. A `.tam`'s companions
+/// are read from its own folder. A zip's names are the names the archive
+/// recorded. `--out` is the directory that receives one folder per mutator.
+/// `--id` and `--version` set that mutator's id and version, and they are a
+/// usage error when more than one mutator is named. `--tag` is repeated.
+/// `--works-with CODE=ENTRY` maps one compatibility code. `--pack` also
+/// writes a `.oamut`. `--force` replaces an existing folder and package.
+/// A link is not followed.
+///
+/// @param arguments the inputs and the options
+/// @param[in,out] output receives one line per mutator, its warnings and a
+///        refusal, and a usage line when the arguments are not the command's
+/// @return exit_done when every mutator was imported, exit_failed when one
+///         was refused or could not be written, or exit_usage when the
+///         arguments are not the command's
+/// @throws Failure when a folder cannot be written
+[[nodiscard]] int run_mutator_import(std::span<const std::string> arguments, Output& output);
+
+/// Reports what a loadout changes, or compares two loadouts.
+///
+/// `--game-dir` is the game folder, mounted the way the game mounts it.
+/// `--mod-dir` is a mod folder over that game. Each `--mutator` is a package
+/// folder, with options after the last colon. An id with no path is refused.
+/// `--versus` is a second loadout. `--allow` is a file of differences that
+/// may remain, and it needs `--versus`. `--map` names the map whose maps
+/// hooks run. `--seed` is the match seed, and it is 0 when left out.
+/// `--dump` writes the mutated file list and does not change the report.
+/// A map the game does not have, and a `--dump` file that cannot be
+/// created, are usage errors.
+///
+/// @param arguments the options
+/// @param[in,out] output receives the report or the comparison, and a usage
+///        line when the arguments are not the command's
+/// @return exit_done when the report was written, or a comparison has no
+///         remaining difference and no unused allowance; exit_failed when a
+///         mutator fails, the folder is not a usable game, or a comparison
+///         does not match; exit_usage when the arguments are not the command's
+/// @throws Failure when a mutator fails, the folder is not a usable game,
+///         or the dump cannot be written
+[[nodiscard]] int run_mutator_diff(std::span<const std::string> arguments, Output& output);
 
 // The catalogue commands, defined in catalogue.cpp.
 

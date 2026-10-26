@@ -429,6 +429,17 @@ struct ModelFrameInputs {
     /// The models' display tables: the shade table gives the flat polygons
     /// of a lit building their colours. Null draws them unlit.
     const oa::present::model::ModelDisplay* display{};
+    /// Where given, the stage keeps beside the frame's vertices each one's
+    /// world height in map pixels where it draws a unit's polygon at one, and
+    /// NaN for every other: the heights Naval reflections mirror a ship by.
+    std::vector<float>* vertex_heights{};
+    /// Underwater shimmer's strength, for presentation alone: above zero the
+    /// viewer's own submerged pieces are shaded below the sea's surface by
+    /// their height; at zero, 3.1c's look, each polygon of them the game's
+    /// depth rule puts under water halved and lifted towards blue.
+    float water_shimmer{};
+    float water_sea_level{};   ///< the map's sea level, for the shimmer
+    double water_seconds{};    ///< the match's time, which the shimmer moves by
     uint16_t graphics_flags{}; ///< Game.graphics_flags: shadows, vehicle shadows and shading
     /// The tick of the build effect's pulse, which the nanoframe's colours
     /// cycle by: the match's tick less ModelRenderer::build_pulse_lag.

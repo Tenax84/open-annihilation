@@ -180,14 +180,75 @@ void check_catalogue(const std::filesystem::path& examples) {
     OA_CHECK(
         loaded.icon == "/v1/i/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png"
     );
-    OA_CHECK(loaded.packages.size() == 3);
-    if (loaded.packages.size() == 3) {
+    OA_CHECK(loaded.packages.size() == 5);
+    if (loaded.packages.size() == 5) {
         OA_CHECK(loaded.packages[0].kind == catalogue::Kind::oamod);
         OA_CHECK(loaded.packages[0].id == "example-mod");
         OA_CHECK(loaded.packages[1].kind == catalogue::Kind::oamap);
         OA_CHECK(loaded.packages[1].id == "example-maps");
         OA_CHECK(loaded.packages[2].kind == catalogue::Kind::oalang);
         OA_CHECK(loaded.packages[2].id == "xx-Test");
+        const catalogue::Package& mutator = loaded.packages[3];
+        OA_CHECK(mutator.kind == catalogue::Kind::oamut);
+        OA_CHECK(mutator.id == "steady-hands");
+        OA_CHECK(mutator.version == "1.2");
+        OA_CHECK(mutator.works_with == std::vector<std::string>({"ta-3.1c", "ridge >= 1.0"}));
+        OA_CHECK(mutator.requires_mutators.size() == 1);
+        if (!mutator.requires_mutators.empty()) {
+            OA_CHECK(mutator.requires_mutators[0].id == "calm-seas");
+            OA_CHECK(mutator.requires_mutators[0].range_text == ">= 1.0");
+        }
+        OA_CHECK(mutator.conflicts_with.size() == 1);
+        if (!mutator.conflicts_with.empty())
+            OA_CHECK(mutator.conflicts_with[0].id == "shaky-grip");
+        OA_CHECK(mutator.layers.size() == 2);
+        if (mutator.layers.size() == 2) {
+            OA_CHECK(mutator.layers[0] == oa::formats::oamut::Layer::units);
+            OA_CHECK(mutator.layers[1] == oa::formats::oamut::Layer::weapons);
+        }
+        OA_CHECK(mutator.options.size() == 2);
+        if (mutator.options.size() == 2) {
+            OA_CHECK(mutator.options[0].id == "grip");
+            OA_CHECK(mutator.options[0].value_labels == std::vector<std::string>({"Soft", "Firm"}));
+            OA_CHECK(mutator.options[1].id == "sway");
+            OA_CHECK(mutator.options[1].minimum == "0");
+            OA_CHECK(mutator.options[1].maximum == "2");
+            OA_CHECK(mutator.options[1].step == "0.5");
+        }
+        OA_CHECK(
+            mutator.badge ==
+            "/v1/i/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.png"
+        );
+        OA_CHECK(mutator.tags == std::vector<std::string>({"aim"}));
+        const catalogue::Package& brain = loaded.packages[4];
+        OA_CHECK(brain.kind == catalogue::Kind::oabrain);
+        OA_CHECK(brain.id == "steady-commander");
+        OA_CHECK(brain.version == "1.2");
+        OA_CHECK(!brain.full_awareness);
+        OA_CHECK(brain.network_bytes == 2100000);
+        OA_CHECK(brain.works_with == std::vector<std::string>({"ta-3.1c", "ridge >= 28"}));
+        OA_CHECK(brain.required_expansions == std::vector<std::string>({"core-contingency"}));
+        OA_CHECK(brain.levels.size() == 2);
+        if (brain.levels.size() == 2) {
+            OA_CHECK(brain.levels[0].id == "careful");
+            OA_CHECK(brain.levels[0].name == "Careful");
+            OA_CHECK(brain.levels[0].difficulty == oa::formats::oabrain::Difficulty::easy);
+            OA_CHECK(brain.levels[1].id == "steady");
+            OA_CHECK(brain.levels[1].name == "Steady");
+            OA_CHECK(brain.levels[1].difficulty == oa::formats::oabrain::Difficulty::medium);
+        }
+        OA_CHECK(brain.options.size() == 1);
+        if (!brain.options.empty()) {
+            OA_CHECK(brain.options[0].id == "teach");
+            OA_CHECK(brain.options[0].label == "Teaching");
+            OA_CHECK(brain.options[0].type == oa::formats::oamut::OptionType::toggle);
+            OA_CHECK(brain.options[0].default_text == "true");
+        }
+        OA_CHECK(brain.tags == std::vector<std::string>({"economy", "teaching"}));
+        OA_CHECK(
+            brain.badge ==
+            "/v1/i/8888888888888888888888888888888888888888888888888888888888888888.png"
+        );
     }
 
     // RFC 8032 section 7.1 TEST 1. The seed is the published test vector.

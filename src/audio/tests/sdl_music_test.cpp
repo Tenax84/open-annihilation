@@ -3,6 +3,7 @@
 
 #include "audio_test_support.hpp"
 #include "oa/audio/cd_music.hpp"
+#include "oa/audio/music_decoder.hpp"
 #include "oa/audio/music_disc.hpp"
 #include "oa/audio/sdl_music.hpp"
 #include "oa/test/game_data.hpp"
@@ -10,9 +11,11 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 
 using namespace oa::audio;
 using audio_test::require;
@@ -170,6 +173,173 @@ void installed_disc(const std::filesystem::path& game_dir) {
     sdl_music_device_destroy(device);
 }
 
+// A read of a music file that waits until the test lets it go, as a file
+// iCloud is still downloading does. It gives up after slow_read_limit_ms,
+// so a play that read the file on the calling thread returns late instead
+// of never.
+constexpr uint64_t slow_read_limit_ms = 3000;
+// A call that returns within this did not wait for the read, which takes
+// slow_read_limit_ms; the margin is for a busy test machine.
+constexpr uint64_t no_wait_ms = 100;
+
+struct SlowGate {
+    std::atomic<int> entered{0};
+    std::atomic<bool> open{false};
+};
+
+void slow_read(void* context) {
+    auto& gate = *static_cast<SlowGate*>(context);
+    gate.entered.fetch_add(1, std::memory_order_relaxed);
+    const uint64_t start = SDL_GetTicks();
+    while (!gate.open.load(std::memory_order_acquire) &&
+           SDL_GetTicks() - start < slow_read_limit_ms)
+        SDL_Delay(5);
+}
+
+struct ClearDelay {
+    ~ClearDelay() { music_set_read_delay(nullptr, nullptr); }
+};
+
+// Runs `work` and tells whether it returned without waiting for a read.
+template <typename Work>
+bool without_waiting(Work work) {
+    const uint64_t start = SDL_GetTicks();
+    work();
+    return SDL_GetTicks() - start < no_wait_ms;
+}
+
+// One frame's music work, as Runtime::step_music does it: the completion
+// poll, the playing state and the position.
+void music_frame(Mixer& mixer, SdlMusicDevice* device) {
+    if (sdl_music_device_poll_complete(device))
+        cd_on_play_complete(mixer, true);
+    (void)cd_is_playing(mixer);
+    (void)sdl_music_device_position(device);
+}
+
+// A match start, a track change and a stop while a music file is still
+// being read: none waits for the read, the frames go on, and the music
+// starts once the read ends. The device can then be destroyed while a read
+// is still waiting.
+void slow_track() {
+    if (!sdl_music_decoder_available())
+        oa::test::skip_test("a slow music file", "this build has no music decoder");
+    const auto root = oa::test::make_scratch_directory("oa-sdl-music-slow-test");
+    std::filesystem::create_directories(root);
+    write_tone(root / "2.wav", 22050 / 2);
+    write_tone(root / "3.wav", 22050 / 2);
+    const MusicDisc disc = music_disc_scan(root);
+    require(disc.track_count == 3, "slow disc has a data track and two audio tracks");
+    SdlMusicDevice* device = sdl_music_device_create(disc);
+    audio_test::FakeTimers timers;
+    auto mixer = make_mixer(device, timers);
+    require(cd_open(*mixer), sdl_music_device_error(device));
+    const ClearDelay clear;
+
+    SlowGate gate;
+    music_set_read_delay(slow_read, &gate);
+    const uint64_t started = SDL_GetTicks();
+    require(
+        without_waiting([&] { require(cd_play_track(*mixer, 1), "play returns"); }),
+        "a match start does not wait for the music file"
+    );
+    require(cd_is_playing(*mixer), "a track still being read counts as playing");
+    int frames = 0;
+    bool frames_on_time = true;
+    while (gate.entered.load(std::memory_order_relaxed) == 0 && SDL_GetTicks() - started < 2000) {
+        frames_on_time = without_waiting([&] { music_frame(*mixer, device); }) && frames_on_time;
+        ++frames;
+        SDL_Delay(5);
+    }
+    require(gate.entered.load(std::memory_order_relaxed) > 0, "a read of the track started");
+    const int read_from = frames;
+    while (frames < read_from + 10) {
+        frames_on_time = without_waiting([&] { music_frame(*mixer, device); }) && frames_on_time;
+        ++frames;
+        SDL_Delay(5);
+    }
+    // A track change while the first file is still being read.
+    require(
+        without_waiting([&] { require(cd_play_track(*mixer, 2), "track change returns"); }),
+        "a track change does not wait for the music file"
+    );
+    while (frames < read_from + 20) {
+        frames_on_time = without_waiting([&] { music_frame(*mixer, device); }) && frames_on_time;
+        ++frames;
+        SDL_Delay(5);
+    }
+    require(frames_on_time, "no frame's music work waits for the read");
+    require(SDL_GetTicks() - started < slow_read_limit_ms, "the read was still waiting");
+    require(sdl_music_device_position(device) == 0.0, "no music before the file is read");
+    require(cd_is_playing(*mixer), "the changed track counts as playing while it is read");
+    gate.open.store(true, std::memory_order_release);
+    require(
+        wait_for([&] { return sdl_music_device_position(device) > 0.0; }, 5000),
+        "the music starts after the read"
+    );
+    int32_t device_track = 0;
+    mixer->music.current_track(mixer->music.context, &device_track);
+    require(device_track == 3, "the track changed to plays, not the one being read before");
+
+    // A stop, as a match ends, while a read waits.
+    SlowGate stop_gate;
+    music_set_read_delay(slow_read, &stop_gate);
+    require(cd_play_track(*mixer, 1), "play before the stop");
+    require(
+        wait_for([&] { return stop_gate.entered.load(std::memory_order_relaxed) > 0; }, 2000),
+        "a read before the stop started"
+    );
+    require(
+        without_waiting([&] { require(cd_stop(*mixer), "stop returns"); }),
+        "a stop does not wait for the music file"
+    );
+    require(!cd_is_playing(*mixer), "stopped while the read waits");
+
+    // Destroyed while a read still waits: the device waits for the read's
+    // thread, which the gate lets go a little later.
+    require(cd_play_track(*mixer, 2), "play before the device is destroyed");
+    std::thread opener([&] {
+        SDL_Delay(100);
+        stop_gate.open.store(true, std::memory_order_release);
+    });
+    mixer_teardown(*mixer);
+    sdl_music_device_destroy(device);
+    opener.join();
+    std::filesystem::remove_all(root);
+}
+
+// A track that cannot be read stops, as before, so the music session's
+// next tick picks another; a later track plays.
+void unreadable_track() {
+    if (!sdl_music_decoder_available())
+        oa::test::skip_test("an unreadable music file", "this build has no music decoder");
+    const auto root = oa::test::make_scratch_directory("oa-sdl-music-unreadable-test");
+    std::filesystem::create_directories(root);
+    write_tone(root / "2.wav", 22050 / 2);
+    write_tone(root / "3.wav", 22050 / 2);
+    const MusicDisc disc = music_disc_scan(root);
+    require(disc.track_count == 3, "unreadable disc has a data track and two audio tracks");
+    std::filesystem::remove(root / "2.wav");
+    SdlMusicDevice* device = sdl_music_device_create(disc);
+    audio_test::FakeTimers timers;
+    auto mixer = make_mixer(device, timers);
+    require(cd_open(*mixer), sdl_music_device_error(device));
+    (void)cd_play_track(*mixer, 1);
+    require(
+        wait_for([&] { return !cd_is_playing(*mixer); }, 2000), "a track that cannot be read stops"
+    );
+    require(*sdl_music_device_error(device) != '\0', "the device says why");
+    require(cd_play_track(*mixer, 2), "the next track plays");
+    require(
+        wait_for([&] { return sdl_music_device_position(device) > 0.0; }, 5000),
+        "the next track decodes"
+    );
+    require(cd_stop(*mixer), "stopped after the unreadable track");
+    mixer_teardown(*mixer);
+    sdl_music_device_destroy(device);
+    std::filesystem::remove_all(root);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -180,8 +350,11 @@ int main(int argc, char** argv) {
     require(SDL_Init(0), "SDL init");
     if (installed)
         installed_disc(game_dir);
-    else
+    else {
         generated_disc();
+        slow_track();
+        unreadable_track();
+    }
     SDL_Quit();
     return 0;
 }

@@ -38,6 +38,7 @@
 #include "oa/formats/url.hpp"
 #include "oa/ui/frontend_dialogs.hpp"
 #include "oa/ui/frontend_multiplayer/panel.hpp"
+#include "oa/ui/frontend_state/oa_button_place.hpp"
 #include "oa/ui/frontend_multiplayer/screens.hpp"
 #include "oa/ui/frontend_state/map_selection.hpp"
 #include "oa/ui/kit/components.hpp"
@@ -78,6 +79,7 @@ namespace {
 
 namespace kit = oa::ui::kit;
 namespace mb = oa::ui::map_browser;
+namespace place = oa::ui::frontend_state;
 namespace mp = oa::ui::frontend_multiplayer;
 namespace previews = oa::ui::map_previews;
 namespace fit = oa::data::map_fit;
@@ -147,42 +149,6 @@ std::string shown_with(std::string_view english, std::string_view name, std::str
 /// @return true when they meet
 bool meet(const kit::Rect& first, const kit::Rect& second) noexcept {
     return kit::intersect(first, second).width > 0 && kit::intersect(first, second).height > 0;
-}
-
-/// Maps a rectangle of the 640 by 480 frame to the OA layer's points through
-/// the picture's place in the window, the edges outward.
-///
-/// @param seen what the layer's screens are placed on
-/// @param frame_rect the rectangle, in the frame's pixels
-/// @return the rectangle, in the layer's points
-kit::Rect frame_to_points(const LayerView& seen, const kit::Rect& frame_rect) {
-    if (seen.picture_size.x <= 0 || seen.picture_size.y <= 0)
-        return {};
-    const int64_t percent = std::max(seen.scale_percent, int32_t{100});
-    const auto& picture = seen.picture;
-    const auto across = [&](int32_t column) {
-        return picture.x + static_cast<int64_t>(column) * picture.width / seen.picture_size.x;
-    };
-    const auto down = [&](int32_t row) {
-        return picture.y + static_cast<int64_t>(row) * picture.height / seen.picture_size.y;
-    };
-    const auto floor_points = [percent](int64_t pixels) {
-        const int64_t scaled = pixels * 100;
-        return static_cast<int32_t>(
-            scaled >= 0 ? scaled / percent : -((-scaled + percent - 1) / percent)
-        );
-    };
-    const auto ceil_points = [percent](int64_t pixels) {
-        const int64_t scaled = pixels * 100;
-        return static_cast<int32_t>(
-            scaled >= 0 ? (scaled + percent - 1) / percent : -(-scaled / percent)
-        );
-    };
-    const int32_t left = floor_points(across(frame_rect.x));
-    const int32_t top = floor_points(down(frame_rect.y));
-    const int32_t right = ceil_points(across(frame_rect.x + frame_rect.width));
-    const int32_t bottom = ceil_points(down(frame_rect.y + frame_rect.height));
-    return {left, top, right - left, bottom - top};
 }
 
 /// The window row where a frame rectangle's bottom edge ends, rounded outward.
@@ -1300,19 +1266,26 @@ struct Runtime::MoreMapsScreen final : LayerScreen {
     /// Takes a press or a tap on the button, and its release; everything
     /// else goes on.
     ///
+    /// A mouse presses the drawn rectangle. A finger presses by its reach
+    /// when no gadget of the picker, the map list included, is nearer the
+    /// point. A point inside a gadget stays that gadget's.
+    ///
     /// @param kind pointer_move, pointer_down or pointer_up
     /// @param button the pointer's button
     /// @param at the pointer, in the button's points
+    /// @param finger_reach a finger's reach; 0 for a mouse
     /// @return none or redraw for the button's own press; pass otherwise
-    LayerAnswer pointer(
-        ScreenInputKind kind, uint8_t button, kit::Point at, int32_t /*finger_reach*/
-    ) override {
-        const std::optional<kit::Rect> place = place_of(view_);
-        const bool over = place && kit::contains({0, 0, place->width, place->height}, at);
-        if (over != hovered_) {
-            hovered_ = over;
+    LayerAnswer
+    pointer(ScreenInputKind kind, uint8_t button, kit::Point at, int32_t finger_reach) override {
+        const std::optional<kit::Rect> shown = place_of(view_);
+        const bool inside = shown && kit::contains({0, 0, shown->width, shown->height}, at);
+        if (inside != hovered_) {
+            hovered_ = inside;
             ++revision_;
         }
+        const bool over = kind != ScreenInputKind::pointer_move && finger_reach > 0
+                              ? finger_reaches(at, finger_reach)
+                              : inside;
         if (kind == ScreenInputKind::pointer_down && button == SDL_BUTTON_LEFT && over) {
             pressed_ = true;
             ++revision_;
@@ -1441,6 +1414,42 @@ struct Runtime::MoreMapsScreen final : LayerScreen {
     ///
     /// @return the picker; none while none shows
     [[nodiscard]] std::optional<mb::Browser::Opener> opener() const { return picker(runtime_); }
+
+    /// Tells whether a finger's reach lands on the button.
+    ///
+    /// A gadget nearer the point, or one the point lies inside, keeps it.
+    /// The hover stays the drawn rectangle.
+    ///
+    /// @param at the finger, in the button's points
+    /// @param finger_reach how far the finger reaches, in points
+    /// @return true when the finger presses the button
+    [[nodiscard]] bool finger_reaches(kit::Point at, int32_t finger_reach) const {
+        const std::optional<kit::Rect> shown = place_of(view_);
+        if (!shown || finger_reach <= 0 || shown->width <= 0 || shown->height <= 0)
+            return false;
+        const place::PlaceRect button{0, 0, shown->width, shown->height};
+        std::vector<place::PlaceRect> gadgets;
+        kit::Rect list_rect{};
+        std::vector<kit::Rect> others;
+        if (picker_rects(list_rect, others)) {
+            const auto add = [&](const kit::Rect& frame) {
+                const kit::Rect points = frame_to_points(view_, frame);
+                if (points.width <= 0 || points.height <= 0)
+                    return;
+                gadgets.push_back(
+                    {points.x - shown->x, points.y - shown->y, points.width, points.height}
+                );
+            };
+            add(list_rect);
+            for (const kit::Rect& other : others)
+                add(other);
+        }
+        if (place::nearer_gadget(at.x, at.y, button, gadgets))
+            return false;
+        const kit::DisplayList list = display_list();
+        kit::Interaction trial = interaction();
+        return kit::finger_down(trial, list, at, finger_reach).control == more_maps_control;
+    }
 
     /// Returns the picker's map list and the other gadgets of its panel, in
     /// the 640 by 480 frame.

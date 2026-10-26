@@ -14,6 +14,12 @@ the frame, the preferences, the match, the battle room and the events. The
 game is driven only as the endpoint drives it, with the events of a keyboard,
 a mouse and a touch screen; docs/automation.md says what the endpoint does.
 
+The script starts no program but Open Annihilation's own executable, passes
+the game only the command-line options it allows, gives it a preferences
+file of its own unless told otherwise, and connects only to the loopback
+address. Driven by input, the game does what a player could do at the
+keyboard; tools/mcp/README.md says what that reaches.
+
 The script needs Python 3.8 or later and nothing beyond its standard library.
 
     python3 tools/mcp/oa_mcp_server.py               serve MCP on stdin/stdout
@@ -24,18 +30,22 @@ tools/mcp/README.md says how to register it with an MCP client.
 import argparse
 import base64
 import collections
+import io
 import json
+import math
 import os
 from pathlib import Path
 import queue
 import shlex
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import traceback
 import zlib
 
 SERVER_NAME = "open-annihilation"
@@ -55,6 +65,12 @@ MAX_HEADER_BYTES = 96
 ANSWER_SECONDS = 30.0
 START_SECONDS = 120.0
 QUIT_SECONDS = 30.0
+# The longest wait a tool call may ask for, in seconds: the server answers
+# one call at a time, so a longer one would hold every other call up.
+MAX_WAIT_SECONDS = 600.0
+# The frames a press_key call may hold keys down for in all: 30 seconds
+# at the game's 30 frames a second.
+MAX_HELD_FRAMES = 900
 # Seconds between two looks while waiting for a screen or a control.
 POLL_SECONDS = 0.2
 # The events kept for read_events; older ones are dropped first.
@@ -71,9 +87,51 @@ PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
+INTERNAL_ERROR = -32603
 
 REPO_DIR = Path(__file__).resolve().parents[2]
+# The names Open Annihilation's executable has: on Windows, and everywhere
+# else (a macOS bundle's binary in Contents/MacOS included). A compatibility
+# layer named by --runner may run the Windows one elsewhere.
 EXECUTABLE_NAMES = ("open-annihilation.exe", "open-annihilation")
+# The one a build on this system makes, which the build folders are searched for.
+EXECUTABLE_NAME = EXECUTABLE_NAMES[0] if os.name == "nt" else EXECUTABLE_NAMES[1]
+# A Total Annihilation installation holds this archive (any case).
+GAME_ARCHIVE = "totala1.hpi"
+# The first line of a preferences file the game reads; a file of that line
+# alone holds no setting, so the game plays on its defaults.
+PREFERENCES_HEADER = "open-annihilation-preferences 1\n"
+# The endpoint file the game writes is under 200 bytes; a larger file is not one.
+MAX_ENDPOINT_FILE_BYTES = 4096
+# The hosts the endpoint may be on: the game serves only the loopback address.
+LOOPBACK_HOSTS = {"127.0.0.1": "127.0.0.1", "::1": "::1", "localhost": "127.0.0.1"}
+# The endpoint's token: 128 bits as 32 lowercase hexadecimal digits.
+TOKEN_DIGITS = 32
+
+# The command-line options game_launch's arguments may hold, by what each
+# takes: FLAG nothing; a set, nothing or one of those words after an =; VALUE
+# a word that names no file, as the next argument; PATH a file or folder, as
+# the next argument, which must lie in the server's scratch folder. Every
+# other option is refused: --fark and its options, --preferences-file and
+# --game-dir are the server's own, and the options that run a check, a
+# benchmark or a headless run cannot go with --fark.
+FLAG, VALUE, PATH = "flag", "value", "path"
+LAUNCH_OPTIONS = {
+    "--skip-intro": FLAG, "--mute": FLAG, "--first-run": FLAG, "--touch-controls": FLAG,
+    "--native-density": FLAG, "--experimental-3d": FLAG, "--no-hardware-acceleration": FLAG,
+    "--hardware-acceleration": frozenset({"off", "basic", "full"}), "--max-fps": VALUE,
+    "--resolution": VALUE, "--base-game": FLAG, "--no-mutators": FLAG, "--content": VALUE,
+    "--trace-input": FLAG, "--debug-order-lines": FLAG, "--seed": VALUE,
+    "--status-stdout": FLAG, "--status-file": PATH, "--quit-after-game": frozenset({"after-score"}),
+    "--host": FLAG, "--join": VALUE, "--player-name": VALUE, "--game-name": VALUE,
+    "--game-password": VALUE, "--map": VALUE, "--side": VALUE, "--team": VALUE, "--colour": VALUE,
+    "--player-limit": VALUE, "--tournament": frozenset({"on", "off"}),
+    "--closed": frozenset({"on", "off"}),
+    "--user-folder": PATH, "--data-dir": PATH, "--mod-dir": PATH, "--open": PATH,
+    "--install-mod": PATH,
+}
+# The options whose value the server's log leaves out.
+SECRET_OPTIONS = {"--game-password"}
 
 # SDL scancodes by key name (USB HID usage numbers, the same in SDL 2 and 3).
 SCANCODES = {
@@ -165,29 +223,56 @@ class FrameStream:
         del self._buffer[:size]
         if (zlib.crc32(body + payload) & 0xFFFFFFFF) != int(header[4], 16):
             raise ConnectionError("a frame's CRC does not match")
-        return (json.loads(body.decode("utf-8")) if body else {}), payload
+        message = json.loads(body.decode("utf-8")) if body else {}
+        if not isinstance(message, dict):
+            raise ConnectionError("a frame's JSON is not an object")
+        return message, payload
+
+
+def loopback_address(address):
+    """Returns the host and port to connect to for an endpoint address; refuses any but the loopback's.
+
+    The address is 127.0.0.1:PORT, [::1]:PORT or localhost:PORT, as the game
+    serves only the loopback address; localhost is reached as 127.0.0.1, so
+    that no name is looked up.
+    """
+    if not isinstance(address, str):
+        raise ToolError("the endpoint's address is not text")
+    host, _, port = address.rpartition(":")
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if (host not in LOOPBACK_HOSTS or not port.isascii() or not port.isdigit() or len(port) > 5
+            or not 0 < int(port) < 65536):
+        raise ToolError("the endpoint's address is not on the loopback address (127.0.0.1, ::1 or "
+                        "localhost and a port), the only one the game serves")
+    return LOOPBACK_HOSTS[host], int(port)
 
 
 class Endpoint:
     """One connection to the automation endpoint: requests, their answers and the events."""
 
     def __init__(self, address, token, client="oa-mcp"):
-        host, _, port = address.rpartition(":")
-        self._sock = socket.create_connection((host.strip("[]"), int(port)), timeout=10)
-        self._sock.settimeout(None)
+        self._sock = socket.create_connection(loopback_address(address), timeout=10)
         self._stream = FrameStream(self._sock)
         self._lock = threading.Lock()
         self._next_id = 1
         self._waiting = {}
         self.events = collections.deque(maxlen=EVENTS_KEPT)
         self.closed_reason = None
-        # The hello is answered before the reader starts, so a refusal is read here.
-        self._sock.sendall(encode_frame({"id": 0, "op": "hello", "versions": [AUTOMATION_VERSION],
-                                         "client": client, "token": token}))
-        answer, _ = self._stream.read()
+        # The hello is answered before the reader starts, so a refusal is read
+        # here, within the connection's timeout.
+        try:
+            self._sock.sendall(encode_frame({"id": 0, "op": "hello", "versions": [AUTOMATION_VERSION],
+                                             "client": client, "token": token}))
+            answer, _ = self._stream.read()
+        except (OSError, ValueError):
+            self._sock.close()
+            raise
         if not answer.get("ok"):
             self._sock.close()
-            raise EndpointError("hello", answer.get("error", {}))
+            error = answer.get("error")
+            raise EndpointError("hello", error if isinstance(error, dict) else {})
+        self._sock.settimeout(None)
         self.hello = answer
         threading.Thread(target=self._read, daemon=True).start()
 
@@ -213,8 +298,12 @@ class Endpoint:
     def connected(self):
         return self.closed_reason is None
 
-    def request(self, op, timeout=ANSWER_SECONDS, **fields):
-        """Sends a request and returns its answer and payload; a refusal raises EndpointError."""
+    def request(self, op, fields=None):
+        """Sends a request and returns its answer and payload; a refusal raises EndpointError.
+
+        The fields go into the request beside its id and op, which they
+        cannot replace, and the answer is waited for ANSWER_SECONDS at most.
+        """
         if not self.connected:
             raise ToolError(f"the endpoint connection is closed ({self.closed_reason})")
         waiter = queue.Queue(maxsize=1)
@@ -222,18 +311,20 @@ class Endpoint:
             request_id = self._next_id
             self._next_id += 1
             self._waiting[request_id] = waiter
-        self._sock.sendall(encode_frame({"id": request_id, "op": op, **fields}))
         try:
-            answer = waiter.get(timeout=timeout)
+            self._sock.sendall(encode_frame({**(fields or {}), "id": request_id, "op": op}))
+            answer = waiter.get(timeout=ANSWER_SECONDS)
         except queue.Empty:
+            raise ToolError(f"{op}: no answer within {ANSWER_SECONDS:g} s") from None
+        finally:
             with self._lock:
                 self._waiting.pop(request_id, None)
-            raise ToolError(f"{op}: no answer within {timeout:g} s") from None
         if answer is None:
             raise ToolError(f"{op}: the endpoint connection closed ({self.closed_reason})")
         message, payload = answer
         if not message.get("ok"):
-            raise EndpointError(op, message.get("error", {}))
+            error = message.get("error")
+            raise EndpointError(op, error if isinstance(error, dict) else {})
         return message, payload
 
     def close(self):
@@ -279,36 +370,182 @@ def png_from_rgb(width, height, pixels, max_width=None):
 # --- The game ------------------------------------------------------------------
 
 
-def find_executable():
-    """Returns the newest open-annihilation executable in the repository's build folders, or None."""
+def inside(path, folder):
+    """Whether path, its links followed, lies in folder (or is it)."""
+    try:
+        Path(path).resolve().relative_to(Path(folder).resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def game_executable(path):
+    """Returns path, resolved, when it is Open Annihilation's executable; refuses any other file.
+
+    The executable is named open-annihilation or open-annihilation.exe, and
+    inside a macOS bundle it is the binary in Contents/MacOS; a bundle's
+    folder (*.app) names that binary.
+    """
+    path = Path(path)
+    if path.suffix == ".app" and path.is_dir():
+        path = path / "Contents" / "MacOS" / EXECUTABLE_NAMES[1]
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise ToolError(f"{path} is not a file")
+    if resolved.name not in EXECUTABLE_NAMES:
+        raise ToolError(f"{path} is not Open Annihilation's executable, which is named "
+                        f"{' or '.join(EXECUTABLE_NAMES)}")
+    bundle = next((parent for parent in resolved.parents if parent.suffix == ".app"), None)
+    if bundle is not None and resolved.parent != bundle / "Contents" / "MacOS":
+        raise ToolError(f"{path} is not the binary in {bundle.name}/Contents/MacOS")
+    return resolved
+
+
+def find_executables(repo_dir=REPO_DIR):
+    """Returns this system's open-annihilation executables in the repository's build folders, newest first."""
     found = []
-    for build in REPO_DIR.glob("build*"):
+    for build in sorted(Path(repo_dir).glob("build*")):
         if not build.is_dir():
             continue
-        for name in EXECUTABLE_NAMES:
-            for candidate in (build / name, *build.glob(f"*/{name}"),
-                              build / "open-annihilation.app" / "Contents" / "MacOS" / "open-annihilation"):
-                if candidate.is_file():
-                    found.append(candidate)
-    if not found:
-        return None
-    return max(found, key=lambda path: path.stat().st_mtime)
+        candidates = [build / EXECUTABLE_NAME, *sorted(build.glob(f"*/{EXECUTABLE_NAME}"))]
+        if sys.platform == "darwin":
+            candidates += sorted(build.glob(f"*.app/Contents/MacOS/{EXECUTABLE_NAME}"))
+        for candidate in candidates:
+            if candidate.is_file() and candidate.resolve() not in found:
+                found.append(candidate.resolve())
+    return sorted(found, key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def game_folder(folder, named_by):
+    """Returns folder, resolved, when it holds a Total Annihilation installation; refuses any other."""
+    path = Path(folder).resolve()
+    if not path.is_dir():
+        raise ToolError(f"{named_by} {folder} is not a folder")
+    try:
+        holds_game = any(entry.name.lower() == GAME_ARCHIVE and entry.is_file() for entry in path.iterdir())
+    except OSError as error:
+        raise ToolError(f"cannot read {named_by} {folder}: {error.strerror}") from None
+    if not holds_game:
+        raise ToolError(f"{named_by} {folder} holds no {GAME_ARCHIVE}: name the Total Annihilation "
+                        f"installation")
+    return path
+
+
+def launch_arguments(arguments, folder, scratch):
+    """Returns game_launch's arguments when LAUNCH_OPTIONS allows each; refuses any other.
+
+    A path is read as the game reads it, from folder, its working folder, and
+    must lie in scratch, the server's scratch folder.
+    """
+    if any("\0" in argument for argument in arguments):
+        raise ToolError("an argument cannot hold a zero character")
+    checked = []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        name, equals, suffix = argument.partition("=")
+        kind = LAUNCH_OPTIONS.get(name) if name.startswith("--") else None
+        if kind is None:
+            if name.startswith("--fark") or name in ("--preferences-file", "--game-dir"):
+                raise ToolError(f"arguments cannot hold {name}: the server sets it (game_dir and "
+                                f"preferences_file choose the folder and the file)")
+            raise ToolError(f"arguments cannot hold {argument!r}; it takes only the options "
+                            f"{', '.join(sorted(LAUNCH_OPTIONS))}")
+        if isinstance(kind, frozenset):
+            if equals and suffix not in kind:
+                raise ToolError(f"{name} takes ={' or ='.join(sorted(kind))}, or nothing")
+            checked.append(argument)
+        elif equals:
+            raise ToolError(f"{name} takes {'no value' if kind == FLAG else 'its value as the next argument'}")
+        elif kind == FLAG:
+            checked.append(argument)
+        else:
+            value = arguments[index + 1] if index + 1 < len(arguments) else ""
+            if not value or value.startswith("-"):
+                raise ToolError(f"{name} needs a value as the next argument")
+            if kind == PATH and not inside(Path(folder) / value, scratch):
+                raise ToolError(f"{name} {value} lies outside the server's scratch folder {scratch}, "
+                                f"where every file arguments names must be")
+            checked += [argument, value]
+            index += 1
+        index += 1
+    return checked
+
+
+def read_endpoint_file(path):
+    """Returns the address, token and pid of an endpoint file the game wrote; refuses any other file.
+
+    The game writes a small JSON object of the protocol's version, a loopback
+    address, a token of 32 hexadecimal digits and its process id, owned by
+    the player and writable by no one else. Nothing else in the file is
+    read, and a refusal quotes none of it.
+    """
+    path = Path(path)
+    refused = f"{path} is not an endpoint file the game wrote"
+    try:
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_ENDPOINT_FILE_BYTES:
+            raise ToolError(f"{refused}: the game's is a file of under {MAX_ENDPOINT_FILE_BYTES} bytes")
+        if hasattr(os, "getuid") and (info.st_uid != os.getuid() or info.st_mode & 0o022):
+            raise ToolError(f"{refused}: the game's is the player's own and writable by no one else")
+        with open(path, "rb") as file:
+            description = json.loads(file.read(MAX_ENDPOINT_FILE_BYTES).decode("utf-8"))
+    except OSError as error:
+        raise ToolError(f"cannot read the endpoint file {path}: {error.strerror}") from None
+    except ValueError:
+        raise ToolError(f"{refused}: it is not JSON") from None
+    if not isinstance(description, dict) or description.get("version") != AUTOMATION_VERSION:
+        raise ToolError(f"{refused}: it holds no version {AUTOMATION_VERSION}")
+    token, pid = description.get("token"), description.get("pid")
+    if (not isinstance(token, str) or len(token) != TOKEN_DIGITS
+            or any(digit not in "0123456789abcdef" for digit in token)):
+        raise ToolError(f"{refused}: it holds no token of {TOKEN_DIGITS} hexadecimal digits")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        raise ToolError(f"{refused}: it holds no process id")
+    try:
+        loopback_address(description.get("address"))
+    except ToolError as error:
+        raise ToolError(f"{refused}: {error}") from None
+    return description["address"], token, pid
+
+
+def shown_command(command):
+    """The command as the server's log shows it, without the values of SECRET_OPTIONS."""
+    return " ".join("***" if index and command[index - 1] in SECRET_OPTIONS else part
+                    for index, part in enumerate(command))
 
 
 class Game:
     """The game this server started, or the endpoint file of one it attached to, and the connection."""
 
-    def __init__(self, runner=()):
+    def __init__(self, runner=(), executable=None, preferences_dirs=(), repo_dir=REPO_DIR):
         # A command that starts the executable, such as the compatibility
         # layer a cross build runs through; empty runs it directly.
         self.runner = list(runner)
+        # The executable the server's command line names, which game_launch
+        # starts unless asked for another of the known ones.
+        self.chosen_executable = game_executable(executable) if executable else None
+        # The folders the server's command line names, whose preferences
+        # files game_launch may give the game besides the scratch folder's.
+        self.preferences_dirs = [Path(folder).resolve() for folder in preferences_dirs]
+        self.repo_dir = Path(repo_dir)
+        self._scratch = None
+        self.launches = 0
         self.process = None
         self.executable = None
         self.log_path = None
-        self.scratch = None
+        self.preferences_file = None
+        self.folder = None
         self.endpoint_file = None
         self.endpoint = None
         self.pid = None
+
+    @property
+    def scratch(self):
+        """The server's own folder in the system's temporary folder, made at first use."""
+        if self._scratch is None:
+            self._scratch = Path(tempfile.mkdtemp(prefix="oa-mcp-")).resolve()
+        return self._scratch
 
     def running(self):
         return self.process is not None and self.process.poll() is None
@@ -319,44 +556,97 @@ class Game:
         text = Path(self.log_path).read_text(encoding="utf-8", errors="replace")
         return "\n".join(text.splitlines()[-lines:])
 
+    def known_executables(self):
+        """The executables game_launch may start: the server's --executable, OA_EXECUTABLE, then the builds'.
+
+        The first is the one started when no other is asked for.
+        """
+        known = [self.chosen_executable] if self.chosen_executable else []
+        if os.environ.get("OA_EXECUTABLE"):
+            try:
+                known.append(game_executable(os.environ["OA_EXECUTABLE"]))
+            except ToolError as error:
+                raise ToolError(f"OA_EXECUTABLE: {error}") from None
+        known += find_executables(self.repo_dir)
+        return list(dict.fromkeys(known))
+
+    def choose_executable(self, executable):
+        """Returns the known executable to start: the first, or the one executable names."""
+        known = self.known_executables()
+        if not known:
+            raise ToolError(f"no {EXECUTABLE_NAME} executable: build it (./run.sh), or name it with the "
+                            f"server's --executable option or OA_EXECUTABLE")
+        if not executable:
+            return known[0]
+        if not Path(executable).exists():
+            raise ToolError(f"executable {executable} does not exist; the known ones are "
+                            f"{', '.join(map(str, known))}")
+        wanted = game_executable(executable)
+        if wanted not in known:
+            raise ToolError(f"executable {executable} is not one the server found: game_launch starts only "
+                            f"{', '.join(map(str, known))}")
+        return wanted
+
+    def preferences(self, preferences_file):
+        """Returns preferences_file, resolved, when it is a file the game may be given; refuses any other."""
+        path = Path(preferences_file).resolve()
+        if not path.is_file():
+            raise ToolError(f"preferences_file {preferences_file} is not a file: name one that exists, or "
+                            f"leave it out for a new one in the server's scratch folder")
+        allowed = [self.scratch, *self.preferences_dirs]
+        if not any(inside(path, folder) for folder in allowed):
+            raise ToolError(f"preferences_file {preferences_file} lies outside the server's scratch folder "
+                            f"and the folders its --preferences-dir names: "
+                            f"{', '.join(map(str, allowed))}")
+        return path
+
     def launch(self, executable, game_dir, headless, preferences_file, skip_intro, mute, arguments,
                timeout):
         if self.running():
             raise ToolError("a game is already running; call game_quit first")
-        executable = Path(executable) if executable else (
-            Path(os.environ["OA_EXECUTABLE"]) if os.environ.get("OA_EXECUTABLE") else find_executable())
-        if executable is None or not executable.is_file():
-            raise ToolError("no open-annihilation executable: build it (./run.sh or run.bat) or name it "
-                            "with the executable argument or OA_EXECUTABLE")
-        executable = executable.resolve()
+        # Everything is checked before anything changes, so a refused launch
+        # leaves the game connected, if one is, as it was.
+        executable = self.choose_executable(executable)
+        if game_dir:
+            game_dir = game_folder(game_dir, "game_dir")
+        elif os.environ.get("OA_GAME_DIR"):
+            game_dir = game_folder(os.environ["OA_GAME_DIR"], "OA_GAME_DIR")
+        if preferences_file:
+            preferences_file = self.preferences(preferences_file)
+        folder = self.scratch / f"game-{self.launches + 1}"
+        arguments = launch_arguments(arguments, folder, self.scratch)
         self.disconnect()
-        self.remove_scratch()
-        self.scratch = Path(tempfile.mkdtemp(prefix="oa-mcp-"))
-        self.endpoint_file = self.scratch / "automation.json"
-        self.log_path = self.scratch / "game.log"
-        command = [*self.runner, str(executable), "--fark", "--fark-file", str(self.endpoint_file)]
-        game_dir = game_dir or os.environ.get("OA_GAME_DIR")
+        self.forget_launch()
+        self.launches += 1
+        folder.mkdir()
+        self.folder = folder
+        self.endpoint_file = folder / "automation.json"
+        self.log_path = folder / "game.log"
+        if not preferences_file:
+            preferences_file = folder / "preferences.conf"
+            preferences_file.write_text(PREFERENCES_HEADER, encoding="utf-8")
+        self.preferences_file = preferences_file
+        command = [*self.runner, str(executable), "--fark", "--fark-file", str(self.endpoint_file),
+                   "--preferences-file", str(preferences_file)]
         if game_dir:
             command += ["--game-dir", str(game_dir)]
         if skip_intro:
             command.append("--skip-intro")
         if mute:
             command.append("--mute")
-        if preferences_file:
-            command += ["--preferences-file", str(preferences_file)]
-        command += [str(argument) for argument in arguments]
+        command += arguments
         environment = dict(os.environ)
         if headless:
             environment.update(SDL_VIDEO_DRIVER="dummy", SDL_AUDIO_DRIVER="dummy",
                                SDL_RENDER_DRIVER="software")
         log_file = open(self.log_path, "wb")
-        self.process = subprocess.Popen(command, cwd=self.scratch, env=environment,
+        self.process = subprocess.Popen(command, cwd=folder, env=environment,
                                         stdin=subprocess.DEVNULL, stdout=log_file,
                                         stderr=subprocess.STDOUT)
         log_file.close()
         self.executable = executable
         self.pid = self.process.pid
-        log(f"started {' '.join(command)} (pid {self.pid})")
+        log(f"started {shown_command(command)} (pid {self.pid})")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.endpoint_file.is_file():
@@ -369,20 +659,28 @@ class Game:
         self.stop()
         raise ToolError(f"the game wrote no endpoint file within {timeout:g} s; its log:\n{self.log_tail()}")
 
-    def connect(self, endpoint_file):
+    def attach(self, endpoint_file):
+        """Connects to a game started elsewhere, forgetting the one launched here, which has ended."""
+        if self.running():
+            raise ToolError("a game launched here is running: call game_quit before attaching to another")
+        address, token, pid = read_endpoint_file(endpoint_file)
         self.disconnect()
-        endpoint_file = Path(endpoint_file)
+        self.forget_launch()
+        self.pid = pid
+        self._connect(endpoint_file, address, token)
+
+    def connect(self, endpoint_file):
+        """Connects to the game launched here through the endpoint file it wrote."""
+        address, token, _ = read_endpoint_file(endpoint_file)
+        self.disconnect()
+        self._connect(endpoint_file, address, token)
+
+    def _connect(self, endpoint_file, address, token):
+        self.endpoint_file = Path(endpoint_file)
         try:
-            description = json.loads(endpoint_file.read_text(encoding="utf-8"))
+            self.endpoint = Endpoint(address, token)
         except (OSError, ValueError) as error:
-            raise ToolError(f"cannot read the endpoint file {endpoint_file}: {error}") from None
-        self.endpoint_file = endpoint_file
-        if self.process is None:
-            self.pid = description.get("pid")
-        try:
-            self.endpoint = Endpoint(description["address"], description["token"])
-        except OSError as error:
-            raise ToolError(f"cannot connect to {description.get('address')}: {error}") from None
+            raise ToolError(f"cannot connect to the endpoint at {address}: {error}") from None
 
     def disconnect(self):
         if self.endpoint is not None:
@@ -406,11 +704,21 @@ class Game:
             self.process.kill()
             self.process.wait()
 
+    def forget_launch(self):
+        """Forgets the game launched last, which has ended, and removes its folder in the scratch folder."""
+        if self.running():
+            return
+        if self.folder is not None:
+            shutil.rmtree(self.folder, ignore_errors=True)
+        self.process = self.executable = self.log_path = self.folder = self.endpoint_file = None
+        self.preferences_file = self.pid = None
+
     def remove_scratch(self):
-        """Removes the folder of the endpoint file and the log of the game launched last."""
-        if self.scratch is not None and not self.running():
-            shutil.rmtree(self.scratch, ignore_errors=True)
-            self.scratch = None
+        """Removes the scratch folder and all in it, once no game launched here runs."""
+        if self._scratch is not None and not self.running():
+            shutil.rmtree(self._scratch, ignore_errors=True)
+            self._scratch = None
+            self.folder = None
 
 
 # --- The tools -----------------------------------------------------------------
@@ -504,7 +812,7 @@ class Tools:
         fields = {"events": events}
         if expect_screen:
             fields["expect_screen"] = expect_screen
-        answer, _ = self.game.require().request("input", **fields)
+        answer, _ = self.game.require().request("input", fields)
         return answer.get("consumed", {})
 
     def _after(self, consumed):
@@ -544,20 +852,20 @@ class Tools:
     def game_launch(self, executable=None, game_dir=None, headless=False, preferences_file=None,
                     skip_intro=True, mute=False, arguments=(), timeout=START_SECONDS):
         self.game.launch(executable, game_dir, headless, preferences_file, skip_intro, mute,
-                         list(arguments), float(timeout))
+                         list(arguments), timeout)
         hello = strip_answer(self.game.endpoint.hello)
         return text_result({"pid": self.game.pid, "executable": str(self.game.executable),
                             "built": time.strftime("%Y-%m-%d %H:%M:%S",
                                                    time.localtime(self.game.executable.stat().st_mtime)),
                             "log": str(self.game.log_path), "endpoint_file": str(self.game.endpoint_file),
-                            "hello": hello})
+                            "preferences_file": str(self.game.preferences_file), "hello": hello})
 
     def game_attach(self, file=None):
         file = file or os.environ.get("OA_FARK_FILE")
         if not file:
             raise ToolError("name the endpoint file the game was started with (--fark-file), or set "
                             "OA_FARK_FILE")
-        self.game.connect(file)
+        self.game.attach(file)
         return text_result({"pid": self.game.pid, "endpoint_file": str(file),
                             "hello": strip_answer(self.game.endpoint.hello)})
 
@@ -571,7 +879,13 @@ class Tools:
                                 if self.game.process and self.game.process.poll() is not None else None),
                   "executable": str(self.game.executable) if self.game.executable else None,
                   "endpoint_file": str(self.game.endpoint_file) if self.game.endpoint_file else None,
-                  "log": str(self.game.log_path) if self.game.log_path else None}
+                  "log": str(self.game.log_path) if self.game.log_path else None,
+                  "preferences_file": str(self.game.preferences_file) if self.game.preferences_file else None,
+                  "scratch": str(self.game.scratch)}
+        try:
+            status["executables"] = [str(path) for path in self.game.known_executables()]
+        except ToolError as error:
+            status["executables"] = str(error)
         if endpoint and not endpoint.connected:
             status["closed_reason"] = endpoint.closed_reason
         if self.game.log_path:
@@ -625,11 +939,11 @@ class Tools:
 
     def prefs(self, names=None):
         fields = {"names": list(names)} if names else {}
-        answer, _ = self.game.require().request("prefs", **fields)
+        answer, _ = self.game.require().request("prefs", fields)
         return text_result(strip_answer(answer))
 
     def match(self, state_hash=False):
-        answer, _ = self.game.require().request("match", **({"state_hash": True} if state_hash else {}))
+        answer, _ = self.game.require().request("match", {"state_hash": True} if state_hash else None)
         return text_result(strip_answer(answer))
 
     def room(self):
@@ -642,12 +956,12 @@ class Tools:
             fields["region"] = list(region)
         endpoint = self.game.require()
         try:
-            answer, payload = endpoint.request("frame", **fields)
+            answer, payload = endpoint.request("frame", fields)
         except EndpointError as error:
             if error.code != "no_window" or source != "presented":
                 raise
             fields["source"] = "composed"
-            answer, payload = endpoint.request("frame", **fields)
+            answer, payload = endpoint.request("frame", fields)
         image = answer["image"]
         png, width, height = png_from_rgb(image["width"], image["height"], payload, max_width)
         about = {"source": image.get("source"), "width": image["width"], "height": image["height"],
@@ -662,7 +976,7 @@ class Tools:
         fields = {"source": source, "hash": True, "space": space}
         if region:
             fields["region"] = list(region)
-        answer, _ = self.game.require().request("frame", **fields)
+        answer, _ = self.game.require().request("frame", fields)
         return text_result(strip_answer(answer))
 
     # -- driving --
@@ -734,6 +1048,9 @@ class Tools:
                                                      "space": space}])))
 
     def press_key(self, key, repeat=1, hold_frames=0):
+        if repeat * hold_frames > MAX_HELD_FRAMES:
+            raise ToolError(f"press_key holds keys for at most {MAX_HELD_FRAMES} frames in all "
+                            f"(repeat times hold_frames)")
         events = key_events(key)
         consumed = None
         for _ in range(max(1, int(repeat))):
@@ -803,7 +1120,7 @@ class Tools:
         return text_result({"from_frame": first, "to_frame": frame})
 
     def subscribe(self, events="all"):
-        answer, _ = self.game.require().request("subscribe", events=events)
+        answer, _ = self.game.require().request("subscribe", {"events": events})
         return text_result(strip_answer(answer))
 
     def read_events(self, max_events=100, wait_seconds=0, kinds=None):
@@ -823,7 +1140,7 @@ class Tools:
         return text_result({"events": taken, "still_waiting": len(endpoint.events)})
 
     def request(self, op, fields=None):
-        answer, payload = self.game.require().request(op, **(fields or {}))
+        answer, payload = self.game.require().request(op, fields)
         result = strip_answer(answer)
         if payload:
             result["payload_bytes"] = len(payload)
@@ -842,24 +1159,102 @@ def schema(properties=None, required=()):
             "additionalProperties": False}
 
 
+# What a value of each schema type is, for checked().
+SCHEMA_TYPES = {
+    "string": ("text", lambda value: isinstance(value, str)),
+    "boolean": ("true or false", lambda value: isinstance(value, bool)),
+    "integer": ("a whole number", lambda value: (isinstance(value, int) and not isinstance(value, bool))
+                or (isinstance(value, float) and value.is_integer())),
+    "number": ("a number", lambda value: isinstance(value, (int, float)) and not isinstance(value, bool)
+               and math.isfinite(value)),
+    "array": ("a list", lambda value: isinstance(value, list)),
+    "object": ("an object", lambda value: isinstance(value, dict)),
+}
+
+
+def checked(rule, value, where):
+    """Returns value when it meets the schema rule, a whole float as an int; raises ToolError otherwise.
+
+    It reads the parts of JSON Schema the tools' schemas use: type, enum,
+    minimum, maximum, minLength, items, minItems, maxItems, properties,
+    required, additionalProperties false and anyOf.
+    """
+    if "anyOf" in rule:
+        for choice in rule["anyOf"]:
+            try:
+                return checked(choice, value, where)
+            except ToolError:
+                pass
+        raise ToolError(f"{where} is none of the forms it takes")
+    kind = rule.get("type")
+    if kind is not None:
+        what, test = SCHEMA_TYPES[kind]
+        if not test(value):
+            raise ToolError(f"{where} must be {what}")
+        if kind == "integer":
+            value = int(value)
+    if "enum" in rule and value not in rule["enum"]:
+        raise ToolError(f"{where} must be one of {', '.join(map(str, rule['enum']))}")
+    if "minimum" in rule and value < rule["minimum"]:
+        raise ToolError(f"{where} must be at least {rule['minimum']:g}")
+    if "maximum" in rule and value > rule["maximum"]:
+        raise ToolError(f"{where} must be at most {rule['maximum']:g}")
+    if "minLength" in rule and len(value) < rule["minLength"]:
+        raise ToolError(f"{where} must not be empty")
+    if kind == "array":
+        if len(value) < rule.get("minItems", 0):
+            raise ToolError(f"{where} must hold at least {rule['minItems']} items")
+        if len(value) > rule.get("maxItems", len(value)):
+            raise ToolError(f"{where} must hold at most {rule['maxItems']} items")
+        value = [checked(rule.get("items", {}), item, f"{where}[{index}]") for index, item in enumerate(value)]
+    if kind == "object" and "properties" in rule:
+        properties = rule["properties"]
+        unknown = [key for key in value if key not in properties]
+        if unknown and rule.get("additionalProperties", True) is False:
+            raise ToolError(f"{where} takes no {', '.join(map(str, unknown))}")
+        missing = [key for key in rule.get("required", ()) if key not in value]
+        if missing:
+            raise ToolError(f"{where} needs {', '.join(missing)}")
+        value = {key: checked(properties[key], item, key) if key in properties else item
+                 for key, item in value.items()}
+    return value
+
+
+def seconds(default, minimum=0):
+    """A wait in seconds, at most MAX_WAIT_SECONDS."""
+    return {"type": "number", "default": default, "minimum": minimum, "maximum": MAX_WAIT_SECONDS}
+
+
 TOOLS = [
     ("game_launch", "Start Open Annihilation with the automation endpoint on (--fark) and connect to it. "
-     "Uses the newest build found in the repository's build folders unless executable is given, and the "
-     "installation OA_GAME_DIR names unless game_dir is given. headless runs on SDL's dummy drivers, with "
-     "no window and no sound; frames can still be taken.",
-     schema({"executable": {"type": "string", "description": "path of open-annihilation(.exe)"},
-             "game_dir": {"type": "string", "description": "the Total Annihilation installation"},
+     "Starts only the game's own executable: the server's --executable, else OA_EXECUTABLE, else the "
+     "newest build of this system's open-annihilation in the repository's build folders; executable may "
+     "name another of those game_status lists. The game gets a new preferences file in the server's "
+     "scratch folder unless preferences_file names one, and the installation OA_GAME_DIR names unless "
+     "game_dir is given. headless runs on SDL's dummy drivers, with no window and no sound; frames can "
+     "still be taken. Driving the game can change its settings, install packages and send chat other "
+     "players see.",
+     schema({"executable": {"type": "string",
+                            "description": "one of the executables game_status lists"},
+             "game_dir": {"type": "string",
+                          "description": "the Total Annihilation installation, a folder holding totala1.hpi"},
              "headless": {"type": "boolean", "default": False},
              "preferences_file": {"type": "string",
-                                  "description": "a preferences file of its own, so the player's stay untouched"},
+                                  "description": "an existing preferences file in the server's scratch folder "
+                                                 "or a folder its --preferences-dir names; left out, a new "
+                                                 "one, so the player's stay untouched"},
              "skip_intro": {"type": "boolean", "default": True},
              "mute": {"type": "boolean", "default": False},
-             "arguments": {"type": "array", "items": {"type": "string"},
-                           "description": "more command-line options, such as --host or --join"},
-             "timeout": {"type": "number", "default": START_SECONDS}})),
-    ("game_attach", "Connect to a game already started with --fark --fark-file FILE.",
-     schema({"file": {"type": "string", "description": "the endpoint file (automation.json)"}})),
-    ("game_status", "Whether a game is connected and running, its executable, and the end of its log.",
+             "arguments": {"type": "array", "items": {"type": "string"}, "maxItems": 64,
+                           "description": "more command-line options, such as --host, --join ADDRESS or "
+                                          "--resolution 1280x720; tools/mcp/README.md lists those taken, "
+                                          "and a file they name must lie in the scratch folder"},
+             "timeout": seconds(START_SECONDS, 1)})),
+    ("game_attach", "Connect to a game already started with --fark --fark-file FILE, on this machine's "
+     "loopback address. Refused while a game launched here runs: call game_quit first.",
+     schema({"file": {"type": "string", "description": "the endpoint file the game wrote (automation.json)"}})),
+    ("game_status", "Whether a game is connected and running, its executable, the end of its log, the "
+     "server's scratch folder and the executables game_launch may start.",
      schema()),
     ("game_quit", "Quit the game as the main menu's Exit does (leaving a match first). force kills it.",
      schema({"force": {"type": "boolean", "default": False}})),
@@ -877,7 +1272,7 @@ TOOLS = [
     ("screenshot", "A picture of the frame the game presented (or composed) as PNG, whole or a region.",
      schema({"source": {"type": "string", "enum": ["presented", "composed"], "default": "presented"},
              "region": REGION, "space": SPACE,
-             "max_width": {"type": "integer", "default": 1280,
+             "max_width": {"type": "integer", "default": 1280, "minimum": 1, "maximum": 16384,
                            "description": "shrink the picture by whole steps to at most this width"}})),
     ("frame_hash", "The 64-bit FNV-1a hash and mean colour of the frame or a region, to compare frames "
      "without taking a picture.",
@@ -900,13 +1295,16 @@ TOOLS = [
     ("drag", "Press at one point, move to another and let go, as a selection box is drawn.",
      schema({"x1": {"type": "integer"}, "y1": {"type": "integer"}, "x2": {"type": "integer"},
              "y2": {"type": "integer"}, "space": SPACE, "button": BUTTON,
-             "steps": {"type": "integer", "default": 8}}, ["x1", "y1", "x2", "y2"])),
+             "steps": {"type": "integer", "default": 8, "minimum": 1, "maximum": 256}},
+            ["x1", "y1", "x2", "y2"])),
     ("move_pointer", "Move the game's pointer (never the desktop's).",
      schema({"x": {"type": "integer"}, "y": {"type": "integer"}, "space": SPACE}, ["x", "y"])),
     ("press_key", "Press and let go of a key or a chord: escape, return, space, f1, a, 5, up, "
      "ctrl+s, shift+left. hold_frames keeps it down for that many frames (camera scrolling).",
-     schema({"key": {"type": "string"}, "repeat": {"type": "integer", "default": 1},
-             "hold_frames": {"type": "integer", "default": 0}}, ["key"])),
+     schema({"key": {"type": "string"},
+             "repeat": {"type": "integer", "default": 1, "minimum": 1, "maximum": 100},
+             "hold_frames": {"type": "integer", "default": 0, "minimum": 0,
+                             "maximum": MAX_HELD_FRAMES}}, ["key"])),
     ("type_text", "Type text into the field that takes it (click the field first); submit presses Return.",
      schema({"text": {"type": "string"}, "submit": {"type": "boolean", "default": False}}, ["text"])),
     ("scroll", "Turn the mouse wheel; dy positive turns it away from the player.",
@@ -920,9 +1318,10 @@ TOOLS = [
      "until it no longer is).",
      schema({"screen": {"type": "string"}, "dialog": {"type": "string"}, "control": {"type": "string"},
              "gone": {"type": "boolean", "default": False},
-             "timeout": {"type": "number", "default": 30}})),
+             "timeout": seconds(30)})),
     ("wait_frames", "Let the game run for a number of frames.",
-     schema({"frames": {"type": "integer", "default": 30}})),
+     schema({"frames": {"type": "integer", "default": 30, "minimum": 0, "maximum": MAX_HELD_FRAMES,
+                        "description": "at most 30 seconds of them are waited for"}})),
     ("prefs", "The preferences as the game holds them, all or the keys named.",
      schema({"names": {"type": "array", "items": {"type": "string"}}})),
     ("match", "The running match: pause, speed, each player's side, team, units, kills and losses, the "
@@ -934,12 +1333,13 @@ TOOLS = [
      schema({"events": {"anyOf": [{"type": "string", "enum": ["all"]},
                                   {"type": "array", "items": {"type": "string"}}]}}, ["events"])),
     ("read_events", "Take the events received since the last call, oldest first.",
-     schema({"max_events": {"type": "integer", "default": 100},
-             "wait_seconds": {"type": "number", "default": 0,
-                              "description": "wait this long for one when none has come"},
+     schema({"max_events": {"type": "integer", "default": 100, "minimum": 1, "maximum": EVENTS_KEPT},
+             "wait_seconds": dict(seconds(0), description="wait this long for one when none has come"),
              "kinds": {"type": "array", "items": {"type": "string"}}})),
     ("request", "Send any automation request by its op and fields, and answer its JSON.",
-     schema({"op": {"type": "string"}, "fields": {"type": "object"}}, ["op"])),
+     schema({"op": {"type": "string", "minLength": 1},
+             "fields": {"type": "object", "description": "the request's fields beside its id and op, which "
+                                                         "the server sets"}}, ["op"])),
 ]
 
 INSTRUCTIONS = """Drives Open Annihilation, a portable engine for Total Annihilation 3.1c, through its
@@ -971,6 +1371,8 @@ class Server:
             return None
         message_id = message["id"]
         params = message.get("params") or {}
+        if not isinstance(params, dict):
+            return self._error(message_id, INVALID_PARAMS, "params must be an object")
         if method == "initialize":
             asked = params.get("protocolVersion")
             return self._result(message_id, {
@@ -985,26 +1387,34 @@ class Server:
                 {"name": name, "description": description, "inputSchema": input_schema}
                 for name, description, input_schema in TOOLS]})
         if method == "tools/call":
-            return self._result(message_id, self.call(params.get("name"), params.get("arguments") or {}))
+            arguments = params.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                return self._error(message_id, INVALID_PARAMS, "arguments must be an object")
+            return self._result(message_id, self.call(params.get("name"), arguments))
         return self._error(message_id, METHOD_NOT_FOUND, f"unknown method {method}")
 
     def call(self, name, arguments):
+        """Calls a tool once its arguments meet its schema; any failure is the tool's error, never the server's end."""
         known = {tool[0]: tool[2] for tool in TOOLS}
-        if name not in known:
+        if not isinstance(name, str) or name not in known:
             return {"isError": True, "content": [{"type": "text", "text": f"unknown tool {name}"}]}
-        allowed = known[name]["properties"]
-        unknown = [key for key in arguments if key not in allowed]
-        if unknown:
-            return {"isError": True, "content": [{"type": "text",
-                                                  "text": f"{name} takes no {', '.join(unknown)}"}]}
         try:
-            return getattr(self.tools, name)(**arguments)
+            return getattr(self.tools, name)(**checked(known[name], arguments, name))
         except ToolError as error:
             return {"isError": True, "content": [{"type": "text", "text": str(error)}]}
-        except (OSError, ValueError, KeyError, TypeError) as error:
-            log(f"{name} failed: {type(error).__name__}: {error}")
+        except Exception as error:  # a tool's own fault must leave the server and the game running
+            log(f"{name} failed:\n{traceback.format_exc().rstrip()}")
             return {"isError": True, "content": [{"type": "text",
                                                   "text": f"{name} failed: {type(error).__name__}: {error}"}]}
+
+    def answer(self, message):
+        """Returns handle's answer, or an internal error when handling the message failed."""
+        try:
+            return self.handle(message)
+        except Exception as error:  # one bad message must not end the server
+            log(f"a request failed:\n{traceback.format_exc().rstrip()}")
+            return self._error(message.get("id") if isinstance(message, dict) else None,
+                               INTERNAL_ERROR, f"{type(error).__name__}: {error}")
 
     @staticmethod
     def _result(message_id, result):
@@ -1024,21 +1434,25 @@ class Server:
             except ValueError:
                 answer = self._error(None, PARSE_ERROR, "not JSON")
             else:
-                answers = [self.handle(item) for item in message] if isinstance(message, list) \
-                    else self.handle(message)
+                answers = [self.answer(item) for item in message] if isinstance(message, list) \
+                    else self.answer(message)
                 if isinstance(answers, list):
                     answers = [item for item in answers if item is not None] or None
                 answer = answers
             if answer is not None:
-                writer.write(json.dumps(answer, ensure_ascii=False) + "\n")
+                try:
+                    text = json.dumps(answer, ensure_ascii=False)
+                except (TypeError, ValueError) as error:
+                    text = json.dumps(self._error(None, INTERNAL_ERROR, f"cannot write the answer: {error}"))
+                writer.write(text + "\n")
                 writer.flush()
 
     def shutdown(self):
         if self.game.process is not None:
             self.game.stop()
-            self.game.remove_scratch()
         else:
             self.game.disconnect()
+        self.game.remove_scratch()
 
 
 # --- The self-test -------------------------------------------------------------------
@@ -1051,15 +1465,26 @@ class StandInEndpoint:
 
     def __init__(self, folder):
         self.listener = socket.create_server(("127.0.0.1", 0))
-        self.address = "127.0.0.1:%d" % self.listener.getsockname()[1]
-        self.file = Path(folder) / "automation.json"
-        self.file.write_text(json.dumps({"version": 1, "address": self.address, "token": self.TOKEN,
-                                         "pid": os.getpid()}), encoding="utf-8")
+        self.port = self.listener.getsockname()[1]
+        self.address = "127.0.0.1:%d" % self.port
+        self.file = self.write_file(Path(folder) / "automation.json")
         self.screen = "main_menu"
         self.frame = 0
         self.inputs = []
+        self.requests = []
         self.list_first = 0
         threading.Thread(target=self._serve, daemon=True).start()
+
+    def description(self, **changes):
+        """The endpoint file's JSON as the game writes it, with any field changed."""
+        return json.dumps(dict({"version": 1, "address": self.address, "token": self.TOKEN,
+                                "pid": os.getpid()}, **changes))
+
+    def write_file(self, path, **changes):
+        """Writes an endpoint file as the game does, readable by its owner alone."""
+        path.write_text(self.description(**changes), encoding="utf-8")
+        os.chmod(path, 0o600)
+        return path
 
     def _controls(self):
         if self.screen == "main_menu":
@@ -1122,6 +1547,7 @@ class StandInEndpoint:
                                                  "version": 1, "tick_rate": 30}))
                 while True:
                     request, _ = stream.read()
+                    self.requests.append(request)
                     self.frame += 1
                     answer, payload = self._answer(request)
                     if request.get("op") == "subscribe":
@@ -1132,6 +1558,22 @@ class StandInEndpoint:
                 connection.close()
 
 
+# A stand-in for the game that game_launch starts through --runner: it keeps
+# its command line, writes the endpoint file the stand-in endpoint serves
+# where --fark-file says, readable by its owner alone, and waits to be ended.
+STAND_IN_GAME = """import json, os, sys, time
+arguments = sys.argv[1:]
+with open({command!r}, "w", encoding="utf-8") as out:
+    json.dump(arguments, out)
+endpoint = arguments[arguments.index("--fark-file") + 1]
+with open(endpoint + ".part", "w", encoding="utf-8") as out:
+    out.write({description!r})
+os.chmod(endpoint + ".part", 0o600)
+os.replace(endpoint + ".part", endpoint)
+time.sleep(60)
+"""
+
+
 def self_test():
     """Drives the server's tools against the stand-in endpoint; returns the process status."""
     failures = []
@@ -1140,10 +1582,29 @@ def self_test():
         if not condition:
             failures.append(what)
 
-    folder = tempfile.mkdtemp(prefix="oa-mcp-selftest-")
+    folder = Path(tempfile.mkdtemp(prefix="oa-mcp-selftest-")).resolve()
+    # The environment names no executable, installation or endpoint file of the machine's.
+    kept_environment = {name: os.environ.pop(name) for name in ("OA_EXECUTABLE", "OA_GAME_DIR", "OA_FARK_FILE")
+                        if name in os.environ}
+    server = None
     try:
         stand_in = StandInEndpoint(folder)
-        server = Server()
+        # A repository whose build folder holds this system's executable and,
+        # newer, the other system's.
+        build = folder / "repo" / "build"
+        build.mkdir(parents=True)
+        own = build / EXECUTABLE_NAME
+        other = build / next(name for name in EXECUTABLE_NAMES if name != EXECUTABLE_NAME)
+        own.write_bytes(b"")
+        other.write_bytes(b"")
+        os.utime(own, (1_000_000_000, 1_000_000_000))
+        command_file = folder / "command.json"
+        stand_in_game = folder / "stand_in_game.py"
+        stand_in_game.write_text(STAND_IN_GAME.format(command=str(command_file),
+                                                      description=stand_in.description()), encoding="utf-8")
+        preferences_dir = folder / "preferences"
+        preferences_dir.mkdir()
+        server = Server(Game([sys.executable, str(stand_in_game)], None, [preferences_dir], folder / "repo"))
 
         def call(tool, **arguments):
             answer = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -1152,6 +1613,9 @@ def self_test():
 
         def body(result):
             return json.loads(result["content"][0]["text"])
+
+        def refusal(result):
+            return result["content"][0]["text"] if result.get("isError") else ""
 
         init = server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                               "params": {"protocolVersion": "2025-03-26", "capabilities": {},
@@ -1165,7 +1629,74 @@ def self_test():
         check(server.handle({"jsonrpc": "2.0", "id": 3, "method": "nope"})["error"]["code"]
               == METHOD_NOT_FOUND, "an unknown method is refused")
         check(call("screen").get("isError"), "a tool without a game is refused")
+
+        # The executables game_launch may start.
+        check(find_executables(folder / "repo") == [own.resolve()],
+              "find_executables picks this system's executable, not the newer one of the other system")
+        bundle_binary = folder / "Open Annihilation.app" / "Contents" / "MacOS" / "open-annihilation"
+        bundle_binary.parent.mkdir(parents=True)
+        bundle_binary.write_bytes(b"")
+        check(game_executable(folder / "Open Annihilation.app") == bundle_binary.resolve(),
+              "a .app bundle names the binary in Contents/MacOS")
+        stray = folder / "Open Annihilation.app" / "Contents" / "Resources" / "open-annihilation"
+        stray.parent.mkdir()
+        stray.write_bytes(b"")
+        foreign = folder / "tool.sh"
+        foreign.write_bytes(b"")
+        for path, what in ((foreign, "a program of another name"), (stray, "a file elsewhere in a bundle")):
+            try:
+                game_executable(path)
+                check(False, f"game_executable refuses {what}")
+            except ToolError:
+                pass
+        try:
+            Game(executable=foreign)
+            check(False, "the server's --executable refuses a program of another name")
+        except ToolError:
+            pass
+        elsewhere = folder / "elsewhere" / EXECUTABLE_NAME
+        elsewhere.parent.mkdir()
+        elsewhere.write_bytes(b"")
+        check("not Open Annihilation's executable" in refusal(call("game_launch", executable=str(foreign))),
+              "game_launch refuses a foreign executable")
+        check("not one the server found" in refusal(call("game_launch", executable=str(elsewhere))),
+              "game_launch refuses an executable the server did not find")
+        check(call("game_launch", executable=str(folder / "none")).get("isError"),
+              "game_launch refuses a missing executable")
+        check(server.game.process is None, "a refused game_launch starts nothing")
+
+        # Attaching, and the endpoint files refused.
         check(call("game_attach", file=str(stand_in.file)).get("isError") is None, "game_attach connects")
+        check(server.game.pid == os.getpid(), "game_attach keeps the endpoint file's process id")
+        bad_files = [("non-loopback", {"address": "192.0.2.10:%d" % stand_in.port}),
+                     ("all-addresses", {"address": "0.0.0.0:%d" % stand_in.port}),
+                     ("numeric-address", {"address": 1}), ("no-port", {"address": "127.0.0.1"}),
+                     ("short-token", {"token": "00ff"}), ("version-2", {"version": 2}),
+                     ("no-pid", {"pid": "1"})]
+        for name, changes in bad_files:
+            path = stand_in.write_file(folder / f"{name}.json", **changes)
+            check(call("game_attach", file=str(path)).get("isError"), f"game_attach refuses the {name} file")
+        for name in ("non-loopback", "all-addresses"):
+            check("loopback" in refusal(call("game_attach", file=str(folder / f"{name}.json"))),
+                  f"game_attach refuses the {name} file before connecting")
+        not_json = folder / "notes.txt"
+        not_json.write_text("address 127.0.0.1\n", encoding="utf-8")
+        os.chmod(not_json, 0o600)
+        check("not JSON" in refusal(call("game_attach", file=str(not_json))), "game_attach refuses a file not JSON")
+        large = folder / "large.json"
+        large.write_text(" " * MAX_ENDPOINT_FILE_BYTES + stand_in.description(), encoding="utf-8")
+        os.chmod(large, 0o600)
+        check(call("game_attach", file=str(large)).get("isError"), "game_attach refuses a large file")
+        if hasattr(os, "getuid"):
+            open_file = stand_in.write_file(folder / "open.json")
+            os.chmod(open_file, 0o666)
+            check(call("game_attach", file=str(open_file)).get("isError"),
+                  "game_attach refuses a file others may write")
+        localhost = stand_in.write_file(folder / "localhost.json", address="localhost:%d" % stand_in.port)
+        check(call("game_attach", file=str(localhost)).get("isError") is None,
+              "game_attach connects to localhost as 127.0.0.1")
+
+        # The tools against the stand-in.
         check(body(call("screen"))["screen"] == "main_menu", "screen names the main menu")
         controls = body(call("controls", name_contains="single"))
         check(controls["count"] == 1 and controls["controls"][0]["name"] == "SINGLE",
@@ -1195,13 +1726,130 @@ def self_test():
               "wait_for sees the screen shown")
         check(call("wait_for", screen="match", timeout=0.3).get("isError"), "wait_for gives up in time")
         check(call("request", op="bogus").get("isError"), "request passes a refusal on")
-        check(call("game_launch", executable=str(Path(folder) / "none")).get("isError"),
-              "game_launch refuses a missing executable")
+        started = time.monotonic()
+        answered = call("request", op="screen", fields={"id": 999999, "op": "quit", "timeout": 1e9})
+        sent = stand_in.requests[-1]
+        check(answered.get("isError") is None and sent["op"] == "screen" and sent["id"] != 999999
+              and time.monotonic() - started < ANSWER_SECONDS,
+              "request's fields cannot replace its id and op, nor make the server wait")
+        check(call("click", x=140.0, y=110).get("isError") is None, "a whole number given as 140.0 is taken")
+
+        # Arguments that do not meet a tool's schema are refused, and the server goes on.
+        for tool, arguments, what in (
+                ("screenshot", {"max_width": -1}, "a negative max_width"),
+                ("screenshot", {"max_width": 0}, "a max_width of 0"),
+                ("press_key", {"key": 5}, "a key that is a number"),
+                ("press_key", {"key": "a", "repeat": 100, "hold_frames": 900}, "keys held too long"),
+                ("select_list_item", {"list_name": "MAPS", "item": 5}, "an item that is a number"),
+                ("select_list_item", {"list_name": "MAPS"}, "a missing item"),
+                ("click", {"x": "1", "y": 2}, "a point given as text"),
+                ("click", {"x": 1.5, "y": 2}, "a point that is not whole"),
+                ("click", {"x": True, "y": 2}, "a point that is true"),
+                ("drag", {"x1": 0, "y1": 0, "x2": 1, "y2": 1, "steps": 0}, "no steps"),
+                ("wait_for", {"screen": "match", "timeout": float("nan")}, "a timeout that is not a number"),
+                ("wait_for", {"screen": "match", "timeout": 1e9}, "a timeout too long"),
+                ("read_events", {"wait_seconds": -1}, "a negative wait"),
+                ("game_launch", {"arguments": "--mute"}, "arguments that are not a list"),
+                ("game_launch", {"arguments": [5]}, "an argument that is a number"),
+                ("request", {"op": 5}, "an op that is a number"),
+                ("request", {"op": "screen", "fields": [1]}, "fields that are not an object"),
+                ("subscribe", {"events": 5}, "events of neither form")):
+            check(call(tool, **arguments).get("isError"), f"{tool} refuses {what}")
+        broken = server.tools.room
+        server.tools.room = lambda: 1 // 0
+        failed = refusal(call("room"))
+        server.tools.room = broken
+        check("ZeroDivisionError" in failed and body(call("screen"))["screen"] == "single_player",
+              "a tool's own failure is its error, and the server goes on")
+        lines = [{"jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": [1]},
+                 {"jsonrpc": "2.0", "id": 11, "method": "tools/call",
+                  "params": {"name": "screen", "arguments": [1]}},
+                 {"jsonrpc": "2.0", "id": 12, "method": "tools/call",
+                  "params": {"name": "press_key", "arguments": {"key": 5}}},
+                 {"jsonrpc": "2.0", "id": 13, "method": "ping"}]
+        written = io.StringIO()
+        server.serve(io.StringIO("".join(json.dumps(line) + "\n" for line in lines)), written)
+        answers = [json.loads(line) for line in written.getvalue().splitlines()]
+        check([answer["id"] for answer in answers] == [10, 11, 12, 13]
+              and answers[0]["error"]["code"] == INVALID_PARAMS and answers[2]["result"]["isError"]
+              and answers[3]["result"] == {},
+              "serve answers malformed calls and goes on")
         check("quit sent" in call("game_quit")["content"][0]["text"], "game_quit sends quit")
+
+        # game_launch's checks, each made before anything starts.
+        installation = folder / "installation"
+        installation.mkdir()
+        outside_preferences = folder / "outside.conf"
+        outside_preferences.write_text(PREFERENCES_HEADER, encoding="utf-8")
+        scratch = server.game.scratch
+        for arguments, what in (
+                (["--fark-address", "0.0.0.0:1"], "--fark-address"), (["--fark"], "--fark"),
+                (["--fark-file", str(folder / "x.json")], "--fark-file"),
+                (["--preferences-file", str(outside_preferences)], "--preferences-file"),
+                (["--game-dir", str(installation)], "--game-dir"), (["--stage", "a.stage"], "--stage"),
+                (["--headless-check"], "--headless-check"), (["german"], "a word that is no option"),
+                (["--user-folder", str(folder)], "a folder outside the scratch folder"),
+                (["--open", "../../file.oamod"], "a relative path out of the scratch folder"),
+                (["--player-name"], "an option without its value"),
+                (["--player-name", "--fark"], "an option as a value"),
+                (["--skip-intro=yes"], "a value to a switch"),
+                (["--hardware-acceleration=most"], "a word the option does not take"),
+                (["--player-name", "a\0b"], "a zero character")):
+            check(call("game_launch", arguments=arguments).get("isError"), f"game_launch refuses {what}")
+        check("holds no totala1.hpi" in refusal(call("game_launch", game_dir=str(installation))),
+              "game_launch refuses a game_dir without the game")
+        check("outside" in refusal(call("game_launch", preferences_file=str(outside_preferences))),
+              "game_launch refuses a preferences file outside the allowed folders")
+        check(call("game_launch", preferences_file=str(preferences_dir / "none.conf")).get("isError"),
+              "game_launch refuses a preferences file that does not exist")
+        check(server.game.process is None and server.game.endpoint is None,
+              "a refused game_launch starts nothing")
+
+        # A launch through the stand-in game.
+        (installation / "TotalA1.HPI").write_bytes(b"")
+        taken = ["--resolution", "800x600", "--user-folder", "user", "--hardware-acceleration=off",
+                 "--game-password", "secret"]
+        launched = call("game_launch", game_dir=str(installation), headless=True, timeout=20, arguments=taken)
+        check(launched.get("isError") is None, f"game_launch starts the game: {refusal(launched)}")
+        if launched.get("isError") is None:
+            command = json.loads(command_file.read_text(encoding="utf-8"))
+            value = {option: command[index + 1] for index, option in enumerate(command[:-1])}
+            preferences = Path(value.get("--preferences-file", ""))
+            check(command[0] == str(own.resolve()), "game_launch starts the executable the server found")
+            check(body(launched)["preferences_file"] == str(preferences), "game_launch names the preferences file")
+            check(inside(preferences, scratch) and preferences.read_text(encoding="utf-8") == PREFERENCES_HEADER,
+                  "the game gets a new preferences file in the scratch folder")
+            check(inside(value.get("--fark-file", ""), scratch), "the endpoint file is in the scratch folder")
+            check(value.get("--game-dir") == str(installation.resolve()), "game_dir is passed on")
+            check(command[-len(taken):] == taken and "--skip-intro" in command,
+                  "the arguments taken are passed on in order")
+            check("refused" not in refusal(call("screen")) and body(call("screen"))["screen"],
+                  "the launched game's endpoint answers")
+            check("game_quit" in refusal(call("game_attach", file=str(stand_in.file))),
+                  "game_attach is refused while the launched game runs")
+            status = body(call("game_status"))
+            check(status["launched_here"] and status["running"] and status["scratch"] == str(scratch)
+                  and status["executables"] == [str(own.resolve())],
+                  "game_status names the launched game, the scratch folder and the executables")
+            check("stopped" in call("game_quit", force=True)["content"][0]["text"], "game_quit force stops it")
+            check(call("game_attach", file=str(stand_in.file)).get("isError") is None
+                  and not body(call("game_status"))["launched_here"] and server.game.pid == os.getpid(),
+                  "game_attach after the launched game ended forgets it")
+        own_preferences = preferences_dir / "mine.conf"
+        own_preferences.write_text(PREFERENCES_HEADER, encoding="utf-8")
+        launched = call("game_launch", preferences_file=str(own_preferences), timeout=20)
+        check(launched.get("isError") is None and str(own_preferences.resolve())
+              in json.loads(command_file.read_text(encoding="utf-8")),
+              "game_launch takes a preferences file in a folder of --preferences-dir")
+        call("game_quit", force=True)
         with_png, width, height = png_from_rgb(9, 3, bytes(81), 4)
         check((width, height) == (3, 1) and with_png.startswith(b"\x89PNG"), "a picture shrinks by steps")
         server.shutdown()
+        check(not scratch.exists(), "the scratch folder is removed when the server ends")
     finally:
+        if server is not None:
+            server.shutdown()
+        os.environ.update(kept_environment)
         shutil.rmtree(folder, ignore_errors=True)
     for failure in failures:
         print(f"FAIL: {failure}", file=sys.stderr)
@@ -1215,12 +1863,21 @@ def main(argv=None):
                         help="check the server against a stand-in endpoint and exit")
     parser.add_argument("--runner", default="",
                         help="a command game_launch starts the game through, such as a compatibility layer")
+    parser.add_argument("--executable", type=Path,
+                        help="the game's executable (open-annihilation, open-annihilation.exe or a .app "
+                             "bundle) game_launch starts; by default OA_EXECUTABLE or the newest build")
+    parser.add_argument("--preferences-dir", type=Path, action="append", default=[],
+                        help="a folder whose preferences files game_launch may give the game (again for more)")
     options = parser.parse_args(argv)
     if options.self_test:
         return self_test()
+    try:
+        game = Game(shlex.split(options.runner), options.executable, options.preferences_dir)
+    except ToolError as error:
+        parser.error(f"--executable: {error}")
     stdin = open(sys.stdin.fileno(), "r", encoding="utf-8", newline="\n", closefd=False)
     stdout = open(sys.stdout.fileno(), "w", encoding="utf-8", newline="\n", closefd=False)
-    server = Server(Game(shlex.split(options.runner)))
+    server = Server(game)
     try:
         server.serve(stdin, stdout)
     finally:

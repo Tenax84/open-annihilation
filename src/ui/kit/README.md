@@ -100,7 +100,15 @@ contract from version 15 (`src/app/include/oa/app/extension.hpp`).
   `StateIcon` names the state icons: a circled check, a circled up-arrow,
   a download arrow, a key, and the two maker's marks (the OA badge and
   the bone). `MakerMark` on a list row draws one of those marks under the
-  row's state icon.
+  row's state icon. `TagIcon` (`tag_icon.hpp`, which `looks.hpp` includes)
+  names the eight catalogue tag icons, `statistics`, `economy`,
+  `commanders`, `new-units`, `disable`, `gameplay`, `ai` and `maps`.
+  `tag_icon_of` maps an id exactly, lower-case kebab-case, and any other
+  id gives none; the kit holds no tag label. `BadgeLook` is a package
+  badge: a picture, else a tag icon on `face`, else letters, else a dashed
+  square. `GripLook` is a drag handle, `grip_width` by `grip_height`.
+  `PillLook::tag` is a tag icon at the pill's left. `ListRowLook::badge_tag`
+  draws that icon on the badge, and `by_colour` colours the byline.
 - `canvas.hpp`: the canvas the components draw on, `Canvas`, in its two
   forms, and the primitives every draw function draws through: `fill_rect`,
   `blend_rect`, `outline_rect`, `bevel_rect`, `rule_rect`, `box_text`,
@@ -120,7 +128,7 @@ contract from version 15 (`src/app/include/oa/app/extension.hpp`).
   kept for the thread, grown and never replaced, and a drawing that is
   already using it draws nothing if it asks for the buffer again.
 - `components.hpp`: the controls, drawn through the canvas's primitives on
-  either form. One button, five looks. `draw_state_icon` draws a state
+  either form. One button, six looks. `draw_state_icon` draws a state
   icon, filling a square of a rectangle's shorter side. A circled check,
   a circled up-arrow, a download arrow and a key are one colour: their
   rings and strokes, from a design of 24 units (the ring 2 units wide, its
@@ -133,7 +141,9 @@ contract from version 15 (`src/app/include/oa/app/extension.hpp`).
   outline. The OA badge is the app icon when `set_open_annihilation_mark`
   has been given one, drawn through `draw_picture` from the copy kept for
   the mark's size, and otherwise that same kind of shape: a rounded plate
-  with the letters in the lock colour. `paint` draws a display list. The
+  with the letters in the lock colour. `draw_tag_icon` draws a tag icon
+  the same way, strokes 2.5 units wide on the 24-unit square, sampled at
+  the canvas's own pixels. `paint` draws a display list. The
   OA button (`draw_oa_button`, `OaButtonLook`) may wear the kit's attention
   dot, as the main menu's does while updates wait: a disc
   `oa_button_dot_side` (7) points across in the warning token
@@ -189,7 +199,9 @@ contract from version 15 (`src/app/include/oa/app/extension.hpp`).
     Hover lightens an accent ground and outlines a muted one; focus
     outlines the pill in the text colour; disabled is the muted ground
     under the idle colour and ignores hover and focus. The ends are
-    stepped at 1x on the crisp form and smooth at 150%. A chip stays a
+    stepped at 1x on the crisp form and smooth at 150%. A tag icon at the
+    left adds the same square and gap as the state icon at the right, and
+    a pill with neither is unchanged. A chip stays a
     rectangle;
   - a text field, and with the magnifier the search field, its text moved
     so its caret shows;
@@ -202,7 +214,16 @@ contract from version 15 (`src/app/include/oa/app/extension.hpp`).
     rows, a quiet block and an arrow from any edge, `hover_card_size`,
     `hover_card_rect` and `hover_card_due`, which says when the pointer has
     rested on one control for `hover_card_delay_ms` (400);
-  - a link, `link_width`.
+  - a link, `link_width`;
+  - a package badge (`BadgeLook`, `draw_badge`, `add_badge`, role
+    `package_badge`): the picture with a `control_border` outline, else
+    the tag icon in `on_accent` on `face` at 70 percent of the side, else
+    the letters cut to whole letters, else a dashed square. A list row's
+    badge is this drawing;
+  - a drag handle (`GripLook`, `draw_grip`, `add_grip`, role `grip`):
+    two columns of four discs, 3 points apart and 1 point in radius,
+    `grip_width` (6) by `grip_height` (12). Rest is `quiet`, hovered the
+    text colour, held the accent, disabled `control_hover`.
 
   Each has a draw function and an `add_*` that puts it in a display list
   with its name, kind and Tab place; `paint` draws them.
@@ -217,7 +238,11 @@ contract from version 15 (`src/app/include/oa/app/extension.hpp`).
   `QuestionButton::id`, or `<word>.button-<n>` from 1 without one, and
   both's text `<word>.body`, a control of kind `area` that is neither
   enabled nor focusable, so that no press, finger or key reaches it, whose
-  text is the title, the paragraphs and the failure, one a line. The work
+  text is the title, the paragraphs and the failure, one a line. A question's
+  `items` (`QuestionItem`) are lines under the paragraphs: a 20-point badge,
+  the name and an aside in the hint colour, cut with the kit's ellipsis.
+  Each item's name and aside is a line of `<word>.body` after the paragraphs.
+  With no items the question is laid out and drawn as before. The work
   dialog is the same panel with no buttons: a title, one line and either a
   bar (`progress` of 0 to `question_progress_whole`) or a spinner
   (`progress` of -1, `work_spinner_side`, `draw_spinner`). Its word is
@@ -412,14 +437,17 @@ takes ([docs/extensions/ui-kit.md](../../../docs/extensions/ui-kit.md#the-galler
   the spotlight under it; a picture well; a call to action; and a step
   indicator), Window chrome (an OA window over a darkened screen, its
   header saying `v1.2.3`, never the build's version), Tabs, Buttons (the
-  four looks, a link), Toggle, Level strip, Drop-down (one shown open with
+  five looks, a link), Toggle, Level strip, Drop-down (one shown open with
   an aside), Slider, Search field (and a plain text field), Chips (every
   state), Pills (playing, neutral, installed, update and problem, each a
   word on a rounded ground and none taking a press), Progress, Nav list,
   List rows, Scroll list, Card grid, Hover card,
-  Section, label and hint, Lock, Notice, Question and OA mark (the OA
+  Section, label and hint, Lock, Notice, Question, OA mark (the OA
   button with and without its dot, the mark alone, the icon and every
-  one-bit mark). They flow into the shortest column: one at Compact, two
+  one-bit mark) and Badges and tags (the eight tag icons, a picture,
+  letters and a blank badge, a pill and a nav entry with a tag, a drag
+  handle at rest, hovered, held and disabled, and a question listing
+  Gatehouse). They flow into the shortest column: one at Compact, two
   at Regular, three at Large, and scroll between the header and the footer
   where they are taller than it. A notice, a question and the window
   chrome's sample are drawn from their own origin (`GalleryPanel`), as the
@@ -536,14 +564,36 @@ the carousel slides flat and the call to action holds a steady ring.
 - A notice and a question place their parts from the Compact metrics, but
   for their width and greatest height, which are their size class's: their
   text wraps at the wider width, and their buttons keep their sizes. A
-  question's buttons are as wide as their captions at the estimated width,
-  whatever the fonts, so a press lands where a button is drawn. Their
+  question's button is as wide as its caption and the padding, the caption
+  counted at the wider of the estimated width and the small font's
+  measure: a caption the fonts draw wider than the estimate, as the modern
+  fonts draw Cyrillic capitals, widens its button, and one they draw
+  narrower keeps the estimate's place. A row wider than the room between
+  the box's paddings is narrowed from its widest buttons. The pointer and
+  finger functions take the fonts the question is drawn in, so a press
+  lands where a button is drawn. Their
   events hit and reach through `hit` and `reach` over the same controls
   their display lists hold: a notice's OK before its open button, a
   question's buttons left to right.
-- One button, five looks: accent, plain, quiet, inset, and plain while
-  disabled. The kit chooses every colour. A caller passes the style and
-  whether the pointer is over the button or holds it.
+- One button, six looks: accent, plain, quiet, inset, filled, and plain
+  while disabled. Filled is a deep green face (`colour::filled`, 3e5218,
+  7:1 against the white text; `filled_light` under the pointer and
+  `filled_held` while held both keep at least 5.7:1) under white text
+  (`colour::text`), with rounded corners a quarter of its shorter side, at
+  least 2 points (`filled_radius`), drawn as two rectangles with rounded
+  corners (`fill_corner_rect`, the canvas's capsule fill with quarter-circle
+  corners and straight edges), the edge and the face one point in; a filled button that is not enabled keeps the
+  corners in the plain look's disabled colours. It is for a button that
+  stands over a 3.1c picture:
+  Mutators. The kit chooses every colour. A caller passes the style and
+  whether the pointer is over the button or holds it. A button may wear the
+  OA badge (`ButtonLook::oa_mark`): the badge at its left and the caption
+  after it, keeping to the left, in the look's font (`ButtonLook::font`,
+  small unless the caller picks regular). `button_mark_parts` places them:
+  a fifth of the button's height pads the left, the gap after the badge
+  and the right, and the badge is a square as tall as the button less that
+  padding above and below. The caller fits the caption to that box. The
+  gallery's filled sample wears the badge.
 - `paint` draws a display list's items in the list's order. A control is
   added with its automation name.
 - Two backends, one set of components. The crisp form of the canvas draws
@@ -656,7 +706,9 @@ names, kinds and Tab order, a word of their own (`language-notice`) and
 their text's control, which changes what no press or finger finds at any
 point of the box, where a finger lands, every key (the editing
 keys and Info, which do nothing, among them), that `paint` matches `draw_notice` and
-`draw_question`, and the progress bar's fill.
+`draw_question`, and the progress bar's fill. It fits a question's buttons
+to a measure and to fonts wider than the estimate, where the display list,
+the placement and the presses agree, and narrows a row too wide for its box.
 `ui-kit-rows` lays out, draws, focuses and changes a page of every row
 kind from a table: the placement of rows shaped as the settings dialog's
 Controls, Graphics and Developer sections, with the game's fonts and the
@@ -679,10 +731,16 @@ same however the time was sliced, where a choice group steps and where a
 coach mark sits, and that every first-run component draws at Compact,
 Regular and Large, on the crisp form and at 150%, with its states differing.
 
-The module's ctests are those twelve: `ui-kit-theme`, `ui-kit-text`,
+`ui-kit-tag-icons` checks the eight tag ids, each icon at 8, 12, 20, 28
+and 40 points at 1x, 2x, 3x and 150%, a badge's picture, tag, letters and
+blank, a row, pill, nav entry and question with nothing new pinned to the
+pixels from before the change, a byline's colour, a drag handle in each
+state, and a question that grows by two item lines and names them.
+
+The module's ctests are those thirteen: `ui-kit-theme`, `ui-kit-text`,
 `ui-kit-layout`, `ui-kit-input`, `ui-kit-components`, `ui-kit-chrome`,
-`ui-kit-controls`, `ui-kit-notices`, `ui-kit-smooth`, `ui-kit-rows`,
-`ui-kit-gallery` and `ui-kit-first-run`, none of which needs the game's
+`ui-kit-controls`, `ui-kit-tag-icons`, `ui-kit-notices`, `ui-kit-smooth`,
+`ui-kit-rows`, `ui-kit-gallery` and `ui-kit-first-run`, none of which needs the game's
 data. Others guard the
 kit from its users: `ui-engine-settings-pixels` and
 `ui-engine-settings-pixels-data` pin Compact's pixels

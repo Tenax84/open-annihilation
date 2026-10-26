@@ -10,6 +10,7 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <functional>
 
 namespace oa::sim::match_runtime {
 
@@ -40,6 +41,11 @@ bool side_commander(const oa::World& world, const oa::Unit& unit) noexcept {
 }
 
 std::size_t Match::order_bucket(const sim::simulation_state::Order* order) noexcept {
+    // The entry picked from the order's address cannot change what a match
+    // does: a lookup searches only that entry's list, for the record of this
+    // very order, and nothing walks the entries or their lists in turn. Where
+    // an order lies in memory changes how long finding its record takes,
+    // never which record is found.
     // Fibonacci hashing: the top bits of the address times 2^64 / phi.
     constexpr uint64_t golden_multiplier = 0x9e3779b97f4a7c15ull;
     const auto address = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(order));
@@ -79,11 +85,18 @@ void Match::drop_order(const RuntimeOrder& record) {
     std::erase_if(orders_, [&](const auto& candidate) { return candidate.get() == &record; });
 }
 
+Match::RuntimeOrder** Match::observer_head(const sim::simulation_state::Unit& unit) noexcept {
+    const auto* first = units_.data();
+    if (std::less<>{}(&unit, first) || !std::less<>{}(&unit, first + units_.size()))
+        return nullptr;
+    return &target_observers_[static_cast<std::size_t>(&unit - first)];
+}
+
 void Match::wake_target_observers(sim::simulation_state::Unit& unit, uint32_t event) {
-    const auto found = target_observers_.find(&unit);
-    if (found == target_observers_.end())
+    auto* const* head = observer_head(unit);
+    if (head == nullptr)
         return;
-    for (auto* entry = found->second; entry != nullptr; entry = entry->observer_next) {
+    for (auto* entry = *head; entry != nullptr; entry = entry->observer_next) {
         // Every order on the list still targets this unit. The walk raises
         // the event on each of them.
         assert(entry->attack.target == &unit);
@@ -155,15 +168,11 @@ void Match::apply_damage_event(
     auto& unit = *target.unit;
     if (!(unit.flags & live_unit_flag) || (unit.flags & death_pending_flag))
         return;
-    if (event_hooks.unit_damaged != nullptr)
-        event_hooks.unit_damaged(
-            event_hooks.context,
-            state(),
-            target.unit_index,
-            source != nullptr && source->unit != nullptr ? source->unit_index : uint16_t{},
-            amount,
-            kind
-        );
+    if (event_wanted<&EventHooks::unit_damaged>()) {
+        const auto attacker =
+            source != nullptr && source->unit != nullptr ? source->unit_index : uint16_t{};
+        emit_event<&EventHooks::unit_damaged>(state(), target.unit_index, attacker, amount, kind);
+    }
     if (kind == healing_kind) {
         if (unit.type)
             unit.health =
@@ -230,6 +239,8 @@ void Match::transfer_unit(uint16_t unit, uint8_t new_owner, const TransferredUni
     auto& original = slots_.at(unit);
     if (!original.unit || new_owner >= simulation_.players.size())
         return;
+    // Read before the captured event or the copy can change the record.
+    const uint8_t from = original.record.owner_index;
     auto& receiver = simulation_.players[new_owner];
     if (original.unit->owner == &receiver)
         return;
@@ -249,6 +260,7 @@ void Match::transfer_unit(uint16_t unit, uint8_t new_owner, const TransferredUni
         original.unit->capture_cooldown = handed_over_cooldown;
         if (multiplayer.unit_transferred != nullptr)
             multiplayer.unit_transferred(multiplayer.context, unit, new_owner);
+        emit_event<&EventHooks::unit_given>(state(), unit, uint16_t{0}, from, new_owner);
         TickHost(*this).scaled_damage(nullptr, original, lethal_damage, captured);
         return;
     }
@@ -269,6 +281,7 @@ void Match::transfer_unit(uint16_t unit, uint8_t new_owner, const TransferredUni
         return;
     // The copy drops the standing move and fire orders it was created with.
     copy->unit->flags &= ~(OA_UNIT_FLAG_MOVE_ORDER_MASK | OA_UNIT_FLAG_FIRE_ORDER_MASK);
+    emit_event<&EventHooks::unit_given>(state(), unit, copy->unit_index, from, new_owner);
     if (carried != nullptr) {
         // The unit's own machine kills the old unit and shares its death.
         copy->unit->health = carried->health;
@@ -330,6 +343,12 @@ void Match::spawn_corpse(sim::unit_spawn::Slot& slot, uint8_t wreck_level, bool 
         }
         smoke = false;
     }
+    // unit_died has already fired, and the dead unit's record still holds
+    // its position. A placement that returns no feature leaves no wreck.
+    if (placed != nullptr)
+        emit_event<&EventHooks::wreck_placed>(
+            world, slot.unit_index, corpse, static_cast<uint32_t>(index)
+        );
     if (world.plots[index].feature == corpse)
         wrecks_.push_back(
             {corpse,
@@ -418,17 +437,17 @@ void Match::record_death_statistics(
 }
 
 void Match::release_target_observers(sim::simulation_state::Unit& target) {
-    const auto found = target_observers_.find(&target);
-    if (found == target_observers_.end())
+    auto** head = observer_head(target);
+    if (head == nullptr)
         return;
-    auto* entry = found->second;
+    auto* entry = *head;
     std::size_t steps = orders_.size();
     while (entry != nullptr && steps-- > 0) {
         auto* next = entry->observer_next;
         lose_target(*entry, target);
         entry = next;
     }
-    target_observers_.erase(found);
+    *head = nullptr;
 }
 
 void Match::lose_target(RuntimeOrder& entry, const sim::simulation_state::Unit& target) {
@@ -445,29 +464,32 @@ void Match::link_target_observer(RuntimeOrder& entry, sim::simulation_state::Uni
     // Drop the order from the unit it watches now, so that unit's list no
     // longer reaches it once the order points somewhere else.
     unlink_target_observer(entry);
-    if (target == nullptr || target->record.type_index == 0) {
+    auto** head =
+        target != nullptr && target->record.type_index != 0 ? observer_head(*target) : nullptr;
+    if (head == nullptr) {
         entry.attack.target = nullptr;
         entry.observer_next = nullptr;
         check_target_observer(entry);
         return;
     }
-    auto& head = target_observers_[target];
     entry.attack.target = target;
-    entry.observer_next = head;
-    head = &entry;
+    entry.observer_next = *head;
+    *head = &entry;
     check_target_observer(entry);
 }
 
 void Match::unlink_target_observer(RuntimeOrder& entry) {
     if (entry.attack.target != nullptr) {
-        auto** link = &target_observers_[entry.attack.target];
-        // Every order may watch one unit, so the list is never longer than
-        // the orders there are; the bound only stops a damaged list looping.
-        std::size_t steps = orders_.size();
-        while (*link != nullptr && *link != &entry && steps-- > 0)
-            link = &(*link)->observer_next;
-        if (*link == &entry)
-            *link = entry.observer_next;
+        if (auto** link = observer_head(*entry.attack.target)) {
+            // Every order may watch one unit, so the list is never longer
+            // than the orders there are; the bound only stops a damaged list
+            // looping.
+            std::size_t steps = orders_.size();
+            while (*link != nullptr && *link != &entry && steps-- > 0)
+                link = &(*link)->observer_next;
+            if (*link == &entry)
+                *link = entry.observer_next;
+        }
         entry.attack.target = nullptr;
         entry.observer_next = nullptr;
     }
@@ -477,8 +499,9 @@ void Match::unlink_target_observer(RuntimeOrder& entry) {
 void Match::check_target_observer(const RuntimeOrder& entry) const noexcept {
 #ifndef NDEBUG
     auto* target = entry.attack.target;
-    for (const auto& [unit, head] : target_observers_) {
-        auto* cursor = head;
+    for (std::size_t index = 0; index < units_.size(); ++index) {
+        const auto* unit = &units_[index];
+        auto* cursor = target_observers_[index];
         int seen = 0;
         std::size_t steps = overlay_order_budget;
         while (cursor != nullptr && steps-- > 0) {
@@ -494,7 +517,7 @@ void Match::check_target_observer(const RuntimeOrder& entry) const noexcept {
             assert(seen <= 1);
     }
     if (target != nullptr)
-        assert(target_observers_.find(target) != target_observers_.end());
+        assert(const_cast<Match*>(this)->observer_head(*target) != nullptr);
 #else
     (void)entry;
 #endif
@@ -521,10 +544,7 @@ void Match::teardown_dead_unit(
     auto& unit = *slot.unit;
     if (!(unit.flags & live_unit_flag))
         return;
-    if (event_hooks.unit_died != nullptr)
-        event_hooks.unit_died(
-            event_hooks.context, state(), slot.unit_index, outcome, settled_elsewhere
-        );
+    emit_event<&EventHooks::unit_died>(state(), slot.unit_index, outcome, settled_elsewhere);
     // The kill handler first leaves the viewer seeing where its own unit died.
     const auto* sight_def = oa::world_unit_def_of(&state(), &slot.record);
     const auto* sight_owner = oa::world_unit_owner(&state(), &slot.record);

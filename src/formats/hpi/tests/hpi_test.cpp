@@ -12,7 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -23,6 +23,17 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <winioctl.h>
+#endif
 
 namespace {
 
@@ -938,6 +949,51 @@ void asset_store_loose_links() {
     check(store.read("units/loop/units/inside.fbi").bytes == text("inside"), "a loop resolves");
 }
 
+/// A loose folder or file that becomes a link leading outside after the
+/// store listed it is not read, so the archive's file is, as when it was a
+/// link before the listing; a plain file beside it still is.
+void asset_store_loose_links_made_after_listing() {
+    TempDir dir;
+    dir.write("game/maps/near.tnt", text("near"));
+    dir.write("game/units/a.fbi", text("a"));
+    dir.write("game/units/b.fbi", text("b"));
+    dir.write("outside/maps/near.tnt", text("far"));
+    dir.write("outside/secret.fbi", text("secret"));
+    const auto archive = dir.write("game.hpi", archive_of({{"units/a.fbi", text("archived"), 0}}));
+    const auto game = dir.path() / "game";
+    oa::AssetStore store(game);
+    store.mount(archive);
+    check(store.read("maps/near.tnt").bytes == text("near"), "a plain folder is read");
+    check(store.read("units/a.fbi").bytes == text("a"), "a plain file wins over the archive");
+    std::error_code error;
+    fs::remove_all(game / "maps", error);
+    if (!error)
+        fs::create_directory_symlink(dir.path() / "outside" / "maps", game / "maps", error);
+    if (!error)
+        fs::remove(game / "units" / "a.fbi", error);
+    if (!error)
+        fs::create_symlink(dir.path() / "outside" / "secret.fbi", game / "units" / "a.fbi", error);
+    // Some systems report a link made and make none.
+    std::error_code status_error;
+    for (const auto& link : {game / "maps", game / "units" / "a.fbi"})
+        if (!error && !fs::is_symlink(fs::symlink_status(link, status_error)))
+            error = std::make_error_code(std::errc::no_such_file_or_directory);
+    if (error) {
+        std::cout << "skipped the loose links made after listing: " << error.message() << '\n';
+        return;
+    }
+    check(
+        throws([&] { (void)store.read("maps/near.tnt"); }, "asset not found"),
+        "a folder that became a link outside is not read"
+    );
+    check(
+        store.read("units/a.fbi").bytes == text("archived"),
+        "a file that became a link outside gives way"
+    );
+    check(!store.loose_file("units/a.fbi").has_value(), "and is no loose file");
+    check(store.read("units/b.fbi").bytes == text("b"), "a plain file beside it is read");
+}
+
 /// A file over the entry limit is refused before its buffer is made, by
 /// every way the store reads a whole file; one at the limit's size is not.
 void asset_store_refuses_files_over_the_entry_limit() {
@@ -1038,22 +1094,108 @@ void asset_store_loose_listings() {
     );
 }
 
-/// A folder junction that leads outside the loose folder is not read, and
-/// one that stays inside is, on systems that make junctions.
+#ifdef _WIN32
+/// Makes a folder junction through the file system's own calls, and checks
+/// that the system reports the folder as a reparse point.
+///
+/// @param link the junction's path; nothing may exist there
+/// @param target the folder it leads to
+/// @return true when the junction was made
+bool make_junction(const fs::path& link, const fs::path& target) {
+    std::error_code error;
+    fs::path leads_to = fs::absolute(target, error);
+    if (error || ::CreateDirectoryW(link.c_str(), nullptr) == 0)
+        return false;
+    leads_to.make_preferred();
+    // A mount point's reparse data: the tag, the data's length and a
+    // reserved word, then the offsets and lengths in bytes of the target's
+    // NT path and of its plain path, then both paths, each ending in a NUL.
+    const std::wstring substitute = L"\\??\\" + leads_to.wstring();
+    const std::wstring print = leads_to.wstring();
+    constexpr std::size_t kHeaderBytes = 8;
+    constexpr std::size_t kNamesHeaderBytes = 8;
+    const std::size_t substitute_bytes = substitute.size() * sizeof(wchar_t);
+    const std::size_t print_bytes = print.size() * sizeof(wchar_t);
+    const std::size_t names_bytes = substitute_bytes + print_bytes + 2 * sizeof(wchar_t);
+    std::vector<uint8_t> data(kHeaderBytes + kNamesHeaderBytes + names_bytes);
+    const auto put16 = [&](std::size_t at, std::size_t value) {
+        data[at] = static_cast<uint8_t>(value & 0xFFU);
+        data[at + 1] = static_cast<uint8_t>((value >> 8U) & 0xFFU);
+    };
+    oa::base::bytes::store_le32(data.data(), IO_REPARSE_TAG_MOUNT_POINT);
+    put16(4, kNamesHeaderBytes + names_bytes);
+    put16(kHeaderBytes, 0);
+    put16(kHeaderBytes + 2, substitute_bytes);
+    put16(kHeaderBytes + 4, substitute_bytes + sizeof(wchar_t));
+    put16(kHeaderBytes + 6, print_bytes);
+    uint8_t* const names = data.data() + kHeaderBytes + kNamesHeaderBytes;
+    std::memcpy(names, substitute.c_str(), substitute_bytes + sizeof(wchar_t));
+    std::memcpy(
+        names + substitute_bytes + sizeof(wchar_t), print.c_str(), print_bytes + sizeof(wchar_t)
+    );
+    const HANDLE handle = ::CreateFileW(
+        link.c_str(),
+        GENERIC_WRITE,
+        0,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr
+    );
+    bool made = false;
+    if (handle != INVALID_HANDLE_VALUE) {
+        DWORD returned = 0;
+        made = ::DeviceIoControl(
+                   handle,
+                   FSCTL_SET_REPARSE_POINT,
+                   data.data(),
+                   static_cast<DWORD>(data.size()),
+                   nullptr,
+                   0,
+                   &returned,
+                   nullptr
+               ) != 0;
+        ::CloseHandle(handle);
+    }
+    // Some systems accept the call and make no reparse point.
+    const DWORD attributes = ::GetFileAttributesW(link.c_str());
+    made = made && attributes != INVALID_FILE_ATTRIBUTES &&
+           (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    if (!made)
+        ::RemoveDirectoryW(link.c_str());
+    return made;
+}
+#endif
+
+/// A folder junction that leads outside the loose folder is not read, one
+/// that stays inside is, and a folder that becomes a junction leading
+/// outside after the store listed it is not read, on systems that make
+/// junctions.
 void asset_store_loose_junctions() {
 #ifdef _WIN32
     TempDir dir;
     dir.write("game/Units/inside.fbi", text("inside"));
+    dir.write("game/sounds/near.wav", text("near"));
     dir.write("outside/maps/far.tnt", text("far"));
+    dir.write("outside/sounds/near.wav", text("far"));
     const auto game = dir.path() / "game";
-    const auto junction = [](const fs::path& link, const fs::path& target) {
-        const std::string command =
-            "mklink /J \"" + link.string() + "\" \"" + target.string() + "\" >nul 2>nul";
-        return std::system(command.c_str()) == 0;
+    // Each junction is removed before the folder, so that removing the
+    // folder never walks into what a junction leads to.
+    std::vector<fs::path> junctions;
+    const auto junction = [&](const fs::path& link, const fs::path& target) {
+        if (!make_junction(link, target))
+            return false;
+        junctions.push_back(link);
+        return true;
+    };
+    const auto remove_junctions = [&] {
+        for (const auto& made : junctions)
+            ::RemoveDirectoryW(made.c_str());
     };
     if (!junction(game / "maps", dir.path() / "outside" / "maps") ||
         !junction(game / "units2", game / "Units")) {
         std::cout << "skipped the loose junction cases: no junction made\n";
+        remove_junctions();
         return;
     }
     oa::AssetStore store(game);
@@ -1063,6 +1205,21 @@ void asset_store_loose_junctions() {
     );
     check(store.read("units2/inside.fbi").bytes == text("inside"), "a junction inside is read");
     check(store.read("units/inside.fbi").bytes == text("inside"), "a plain folder is read");
+    check(
+        store.read("sounds/near.wav").bytes == text("near"), "a folder is read before it changes"
+    );
+    std::error_code error;
+    fs::remove_all(game / "sounds", error);
+    if (error || !junction(game / "sounds", dir.path() / "outside" / "sounds")) {
+        std::cout << "skipped the junction made after listing: no junction made\n";
+        remove_junctions();
+        return;
+    }
+    check(
+        throws([&] { (void)store.read("sounds/near.wav"); }, "asset not found"),
+        "a folder that became a junction outside is not read"
+    );
+    remove_junctions();
 #endif
 }
 
@@ -1306,6 +1463,41 @@ void hpi_lookups_follow_the_records() {
     check(!archive.lookup("sub/c.gui"), "a name holding a separator is not a folder");
 }
 
+/// A directory of many records keeps the last record of each name ignoring
+/// ASCII case, as a walk of the records does, and opens in far less time
+/// than a cost growing with the square of its records would take.
+void hpi_large_directory_keeps_the_last_of_each_name() {
+    TempDir dir;
+    constexpr int kNames = 40'000;
+    // Every name in lower case, then in upper case, then every even one in
+    // mixed case: the last spelling of each name holds its round.
+    std::vector<oa::HpiWriteFile> files;
+    files.reserve(3 * kNames);
+    for (int round = 0; round < 3; ++round)
+        for (int number = 0; number < kNames; ++number) {
+            if (round == 2 && number % 2 != 0)
+                continue;
+            const std::string digits = std::to_string(number);
+            const std::string name = round == 0   ? "unit" + digits + ".fbi"
+                                     : round == 1 ? "UNIT" + digits + ".FBI"
+                                                  : "Unit" + digits + ".Fbi";
+            files.push_back({name, text(std::to_string(round)), 0});
+        }
+    const auto path = dir.write("large.hpi", archive_of(files));
+    const auto start = std::chrono::steady_clock::now();
+    const auto archive = opened(path);
+    const auto took = std::chrono::steady_clock::now() - start;
+    check(archive.entries().size() == files.size(), "a large directory keeps every record");
+    check(took < std::chrono::seconds(10), "a directory of 100000 records opens quickly");
+    std::vector<std::string> paths;
+    for (int number = 0; number < kNames; number += 997)
+        for (const int sample : {number, number + 1})
+            paths.push_back("unit" + std::to_string(sample) + ".FBI");
+    check_lookups_match_walk(archive, paths);
+    check(archive.read("UNIT0.fbi").value == text("2"), "the mixed-case last record is read");
+    check(archive.read("unit1.fbi").value == text("1"), "the upper-case last record is read");
+}
+
 /// Every directory of the installed game's archives lists as the full scan
 /// of the archives does.
 ///
@@ -1382,8 +1574,10 @@ int main(int argc, char** argv) {
         asset_store_loose_listings();
         asset_store_lists_archive_folders();
         hpi_lookups_follow_the_records();
+        hpi_large_directory_keeps_the_last_of_each_name();
         asset_store_names_in_any_script();
         asset_store_loose_links();
+        asset_store_loose_links_made_after_listing();
         asset_store_loose_junctions();
         asset_store_refuses_files_over_the_entry_limit();
         resource_file_semantics();

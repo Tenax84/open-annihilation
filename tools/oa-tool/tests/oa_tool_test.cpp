@@ -216,7 +216,7 @@ void test_commands(const Scratch& scratch) {
 
 void test_help() {
     const auto table = oa::tool::commands();
-    OA_CHECK(table.size() == 10);
+    OA_CHECK(table.size() == 12);
     OA_CHECK(table[0].name == "list");
     OA_CHECK(table[1].name == "extract");
     OA_CHECK(table[2].name == "asset-extract");
@@ -224,15 +224,27 @@ void test_help() {
     OA_CHECK(table[4].name == "decode-pcx");
     OA_CHECK(table[5].name == "pack");
     OA_CHECK(table[6].name == "check");
-    OA_CHECK(table[7].name == "catalogue");
-    OA_CHECK(table[8].name == "registry");
-    OA_CHECK(table[9].name == "interface-words");
-    OA_CHECK(table[8].subcommands.size() == 2);
+    OA_CHECK(table[7].name == "mutator");
+    OA_CHECK(table[8].name == "brain");
+    OA_CHECK(table[9].name == "catalogue");
+    OA_CHECK(table[10].name == "registry");
+    OA_CHECK(table[11].name == "interface-words");
+    // mutator diff is the fourth subcommand. tools-oa-tool checks this list.
     OA_CHECK(table[7].subcommands.size() == 4);
-    OA_CHECK(table[7].subcommands[0].name == "keygen");
-    OA_CHECK(table[7].subcommands[1].name == "public");
-    OA_CHECK(table[7].subcommands[2].name == "sign");
-    OA_CHECK(table[7].subcommands[3].name == "verify");
+    OA_CHECK(table[7].subcommands[0].name == "pack");
+    OA_CHECK(table[7].subcommands[1].name == "check");
+    OA_CHECK(table[7].subcommands[2].name == "import");
+    OA_CHECK(table[7].subcommands[3].name == "diff");
+    OA_CHECK(table[8].subcommands.size() == 3);
+    OA_CHECK(table[8].subcommands[0].name == "pack");
+    OA_CHECK(table[8].subcommands[1].name == "check");
+    OA_CHECK(table[8].subcommands[2].name == "net");
+    OA_CHECK(table[10].subcommands.size() == 2);
+    OA_CHECK(table[9].subcommands.size() == 4);
+    OA_CHECK(table[9].subcommands[0].name == "keygen");
+    OA_CHECK(table[9].subcommands[1].name == "public");
+    OA_CHECK(table[9].subcommands[2].name == "sign");
+    OA_CHECK(table[9].subcommands[3].name == "verify");
 
     const auto bare = run({});
     OA_CHECK(bare.status == oa::tool::exit_usage);

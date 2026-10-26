@@ -27,7 +27,9 @@ The path is:
 4. `tick_navigation` tests the goal-cell radius, raises arrival, detaches
    completed goals, consumes nearby route points, and marks a search needed
    after collisions or route exhaustion. An external search result is
-   supplied through `accept_path`.
+   supplied through `accept_path`, which returns true when that result is
+   empty and the unit is not already at the goal (it has raised
+   `path_failed_event` on the goal's order) and false otherwise.
 
 `search_ready` holds the pending bit and the 60-tick gate, and
 `SearchController` owns the four fields of the active search record (unit,
@@ -62,6 +64,19 @@ minus one.
    clipping, fixed-point segment normalization, heading delta, the game's
    turn radius and braking comparisons, then the turn and acceleration
    routines from `unit-movement`. No waypoint is synthesized here.
+   In a match that applied mutators (`FastUnitSteering::held_to_route`,
+   which the match passes when it holds a mutator digest), a unit faster
+   than any stock unit (more than 6 pixels a tick; the fastest stock unit,
+   the ARMSS scout ship, makes 5.8) is then held to its route: its speed is
+   held to the distance left to the waypoint, to the speed its braking can
+   still stop at the third steering point, and, while it is still turning
+   toward the target, to the speed at which it finishes the turn within half
+   the distance ahead. Such a unit, as stacked speed mutators make one,
+   otherwise steps over the cell its move must end in and back, for ever. A
+   unit no faster, and every unit of a match without mutators
+   (`FastUnitSteering::as_3_1c`), a mod's fast units included, steers
+   exactly as in 3.1c, so that network games with 3.1c and recordings play
+   as they did.
 6. Move phase one returns completion on arrival (sound category 6), or the
    retry result for other movement events. Standby keeps weapon wakeups,
    timers, conditional auto-attack and the randomized delay.

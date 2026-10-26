@@ -182,6 +182,9 @@ struct Ui {
     netgame::WireRules wire_rules{};
     /// This machine sends and reads chat as UTF-8; off until bound.
     bool unicode_chat{};
+    /// How the chat list measures a line; unbound until the engine binds it.
+    /// It survives multiplayer_reset.
+    ChatMeasure chat_measure{};
     /// The presence record this machine sends, without a map pack; empty
     /// until one is bound. It survives multiplayer_reset.
     std::vector<uint8_t> presence_record;
@@ -1101,6 +1104,7 @@ void bind_boundaries() {
     take_presence_record(lobby, state.presence_record);
     lobby.wire_rules = state.wire_rules;
     lobby.unicode_chat = state.unicode_chat;
+    lobby.chat_measure = state.chat_measure;
     lobby.local_version_major = state.wire_rules.version_major;
     lobby.local_version_minor = state.wire_rules.version_minor;
     std::snprintf(
@@ -4006,6 +4010,20 @@ void add(app::ScreenRegistry* registry, app::ScreenId id, const char* name, app:
     (void)app::screen_register(registry, &desc);
 }
 
+/// The place of one control in the battle room's focus order.
+///
+/// @param panel the battle room's panel
+/// @param lobby the battle room
+/// @param index the control
+/// @return its place, or -1 when the order leaves it out
+int32_t battle_room_focus_place(const Panel& panel, Lobby& lobby, int32_t index) noexcept {
+    const FocusOrder order = battle_room_focus_order(panel, lobby);
+    for (int32_t at = 0; at < order.count; ++at)
+        if (order.index[static_cast<std::size_t>(at)] == index)
+            return at;
+    return -1;
+}
+
 } // namespace
 
 void multiplayer_bind_launch_link(const LaunchLink& link) noexcept {
@@ -4070,12 +4088,57 @@ void multiplayer_bind_unicode_chat(bool on) noexcept {
     ui().lobby.unicode_chat = on;
 }
 
+void multiplayer_bind_chat_measure(const ChatMeasure& measure) noexcept {
+    ui().chat_measure = measure;
+    ui().lobby.chat_measure = measure;
+}
+
 void multiplayer_bind_presence_record(const uint8_t* record, std::size_t size) noexcept {
     auto& state = ui();
     if (record == nullptr || size > netgame::presence_record_max_bytes)
         size = 0;
     state.presence_record.assign(record, record + size);
     take_presence_record(state.lobby, state.presence_record);
+}
+
+void multiplayer_bind_mutator_loadout(const netgame::PresenceMutators* loadout) noexcept {
+    auto& records = ui().lobby.presence_records;
+    if (loadout == nullptr)
+        records.part_source.reset();
+    else
+        records.part_source = *loadout;
+}
+
+void multiplayer_units_changed() {
+    auto& state = ui();
+    state.units = UnitStore{};
+    if (state.assets != nullptr) {
+        load_units();
+    } else {
+        state.lobby.units = nullptr;
+        state.lobby.unit_count = 0;
+    }
+    unit_sync_rebuild(state.lobby);
+}
+
+void multiplayer_regreet(uint32_t player_id) {
+    unit_sync_regreet(ui().lobby, player_id);
+}
+
+bool multiplayer_room_mutators(netgame::PresenceLoadoutAssembly* out) {
+    auto& lobby = ui().lobby;
+    if (lobby.game != nullptr && (local_info(lobby).role & kRoleHost) != 0)
+        return false;
+    const auto& assembly = lobby.presence_records.host_loadout;
+    if (assembly.total == 0)
+        return false;
+    if (out != nullptr)
+        *out = assembly;
+    return true;
+}
+
+uint32_t multiplayer_room_mutators_generation() noexcept {
+    return ui().lobby.presence_records.host_loadout_generation;
 }
 
 void multiplayer_bind_map_pack(
@@ -4470,6 +4533,70 @@ bool multiplayer_battle_room_map(BattleRoomMap* out) noexcept {
     );
 }
 
+namespace {
+
+/// True while the battle room's panel is loaded, whether or not a dialog covers it.
+///
+/// @return true while that screen is showing
+bool battle_room_loaded() noexcept {
+    const auto& state = ui();
+    return state.showing && state.screen == kScreenBattleroom && state.base.loaded;
+}
+
+/// True while the battle room's own panel is the one in front.
+///
+/// @return true while no dialog covers it
+bool battle_room_in_front() noexcept {
+    const auto& state = ui();
+    return battle_room_loaded() && &front() == &state.base;
+}
+
+} // namespace
+
+std::vector<BattleRoomControl> multiplayer_battle_room_controls() {
+    std::vector<BattleRoomControl> controls;
+    if (!battle_room_in_front())
+        return controls;
+    auto& state = ui();
+    const Panel& panel = state.base.panel;
+    const int32_t limit = std::min(panel.count, static_cast<int32_t>(kPanelControls));
+    for (int32_t index = 1; index < limit; ++index) {
+        const Control& control = panel.controls[static_cast<std::size_t>(index)];
+        if (control.width <= 0 || control.height <= 0)
+            continue;
+        BattleRoomControl one;
+        one.index = index;
+        one.name = std::string(control_name(control));
+        one.x = static_cast<int32_t>(control.x) + state.base.offset_x;
+        one.y = static_cast<int32_t>(control.y) + state.base.offset_y;
+        one.width = control.width;
+        one.height = control.height;
+        one.focus_place = battle_room_focus_place(panel, state.lobby, index);
+        controls.push_back(std::move(one));
+    }
+    return controls;
+}
+
+int32_t multiplayer_battle_room_focus() noexcept {
+    if (!battle_room_in_front())
+        return kNoControl;
+    return ui().base.panel.focus;
+}
+
+void multiplayer_set_battle_room_focus(int32_t index) noexcept {
+    if (!battle_room_in_front())
+        return;
+    Panel& panel = ui().base.panel;
+    if (panel.focus == index)
+        return;
+    panel.focus = index;
+    panel.dirty = true;
+}
+
+bool multiplayer_battle_room_open() noexcept {
+    return battle_room_loaded();
+}
+
 int32_t multiplayer_focused_player_slot() noexcept {
     auto& state = ui();
     // As the badges: the battle room shows, with no dialog over it.
@@ -4649,6 +4776,7 @@ void multiplayer_reset() noexcept {
     state.lobby = Lobby{};
     state.lobby.launch_link = state.launch_link;
     state.lobby.rules = state.rules;
+    state.lobby.chat_measure = state.chat_measure;
     state.connect = ConnectState{};
     state.restrict = RestrictPanel{};
     state.mapselect = MapSelect{};

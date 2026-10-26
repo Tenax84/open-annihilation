@@ -2271,24 +2271,37 @@ bool dispatch_record(NetMatch* m, Player& from, Player& to, const Packet& packet
     case RecordType::ping:
         handle_ping(m, from, to, data, size);
         break;
-    case RecordType::chat:
+    case RecordType::chat: {
         if (m->rules.private_channel != PrivateChannel::none && is_private_chat(data, size)) {
             handle_private(m, from, data, size);
             break;
         }
-        if (is_local(to) && to.status == OA_PLAYER_STATUS_LOCAL && m->hooks.chat != nullptr &&
-            size >= 1) {
-            char text[sizeof(ChatRecord::text) + 1]{};
+        const bool addressed_here = is_local(to) && size >= 1;
+        char text[sizeof(ChatRecord::text) + 1]{};
+        std::string shown;
+        if (addressed_here) {
             std::memcpy(
                 text,
                 data + 1,
                 size - 1 < sizeof(ChatRecord::text) ? size - 1 : sizeof(ChatRecord::text)
             );
-            const auto shown = net_match_chat_text(m, from, text);
+            shown = net_match_chat_text(m, from, text);
+        }
+        if (is_local(to) && to.status == OA_PLAYER_STATUS_LOCAL && m->hooks.chat != nullptr &&
+            size >= 1) {
             m->hooks.chat(m->hooks.context, from.index, shown.c_str());
             recorder_chat_line(m, from, text);
         }
+        if (addressed_here && m->hooks.seat_chat != nullptr)
+            m->hooks.seat_chat(
+                m->hooks.context,
+                from.index,
+                to.index,
+                packet.to_id == broadcast_destination_id,
+                shown.c_str()
+            );
         break;
+    }
     case RecordType::probe: {
         const uint8_t reply = static_cast<uint8_t>(RecordType::probe_reply);
         net_match_send(m, primary_id(world), from.player_id, &reply, 1);
@@ -2553,6 +2566,130 @@ bool watcher(World* world, Player& p) {
     return p.in_use != 0 && info != nullptr && (info->options & OA_SETUP_OPTION_WATCHER) != 0;
 }
 
+/// Tells whether the profile keeps team-mates' start positions together.
+///
+/// @param m Running match.
+/// @return True under setup.team-start-positions at team-adjacent.
+bool team_adjacent_starts(const NetMatch* m) {
+    return setup_rules(m).team_start_positions.mode ==
+           data::match_rules::SetupTeamStartPositionsMode::team_adjacent;
+}
+
+/// Gives every slot its start position.
+///
+/// An active slot that is not watching takes its entry of `positions`, or
+/// without them the next position in slot order. Every other slot takes -1.
+///
+/// @param world Match world.
+/// @param positions The team rules' position of each slot, or null.
+/// @param[out] out Each slot's start position.
+void assign_starts(
+    World* world,
+    const team_rules::StartPositions* positions,
+    std::span<int32_t, OA_PLAYER_COUNT> out
+) {
+    int32_t next = 0;
+    for (int32_t i = 0; i < OA_PLAYER_COUNT; ++i) {
+        auto& p = world->game.players[i];
+        const auto at = static_cast<std::size_t>(i);
+        if (!slot_active(p) || watcher(world, p))
+            out[at] = -1;
+        else
+            out[at] = positions != nullptr ? (*positions)[at] : next++;
+    }
+}
+
+/// Finds the slot of this machine that holds each of the host's slots.
+///
+/// The host's machine holds its own. Another machine seats the players in
+/// slots of its own, and reads the host's from the host's slot table, which
+/// names each slot's player id: 0 for a free slot, no_player_id for a
+/// closed one.
+///
+/// @param world Match world.
+/// @param host_slots The host's slot table.
+/// @param[out] here This machine's slot for each of the host's slots, -1 for none.
+/// @return False when the table names a player this machine does not hold
+///         or names one twice, or leaves out an active slot that is not
+///         watching.
+bool find_host_slots(
+    World* world,
+    std::span<const uint32_t, OA_PLAYER_COUNT> host_slots,
+    std::array<int32_t, OA_PLAYER_COUNT>& here
+) {
+    here.fill(-1);
+    if (host_is_local(world)) {
+        for (int32_t slot = 0; slot < OA_PLAYER_COUNT; ++slot)
+            here[static_cast<std::size_t>(slot)] = slot;
+        return true;
+    }
+    std::array<bool, OA_PLAYER_COUNT> listed{};
+    for (std::size_t at = 0; at < here.size(); ++at) {
+        const uint32_t id = host_slots[at];
+        if (id == 0 || id == no_player_id)
+            continue;
+        const auto slot = slot_of(world, id);
+        if (slot >= OA_PLAYER_COUNT || world->game.players[slot].in_use == 0 || listed[slot])
+            return false;
+        listed[slot] = true;
+        here[at] = slot;
+    }
+    for (uint8_t slot = 0; slot < OA_PLAYER_COUNT; ++slot) {
+        auto& p = world->game.players[slot];
+        if (slot_active(p) && !watcher(world, p) && !listed[slot])
+            return false;
+    }
+    return true;
+}
+
+/// Reads the slots in the host's order, as the host's machine reads them.
+///
+/// Each of the host's slots takes the slot of this machine that holds its
+/// player, with its alliances numbered by the host's slots. On a map with
+/// neutral units the team rules place the computer players the reading
+/// machine runs after the others. Away from the host's machine, a computer
+/// player in the host's machine group is one of the host's, and every other
+/// player is read as another machine's.
+///
+/// @param m Running match.
+/// @param here This machine's slot for each of the host's slots (find_host_slots).
+/// @param[out] slots The slots by the host's slots.
+/// @return False when the team rules read the host's computer players and
+///         the host has no machine group to tell them by.
+bool host_team_slots(
+    const NetMatch* m,
+    const std::array<int32_t, OA_PLAYER_COUNT>& here,
+    team_rules::TeamSlots& slots
+) {
+    auto* world = m->world;
+    const auto local = team_slots(world);
+    slots = {};
+    for (std::size_t at = 0; at < slots.size(); ++at) {
+        if (here[at] < 0)
+            continue;
+        const auto& from = local[static_cast<std::size_t>(here[at])];
+        slots[at] = from;
+        for (std::size_t other = 0; other < slots.size(); ++other)
+            slots[at].alliance[other] =
+                here[other] >= 0 ? from.alliance[static_cast<std::size_t>(here[other])] : 0;
+    }
+    if (!m->map_neutral_units || host_is_local(world))
+        return true;
+    const auto host = host_slot(world);
+    if (host == no_slot || world->game.players[host].machine_group == 0)
+        return false;
+    const auto group = world->game.players[host].machine_group;
+    for (std::size_t at = 0; at < slots.size(); ++at) {
+        if (here[at] < 0)
+            continue;
+        const bool hosts =
+            world->game.players[static_cast<std::size_t>(here[at])].machine_group == group &&
+            slots[at].setup_state == team_rules::setup_computer;
+        slots[at].status = hosts ? team_rules::status_computer : team_rules::status_remote;
+    }
+    return true;
+}
+
 /// Runs one step of the load barrier.
 ///
 /// On the host's machine the start positions are assigned once (shuffled
@@ -2572,9 +2709,7 @@ bool barrier_step(NetMatch* m) {
         const auto* local_info = world_player_info(world, &local);
         const bool fixed =
             local_info != nullptr && (local_info->options & OA_SETUP_OPTION_FIXED_LOCATIONS) != 0;
-        int32_t next = 0;
-        if (setup_rules(m).team_start_positions.mode ==
-            data::match_rules::SetupTeamStartPositionsMode::team_adjacent) {
+        if (team_adjacent_starts(m)) {
             // setup.team-start-positions: team-mates start together. With
             // random positions the order is shuffled and the coin flip of
             // 3.1c's shuffle is still drawn once, over no positions.
@@ -2585,13 +2720,9 @@ bool barrier_step(NetMatch* m) {
                 (void)m->hooks.rand15(m->hooks.context);
             m->team_positions = positions;
             m->team_positions_assigned = true;
-            for (int32_t i = 0; i < OA_PLAYER_COUNT; ++i) {
-                auto& p = game.players[i];
-                b.start_assignment[i] = slot_active(p) && !watcher(world, p)
-                                            ? positions[static_cast<std::size_t>(i)]
-                                            : -1;
-            }
+            assign_starts(world, &positions, b.start_assignment);
         } else if (!fixed) {
+            int32_t next = 0;
             int32_t order[OA_PLAYER_COUNT];
             int32_t count = 0;
             for (int32_t i = 0; i < OA_PLAYER_COUNT; ++i)
@@ -2613,10 +2744,7 @@ bool barrier_step(NetMatch* m) {
                 b.start_assignment[i] = slot_active(p) && !watcher(world, p) ? order[next++] : -1;
             }
         } else {
-            for (int32_t i = 0; i < OA_PLAYER_COUNT; ++i) {
-                auto& p = game.players[i];
-                b.start_assignment[i] = slot_active(p) && !watcher(world, p) ? next++ : -1;
-            }
+            assign_starts(world, nullptr, b.start_assignment);
         }
         b.assigned = true;
     }
@@ -2883,6 +3011,42 @@ uint8_t net_match_start_position(const NetMatch* m, uint8_t slot) noexcept {
     if (slot >= OA_PLAYER_COUNT)
         return no_start_position;
     return m->world->game.players[slot].start_position;
+}
+
+bool net_match_fixed_start_positions(
+    const NetMatch* m,
+    std::span<const uint32_t, OA_PLAYER_COUNT> host_slots,
+    std::array<int32_t, OA_PLAYER_COUNT>& positions
+) noexcept {
+    positions.fill(-1);
+    auto* world = m->world;
+    std::array<int32_t, OA_PLAYER_COUNT> here{};
+    if (!find_host_slots(world, host_slots, here))
+        return false;
+    const auto plays = [world, &here](std::size_t at) {
+        if (here[at] < 0)
+            return false;
+        auto& p = world->game.players[static_cast<std::size_t>(here[at])];
+        return slot_active(p) && !watcher(world, p);
+    };
+    // The start of each of the host's slots, as the host deals them.
+    std::array<int32_t, OA_PLAYER_COUNT> dealt{};
+    if (team_adjacent_starts(m)) {
+        team_rules::TeamSlots slots{};
+        if (!host_team_slots(m, here, slots))
+            return false;
+        const auto placed =
+            team_rules::team_start_positions(slots, false, m->map_neutral_units, {});
+        std::copy(placed.begin(), placed.end(), dealt.begin());
+    } else {
+        int32_t next = 0;
+        for (std::size_t at = 0; at < dealt.size(); ++at)
+            dealt[at] = plays(at) ? next++ : -1;
+    }
+    for (std::size_t at = 0; at < dealt.size(); ++at)
+        if (plays(at))
+            positions[static_cast<std::size_t>(here[at])] = dealt[at];
+    return true;
 }
 
 void net_match_send_load_progress(NetMatch* m, const uint8_t rows[load_progress_rows]) noexcept {
@@ -3613,32 +3777,62 @@ static uint32_t chat_sender_id(const Game& game) noexcept {
     return no_player_id;
 }
 
+namespace {
+
+/// Where one chat line is sent.
+struct ChatRoute {
+    uint32_t to[OA_PLAYER_COUNT]{}; ///< destination ids
+    std::size_t count{};            ///< how many `to` holds
+};
+
+/// Destinations of one chat line.
+///
+/// A command, or mode everyone, is one broadcast. Chosen players are the
+/// slots whose target entry is set and whose player id is not 0. Allies and
+/// enemies are the remote players by the speaker's alliance row. Any other
+/// mode, this machine only included, sends nothing.
+///
+/// @param game the match's players
+/// @param speaker the player whose alliance row routes allies and enemies
+/// @param mode OA_CHAT_MODE_* or the local-only mode
+/// @param targets chosen-player slots; null reaches nobody in chosen mode
+/// @param command a line whose first byte is '+'
+/// @return the destination ids
+ChatRoute chat_route(
+    const Game& game, const Player& speaker, uint8_t mode, const uint8_t* targets, bool command
+) noexcept {
+    ChatRoute route{};
+    if (command || mode == OA_CHAT_MODE_EVERYONE) {
+        route.to[route.count++] = broadcast_destination_id;
+    } else if (mode == OA_CHAT_MODE_CHOSEN) {
+        if (targets != nullptr)
+            for (std::size_t slot = 0; slot < OA_PLAYER_COUNT; ++slot)
+                if (targets[slot] != 0 && game.players[slot].player_id != 0)
+                    route.to[route.count++] = game.players[slot].player_id;
+    } else {
+        for (std::size_t slot = 0; slot < OA_PLAYER_COUNT; ++slot) {
+            const auto& remote = game.players[slot];
+            if (!is_remote(remote))
+                continue;
+            const bool allied = speaker.alliance[slot] != 0;
+            if ((mode == OA_CHAT_MODE_ALLIES && allied) ||
+                (mode == OA_CHAT_MODE_ENEMIES && !allied))
+                route.to[route.count++] = remote.player_id;
+        }
+    }
+    return route;
+}
+
+} // namespace
+
 void net_match_say(NetMatch* m, const char* text) noexcept {
     m->said_parts.clear();
     auto& game = m->world->game;
     const auto from = chat_sender_id(game);
     const uint8_t mode = game.chat_mode;
-    // Where the chat mode sends the line.
-    uint32_t to[OA_PLAYER_COUNT];
-    std::size_t destinations = 0;
-    if ((text != nullptr && text[0] == '+') || mode == OA_CHAT_MODE_EVERYONE) {
-        to[destinations++] = broadcast_destination_id;
-    } else if (mode == OA_CHAT_MODE_CHOSEN) {
-        for (std::size_t slot = 0; slot < OA_PLAYER_COUNT; ++slot)
-            if (game.chat_targets[slot] != 0 && game.players[slot].player_id != 0)
-                to[destinations++] = game.players[slot].player_id;
-    } else {
-        const auto& self = game.players[game.local_player_index];
-        for (std::size_t slot = 0; slot < OA_PLAYER_COUNT; ++slot) {
-            const auto& p = game.players[slot];
-            if (!is_remote(p))
-                continue;
-            const bool allied = self.alliance[slot] != 0;
-            if ((mode == OA_CHAT_MODE_ALLIES && allied) ||
-                (mode == OA_CHAT_MODE_ENEMIES && !allied))
-                to[destinations++] = p.player_id;
-        }
-    }
+    const bool command = text != nullptr && text[0] == '+';
+    const ChatRoute route =
+        chat_route(game, game.players[game.local_player_index], mode, game.chat_targets, command);
     if (text == nullptr || !m->unicode_chat) {
         // The text's first 64 bytes, the rest zero: a line of 64 characters
         // or more fills the field with no terminator, as 3.1c's record
@@ -3647,16 +3841,42 @@ void net_match_say(NetMatch* m, const char* text) noexcept {
         ChatRecord r{};
         if (text != nullptr)
             std::memcpy(r.text, text, chat_bytes_within(text, sizeof r.text));
-        for (std::size_t i = 0; i < destinations; ++i)
-            send_record(m, from, to[i], r);
+        for (std::size_t i = 0; i < route.count; ++i)
+            send_record(m, from, route.to[i], r);
     } else {
-        auto parts = say_unicode(m, from, {to, destinations}, text, sizeof(ChatRecord::text), true);
+        auto parts =
+            say_unicode(m, from, {route.to, route.count}, text, sizeof(ChatRecord::text), true);
         if (parts.size() > 1)
             m->said_parts = std::move(parts);
     }
     // The recorder answers a command after the line that typed it.
     if (const auto* self = player_of(m->world, from); self != nullptr && text != nullptr)
         recorder_chat_line(m, *self, text);
+}
+
+void net_match_say_from(
+    NetMatch* match, uint8_t seat, const char* line, uint8_t mode, const uint8_t* targets
+) noexcept {
+    if (match == nullptr || match->world == nullptr || line == nullptr || seat >= OA_PLAYER_COUNT)
+        return;
+    const Player& speaker = match->world->game.players[seat];
+    if (speaker.in_use == 0 || speaker.status != OA_PLAYER_STATUS_COMPUTER)
+        return;
+    if (speaker.player_id == no_player_id || speaker.player_id == broadcast_destination_id)
+        return;
+    if (chat_command(line))
+        return;
+    const ChatRoute route = chat_route(match->world->game, speaker, mode, targets, false);
+    if (!match->unicode_chat) {
+        ChatRecord record{};
+        std::memcpy(record.text, line, chat_bytes_within(line, sizeof record.text));
+        for (std::size_t i = 0; i < route.count; ++i)
+            send_record(match, speaker.player_id, route.to[i], record);
+        return;
+    }
+    (void)say_unicode(
+        match, speaker.player_id, {route.to, route.count}, line, sizeof(ChatRecord::text), true
+    );
 }
 
 std::string net_match_chat_text(const NetMatch* m, const Player& from, std::string_view bytes) {

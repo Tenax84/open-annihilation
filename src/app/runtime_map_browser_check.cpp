@@ -23,6 +23,7 @@
 #include "mod_install_state.hpp"
 #include "oa_layer.hpp"
 #include "oa_layer_check.hpp"
+#include "touch_state.hpp"
 #include "user_folder_state.hpp"
 
 #include "oa/app/content/service.hpp"
@@ -401,6 +402,8 @@ void Runtime::check_map_browser() {
         const LayerView seen = layer.view();
         const auto& gadgets = resources_.layout.gadgets;
         require(!gadgets.empty(), "SELMAP has no gadgets" + on);
+        kit::Rect map_list{};
+        bool have_map_list = false;
         const auto& root = gadgets.front().common;
         const auto origin = panel_origin();
         const int32_t left = origin.x + (kCanvasWidth - static_cast<int32_t>(root.width)) / 2;
@@ -421,6 +424,8 @@ void Runtime::check_map_browser() {
             );
             if (!tdf_names_equal(common.name, "MAPNAMES"))
                 continue;
+            map_list = gadget;
+            have_map_list = true;
             // The list draws its frame three frame pixels outside the gadget.
             const kit::Rect frame = frame_to_window(
                 seen,
@@ -434,6 +439,38 @@ void Runtime::check_map_browser() {
                 on_frame.width <= 0 || on_frame.height <= 0,
                 "MORE MAPS… overlaps the map list's frame" + on
             );
+        }
+
+        // A finger on MORE MAPS… opens the browser. A finger in the middle
+        // of the map list does not. The mouse click below still opens it.
+        if (window.width == 640 || window.width == 1280) {
+            require(have_map_list, "SELMAP has no map list" + on);
+            const bool unregistered = touch_state().dispatch.accept_unregistered_touch;
+            touch_state().dispatch.accept_unregistered_touch = true;
+            constexpr SDL_TouchID kFingerDevice = 0x7518;
+            const auto finger_at = [&](layout::Point pixel) {
+                for (const SDL_EventType type : {SDL_EVENT_FINGER_DOWN, SDL_EVENT_FINGER_UP}) {
+                    SDL_Event event = window_finger_event(
+                        sdl_.window, sdl_.renderer, type, pixel, kFingerDevice, 1
+                    );
+                    dispatch_event(event, running);
+                    require(running, "a finger ended the run" + on);
+                }
+                frames(1);
+            };
+            finger_at(
+                {button_rect.x + button_rect.width / 2, button_rect.y + button_rect.height / 2}
+            );
+            require(browser() != nullptr, "a finger on MORE MAPS… did not open the browser" + on);
+            oa_layer().close(browser());
+            frames(1);
+            require(browser() == nullptr, "the map browser stayed open" + on);
+            finger_at({map_list.x + map_list.width / 2, map_list.y + map_list.height / 2});
+            require(
+                browser() == nullptr,
+                "a finger in the middle of the map list opened the browser" + on
+            );
+            touch_state().dispatch.accept_unregistered_touch = unregistered;
         }
 
         // The browser: its class's window, every card and control inside it,

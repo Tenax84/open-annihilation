@@ -110,7 +110,7 @@ SetCompressor /SOLID lzma
 !define OA_DESKTOP_LNK "$DESKTOP\Open Annihilation.lnk"
 # A launch file (.oalaunch) opens the game in that launch's battle room, as
 # open-annihilation.exe -c FILE does. The installer associates it for everyone
-# who uses this computer; the game's own registration of the five types is per
+# who uses this computer; the game's own registration of the six types is per
 # user, at run time, and a player who turns Settings' Launch files switch off
 # hides this association from themselves alone. These are the names
 # src/platform/file-types uses. The uninstaller removes both: the association
@@ -137,6 +137,7 @@ ${OA_Require} "oa-intro.exe"
 ${OA_Require} "oa-tool.exe"
 ${OA_Require} "LICENSE"
 ${OA_Require} "ATTRIBUTIONS.md"
+${OA_Require} "brains/classic.oabrain"
 ${OA_Require} "languages/interface.tdf"
 ${OA_Require} "registries/coreprime.yaml"
 ${OA_Require} "licenses/zlib-LICENSE.txt"
@@ -247,6 +248,9 @@ Section "Open Annihilation" SecProgram
 
   SetOutPath "$INSTDIR\fonts"
   File /r "${OA_PACKAGE_DIR}/fonts/*.*"
+
+  SetOutPath "$INSTDIR\brains"
+  File "${OA_PACKAGE_DIR}/brains/classic.oabrain"
 
   SetOutPath "$INSTDIR\languages"
   File "${OA_PACKAGE_DIR}/languages/interface.tdf"
@@ -456,7 +460,7 @@ FunctionEnd
 !define OA_WithdrawUserType "!insertmacro OA_WithdrawUserType"
 
 Section "Uninstall"
-  # The game's own registration of the five file types, for the account that
+  # The game's own registration of the seven file types, for the account that
   # uninstalls, while it names this install's program: first, while the
   # program is still there to be named in its short form too. The extensions
   # and program identifiers are those of src/platform/file-types.
@@ -471,6 +475,8 @@ Section "Uninstall"
   ${OA_WithdrawUserType} ".oamod" "OpenAnnihilation.Mod" "application/x-oamod"
   ${OA_WithdrawUserType} ".oalang" "OpenAnnihilation.Language" "application/x-oalang"
   ${OA_WithdrawUserType} ".oamap" "OpenAnnihilation.MapPack" "application/x-oamap"
+  ${OA_WithdrawUserType} ".oamut" "OpenAnnihilation.Mutator" "application/x-oamut"
+  ${OA_WithdrawUserType} ".oabrain" "OpenAnnihilation.Brain" "application/x-oabrain"
   ${OA_WithdrawUserType} ".oareg" "OpenAnnihilation.Registry" "application/x-oareg"
   ${OA_WithdrawUserType} ".oalaunch" "${OA_LAUNCH_PROGRAM_ID}" "${OA_LAUNCH_MIME_TYPE}"
 
@@ -495,6 +501,8 @@ Section "Uninstall"
   Delete "$INSTDIR\oa-tool.exe"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\ATTRIBUTIONS.md"
+  Delete "$INSTDIR\brains\classic.oabrain"
+  RMDir "$INSTDIR\brains"
   Delete "$INSTDIR\languages\interface.tdf"
   RMDir "$INSTDIR\languages"
   RMDir /r "$INSTDIR\licenses"

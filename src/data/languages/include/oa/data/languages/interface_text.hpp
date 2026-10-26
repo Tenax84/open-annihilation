@@ -24,10 +24,11 @@
 #include "oa/data/languages.hpp"
 
 #include <cstddef>
-#include <functional>
-#include <map>
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace oa::data::languages {
 
@@ -67,8 +68,32 @@ class InterfaceText {
 
   private:
 
-    /// The translations: English text, then lower-case tag, then the text.
-    std::map<std::string, std::map<std::string, std::string, std::less<>>, std::less<>> texts_{};
+    /// One English text the catalogue holds translations of.
+    struct EnglishText {
+        const char* text{}; ///< the text, in one of blocks_ and followed by a NUL
+        uint32_t size{};    ///< its bytes, without the NUL
+        uint32_t first{};   ///< the place in translations_ of its first translation
+    };
+
+    /// One English text's translation into one language.
+    struct Translation {
+        const char* text{};  ///< the text, in one of blocks_ and followed by a NUL
+        uint32_t language{}; ///< the language's tag's place in tags_
+    };
+
+    /// The characters of the texts, one block for each file that added any,
+    /// each of the exact size its texts take. A block is never moved or
+    /// changed while the catalogue lives; a replaced translation's text stays
+    /// in its block unread.
+    std::vector<std::unique_ptr<char[]>> blocks_{};
+    /// The tags the translations are in, lower-case with '-' for '_', sorted
+    /// by their bytes, each once.
+    std::vector<std::string> tags_{};
+    /// The English texts, sorted by their bytes, each once.
+    std::vector<EnglishText> english_{};
+    /// The translations: each English text's in the order of english_, and
+    /// each one's sorted by language, one for each.
+    std::vector<Translation> translations_{};
 };
 
 /// Installs the catalogue and the language the interface's own words show
@@ -83,6 +108,15 @@ void set_interface_language(const InterfaceText* catalogue, const Language& lang
 ///
 /// @return the installed language; English before any is installed
 [[nodiscard]] const Language& interface_language() noexcept;
+
+/// Returns a number that changes with every set_interface_language, the
+/// same catalogue and language installed again among them: a pack read
+/// again replaces that catalogue's texts in place, and its language may
+/// stay the same entry, so what was drawn in the interface's words tells
+/// by this number that they may have changed.
+///
+/// @return the generation; 0 before any installation
+[[nodiscard]] uint64_t interface_generation() noexcept;
 
 /// Returns one of the interface's own words in a named language, from the
 /// catalogue set_interface_language installed. The language the interface

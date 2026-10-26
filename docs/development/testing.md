@@ -30,8 +30,8 @@ names both, and a sanitizer build (`cmake --preset check`, then
 `cmake --build --preset check` and `ctest --preset check`); put your
 `OA_GAME_DIR`, compiler launcher and job count in a `CMakeUserPresets.json`
 that inherits them, which Git ignores. The Clang check
-of the documentation blocks in public headers is a build target instead
-(`cmake --build build --target oa-doc-check`, see
+of the documentation blocks in public headers is the build target
+`oa-doc-check`, which the test `doc-check` builds (see
 [conventions.md](conventions.md#checks)). Some useful variations:
 
 | To | Run |
@@ -84,6 +84,35 @@ for that half. Without it the check prints that the demo was not checked
 and still passes the Core Contingency half; it does not skip with code 77.
 `--game-dir` is only the source the copy is made from. The check plays the
 player's copy, and its preferences and player folder stay in the build tree.
+
+`native-library-update-question` (`--check-library-update-question`) installs
+made-up Ridge from an added registry and offers an update whose rules change.
+At 640x480 it opens that row's details page, where the tabs are not shown.
+NOT NOW leaves the page. UPDATE, fifty times, leaves the Library on top with
+its tabs on the next frames, including once the update is no longer offered.
+Its preferences, data and player folder stay in the build tree.
+
+`native-library-install` (`--check-library-install`) posts made-up packages
+through the installer while the Library shows over a fixture feed. After
+that feed's own mutator steps it swaps in the runtime's verdict entries
+and dry-runs two made-up packages on the Library's worker against the
+installed game. One changes every builder: the Checked fact names a unit
+count above 0 for No Mod, and `Cache/mutator-verdicts.tsv` in the scratch
+user folder holds one `compatible` line. Rebuilding the Library shows the
+same fact and does not dry-run again. The other matches no unit and reads
+the no-effect words. A third declares only the maps layer: the Checked
+fact reads that it changes the map when a match starts, and the file
+holds it as `compatible`. After those, about forty more made-up packages
+are written with origin records, and eighty more with none, each with a
+file to digest, as a hand-copied collection has: more than 120 in all.
+Their folder digests are made as the worker's search makes them. One
+rebuild of the Library then lists the Mutators folder once, prepares no
+dry run, reads no package folder, and finishes within 250 ms. Thirty more
+rebuilds with nothing changed, as each frame of a download makes, list
+nothing, read nothing and take under 4 ms each. The picker's own list
+over that folder lists it once and reads no package folder either.
+START's hand-off of three of them, from one listing, finishes within
+250 ms. No match starts.
 
 `native-map-pack-lists` (`--check-map-pack-lists`) installs one map pack
 from the Library during the run and requires its fitting map in the
@@ -184,7 +213,9 @@ setting writes the setting's key into its file first
 `native-engine-settings-determinism` holds this in place: with every key at
 its default, the seeded skirmish writes the same trace stream and draws the
 same frame as with no file, and the director render keeps its pinned frames
-and sound. With a named file Hardware acceleration and Vertical sync are
+and sound with the weapon lighting, nanolathe glow, wreck glow and heat
+distortion at 0%, and its pinned sound with them at their defaults. With a
+named file Hardware acceleration and Vertical sync are
 Off, and the windowed checks' `SDL_RENDER_DRIVER=software` locks both, so no
 check draws through the graphics card or waits for the display; game text
 keeps the game's own fonts there too, as modern fonts are Off. Five
@@ -302,6 +333,21 @@ first view of a match on the game's own screen), `zoom-1366x768`,
 game. The side commanders check runs
 as one test for each part (`--part`): `art`, `rule`, `loopback`, `give`, and
 `records-GROUP`, the navigation group over its mod folder.
+
+`native-side-data-per-match` (`--check-side-data-per-match`) needs `--mod-dir`
+on an empty folder. It plays a skirmish on the sides the game started with,
+then writes `gamedata/sidedata.tdf` into that folder so one side names the
+other side's commander and plays again. A file with no sides, and a
+commander the game has no unit for, each refuse the start and leave those
+sides in place. With the file removed, one more skirmish plays the sides
+the game started with. The skirmish setup keeps that side count throughout.
+
+`native-gadget-art-per-match` (`--check-gadget-art-per-match`) needs
+`--mod-dir` on an empty folder. It writes a download file there that links
+a unit onto a lab's download page, then plays three skirmishes. The button
+has no picture, then the picture after the check copies build-page art into
+`anims/<unit>_gadget.gaf` in that folder, then no picture once that file is
+removed. The check removes what it wrote.
 
 ### The demo's installer
 
@@ -460,6 +506,12 @@ names, these run the game headless:
 
 - `native-net-loopback` (`--net-loopback-check N`) hosts and joins a match
   in one process over 127.0.0.1 and compares both worlds after N ticks.
+  When the run chooses mutators, the check builds the shared mutator layer
+  before the battle room's unit sync, reads the unit headers over that
+  layer and takes the layer off before the launch mounts the same bytes
+  again, so a mutator that rewrites or adds a unit is in the match. It
+  creates no battle-room list. A run that chooses none syncs the installed
+  unit table.
   On the way the host's player turns its commander's build page, which
   stays on the host: the joiner's copy of the commander keeps its page and
   the worlds still agree. Then it gives every unit it has through
@@ -603,8 +655,11 @@ walk runs:
   `--force-capable` would: a card call that fails on a Full match frame
   (`--render-fault card`) drops Full to Basic for the run, which presents
   the composed frame, with the failing call struck against the driver and
-  the status saying Full stopped, Off and back trying Full again; the same
-  failure in two runs in a row records `full-unusable`, told once at the
+  the status saying Full stopped, Off and back trying Full again; an
+  effects pass that fails on a Full match frame (`--render-fault effects`)
+  draws that frame without the effects and keeps Full, with nothing
+  struck and the failure logged once; the same card failure in two runs
+  in a row records `full-unusable`, told once at the
   main menu and cleared by a raise of the row from Basic to Full, a strike
   alone cleared by a clean run; Full's first match frame writes its trial
   and sentinel, `path full`, a left-over Full trial is struck at the first
@@ -669,8 +724,11 @@ double tap, ground orders, boxes, a hold then a drag, the Scroll setting,
 QUEUE, ADD and One action, a factory's buttons (+1, a hold's −1, x5, the
 pressed look of a resting finger and a finger sliding off), the two-finger
 tap, pinch and pan keeping the map under the fingers, the order wheel
-(Patrol, its QUEUE hub lighting the 3.1c PATROL button, Info, a greyed
-place), building placement (a drag moving the ghost under the finger, a
+(Patrol, its QUEUE hub ending PATROL with its pick, latched QUEUE
+keeping the 3.1c PATROL button lit until QUEUE goes off, Info, a greyed
+place), the unit info panel taking the finger (the side column's ATTACK
+doing nothing under it, a drag from it drawing no box even with ATTACK
+armed, a box that selects nothing and OK closing it), building placement (a drag moving the ghost under the finger, a
 hold near the ghost placing it there, a double tap or a hold away from it
 placing where the finger is, a refused site staying armed, QUEUE keeping the
 placement for the next site, CANCEL, CLEAR and a two-finger tap ending
@@ -878,17 +936,23 @@ archive holds, and a missing path.
 An extension can read the simulation hash the run plays under
 (`simulation_hash`, version 14 of the extension table): 64 lower-case
 hexadecimal digits. With no mod it is the plain baseline's. Under a mod it
-is that profile's sim hash. A Developer Mode override that changes the
-simulation changes it at once while no match is running; a running match
-keeps the hash it started with until it ends, which is the hash a save of
-that match and the network game are matched on. A display-only override
-leaves it unchanged. The plain baseline is resolved once a process and
-kept: it comes from the rules built into the program alone, so a mod
-switch, a game mode or Developer Mode never changes it.
-`native-simulation-hash` checks the baseline and an override in one start,
-then the first hash again once the settings are put back, and the kept
-baseline against a fresh resolve; `native-simulation-hash-mod` checks a
-profile that changes the simulation, then the same override.
+is that profile's sim hash. While a match has mutators applied, that hash
+is folded with the match's mutator digest, and the presence facts report
+the folded hash with the rules differing from 3.1c. With no mutators
+applied the hash and the presence facts are the profile's alone. A list
+that is chosen and not yet built changes nothing. A Developer Mode
+override that changes the simulation changes it at once while no match is
+running; a running match keeps the hash it started with until it ends,
+which is the hash a save of that match and the network game are matched
+on. A display-only override leaves it unchanged. The plain baseline is
+resolved once a process and kept: it comes from the rules built into the
+program alone, so a mod switch, a game mode or Developer Mode never
+changes it. `native-simulation-hash` checks the baseline, a skirmish with
+no mutators, then one with the command line's mutator, and an override in
+one start, then the first hash again once the settings are put back, and
+the kept baseline against a fresh resolve; `native-simulation-hash-mod`
+checks a profile that changes the simulation, the same two skirmishes,
+then the same override.
 
 ### Modern text for an extension
 
@@ -976,7 +1040,14 @@ the engine, with their size class and scale.
   container and runs its tests under Wine. Use it when a change touches
   platform-specific code. The container keeps compiled objects in a Docker
   volume that every run and every checkout shares, so a rebuild compiles only
-  what changed.
+  what changed. A cross build cannot run the `oa-tool` it compiles.
+  `OA_HOST_OA_TOOL` is the absolute path of a host build's `oa-tool`. When
+  it names that executable, the cross build packs `classic.oabrain` in `brains/`
+  beside the game with it, the same command a host build runs. When it is
+  empty, the cross build leaves Classic unpacked and says so at configure
+  time. `tools/build_windows.sh` passes `build/oa-tool` when that file
+  exists. An empty `OA_HOST_OA_TOOL` in the environment leaves Classic
+  unpacked.
 - **Windows XP:** `OA_MINGW_TRIPLE=i686-w64-mingw32 tools/build_windows.sh
   --xp` builds the tree for 32-bit Windows XP SP3 into
   `build-windows-i686-xp`, and `tools/build_windows.sh --xp` for the 64-bit
@@ -1148,6 +1219,89 @@ definition loaders a skirmish start runs, on every core (see
 `installed-tdf-readers` digests what the feature, unit announcement, side
 layout, meteor and scenario readers take from the installation's TDF texts,
 so a change to how any of them reads shows there.
+
+`native-mutator-layer` starts the game with `--check-mutator-layer` and two
+package paths. It plays a match with no mutator, one that changes the
+commanders, the same match again with none, and one mutator that does not
+apply. `native-mutator-verdicts` starts the game with
+`--check-mutator-verdicts`. The check writes four made-up packages beside
+the preferences file and dry-runs each against the installed game: one
+that changes every commander's health, one whose rules match no unit, one
+that calls `ctx.incompatible`, and one whose script does not load. It
+asks again and reads `Cache/mutator-verdicts.tsv` in the scratch user
+folder, runs once more when an option changes, and rewrites a file of
+garbage. No match starts. `native-mutator-dry-run`
+(`--check-mutator-dry-run`) writes two made-up mutators that each multiply
+every commander's turn rate and worker time. The verdict stays compatible,
+each of those fields is held at 65535 on ARMCOM and CORCOM, and the dry
+run notes each held value once and prints the note. No match starts. `native-mutator-prompts` (`--check-mutator-prompts`) starts a skirmish with
+two made-up mutators, one of whose plans raises an error, and requires the
+start question, START WITHOUT IT, BACK, the question after a crash, Get
+mutators with RETRY, and the host's "The game did not start" for a guest
+without its release and for one with it. `native-mutator-picker`
+(`--check-mutator-picker`) opens the picker over the main menu at four
+window sizes on a fixture feed, then on the runtime's own feed. With a
+made-up package that changes every builder switched on, the verdict chip
+reads the checking words and then `Checked with No Mod ✓`, and again
+after its option changes. The scratch folder's `Cache/mutator-verdicts.tsv`
+holds one line for each option value. Over SKIRMISH, three more made-up
+packages switched on with no verdict are each checked in turn, and the chip
+reads `Checked with No Mod ✓`. It then opens that feed with a mutator
+whose check already stopped and an On mutator whose package cannot be
+resolved: the chip keeps the stopped verdict and does not read the
+checking words. The dry run is the Library worker's.
+`native-brain-picker` (`--check-brain-picker`) opens the brain picker over the
+main menu at four window sizes on a fixture feed of made-up brains, then
+on the runtime's own feed after two packages are written into the scratch
+Brains folder.
+`native-brain-seat-buttons` (`--check-brain-seat-buttons`) checks each computer
+row's brain button on the skirmish setup at 640x480 and 1280x720, in a scratch
+folder: the label, Tab, the picker, the hover card and the brains a start seats.
+`native-replay-loadout` starts the game with
+`--check-replay-loadout`
+and two installed mutators. It refuses a loadout that cannot be read or
+whose mutator is missing, at another package, at another version or a folder
+entry, plays one match of the recorded mutator, plays one with none, and
+puts the player's list back, including after a start that does not happen.
+`native-replay-mutators` (`tools/check_native_replay_mutators.py`) records a
+loopback game with one installed mutator and checks the recording's sector
+and content note. Playback of that recording applies the mutator and
+refuses a missing package, another package and a sector that is not a
+loadout; a recording without the sector plays no mutators. It also records
+ridge-tough, which rewrites both commanders: that match starts, the
+recording keeps the loadout, and strict playback matches every unit
+definition. A loopback with ridge-add-unit holds the added unit, 278 unit
+runtimes on 3.1c. `native-mutators-command-line` runs headless
+skirmishes with
+`--mutator`: none, one package, a number option, two packages in each
+order, a missing mutator, an unknown option, a list the manifests refuse
+and a mutator whose script stops. A companion that fails alone is run
+again from the mutators that applied: that skirmish, and the host of a
+network game started with the same list, play the commander health of
+the applied mutator alone, and strict playback of the game's recording
+rebuilds the recorded unit definitions. A list that applied in full is
+not run again.
+`native-fast-commanders` (`tools/check_native_fast_commanders.py`) gives
+ARMCOM, through `ridge-racing-commander`, the movement seven stacked
+commander mutators leave it: 42 pixels a tick, a turn of 28800 a tick, and
+acceleration and braking that change its speed by all of that in one tick.
+On the flat platform of Over Crude Water it sends fourteen commanders east
+by different distances, fourteen in their own directions and one round a
+wall of dragon's teeth, and queues a solar collector behind one move. Each
+must reach full speed, end its move on the point's cell without reversing
+more than three times, and rest there; the solar collector must be
+finished. A fourth skirmish sends the fourteen east with no mutator, over a
+scratch mod folder whose ARMCOM unit file, taken from the installation with
+`oa-tool asset-extract`, carries the same values: a match without mutators
+steers as 3.1c does, so there a commander must step more than a cell past
+its point.
+`native-spawn-heights` (`tools/check_native_spawn_heights.py`) points at
+markers a stage places on Coast To Coast and enters unit names on the chat
+line: a shipyard, a floating torpedo launcher and a floating metal maker
+on the deep water must stand on their build grid at the sea level less
+their waterlines, a solar collector on a hill at the lowest corner under
+its footprint, read from the map with `oa-tool asset-extract`, and a patrol
+boat at a placed one's height, each to the end of the run.
 
 ## Writing a test
 

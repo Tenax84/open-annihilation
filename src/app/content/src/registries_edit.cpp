@@ -235,6 +235,8 @@ void set_counts(RegistryCheck& check, const catalogue::Catalogue& loaded) {
     std::size_t mods = 0;
     std::size_t maps = 0;
     std::size_t expansions = 0;
+    std::size_t mutators = 0;
+    std::size_t brains = 0;
     for (const catalogue::Package& package : loaded.packages) {
         switch (package.kind) {
         case catalogue::Kind::oalang:
@@ -249,6 +251,12 @@ void set_counts(RegistryCheck& check, const catalogue::Catalogue& loaded) {
         case catalogue::Kind::expansion:
             ++expansions;
             break;
+        case catalogue::Kind::oamut:
+            ++mutators;
+            break;
+        case catalogue::Kind::oabrain:
+            ++brains;
+            break;
         }
     }
     if (languages != 0)
@@ -259,6 +267,10 @@ void set_counts(RegistryCheck& check, const catalogue::Catalogue& loaded) {
         check.kinds.push_back({catalogue::Kind::oamap, maps});
     if (expansions != 0)
         check.kinds.push_back({catalogue::Kind::expansion, expansions});
+    if (mutators != 0)
+        check.kinds.push_back({catalogue::Kind::oamut, mutators});
+    if (brains != 0)
+        check.kinds.push_back({catalogue::Kind::oabrain, brains});
 }
 
 /// Fetches one address into memory.

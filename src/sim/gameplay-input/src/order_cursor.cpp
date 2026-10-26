@@ -81,8 +81,9 @@ bool reclaimable_feature_mapped(
 
 // Whether the rules keep an aircraft of this type off repair pads
 // (air.no-repair-retreat-flag): the Move command over a pad then neither
-// shows the pad cursor nor lands on it, and the pointer falls through to the
-// load and guard tests.
+// shows the pad cursor nor lands on it, nor does a right press on it in the
+// right-click interface; the pointer falls through to the load and guard
+// tests.
 bool kept_off_pads(const UnitDef& actor_def, const OrderCursorHooks& hooks) noexcept {
     using Flag = data::match_rules::AirNoRepairRetreatFlagFlag;
     return hooks.rules.rules().air.no_repair_retreat_flag.flag == Flag::cantbetransported &&
@@ -575,7 +576,7 @@ UnitOrder unit_order(
                     return by_air(UnitOrder::reclaim_unit, UnitOrder::vtol_reclaim_unit);
                 if (allied && assistable())
                     return assist_order();
-                if (flies && allied && target_airbase)
+                if (flies && allied && target_airbase && !kept_off_pads(*def, hooks))
                     return UnitOrder::vtol_landing;
                 if (target != nullptr && can_load_unit(world, actor, *target))
                     return by_air(UnitOrder::ground_pickup, UnitOrder::vtol_pickup);

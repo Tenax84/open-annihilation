@@ -67,7 +67,7 @@ struct Expected {
 // choices are those of a dialog of the engine's settings opened over the
 // defaults: Language offers System default and the built-in languages.
 // clang-format off
-constexpr std::array<Expected, 83> kExpected{{
+constexpr std::array<Expected, 96> kExpected{{
     {Setting::path_search, RowKind::slider, "Pathfinding cycles", 1, 1, 8, 0, 0, false, Lock::in_game, &Locks::path_search},
     {Setting::wheel_zoom, RowKind::toggle, "Mouse wheel zoom", 1, 1, 0, 0, 0, false, Lock::none, nullptr},
     {Setting::max_zoom_out, RowKind::choice, "Maximum zoom out", 1, 1, 7, 200, 0, false, Lock::none, nullptr},
@@ -145,6 +145,8 @@ constexpr std::array<Expected, 83> kExpected{{
     {Setting::file_type_oamap, RowKind::toggle, "Map packs (.oamap)", 0, 0, 0, 0, 0, false, Lock::none, nullptr},
     {Setting::file_type_oalang, RowKind::toggle, "Language packs (.oalang)", 0, 0, 0, 0, 0, false, Lock::none, nullptr},
     {Setting::file_type_oareg, RowKind::toggle, "Registry files (.oareg)", 0, 0, 0, 0, 0, false, Lock::none, nullptr},
+    {Setting::file_type_oamut, RowKind::toggle, "Mutator packages (.oamut)", 0, 0, 0, 0, 0, false, Lock::none, nullptr},
+    {Setting::file_type_oabrain, RowKind::toggle, "Brain packages (.oabrain)", 0, 0, 0, 0, 0, false, Lock::none, nullptr},
     {Setting::file_type_oalaunch, RowKind::toggle, "Launch files (.oalaunch)", 0, 0, 0, 0, 0, false, Lock::none, nullptr},
 #if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
     {Setting::file_types_note, RowKind::text, "File types", 1, 1, 0, 0, 0, false, Lock::none, nullptr},
@@ -153,17 +155,28 @@ constexpr std::array<Expected, 83> kExpected{{
 #endif
     {Setting::skirmish_players, RowKind::slider, "Skirmish players", 1, 1, 9, 0, 0, false, Lock::in_game, &Locks::skirmish_players},
     {Setting::smooth_motion, RowKind::toggle, "Smooth motion", 1, 1, 0, 0, 0, false, Lock::none, nullptr},
+    {Setting::weapon_lighting, RowKind::slider, "Coloured weapon lighting", 0, 0, 21, 0, 0, false, Lock::none, nullptr},
+    {Setting::nanolathe_lighting, RowKind::slider, "Nanolathe glow", 0, 0, 21, 0, 0, false, Lock::none, nullptr},
+    {Setting::wreck_glow, RowKind::slider, "Wreck glow", 0, 0, 21, 0, 0, false, Lock::none, nullptr},
+    {Setting::heat_distortion, RowKind::slider, "Heat distortion", 0, 0, 21, 0, 0, false, Lock::none, nullptr},
+    {Setting::water_ripples, RowKind::slider, "Water ripples", 0, 0, 21, 0, 0, false, Lock::none, &Locks::water_effects},
+    {Setting::coastal_waves, RowKind::slider, "Coastal waves", 0, 0, 21, 0, 0, false, Lock::none, &Locks::water_effects},
+    {Setting::underwater_shimmer, RowKind::slider, "Underwater shimmer", 0, 0, 21, 0, 0, false, Lock::none, &Locks::water_effects},
+    {Setting::naval_reflections, RowKind::slider, "Naval reflections", 0, 0, 21, 0, 0, false, Lock::none, &Locks::water_effects},
+    {Setting::allow_full_3d, RowKind::toggle, "Allow Full 3D Mode", 1, 1, 0, 0, 0, false, Lock::none, nullptr},
+    {Setting::unlocked_camera, RowKind::toggle, "Unlocked Camera", 1, 1, 0, 0, 0, false, Lock::none, &Locks::unlocked_camera},
     {Setting::welcome_setup, RowKind::value_and_button, "Welcome setup", 2, 2, 0, 0, 0, false, Lock::main_menu, &Locks::welcome_setup},
+    {Setting::fog_of_war, RowKind::levels, "Fog of War", 1, 1, 2, 56, 2, false, Lock::none, nullptr},
 }};
 // clang-format on
 
 static_assert(
-    kExpected.size() == static_cast<std::size_t>(Setting::welcome_setup) + 1,
+    kExpected.size() == static_cast<std::size_t>(Setting::fog_of_war) + 1,
     "every setting has its row"
 );
 
 /// Every field of the dialog's locks that locks a row.
-constexpr std::array<Lock Locks::*, 16> kLockFields{
+constexpr std::array<Lock Locks::*, 18> kLockFields{
     &Locks::path_search,
     &Locks::unit_limit,
     &Locks::skirmish_players,
@@ -179,6 +192,8 @@ constexpr std::array<Lock Locks::*, 16> kLockFields{
     &Locks::native_density,
     &Locks::zoomed_out_after,
     &Locks::edge_stickiness,
+    &Locks::unlocked_camera,
+    &Locks::water_effects,
     &Locks::welcome_setup,
 };
 
@@ -477,7 +492,7 @@ struct StoredChoice {
 };
 
 /// Every strip's and drop-down's setting, with its key.
-constexpr std::array<StoredChoice, 23> kStoredChoices{{
+constexpr std::array<StoredChoice, 24> kStoredChoices{{
     {Setting::max_zoom_out, settings::key::max_zoom_out},
     {Setting::max_zoom_in, settings::key::max_zoom_in},
     {Setting::view_past_map_edge, settings::key::view_past_map_edge},
@@ -497,6 +512,7 @@ constexpr std::array<StoredChoice, 23> kStoredChoices{{
     {Setting::pad_prompts, settings::key::pad_prompts},
     {Setting::menu_scaling, settings::key::menu_scaling},
     {Setting::explosion_flash, settings::key::explosion_flash},
+    {Setting::fog_of_war, settings::key::fog_of_war},
     {Setting::zoomed_out_units, settings::key::zoomed_out_units},
     {Setting::zoomed_out_after, settings::key::zoomed_out_after},
     {Setting::window_frame, settings::key::window_frame},
@@ -575,6 +591,7 @@ void every_row_and_choice_has_an_id_of_one_word() {
     OA_CHECK(
         ids_of(Setting::zoomed_out_units) == (std::vector<std::string>{"rendered", "dots", "icons"})
     );
+    OA_CHECK(ids_of(Setting::fog_of_war) == (std::vector<std::string>{"classic", "smooth"}));
     OA_CHECK(
         ids_of(Setting::interface_size) ==
         (std::vector<std::string>{"automatic", "100", "200", "300", "400"})
@@ -631,11 +648,11 @@ void tab_follows_the_dialogs_focus_order() {
     settings::Dialog graphics = controls;
     graphics.page = settings::Page::graphics;
     OA_CHECK(
-        tab_order(graphics) == (std::vector<int32_t>{16, 17, 18, 19, 20,
-                                                     21, 22, 23, 24, 12,
-                                                     13, 14, 0,  1,  2,
-                                                     3,  4,  5,  6,  8,
-                                                     9,  11, 10, 7,  settings::close_x_control})
+        tab_order(graphics) ==
+        (std::vector<int32_t>{16, 17, 18, 19, 20, 21, 22, 23,
+                              24, 25, 27, 28, 29, 30, 31, 32,
+                              12, 13, 14, 0,  1,  2,  3,  4,
+                              5,  6,  8,  9,  11, 10, 7,  settings::close_x_control})
     );
     // Developer with its first area open: its rows, UI kit gallery's SHOW
     // last of them, its list's headers, Show Active Only and Restore profile

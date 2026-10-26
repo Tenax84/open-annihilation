@@ -85,6 +85,14 @@ cannot be selected, ordered or counted. The builder's order still ends with
 "Building complete". A wall created already finished is marked the same way
 as it is placed.
 
+A building created finished, among a mission's units or by the unit-name
+cheat, is placed as 3.1c places it (`Match::snap_to_build_grid`): its point
+snaps to its footprint's grid and it stands at the height its yard takes
+there (`footprint_height`), the height a builder's frame takes on that site.
+A yard with no level cell, such as a shipyard's or a floating torpedo
+launcher's, floats its waterline below the sea. Any other type keeps its
+point, and its creation fits its height to the ground or the water.
+
 ## Rules
 
 A mod's profile reaches the match through `OfflineInputs`: `limits` (the
@@ -126,10 +134,14 @@ only when its parameters need the state: at its baseline a rule adds none.
 `Match::fold_rule_state` folds the profile's sim hash and every table into
 the match-state digest (`src/sim/state-hash`), and `match_tick_digest` and
 the trace recorder fold the same into the trace's total; a save keeps each
-table as a blob of its ModProfile account. With no table nothing more is
-digested or saved, so a match without a profile, or with every rule at its
-baseline, digests as before: `match-determinism` plays its skirmish under
-the profile that turns every limit and hack on at its baseline preset and
+table as a blob of its ModProfile account. A mutator digest the match holds
+is folded too, even when no table was added. A match that holds one also
+steers its ground units faster than any stock unit held to their routes
+(`TickHost::fast_unit_steering`, `ground_orders::FastUnitSteering`); any
+other match steers every unit as 3.1c does. With no table and no mutator
+digest nothing more is digested or saved, so a match without a profile, or
+with every rule at its baseline, digests as before: `match-determinism` plays
+its skirmish under the profile that turns every limit and hack on at its baseline preset and
 holds it to the same pins. `match-rules` checks the copies, the view and the
 rule-state digests. Under `repair.rate: exact-remainder` the match keeps
 each unit slot's heal remainders (`Match::repair_remainders`) as the table
@@ -176,6 +188,17 @@ waiting batches are the table `structure-gifts`
 (`oa/sim/match_runtime/structure_gifts.hpp`); `match-structure-gifts` checks
 them.
 
+## Seat hooks
+
+`Match::seat_hooks` (`SeatHooks`, `seat_hooks.hpp`) is one computer seat's
+turn when something other than the built-in computer player plays it.
+`play` is called at that seat's controller point and returns true when it
+played the tick. A null `play`, or one that returns false, leaves the
+built-in order tick to run. The weapon sweep runs either way. Hooks set on
+a seat that is not a computer are never called. The hooks and the brains'
+state (`Match::seat_state`) are not saved, hashed or shared, and the state
+ends with the match.
+
 ## Event hooks
 
 `Match::event_hooks` (`EventHooks`, `event_hooks.hpp`) reports what happens
@@ -186,6 +209,13 @@ through:
 
 - `unit_created` at the end of `create` and `start_player`; a building
   (bmcode 0) created finished is then reported finished by itself.
+- `unit_created_by` right after `unit_created` for that same unit, and before
+  `unit_finished` when a building created finished is reported finished. The
+  builder is the unit whose work started it: the mobile builder of a
+  nanoframe, the factory of a factory's frame, the resurrecting unit of a
+  raised one, or the aircraft of a building built from the air. It is 0 when
+  no unit made it: a commander, a mission's unit, a hand-over's copy, or a
+  copy of another machine's unit.
 - `unit_finished` from the builder link (`link_built_unit`), which build
   progress reaching the end, a factory's cancelled frame and `finish_unit`
   all take; from the resurrect order, by the unit that raised it; and for a
@@ -202,9 +232,66 @@ through:
   exploding unit included.
 - `unit_damaged` in `apply_damage_event` once the unit is known live and not
   dying, before the event changes it.
+- `unit_given` once from `transfer_unit` for a capture, a share-panel gift or
+  a structure gift, while the old unit is still live. When this machine makes
+  the copy, the copy is reported created and then created by builder 0, and
+  `unit_given` follows with the old unit and the copy, before this machine
+  kills the old unit. A unit another machine handed over is left alive here
+  for that machine to kill. When the receiver's machine makes the copy, the
+  report names no copy and this machine reports no creation, and the old
+  unit's `unit_died` follows once the sweep tears it down. A transfer that
+  changes nothing (the unit's own owner, a unit already dying, or a player
+  who is not present) is not reported.
 - `unit_died` as `teardown_dead_unit` starts on a live unit, before its
   type, owner and position are cleared: each death once, settled here or
   elsewhere.
+- `unit_idle` when a finished unit simulated here runs out of orders and is
+  given its default mission (`TickHost::queue_default_mission`). A unit
+  without a movement object, and a default mission the match does not run,
+  are not reported, so a building is never idle. A frame waiting for its
+  builder is not idle. The report fires once each time the unit runs out of
+  orders, not on every tick it stands by.
+- `order_ended` just before the scheduler removes an order its handler
+  ended, with the order's mission kind and whether it was done or failed.
+  Done is a handler result of 5; failed is 8, a 9 that gives way to the next
+  order, or the head order of a result that clears the queue. Orders removed
+  with that head by the clear, orders a new command replaces, the secondary
+  queue's orders and orders of a dying unit are not reported.
+- `unit_carried` at the end of `link_carried_unit`, after the link is in
+  place, whether this machine made the link or `apply_carry_link` took it
+  from another machine's record. The unit is reported unloaded from the
+  carrier it left, then loaded onto the carrier it joined. A link that only
+  changes the piece, and a link the carry checks refuse, are not reported.
+- `wreck_placed` from `spawn_corpse` when a death places a corpse feature,
+  after that unit's `unit_died` and while the dead unit's record still holds
+  its position. The feature is the placed feature's type and the plot is
+  its index into `World::plots`. A death that leaves no corpse is not
+  reported.
+- `seen_changed` at the end of a player's knowledge refresh, every 30 ticks,
+  when the enemies on its seen list changed. The gained list is the enemies
+  that entered and the lost list is the enemies that left, each with the
+  unit's slot and the generation that tells that unit from the next one to
+  take the slot. The comparison is `detection::diff_sighted`: a slot a new
+  unit has taken is one lost entry and one gained entry, and the lost entry
+  comes first. A lost unit may have died, or its slot may hold another unit
+  now. The lists are valid only for the call. The player's own units and its
+  allies are not on the seen list, so they are not reported, and nothing is
+  reported when the list is unchanged. A player with no controller, a
+  mirrored player among them, is not refreshed. After a load the previous
+  lists are empty, so the first refresh reports every seen enemy as gained:
+  a brain that starts again from a save hears the enemies its seat can see.
+  The previous lists are kept up even when no one is listening, so a
+  listener added during a match hears only real changes at its first
+  refresh.
+- `path_failed` during the tick's path search, when a route search for a
+  unit simulated here finds no route and the unit is not already at the
+  goal. The report names the unit and the order's mission kind. An order
+  is reported once, so a move that tries again is not reported on every
+  try. The mark is kept on the match's order record and is not saved or
+  hashed; after a load it starts clear, so an order still trying may be
+  reported once more. An order the match does not own is reported each
+  time the search fails. A failed search for a unit already at its goal
+  is not reported. Aircraft do not search routes, so they are not reported.
 
 The hooks receive the world as const and must not change match state, draw
 from its random streams or call back into it; the match computes nothing
@@ -212,6 +299,15 @@ differently with them set (`match-event-hooks` checks the synthetic
 skirmish's digests against `match-determinism`'s pins with and without
 them). A limitation: a unit only a state record from elsewhere finishes,
 with no builder link following, is not reported finished.
+
+A match also keeps listeners, each a whole `EventHooks` table added with
+`add_event_listener` and removed with `remove_event_listener`. Each event
+is reported to the primary table first, then to the listeners in the order
+they were added. A match holds at most 8. An id is never reused, and 0 is
+not an id. Listeners follow the same read-only rule, and a hook does not
+add or remove a listener. Replacing or clearing `event_hooks` leaves the
+listeners in place. `match-event-hooks` checks that they change nothing the
+match computes.
 
 ## Sharing with the other players
 
@@ -325,6 +421,33 @@ the viewing player when it allies their owner; a watching local player
 sees no jamming at all, unless the view-switch branch applies: then, while
 the viewing player is not the local one in a game with mapping or line of
 sight, only the alliance counts.
+
+## Each player's radar picture
+
+`keep_player_contacts` starts or stops one player's picture. The picture is
+a byte per unit slot: radar, sonar and jammed, the same three facts the
+viewpoint's flags carry, so a seat can be shown the contacts it would have.
+The first keep allocates the table. Keeping that player again resets the
+bytes to the bits a new unit starts with and sets the scan tick back to 0,
+without allocating. Stopping zeroes that player's bytes. A player outside
+the ten is noted as a fault and changes nothing.
+
+The picture is scanned at that player's own deadline, every 30 ticks, in
+`update_player_slots` just after the viewpoint's scan. `scan_player_contacts`
+runs one scan immediately; tests call it. With one participant, or while the
+picture is not kept, the scan does nothing and leaves the tick alone.
+
+One rescan costs what the viewpoint's scan costs: two passes over the unit
+slots (the first pass and line of sight), one bucket walk per active radar
+or sonar unit of that player (and of each player who allies it, under allied
+vision), and one pass over the slots plus a bucket walk per active jammer.
+Nothing is allocated after the first keep. Nothing runs for a player nobody
+keeps, so a match that keeps no picture does no new work.
+
+Sightings, target searches and `unit_in_sight` keep reading the viewpoint's
+flag bits, as they do in 3.1c. A picture is not saved, recorded or mixed
+into a state digest. After a load it is rebuilt from the bits a new unit
+starts with. `player_contact_bits` is what a later brain reads for that seat.
 
 ## Economy and repair
 
@@ -485,14 +608,21 @@ then.
 The match sets the computer players up in the load's players' pass, or on
 its first tick when a match did not end a load (`finish_load`). Each tick every
 player whose record holds a controller (`Player.controller`) runs it: a
-computer player's controller first runs its order-callback tick (the squad
-sort and due tasks in `src/sim/ai`), then the weapon sweep retargets the slots of
+computer player's controller calls the seat's play hook when one is set, and
+runs its order-callback tick (the squad sort and due tasks in `src/sim/ai`)
+only when the hook is absent or returns false. The weapon sweep then retargets the slots of
 units that fire at will; command-fire weapons take part only for computer
 players. Interceptors aim at an enemy missile; other weapons take a random
 enemy in range. The knowledge refresh follows for the same players: every 30
-ticks it rebuilds the player's sightings (`src/sim/detection`) and, for a
-computer player, its own-unit counts and base position, then a one-in-30 draw
-runs the strategic refresh. Offline matches run the wind from the OTA
+ticks it rebuilds the player's sightings (`src/sim/detection`), its pad list
+and, for a computer player, its own-unit counts and base position, then a
+one-in-30 draw runs the strategic refresh. The pad list holds the player's
+own finished, switched-on air bases that are builders, in unit slot order. A
+damaged aircraft that breaks off for a repair pad (attack, strike, seek,
+patrol and repair patrol missions) draws one of the listed pads still
+switched on within 0xf00 world units (`Match::repair_pads_in_reach` and
+`repair_pad_in_reach`), so a pad built or switched on since the last rebuild
+is not chosen until the next one. Offline matches run the wind from the OTA
 `MinWindSpeed` and `MaxWindSpeed`.
 
 The computer players reach the match through `ComputerHost`

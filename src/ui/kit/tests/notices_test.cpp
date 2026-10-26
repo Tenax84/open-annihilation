@@ -6,7 +6,9 @@
 // order, their words and their text's control, which no press reaches,
 // where a finger's press lands, every key (the editing keys among them),
 // paint against a direct draw, the progress bar's fill, and the work
-// dialog, which has no buttons.
+// dialog, which has no buttons. A question's buttons are also fitted to a
+// measure and to fonts wider than the estimate, and a row too wide for its
+// box is narrowed to the room.
 //
 // The placements and the finger's landings below are literal values,
 // computed once with the settings dialog's own notice and prompt placement
@@ -28,6 +30,7 @@
 #include <cstdio>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -48,12 +51,15 @@ renderer::Surface black(int32_t width, int32_t height) {
 
 /// The synthetic font from the settings pixel test: glyph b is 2 + b % 4
 /// columns by 8 rows, set where (x + y + byte) % 3 is not 0.
-kit::Fonts block_fonts() {
+///
+/// @param columns every glyph's width instead; 0 for 2 + b % 4
+/// @return the font as both the regular and the small one
+kit::Fonts block_fonts(uint16_t columns = 0) {
     renderer::TextFont font;
     font.font.nominal_height = 8;
     constexpr uint8_t ink_index = 1;
     for (int byte = 0; byte < 256; ++byte) {
-        const auto width = static_cast<uint16_t>(2 + byte % 4);
+        const auto width = columns != 0 ? columns : static_cast<uint16_t>(2 + byte % 4);
         constexpr uint16_t height = 8;
         const auto count = static_cast<std::size_t>(width) * height;
         std::vector<uint8_t> pixels(count, ink_index);
@@ -141,6 +147,12 @@ int32_t narrow_small(std::string_view text) {
 
 int32_t narrow_regular(std::string_view text) {
     return static_cast<int32_t>(kit::character_count(text)) * 6;
+}
+
+/// Nine points a character: wider than the estimate, as the modern fonts
+/// draw Cyrillic capitals in the small font.
+int32_t wide_small(std::string_view text) {
+    return static_cast<int32_t>(kit::character_count(text)) * 9;
 }
 
 kit::Notice short_notice() {
@@ -516,6 +528,91 @@ void questions_place_as_before() {
         OA_CHECK(same_rect(rects[0], {260, 174, 58, 17}));
         OA_CHECK(same_rect(rects[1], {323, 174, 65, 17}));
     }
+}
+
+void question_buttons_fit_their_captions() {
+    // A measure wider than the estimate widens a button to its caption and
+    // the padding: the eleven characters of ЗАВАНТАЖИТИ are 99 points, and
+    // BACK keeps the least width. At the estimate, 77 points, it was 93.
+    const kit::Question load = question_of({"BACK", "ЗАВАНТАЖИТИ"});
+    const auto measured = kit::question_button_rects(load, 200, wide_small);
+    OA_CHECK(measured.size() == 2);
+    if (measured.size() == 2) {
+        OA_CHECK(same_rect(measured[0], {216, 174, 52, 17}));
+        OA_CHECK(same_rect(measured[1], {273, 174, 115, 17}));
+    }
+    const auto estimated = kit::question_button_rects(load, 200);
+    OA_CHECK(estimated.size() == 2);
+    if (estimated.size() == 2) {
+        OA_CHECK(same_rect(estimated[0], {238, 174, 52, 17}));
+        OA_CHECK(same_rect(estimated[1], {295, 174, 93, 17}));
+    }
+    // place_question places them with its small measure.
+    const kit::PlacedQuestion placed = kit::place_question(load, kit::estimated_width, wide_small);
+    OA_CHECK(placed.buttons.size() == 2);
+    if (placed.buttons.size() == 2)
+        OA_CHECK(same_rect(placed.buttons[1], {273, 124, 115, 17}));
+
+    // A row wider than the room between the paddings, 376 points at Compact,
+    // is narrowed from its widest buttons: 268 and 205 come to 148 each, and
+    // the row starts at the left padding.
+    const kit::Question wide_row =
+        question_of({"CANCEL", "INSTALL BESIDE THE ONE THERE", "REPLACE THE ONE THERE"});
+    const auto narrowed = kit::question_button_rects(wide_row, 200, wide_small);
+    OA_CHECK(narrowed.size() == 3);
+    if (narrowed.size() == 3) {
+        OA_CHECK(same_rect(narrowed[0], {12, 174, 70, 17}));
+        OA_CHECK(same_rect(narrowed[1], {87, 174, 148, 17}));
+        OA_CHECK(same_rect(narrowed[2], {240, 174, 148, 17}));
+    }
+
+    // In fonts wider than the estimate the display list's buttons, the
+    // placement's and the presses agree: a press on the part of REPLACE
+    // the estimate leaves out takes it only when the fonts are given; at
+    // the estimate that point is CANCEL's.
+    const kit::Fonts wide = block_fonts(10);
+    kit::Question question = question_of({"CANCEL", "REPLACE"});
+    const int32_t height = kit::place_question(question, &wide).height;
+    const auto in_fonts = kit::question_button_rects(question, height, &wide);
+    OA_CHECK(in_fonts.size() == 2);
+    if (in_fonts.size() != 2)
+        return;
+    OA_CHECK(
+        in_fonts[1].width == kit::text_width(wide, kit::FontRole::small, "REPLACE") +
+                                 kit::compact_metrics.prompt_button_padding
+    );
+    OA_CHECK(in_fonts[1].width > kit::question_button_rects(question, height)[1].width);
+    const kit::PlacedQuestion placed_in_fonts = kit::place_question(question, &wide);
+    const kit::DisplayList list = kit::question_list(question, &wide);
+    OA_CHECK(placed_in_fonts.buttons.size() == 2 && list.controls.size() >= 2);
+    if (placed_in_fonts.buttons.size() == 2 && list.controls.size() >= 2) {
+        OA_CHECK(same_rect(placed_in_fonts.buttons[1], in_fonts[1]));
+        OA_CHECK(same_rect(list.controls[1].rect, in_fonts[1]));
+        OA_CHECK(same_rect(list.controls[0].rect, in_fonts[0]));
+    }
+    const kit::Point left_part{in_fonts[1].x + 2, in_fonts[1].y + 2};
+    kit::Question at_estimate = question;
+    std::ignore = kit::question_pointer_down(at_estimate, left_part, height);
+    OA_CHECK(at_estimate.hovered == 0);
+    OA_CHECK(
+        kit::question_pointer_down(question, left_part, height, &wide).action ==
+        kit::QuestionAction::redraw
+    );
+    const kit::QuestionAnswer answered =
+        kit::question_pointer_up(question, left_part, height, &wide);
+    OA_CHECK(answered.action == kit::QuestionAction::answered && answered.button == 1);
+    OA_CHECK(
+        kit::question_pointer_move(question, left_part, height, &wide).action ==
+        kit::QuestionAction::none
+    );
+    OA_CHECK(question.hovered == 1);
+    const kit::Point under{left_part.x, in_fonts[1].y + in_fonts[1].height + 3};
+    OA_CHECK(
+        kit::question_finger_down(question, under, height, 6, &wide).action ==
+        kit::QuestionAction::redraw
+    );
+    const kit::QuestionAnswer tapped = kit::question_pointer_up(question, under, height, &wide);
+    OA_CHECK(tapped.action == kit::QuestionAction::answered && tapped.button == 1);
 }
 
 // --- Display lists -------------------------------------------------------
@@ -1147,6 +1244,61 @@ void paint_draws_what_draw_notice_draws() {
     OA_CHECK(kit::notice_list(other_ok, nullptr).controls[0].text == "CLOSE");
 }
 
+/// The header item's words.
+///
+/// @param list the display list
+/// @return the header's text; empty when it has none
+std::string header_text(const kit::DisplayList& list) {
+    for (const kit::Item& item : list.items)
+        if (item.role == kit::Role::header)
+            return item.text;
+    return {};
+}
+
+/// The columns kept for a question's title at Compact.
+///
+/// @return the title rectangle's width
+int32_t compact_title_room() {
+    const int32_t box = kit::metrics_of(kit::SizeClass::compact).notice_width;
+    const int32_t title_left =
+        kit::notice_mark.x + kit::notice_mark.width + kit::compact_metrics.header_gap;
+    return box - kit::compact_metrics.padding - title_left;
+}
+
+void a_question_title_is_cut_to_its_header() {
+    kit::Question plain = question_of({"OK"});
+    plain.title = "Start";
+    OA_CHECK(header_text(kit::question_list(plain, &fonts())) == "Start");
+
+    kit::Question wide = question_of({"OK"});
+    wide.title = std::string(12, 'W') + " " + std::string(12, 'W') + " " + std::string(12, 'W') +
+                 " " + std::string(12, 'W') + " " + std::string(12, 'W');
+    const int32_t room = compact_title_room();
+    OA_CHECK(
+        kit::tracked_width(
+            fonts(), kit::FontRole::regular, wide.title, kit::compact_metrics.heading_tracking
+        ) > room
+    );
+    const std::string shown = header_text(kit::question_list(wide, &fonts()));
+    OA_CHECK(shown != wide.title);
+    OA_CHECK(shown.size() >= kit::ellipsis.size() && shown.ends_with(kit::ellipsis));
+    const std::string prefix = shown.substr(0, shown.size() - kit::ellipsis.size());
+    OA_CHECK(wide.title.starts_with(prefix));
+    OA_CHECK(
+        prefix.size() == wide.title.size() ||
+        (prefix.size() < wide.title.size() && wide.title[prefix.size()] == ' ')
+    );
+    // The header records the line after stand-ins. A font that draws the
+    // ellipsis as three stops is wider than the ellipsis counted as one.
+    const std::string drawn = kit::with_stand_ins(fonts(), kit::FontRole::regular, shown);
+    OA_CHECK(
+        kit::tracked_width(
+            fonts(), kit::FontRole::regular, drawn, kit::compact_metrics.heading_tracking
+        ) <= room
+    );
+    OA_CHECK(header_text(kit::question_list(wide, nullptr)) == wide.title);
+}
+
 void paint_draws_what_draw_question_draws() {
     std::vector<kit::Question> questions{
         question_of({"OK"}),
@@ -1167,6 +1319,10 @@ void paint_draws_what_draw_question_draws() {
     held.progress = kit::question_progress_whole;
     held.hovered = 2;
     questions.push_back(held);
+    kit::Question wide = question_of({"OK"});
+    wide.title = std::string(12, 'W') + " " + std::string(12, 'W') + " " + std::string(12, 'W') +
+                 " " + std::string(12, 'W') + " " + std::string(12, 'W');
+    questions.push_back(wide);
     for (const kit::Question& question : questions)
         for (const int32_t scale : {1, 2}) {
             const int32_t height = kit::place_question(question, &fonts()).height;
@@ -1346,6 +1502,7 @@ void the_work_dialog_has_no_buttons() {
 int main() {
     notices_place_as_before();
     questions_place_as_before();
+    question_buttons_fit_their_captions();
     lists_name_their_buttons();
     a_word_of_their_own_names_them();
     the_text_control_takes_no_press();
@@ -1355,6 +1512,7 @@ int main() {
     every_key_on_a_notice();
     every_key_on_a_question();
     paint_draws_what_draw_notice_draws();
+    a_question_title_is_cut_to_its_header();
     paint_draws_what_draw_question_draws();
     the_progress_bar_fills_as_far_as_it_came();
     the_work_dialog_has_no_buttons();

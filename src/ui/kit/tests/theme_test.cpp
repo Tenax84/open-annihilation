@@ -49,6 +49,9 @@ void every_token_keeps_its_value() {
     equals(kit::colour::accent_light, 0xb6, 0xe0, 0x5a);
     equals(kit::colour::accent_held, 0x8a, 0xb8, 0x30);
     equals(kit::colour::on_accent, 0x10, 0x12, 0x0d);
+    equals(kit::colour::filled, 0x3e, 0x52, 0x18);
+    equals(kit::colour::filled_light, 0x49, 0x60, 0x1c);
+    equals(kit::colour::filled_held, 0x35, 0x45, 0x14);
     equals(kit::colour::well, 0x12, 0x14, 0x10);
     equals(kit::colour::control_border, 0x3a, 0x40, 0x34);
     equals(kit::colour::control_hover, 0x5b, 0x63, 0x52);

@@ -183,6 +183,7 @@ $S --demo-installer <the demo installer>  # On My iPhone › Total Annihilation.
 $S --fixture not-a-game                   # On My iPhone › Not a game: text files only
 $S --fixture nested                       # On My iPhone › Old PC › Games › Total Annihilation
 $S --fixture mod                          # On My iPhone › Picker Test Mod: a usable mod profile
+$S --fixture mutator                      # On My iPhone › Picker Test Mutator.oamut: tap it to install
 $S --into-documents "TA Commander Pack"   # the game folder under another name, for I HAVE COPIED IT
 $S --clear                                # remove everything it put there
 ```
@@ -238,7 +239,7 @@ the Mac), brings each file opened in the game into the app, and keeps the
 system's three-finger editing gestures (undo, copy, paste) from taking the fingers of a
 three-finger touch. The second is the Game files screen's side (see [Game files](#game-files)).
 
-A file opened in the game (`.oamod`, `.oalang`, `.oamap` or `.oareg`) tapped in the Files app, or
+A file opened in the game (`.oamod`, `.oalang`, `.oamap`, `.oamut` or `.oareg`) tapped in the Files app, or
 shared to Open Annihilation, reaches SDL as an opened URL, which SDL sends the engine as a dropped
 file. Before it does, `ios_platform.mm` brings the file into `tmp/Opened mods/<UUID>/` on a
 background queue: a copy the system made in an Inbox folder is moved, and any other file (one
@@ -262,9 +263,9 @@ option: the desktop installs none.
 icon, the distribution keys (see [For distribution](#for-distribution)), shows the Documents
 folder in the Files app and the Finder, reads a mouse or trackpad as a pointer, and declares the
 type of the game's archives (`net.coreprime.open-annihilation.game-archive`: `.hpi`, `.ufo`,
-`.ccx` and `.gp3`), which the picker offers when the player adds archives, and the four file
-types (`.oamod`, `.oalang`, `.oamap` and `.oareg`), which the app exports and opens as their
-owner, so that the Files app and the share sheet offer Open Annihilation for each, with the app's
+`.ccx` and `.gp3`), which the picker offers when the player adds archives, and the seven file
+types (`.oamod`, `.oalang`, `.oamap`, `.oamut`, `.oabrain`, `.oareg` and `.oalaunch`), which the app exports
+and opens as their owner, so that the Files app and the share sheet offer Open Annihilation for each, with the app's
 icon. `app-bundle-file-types` checks both bundles' declarations.
 [LaunchScreen.storyboard](LaunchScreen.storyboard) is the black launch screen with the title.
 

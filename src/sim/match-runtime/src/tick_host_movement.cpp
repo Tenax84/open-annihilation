@@ -99,7 +99,8 @@ void TickHost::movement_tick(oa::Unit& record) {
             g.mirrored_navigation,
             g.acceleration,
             g.deceleration,
-            match.simulation_.sea_level
+            match.simulation_.sea_level,
+            fast_unit_steering()
         );
     } else {
         sim::ground_orders::tick_navigation(view(s, g, flags), match.simulation_.tick, *this);
@@ -109,7 +110,8 @@ void TickHost::movement_tick(oa::Unit& record) {
             g.navigation,
             g.acceleration,
             g.deceleration,
-            match.simulation_.sea_level
+            match.simulation_.sea_level,
+            fast_unit_steering()
         );
     }
     if (parent_index) {

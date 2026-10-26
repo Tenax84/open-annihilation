@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+# SPDX-License-Identifier: GPL-3.0-only
+
+oamut: 1
+id: ridge-dry-after
+name: "Ridge Dry After"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+tags: ["gameplay"]
+works-with: ["*"]
+requires:
+  mutators: ["ridge-dry-first >= 1.0"]
+layers: ["units"]

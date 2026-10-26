@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 namespace oa::present::model {
@@ -144,11 +145,29 @@ bool piece_passes(const PieceState& piece, int32_t pass, const Unit& unit) noexc
            unit.build_remaining != 0.0F;
 }
 
-// The composite grows to fit a model larger than its start size, unless the
-// limits cut such a model to it.
+// One side, in samples, of the composite that limits cutting a larger model
+// keep: the limits' width or height in game pixels times the samples a game
+// pixel is drawn at, so that a unit drawn finer for enhanced anti-aliasing
+// is cut where the game's pixels cut it.
+int32_t clamped_side(int32_t side, uint32_t samples) noexcept {
+    return static_cast<int32_t>(std::min<int64_t>(
+        int64_t{std::max(side, int32_t{0})} * samples, std::numeric_limits<uint16_t>::max()
+    ));
+}
+
+// The samples of the composite that limits cutting a larger model keep, at
+// the renderer's samples.
+int64_t clamped_plane(const ModelRenderer& renderer) noexcept {
+    return int64_t{clamped_side(renderer.composite_limits.width, renderer.samples)} *
+           clamped_side(renderer.composite_limits.height, renderer.samples);
+}
+
+// The composite grows to fit a model larger than its start size. Under limits
+// that cut such a model it grows only as far as those limits at the draw's
+// samples, so at the game's pixels not past its start size.
 void ensure_composite(ModelRenderer& renderer, int64_t pixels) {
     if (renderer.composite_limits.clamp_oversize)
-        return;
+        pixels = std::min(pixels, clamped_plane(renderer));
     auto& composite = renderer.composite;
     const auto plane = static_cast<int64_t>(composite.pixels.size() / 2);
     if (pixels <= plane || pixels > composite_max_pixels)
@@ -159,8 +178,14 @@ void ensure_composite(ModelRenderer& renderer, int64_t pixels) {
     composite.sprite.aux = composite.pixels.data() + pixels;
 }
 
+// The samples a draw may use of the composite: its buffer's, and under
+// limits that cut a larger model no more than they keep at the draw's
+// samples, however far a finer draw grew the buffer.
 int64_t composite_plane(const ModelRenderer& renderer) noexcept {
-    return static_cast<int64_t>(renderer.composite.pixels.size() / 2);
+    const auto plane = static_cast<int64_t>(renderer.composite.pixels.size() / 2);
+    if (!renderer.composite_limits.clamp_oversize)
+        return plane;
+    return std::min(plane, clamped_plane(renderer));
 }
 
 std::size_t plane_size(const Sprite& sprite) noexcept {
@@ -489,13 +514,18 @@ void set_composite_frame(ModelRenderer& renderer, const SpriteFrame& frame, uint
     composite.width = frame.width;
     composite.height = frame.height;
     if (renderer.composite_limits.clamp_oversize) {
-        // A model larger than the buffer keeps its top left part.
-        composite.width = static_cast<uint16_t>(
-            std::min<int32_t>(composite.width, renderer.composite_limits.width)
-        );
-        composite.height = static_cast<uint16_t>(
-            std::min<int32_t>(composite.height, renderer.composite_limits.height)
-        );
+        // A model larger than the buffer keeps its top left part: the part
+        // the limits hold in game pixels, at whatever samples it is drawn.
+        composite.width = static_cast<uint16_t>(std::min<int32_t>(
+            composite.width, clamped_side(renderer.composite_limits.width, renderer.samples)
+        ));
+        composite.height = static_cast<uint16_t>(std::min<int32_t>(
+            composite.height, clamped_side(renderer.composite_limits.height, renderer.samples)
+        ));
+        // Where the buffer could not grow that far, the rows it holds.
+        if (composite.width != 0 &&
+            static_cast<int64_t>(plane_size(composite)) > composite_plane(renderer))
+            composite.height = static_cast<uint16_t>(composite_plane(renderer) / composite.width);
     }
     composite.origin_x = frame.origin_x;
     composite.origin_y = frame.origin_y;

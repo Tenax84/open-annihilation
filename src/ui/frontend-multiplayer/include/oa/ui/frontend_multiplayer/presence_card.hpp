@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -41,10 +42,24 @@ enum class CardTone : uint8_t {
     lime,  ///< the accent: all is well
 };
 
+/// Whether one player has one mutator of the host's set, as the card says it.
+enum class CardMutatorHave : uint8_t {
+    has,           ///< installed at the host's release: "{item} ✓"
+    missing,       ///< not installed: "{item}: not installed"
+    other_release, ///< another release is installed: "{item}: another release here"
+    unknown,       ///< not known yet: the row is left out, and does not say "not installed"
+};
+
+/// One mutator of the host's set, as a card row names it.
+struct CardMutator {
+    std::string name{};     ///< the mutator's name, or its id
+    CardMutatorHave have{}; ///< what this player has of it
+};
+
 /// One line of the card: a label and its value, both already translated.
 struct PresenceCardLine {
-    std::string
-        label{}; ///< "Engine", "Platform", "Mod", "Rules", "Game", "View", "Dev mode" or "Map"
+    std::string label{}; ///< "Engine", "Platform", "Mod", "Rules", "Mutators", "Game", "View",
+                         ///< "Dev mode" or "Map"
     std::string value{}; ///< what the player's presence record says
     CardTone tone{};     ///< the value's colour
 };
@@ -68,6 +83,9 @@ inline constexpr int32_t presence_card_regular_width = 280;
 inline constexpr int32_t presence_card_large_width = 320;
 /// The points the card leaves clear of the window's edges on each side.
 inline constexpr int32_t presence_card_edge_gap = 8;
+/// The most lines one difference line wraps onto. At Compact the German and
+/// French "cannot start until" lines take three.
+inline constexpr std::size_t presence_card_difference_lines = 3;
 
 /// Returns what the card of a slot's player says, from that player's
 /// presence record alone (lobby_presence_record): a setup block's bytes are
@@ -92,6 +110,11 @@ inline constexpr int32_t presence_card_edge_gap = 8;
 ///   the host's record names the same mod at packaging revision n, another;
 ///   "Same as the host's" when the two sim hashes are known and equal (a
 ///   3.1c host plays the plain baseline's); "Unknown" otherwise;
+/// - Mutators, when `mutators` names a set: one row a mutator, the first
+///   labelled "Mutators". "{item} ✓" when that player has it, or, in amber,
+///   "{item}: not installed" or "{item}: another release here". A row whose
+///   state is still unknown is left out. The host's own card marks every
+///   one ✓;
 /// - Game: how many hacks change the game; View: how many hacks change only
 ///   the view; Dev mode: "On", with " · <n> overrides" when it counts any,
 ///   or "Off". A record that leaves out one of these fields leaves out its
@@ -102,19 +125,26 @@ inline constexpr int32_t presence_card_edge_gap = 8;
 ///   when the state is not known.
 /// When both records name bundles and they differ, unlabelled amber lines
 /// name the difference and say the game cannot start. The Rules line stays
-/// the sim-hash comparison above.
+/// the sim-hash comparison above. A player who lacks a mutator of the set
+/// then gets amber lines after those: "Different from the host: no {name}."
+/// or "Different from the host: another release of {name}.", and "The game
+/// cannot start until {player} gets it, or the host turns it off." The
+/// host's card has none of those lines.
 /// The first presence_card_listed_hacks game hacks' ids follow, and
-/// "· <n> more" for the rest. Every label and fixed word goes through the
-/// lobby's translation (lobby_translated).
+/// "· <n> more" for the rest. The mutator rows and their difference lines
+/// go through the interface catalogue (interface_text). Every other label
+/// and fixed word goes through the lobby's translation (lobby_translated).
 ///
 /// @param lobby the battle room
 /// @param slot the player's slot, 0..9
 /// @param pack_state what this machine has of a map pack; unset counts as unknown
+/// @param mutators the host's set and what this player has of each; empty adds no rows
 /// @return the card; nothing for a slot without the OA badge (lobby_row_badge)
 [[nodiscard]] std::optional<PresenceCard> presence_card(
     Lobby& lobby,
     int32_t slot,
-    const std::function<PackState(const netgame::PresenceMapPack&)>& pack_state
+    const std::function<PackState(const netgame::PresenceMapPack&)>& pack_state,
+    std::span<const CardMutator> mutators = {}
 );
 
 /// Returns the kit's hover card for a presence card.
@@ -125,10 +155,13 @@ inline constexpr int32_t presence_card_edge_gap = 8;
 /// the accent for lime), and the hack ids and "· <n> more" as its block. It
 /// is presence_card_compact_width, presence_card_regular_width or
 /// presence_card_large_width wide by the class, and never wider than the
-/// window less twice presence_card_edge_gap. A value or block line wider
-/// than its room, the width less the class's hover_card_padding either side
-/// and, for a row, the label column, is cut with "..." at a character
-/// (kit::cut_to_width). Its size is kit::hover_card_size's.
+/// window less twice presence_card_edge_gap. A labelled value or a block
+/// line wider than its room, the width less the class's hover_card_padding
+/// either side and, for a row, the label column, is cut with "..." at a
+/// character (kit::cut_to_width). A difference line, which has no label, wraps
+/// instead, onto at most presence_card_difference_lines lines. The last of
+/// them is cut with "..." when the rest does not fit, and the lines before it
+/// are not. Its size is kit::hover_card_size's.
 ///
 /// @param card what the card says
 /// @param size_class the OA layer's size class

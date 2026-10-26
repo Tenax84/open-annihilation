@@ -380,6 +380,171 @@ uint32_t append_solid_pass(
     return quads;
 }
 
+/// Returns where the map pixels [map, map + span) land along one axis: the
+/// target pixel of the first edge and of the far one, each where its own
+/// map pixel lands, so that rectangles that meet share an edge exactly.
+///
+/// @param placement the placement
+/// @param horizontal across, else down
+/// @param map the first map pixel
+/// @param span the map pixels spanned
+/// @return the first edge and the far edge, in target pixels: on whole
+///         pixels for FogPlacement::whole_pixels
+[[nodiscard]] std::pair<float, float>
+placed_edges(const FogPlacement& placement, bool horizontal, int32_t map, int32_t span) noexcept {
+    const float origin = horizontal ? placement.origin_x : placement.origin_y;
+    const int32_t camera = horizontal ? placement.camera_x : placement.camera_z;
+    const float first = placed(origin, map, camera, placement.scale);
+    const float last = placed(origin, map + span, camera, placement.scale);
+    if (!placement.whole_pixels)
+        return {first, last};
+    return {std::round(first), std::round(last)};
+}
+
+/// The variant of the FOG.GAF tile set a grid's tile is drawn from, as the
+/// processor chooses it.
+///
+/// @param grid the grid
+/// @param column the tile's column
+/// @param row the tile's row
+/// @return the variant, 0..3
+[[nodiscard]] int32_t tile_variant(const wr::FogGrid& grid, int32_t column, int32_t row) noexcept {
+    return (row + column + grid.variant_phase) & (wr::fog_tile_variants - 1);
+}
+
+/// One piece of the Classic greyed pass: a rectangle of map pixels over
+/// one terrain tile.
+struct ClassicPiece {
+    int32_t map_x{};  ///< the piece's left edge, in map pixels
+    int32_t map_z{};  ///< the piece's top edge
+    int32_t width{};  ///< map pixels across
+    int32_t height{}; ///< map pixels down
+    int32_t in_x{};   ///< where its left edge lies within the terrain tile, 0..31
+    int32_t in_z{};   ///< where its top edge lies within the terrain tile
+    uint16_t slot{};  ///< the atlas slot of the terrain tile it lies in
+};
+
+/// Collects the pieces of the Classic greyed pass over a grid: a whole
+/// terrain tile where its four fog tiles are wholly out of sight, the
+/// quarters of terrain tiles under each other fog tile wholly out of
+/// sight, and the rectangles of the gray shape of each fog tile partly out
+/// of sight.
+///
+/// @param grid the fog grid
+/// @param shapes the Classic fog's shapes
+/// @param atlas the map's atlas
+/// @param placement where the grid lands
+/// @param[out] pieces the pieces, in the grid's row order
+void collect_classic_pieces(
+    const wr::FogGrid& grid,
+    const ClassicShapes& shapes,
+    const gw::TerrainAtlas& atlas,
+    const FogPlacement& placement,
+    std::vector<ClassicPiece>& pieces
+) {
+    pieces.clear();
+    const auto grid_width = static_cast<int32_t>(atlas.grid_width);
+    const auto grid_height = static_cast<int32_t>(atlas.grid_height);
+    // Adds the rectangle of map pixels at (map_x, map_z) where it lies on
+    // the map; it lies over one terrain tile.
+    const auto add = [&](int32_t map_x, int32_t map_z, int32_t width, int32_t height) {
+        if (map_x < 0 || map_z < 0)
+            return;
+        const int32_t terrain_column = map_x / tile_pixels;
+        const int32_t terrain_row = map_z / tile_pixels;
+        if (terrain_column >= grid_width || terrain_row >= grid_height)
+            return;
+        ClassicPiece piece;
+        piece.map_x = map_x;
+        piece.map_z = map_z;
+        piece.width = width;
+        piece.height = height;
+        piece.in_x = map_x % tile_pixels;
+        piece.in_z = map_z % tile_pixels;
+        piece.slot = atlas.grid
+                         [static_cast<std::size_t>(terrain_row) * atlas.grid_width +
+                          static_cast<std::size_t>(terrain_column)];
+        pieces.push_back(piece);
+    };
+    for (int32_t row = 0; row < grid.height; ++row) {
+        const int32_t tile_z = placement.camera_z + grid.offset_z + row * tile_pixels;
+        for (int32_t column = 0; column < grid.width; ++column) {
+            const uint8_t mask = greyed_mask(grid.at(column, row));
+            if (mask == 0)
+                continue;
+            const int32_t tile_x = placement.camera_x + grid.offset_x + column * tile_pixels;
+            if (mask != wr::fog_mask_full) {
+                for (const ShapeBox& box :
+                     shapes.at(wr::FogTileSet::gray, tile_variant(grid, column, row), mask))
+                    add(tile_x + box.x, tile_z + box.y, box.width, box.height);
+                continue;
+            }
+            for (int32_t quarter_z = 0; quarter_z < 2; ++quarter_z)
+                for (int32_t quarter_x = 0; quarter_x < 2; ++quarter_x) {
+                    // A terrain tile whose four fog tiles are wholly out of
+                    // sight is drawn once, from the fog tile at its top-left.
+                    const int32_t first_column = column + quarter_x - 1;
+                    const int32_t first_row = row + quarter_z - 1;
+                    const bool uniform = wholly_greyed(grid, first_column, first_row) &&
+                                         wholly_greyed(grid, first_column + 1, first_row) &&
+                                         wholly_greyed(grid, first_column, first_row + 1) &&
+                                         wholly_greyed(grid, first_column + 1, first_row + 1);
+                    const int32_t map_x = tile_x + quarter_x * quarter_pixels;
+                    const int32_t map_z = tile_z + quarter_z * quarter_pixels;
+                    if (!uniform) {
+                        add(map_x, map_z, quarter_pixels, quarter_pixels);
+                        continue;
+                    }
+                    if (quarter_x == 1 && quarter_z == 1 && map_x >= 0 && map_z >= 0)
+                        add(map_x - map_x % tile_pixels,
+                            map_z - map_z % tile_pixels,
+                            tile_pixels,
+                            tile_pixels);
+                }
+        }
+    }
+}
+
+/// Appends one rectangle of a fog tile as a quad of the colour, untextured
+/// or textured by the same texels of a page laid over the tile.
+///
+/// @param[in,out] frame the frame
+/// @param placement where the grid lands
+/// @param map_x the rectangle's left edge, in map pixels
+/// @param map_z its top edge
+/// @param width map pixels across
+/// @param height map pixels down
+/// @param texel_x its left edge within the tile, in the page's texels; ignored untextured
+/// @param texel_y its top edge within the tile
+/// @param colour the quad's colour
+void append_box_quad(
+    card::CardFrame& frame,
+    const FogPlacement& placement,
+    int32_t map_x,
+    int32_t map_z,
+    int32_t width,
+    int32_t height,
+    int32_t texel_x,
+    int32_t texel_y,
+    const card::Colour& colour
+) {
+    const auto [left, right] = placed_edges(placement, true, map_x, width);
+    const auto [top, bottom] = placed_edges(placement, false, map_z, height);
+    constexpr auto page_edge = static_cast<float>(dither_page_edge);
+    card::append_quad(
+        frame,
+        left,
+        top,
+        right - left,
+        bottom - top,
+        static_cast<float>(texel_x) / page_edge,
+        static_cast<float>(texel_y) / page_edge,
+        static_cast<float>(texel_x + width) / page_edge,
+        static_cast<float>(texel_y + height) / page_edge,
+        colour
+    );
+}
+
 } // namespace
 
 std::array<float, fog_tile_corners> corner_alphas(uint8_t mask) noexcept {
@@ -429,7 +594,9 @@ uint32_t append_unseen_terrain(
     for (const auto& level : levels)
         if (level.level >= gw::tile_level_count)
             return 0;
-    std::vector<GreyedPiece> pieces;
+    // The pieces are gathered into one list a thread keeps from frame to
+    // frame, which holds the room the busiest frame needed.
+    thread_local std::vector<GreyedPiece> pieces;
     collect_greyed_pieces(grid, atlas, placement, pieces);
     if (pieces.empty())
         return 0;
@@ -595,6 +762,302 @@ uint32_t append_unmapped(
     return append_solid_pass(
         frame, grid, Layer::unmapped, colour, 1.0F, placement, target, scissor
     );
+}
+
+std::span<const ShapeBox>
+ClassicShapes::at(wr::FogTileSet::Bank bank, int32_t variant, uint8_t mask) const noexcept {
+    if (!built() || variant < 0 || variant >= wr::fog_tile_variants || mask == 0 ||
+        mask >= wr::fog_mask_full)
+        return {};
+    const std::size_t tile = static_cast<std::size_t>(bank) * wr::FogTileSet::tiles_per_bank +
+                             static_cast<std::size_t>(variant) * (wr::fog_mask_full - 1) +
+                             (mask - 1U);
+    return std::span<const ShapeBox>(boxes).subspan(first[tile], first[tile + 1] - first[tile]);
+}
+
+void build_classic_shapes(const wr::FogTileSet& tiles, ClassicShapes& shapes) {
+    shapes.boxes.clear();
+    shapes.first.clear();
+    if (!tiles.loaded())
+        return;
+
+    /// A run of one row's texels of one palette index within a quarter.
+    struct Run {
+        uint8_t begin{};
+        uint8_t end{};
+        uint8_t index{};
+    };
+
+    std::vector<Run> above;
+    std::vector<Run> runs;
+    // The open rectangle each run of the row above grows, by its place there.
+    std::vector<std::size_t> open_above;
+    std::vector<std::size_t> open;
+    for (const auto bank : {wr::FogTileSet::black, wr::FogTileSet::gray})
+        for (int32_t variant = 0; variant < wr::fog_tile_variants; ++variant)
+            for (uint8_t mask = 1; mask < wr::fog_mask_full; ++mask) {
+                shapes.first.push_back(static_cast<uint32_t>(shapes.boxes.size()));
+                const wr::FogTileArt& art = tiles.at(bank, variant, mask);
+                for (int32_t quarter = 0; quarter < 4; ++quarter) {
+                    const int32_t x0 = (quarter % 2) * quarter_pixels;
+                    const int32_t y0 = (quarter / 2) * quarter_pixels;
+                    above.clear();
+                    open_above.clear();
+                    for (int32_t y = y0; y < y0 + quarter_pixels; ++y) {
+                        runs.clear();
+                        open.clear();
+                        const std::size_t row = static_cast<std::size_t>(y) * tile_pixels;
+                        for (int32_t x = x0; x < x0 + quarter_pixels;) {
+                            const std::size_t texel = row + static_cast<std::size_t>(x);
+                            if (art.opaque[texel] == 0) {
+                                ++x;
+                                continue;
+                            }
+                            const uint8_t index = art.index[texel];
+                            const int32_t begin = x;
+                            while (x < x0 + quarter_pixels &&
+                                   art.opaque[row + static_cast<std::size_t>(x)] != 0 &&
+                                   art.index[row + static_cast<std::size_t>(x)] == index)
+                                ++x;
+                            runs.push_back(
+                                {static_cast<uint8_t>(begin), static_cast<uint8_t>(x), index}
+                            );
+                        }
+                        // A run that matches one of the row above grows its
+                        // rectangle down a row; any other opens one.
+                        for (const Run& run : runs) {
+                            std::size_t grown = shapes.boxes.size();
+                            for (std::size_t at = 0; at < above.size(); ++at)
+                                if (above[at].begin == run.begin && above[at].end == run.end &&
+                                    above[at].index == run.index) {
+                                    grown = open_above[at];
+                                    break;
+                                }
+                            if (grown == shapes.boxes.size())
+                                shapes.boxes.push_back(
+                                    {run.begin,
+                                     static_cast<uint8_t>(y),
+                                     static_cast<uint8_t>(run.end - run.begin),
+                                     0,
+                                     run.index}
+                                );
+                            ++shapes.boxes[grown].height;
+                            open.push_back(grown);
+                        }
+                        above.swap(runs);
+                        open_above.swap(open);
+                    }
+                }
+            }
+    shapes.first.push_back(static_cast<uint32_t>(shapes.boxes.size()));
+}
+
+void build_dither_texels(std::vector<card::Texel>& texels) {
+    texels.assign(std::size_t{dither_page_edge} * dither_page_edge, card::Texel{});
+    for (uint32_t y = 0; y < dither_page_edge; ++y)
+        for (uint32_t x = 0; x < dither_page_edge; ++x)
+            if (((x + y) & 1U) == 0)
+                texels[std::size_t{y} * dither_page_edge + x] = {255, 255, 255, 255};
+}
+
+uint32_t append_unseen_terrain_classic(
+    card::CardFrame& frame,
+    const wr::FogGrid& grid,
+    const ClassicShapes& shapes,
+    const gw::TerrainAtlas& atlas,
+    std::span<const card::PageHandle> greyed_pages,
+    std::span<const GreyedLevel> levels,
+    const FogPlacement& placement,
+    card::TargetHandle target,
+    const card::Rect* scissor
+) {
+    if (grid.tiles.empty() || !shapes.built() || levels.empty() ||
+        levels.size() > most_greyed_levels || greyed_pages.size() < atlas.pages.size() ||
+        atlas.grid_width == 0 || atlas.grid_height == 0)
+        return 0;
+    for (const auto& level : levels)
+        if (level.level >= gw::tile_level_count)
+            return 0;
+    std::vector<ClassicPiece> pieces;
+    collect_classic_pieces(grid, shapes, atlas, placement, pieces);
+    if (pieces.empty())
+        return 0;
+    uint32_t quads = 0;
+    for (std::size_t pass = 0; pass < levels.size(); ++pass) {
+        const auto& drawn = levels[pass];
+        float later = 0.0F;
+        for (std::size_t after = pass + 1; after < levels.size(); ++after)
+            later += levels[after].share;
+        const card::Colour colour{1.0F, 1.0F, 1.0F, pass_alpha(1.0F, drawn.share, later)};
+        card::Batch* batch = nullptr;
+        card::PageHandle batch_page{};
+        for (const auto& piece : pieces) {
+            const auto rect = gw::tile_rect(atlas, piece.slot, drawn.level);
+            if (!rect || rect->page >= atlas.pages.size())
+                continue;
+            const auto& level = atlas.pages[rect->page].levels[drawn.level];
+            // The tile's texels a map pixel spans at the level.
+            const double texels_per_pixel =
+                static_cast<double>(rect->edge) / static_cast<double>(tile_pixels);
+            const auto texel = [&](uint32_t start, int32_t pixels, uint32_t size) {
+                return static_cast<float>(
+                    (static_cast<double>(start) + pixels * texels_per_pixel) /
+                    static_cast<double>(size)
+                );
+            };
+            open_batch(
+                frame,
+                batch,
+                batch_page,
+                greyed_pages[rect->page],
+                drawn.level,
+                drawn.sampling,
+                target,
+                scissor
+            );
+            const auto [left, right] = placed_edges(placement, true, piece.map_x, piece.width);
+            const auto [top, bottom] = placed_edges(placement, false, piece.map_z, piece.height);
+            card::append_quad(
+                frame,
+                left,
+                top,
+                right - left,
+                bottom - top,
+                texel(rect->x, piece.in_x, level.width),
+                texel(rect->y, piece.in_z, level.height),
+                texel(rect->x, piece.in_x + piece.width, level.width),
+                texel(rect->y, piece.in_z + piece.height, level.height),
+                colour
+            );
+            batch->index_count += quad_indices;
+            ++quads;
+        }
+    }
+    return quads;
+}
+
+uint32_t append_unseen_dither_classic(
+    card::CardFrame& frame,
+    const wr::FogGrid& grid,
+    const ClassicShapes& shapes,
+    card::PageHandle page,
+    const card::Colour& dither,
+    const FogPlacement& placement,
+    card::TargetHandle target,
+    const card::Rect* scissor
+) {
+    if (grid.tiles.empty() || !shapes.built() || page == card::PageHandle{})
+        return 0;
+    const card::Colour colour{dither.red, dither.green, dither.blue, 1.0F};
+    uint32_t quads = 0;
+    card::Batch* batch = nullptr;
+    card::PageHandle batch_page{};
+    for (int32_t row = 0; row < grid.height; ++row) {
+        const int32_t tile_z = placement.camera_z + grid.offset_z + row * tile_pixels;
+        for (int32_t column = 0; column < grid.width; ++column) {
+            const uint8_t mask = greyed_mask(grid.at(column, row));
+            if (mask == 0)
+                continue;
+            const int32_t tile_x = placement.camera_x + grid.offset_x + column * tile_pixels;
+            open_batch(frame, batch, batch_page, page, 0, card::Sampling::nearest, target, scissor);
+            if (mask == wr::fog_mask_full) {
+                append_box_quad(
+                    frame, placement, tile_x, tile_z, tile_pixels, tile_pixels, 0, 0, colour
+                );
+                batch->index_count += quad_indices;
+                ++quads;
+                continue;
+            }
+            for (const ShapeBox& box :
+                 shapes.at(wr::FogTileSet::gray, tile_variant(grid, column, row), mask)) {
+                append_box_quad(
+                    frame,
+                    placement,
+                    tile_x + box.x,
+                    tile_z + box.y,
+                    box.width,
+                    box.height,
+                    box.x,
+                    box.y,
+                    colour
+                );
+                batch->index_count += quad_indices;
+                ++quads;
+            }
+        }
+    }
+    return quads;
+}
+
+uint32_t append_unmapped_classic(
+    card::CardFrame& frame,
+    const wr::FogGrid& grid,
+    const ClassicShapes& shapes,
+    const card::Colour& colour,
+    std::span<const card::Colour, OA_PALETTE_COLORS> palette,
+    const FogPlacement& placement,
+    card::TargetHandle target,
+    const card::Rect* scissor
+) {
+    if (grid.tiles.empty() || !shapes.built())
+        return 0;
+    const card::Colour fill{colour.red, colour.green, colour.blue, 1.0F};
+    uint32_t quads = 0;
+    card::Batch* batch = nullptr;
+    card::PageHandle batch_page{};
+    for (int32_t row = 0; row < grid.height; ++row) {
+        const int32_t tile_z = placement.camera_z + grid.offset_z + row * tile_pixels;
+        for (int32_t column = 0; column < grid.width;) {
+            const uint8_t mask = grid.at(column, row).unmapped;
+            if (mask == 0) {
+                ++column;
+                continue;
+            }
+            const int32_t tile_x = placement.camera_x + grid.offset_x + column * tile_pixels;
+            open_batch(frame, batch, batch_page, {}, 0, card::Sampling::nearest, target, scissor);
+            if (mask == wr::fog_mask_full) {
+                // Tiles wholly never mapped that follow one another in a row
+                // are one quad.
+                int32_t end = column + 1;
+                while (end < grid.width && grid.at(end, row).unmapped == wr::fog_mask_full)
+                    ++end;
+                append_box_quad(
+                    frame,
+                    placement,
+                    tile_x,
+                    tile_z,
+                    (end - column) * tile_pixels,
+                    tile_pixels,
+                    0,
+                    0,
+                    fill
+                );
+                batch->index_count += quad_indices;
+                ++quads;
+                column = end;
+                continue;
+            }
+            for (const ShapeBox& box :
+                 shapes.at(wr::FogTileSet::black, tile_variant(grid, column, row), mask)) {
+                const card::Colour& texels = palette[box.index];
+                append_box_quad(
+                    frame,
+                    placement,
+                    tile_x + box.x,
+                    tile_z + box.y,
+                    box.width,
+                    box.height,
+                    0,
+                    0,
+                    {texels.red, texels.green, texels.blue, 1.0F}
+                );
+                batch->index_count += quad_indices;
+                ++quads;
+            }
+            ++column;
+        }
+    }
+    return quads;
 }
 
 } // namespace oa::app::full_fog

@@ -4,6 +4,7 @@
 // Bounded frame-time benchmark and headless runs over live skirmish and
 // campaign matches.
 #include "oa/app/runtime.hpp"
+#include "renderer_effect_events.hpp"
 #include "engine_settings_state.hpp"
 #include "oa_layer.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
@@ -125,11 +126,13 @@ constexpr int32_t kVersionRoomBottom = 22;
 } // namespace
 
 void Runtime::step_match_simulation() {
+    const auto effect_capture = capture_match_effect_events();
     ++match_timing_.tick;
     match_->simulation().tick = match_timing_.tick;
     // A stage's lines timed for this tick run before it.
     run_due_stage_lines();
     tick_or_raise(*match_);
+    observe_match_effect_tick();
 }
 
 void Runtime::benchmark_scene(std::string_view label, std::size_t frames, bool scroll) {
@@ -195,7 +198,7 @@ void Runtime::benchmark_scene(std::string_view label, std::size_t frames, bool s
     }
 }
 
-void Runtime::exercise_click(std::string_view gadget_name) {
+void Runtime::stage_exercise_click(std::string_view gadget_name) {
     const auto found = std::find_if(
         resources_.layout.gadgets.begin(),
         resources_.layout.gadgets.end(),
@@ -234,6 +237,10 @@ void Runtime::exercise_click(std::string_view gadget_name) {
         throw std::runtime_error(
             "navigation click did not retain selection: " + std::string(gadget_name)
         );
+}
+
+void Runtime::exercise_click(std::string_view gadget_name) {
+    stage_exercise_click(gadget_name);
     activate();
     selected_ = -1;
 }
@@ -245,6 +252,21 @@ void Runtime::start_benchmark_skirmish() {
     if (map_player_capacity() < 2)
         throw std::runtime_error("benchmark map lacks two start positions");
     exercise_click(skirmish::resource_name(skirmish::Button::start));
+    if (screen_ != Screen::match || !match_)
+        throw std::runtime_error("benchmark Start did not enter a match");
+}
+
+void Runtime::start_benchmark_skirmish_as_chosen() {
+    exercise_click(menu::resource_name(menu::Button::single_player));
+    exercise_click(entry::resource_name(entry::Button::skirmish));
+    state_.player_count = 2;
+    if (map_player_capacity() < 2)
+        throw std::runtime_error("benchmark map lacks two start positions");
+    stage_exercise_click(skirmish::resource_name(skirmish::Button::start));
+    const bool started = start_skirmish_as_chosen(entry::Event{{kFrontendMenuHandle}, 0});
+    if (started && match_ && !altitude_sight_blocked_)
+        enter_match_view();
+    selected_ = -1;
     if (screen_ != Screen::match || !match_)
         throw std::runtime_error("benchmark Start did not enter a match");
 }
@@ -980,6 +1002,7 @@ void Runtime::run_headless_frames(std::size_t ticks, uint32_t frames_per_second)
     if (!options_.snapshot.empty())
         write_ppm(options_.snapshot, surface_);
     print_memory_status();
+    print_shadow_reports();
 }
 
 void Runtime::run_headless_match(std::size_t ticks) {
@@ -1033,6 +1056,7 @@ void Runtime::run_headless_match(std::size_t ticks) {
     if (!options_.snapshot.empty())
         write_ppm(options_.snapshot, surface_);
     print_memory_status();
+    print_shadow_reports();
 }
 
 namespace {
@@ -1357,6 +1381,7 @@ int Runtime::run_headless_campaign(std::size_t ticks) {
         outcome_tick
     );
     std::fflush(stdout);
+    print_shadow_reports();
     return failed_ticks == 0 ? 0 : 1;
 }
 

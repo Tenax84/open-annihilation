@@ -5,6 +5,7 @@
 #include "oa/platform/allocator.hpp"
 #include "oa/platform/app_loop.hpp"
 #include "oa/platform/crash.hpp"
+#include "oa/platform/dataless.hpp"
 #include "oa/platform/files.hpp"
 #include "oa/platform/lock.hpp"
 #include "oa/platform/memory_status.hpp"
@@ -12,6 +13,7 @@
 #include "oa/platform/system.hpp"
 #include "oa/test/scratch_directory.hpp"
 
+#include <array>
 #include <atomic>
 #include <csignal>
 #include <cstddef>
@@ -19,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -28,6 +31,10 @@
 #include <new>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#include <sys/stat.h>
 #endif
 
 namespace {
@@ -615,6 +622,68 @@ void test_crash_tests() {
 }
 #endif
 
+bool probe_faked(const std::filesystem::path& path, oa::platform::FileResidence& residence, void*) {
+    residence.dataless = path.filename() == "gone.bin";
+    return true;
+}
+
+bool probe_refuses(const std::filesystem::path&, oa::platform::FileResidence&, void*) {
+    return false;
+}
+
+void test_evicted_files() {
+    using oa::platform::count_evicted_files;
+    using oa::platform::system_file_residence;
+    const auto root = oa::test::make_scratch_directory("oa-platform-evicted-test");
+    std::filesystem::create_directories(root / "Mods" / "pack");
+    std::ofstream(root / "Mods" / "pack" / "gone.bin") << "x";
+    std::ofstream(root / "Mods" / "keep.bin") << "y";
+    std::ofstream(root / "note.txt") << "z";
+    const std::array<std::filesystem::path, 1> roots{root};
+    const auto counted = count_evicted_files(roots, probe_faked, nullptr);
+    check(counted.files == 3, "three files asked about");
+    check(counted.evicted == 1, "the faked dataless file is counted");
+    std::vector<std::filesystem::path> evicted;
+    const auto again = count_evicted_files(roots, probe_faked, nullptr, &evicted);
+    check(again.evicted == 1 && evicted.size() == 1, "the faked file is listed");
+    check(evicted[0].filename() == "gone.bin", "the listed file is the faked one");
+    const auto refused = count_evicted_files(roots, probe_refuses, nullptr);
+    check(refused.files == 0 && refused.evicted == 0, "a file that cannot be asked is not counted");
+    const auto missing = count_evicted_files(
+        std::array<std::filesystem::path, 1>{root / "no-such"}, probe_faked, nullptr
+    );
+    check(missing.files == 0, "a missing folder adds nothing");
+    const std::atomic<bool> stop{true};
+    const auto stopped = count_evicted_files(roots, probe_faked, nullptr, nullptr, &stop);
+    check(stopped.files == 0, "a stopped walk counts nothing more");
+    oa::platform::FileResidence residence;
+    check(
+        system_file_residence(root / "Mods" / "keep.bin", residence, nullptr),
+        "a file written here can be asked about"
+    );
+    check(!residence.dataless, "a file written here is on this computer");
+    // The detector reads the file's own stat flags; the dataless flag is
+    // faked on top of them, as iCloud sets it on a file it has moved off.
+#if defined(__APPLE__) && TARGET_OS_OSX
+    struct stat facts{};
+    check(::stat((root / "Mods" / "keep.bin").c_str(), &facts) == 0, "the file's flags read");
+    const uint32_t flags = facts.st_flags;
+    check(!oa::platform::stat_flags_dataless(flags), "a file's own flags say it is here");
+    check(
+        oa::platform::stat_flags_dataless(flags | SF_DATALESS),
+        "SF_DATALESS says the bytes are not here"
+    );
+#else
+    // SF_DATALESS's value on macOS, which marks nothing on this system.
+    constexpr uint32_t macos_dataless_bit = 0x40000000U;
+    check(
+        !oa::platform::stat_flags_dataless(macos_dataless_bit),
+        "no flags mark a file dataless off macOS"
+    );
+#endif
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     // Before any test starts a thread: the crash tests fork.
     test_crash_tests();
@@ -634,6 +703,7 @@ int main() {
     test_app_loop();
     test_program_directory();
     test_error_log();
+    test_evicted_files();
     if (failures != 0) {
         std::fprintf(stderr, "%d platform check(s) failed\n", failures);
         return 1;

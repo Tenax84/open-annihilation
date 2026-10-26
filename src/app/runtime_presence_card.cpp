@@ -16,9 +16,12 @@
 #include "oa_layer.hpp"
 
 #include "oa/app/runtime.hpp"
+#include "oa/data/mutator_library/library.hpp"
+#include "oa/data/mutators/choice.hpp"
 #include "oa/netgame/presence.hpp"
 #include "oa/ui/frontend_multiplayer/get_map.hpp"
 #include "oa/ui/frontend_multiplayer/presence_card.hpp"
+#include "oa/ui/frontend_multiplayer/room_mutators.hpp"
 #include "oa/ui/frontend_multiplayer/screens.hpp"
 #include "oa/ui/kit/components.hpp"
 #include "oa/ui/kit/controls.hpp"
@@ -34,6 +37,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -148,10 +152,13 @@ class PresenceCardScreen final : public LayerScreen {
     /// @param layer the layer it shows on, whose fonts it is drawn in and
     ///     which tells it when a modal screen shows
     /// @param pack_state what this machine has of the host's map pack
+    /// @param mutators the host's set and what one slot has of each mutator
     PresenceCardScreen(
-        OaLayer& layer, std::function<mp::PackState(const oa::netgame::PresenceMapPack&)> pack_state
+        OaLayer& layer,
+        std::function<mp::PackState(const oa::netgame::PresenceMapPack&)> pack_state,
+        std::function<std::vector<mp::CardMutator>(int32_t)> mutators
     )
-        : layer_(layer), pack_state_(std::move(pack_state)) {
+        : layer_(layer), pack_state_(std::move(pack_state)), mutators_(std::move(mutators)) {
         mp::multiplayer_bind_row_key(&trigger_);
     }
 
@@ -419,8 +426,10 @@ class PresenceCardScreen final : public LayerScreen {
                     return place.slot == slot;
                 });
             std::optional<mp::PresenceCard> model;
-            if (badge != badges_.end())
-                model = mp::presence_card(mp::multiplayer_lobby(), slot, pack_state_);
+            if (badge != badges_.end()) {
+                const std::vector<mp::CardMutator> mutators = mutators_(slot);
+                model = mp::presence_card(mp::multiplayer_lobby(), slot, pack_state_, mutators);
+            }
             if (model) {
                 const kit::SizeClass size_class = view_.frame.size_class;
                 const int32_t arrow_depth = kit::metrics_of(size_class).hover_card_arrow;
@@ -451,6 +460,8 @@ class PresenceCardScreen final : public LayerScreen {
     mp::PresenceCardTrigger trigger_{}; ///< when the card opens and closes
     /// What this machine has of the host's map pack (Runtime::local_map_pack).
     std::function<mp::PackState(const oa::netgame::PresenceMapPack&)> pack_state_{};
+    /// The host's set and what one slot has of each mutator.
+    std::function<std::vector<mp::CardMutator>(int32_t)> mutators_{};
     LayerView view_{};                 ///< the view it was last laid out for
     bool have_view_{};                 ///< view_ holds a view of the front end
     std::vector<BadgePlace> badges_{}; ///< the badges the battle room shows now
@@ -473,13 +484,76 @@ void Runtime::keep_presence_card_screen() {
     // release, by the record's SHA-256, another release, or none of it.
     layer.push(
         std::make_unique<PresenceCardScreen>(
-            layer, [this](const oa::netgame::PresenceMapPack& pack) {
+            layer,
+            [this](const oa::netgame::PresenceMapPack& pack) {
                 const mp::HostPack host = mp::host_pack_of(pack);
                 const mp::LocalPack local = local_map_pack(host.id, host.sha256);
                 if (!local.installed)
                     return mp::PackState::missing;
                 return local.sha256 == host.sha256 ? mp::PackState::installed
                                                    : mp::PackState::other_release;
+            },
+            [this](int32_t slot) {
+                std::vector<mp::CardMutator> rows;
+                mp::Lobby& lobby = mp::multiplayer_lobby();
+                // The room's list as this machine holds it: the host its own
+                // chosen list, a guest the host's list as its records carry it.
+                std::vector<std::pair<std::string, std::string>> listed;
+                if (mp::lobby_hosts(lobby)) {
+                    for (const oa::data::mutators::ResolvedMutator& one : room_mutators()) {
+                        listed.emplace_back(
+                            one.manifest.id,
+                            one.manifest.name.empty() ? one.manifest.id : one.manifest.name
+                        );
+                    }
+                } else {
+                    oa::netgame::PresenceLoadoutAssembly assembly;
+                    if (!mp::multiplayer_room_mutators(&assembly) ||
+                        !oa::netgame::presence_assembly_whole(assembly))
+                        return rows;
+                    const std::vector<HostMutatorFetch> fetched = host_mutators_fetch();
+                    const oa::data::mutator_library::Listing& listing = installed_mutators();
+                    for (std::size_t index = 0; index < assembly.mutators.size(); ++index) {
+                        const oa::netgame::PresenceMutator& item = assembly.mutators[index];
+                        const oa::data::mutator_library::InstalledMutator* found =
+                            oa::data::mutator_library::find(listing, item.id);
+                        const std::string_view installed =
+                            found != nullptr ? std::string_view(found->manifest.name)
+                                             : std::string_view();
+                        const std::string_view catalogue =
+                            index < fetched.size() ? std::string_view(fetched[index].offer.name)
+                                                   : std::string_view();
+                        listed.emplace_back(
+                            item.id, mp::mutator_shown_name(installed, catalogue, item.id)
+                        );
+                    }
+                }
+                const bool hosts_slot = mp::lobby_host_slot(lobby) == static_cast<uint8_t>(slot);
+                rows.reserve(listed.size());
+                for (std::size_t position = 0; position < listed.size(); ++position) {
+                    mp::CardMutator row;
+                    row.name = listed[position].second;
+                    const mp::MutatorHave have =
+                        hosts_slot
+                            ? mp::MutatorHave::has
+                            : mp::lobby_mutator_have(lobby, slot, static_cast<uint8_t>(position));
+                    switch (have) {
+                    case mp::MutatorHave::has:
+                        row.have = mp::CardMutatorHave::has;
+                        break;
+                    case mp::MutatorHave::other_release:
+                        row.have = mp::CardMutatorHave::other_release;
+                        break;
+                    case mp::MutatorHave::missing:
+                        row.have = mp::CardMutatorHave::missing;
+                        break;
+                    case mp::MutatorHave::unknown:
+                        row.have = mp::CardMutatorHave::unknown;
+                        break;
+                    }
+                    rows.push_back(std::move(row));
+                }
+                return rows;
             }
         )
     );

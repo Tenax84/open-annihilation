@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+# SPDX-License-Identifier: GPL-3.0-only
+
+oamut: 1
+id: ridge-against-swift
+name: "Ridge Against Swift"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+tags: ["gameplay"]
+works-with: ["*"]
+conflicts-with: ["ridge-swift"]
+layers: ["files"]

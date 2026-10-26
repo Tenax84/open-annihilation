@@ -4,12 +4,12 @@
 #include "oa/present/game_text.hpp"
 
 #include "oa/base/text/line_break.hpp"
+#include "oa/base/threads.hpp"
 #include "oa/present/blit.hpp"
 
 #include <algorithm>
 #include <limits>
 #include <list>
-#include <mutex>
 #include <unordered_map>
 #include <utility>
 
@@ -524,7 +524,7 @@ struct KeptLayers {
 
 /// The kept layers, the line used last first.
 struct LayerCache {
-    std::mutex mutex{};            ///< held while the cache is read or changed
+    base::threads::Mutex mutex{};  ///< held while the cache is read or changed
     std::list<KeptLayers> order{}; ///< the kept lines, the one used last first
     /// Each kept line by what it was built from.
     std::unordered_map<LayerKey, std::list<KeptLayers>::iterator, LayerKeyHash> lines{};
@@ -582,7 +582,7 @@ TextLayers finished_layers(
     const uint64_t digest = mask_digest(*mask);
     LayerCache& cache = layer_cache();
     {
-        const std::lock_guard<std::mutex> lock(cache.mutex);
+        const base::threads::LockGuard lock(cache.mutex);
         if (const auto found = cache.lines.find(key); found != cache.lines.end()) {
             if (found->second->digest == digest) {
                 cache.order.splice(cache.order.begin(), cache.order, found->second);
@@ -598,7 +598,7 @@ TextLayers finished_layers(
                               mask->alpha.size() + mask->character_ends.size() * sizeof(int32_t);
     if (bytes > kept_layer_bytes)
         return layers;
-    const std::lock_guard<std::mutex> lock(cache.mutex);
+    const base::threads::LockGuard lock(cache.mutex);
     // Another caller may have kept the same line meanwhile.
     if (cache.lines.find(key) != cache.lines.end())
         return layers;
@@ -628,7 +628,7 @@ TextStyle modern_style(bool allow_background) {
 
 void forget_text_layers() noexcept {
     LayerCache& cache = layer_cache();
-    const std::lock_guard<std::mutex> lock(cache.mutex);
+    const base::threads::LockGuard lock(cache.mutex);
     cache.lines.clear();
     cache.order.clear();
     cache.bytes = 0;
@@ -863,17 +863,27 @@ void lay_text(
         return;
     const int32_t left = x - layers.pen;
     const int32_t top = baseline_y - layers.baseline;
-    // The few colours a line makes are reduced once each.
+    // The few colours a line makes are reduced once each; a run of pixels
+    // of one colour, as inside a letter or along its outline, takes the
+    // last colour's index without looking it up.
     std::unordered_map<uint32_t, uint8_t> reduced;
+    uint32_t last_key = 0;
+    uint8_t last_index = 0;
+    bool any_reduced = false;
     const auto reduce = [&](std::array<uint8_t, 3> mixed) -> uint8_t {
         const auto key = (uint32_t{mixed[0]} << 16) | (uint32_t{mixed[1]} << 8) | mixed[2];
+        if (any_reduced && key == last_key)
+            return last_index;
         auto found = reduced.find(key);
         if (found == reduced.end())
             found =
                 reduced
                     .emplace(key, nearest_palette_index(canvas.palette, palette_entry_bytes, mixed))
                     .first;
-        return found->second;
+        last_key = key;
+        last_index = found->second;
+        any_reduced = true;
+        return last_index;
     };
     // Pixels the picture under an RGB canvas shows through, and the runs of
     // them each layer leaves to the canvas's world_run.

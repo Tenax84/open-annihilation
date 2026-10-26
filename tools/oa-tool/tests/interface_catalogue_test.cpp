@@ -6,7 +6,8 @@
 // French, Spanish and Italian. A text is read back through the catalogue
 // the game uses, and a German lookup returns German. Each translation keeps
 // the English text's placeholders and numbers, and the product names stay
-// as written.
+// as written. A text that names a mutator button names it as that language
+// shows the button.
 //
 // The command line names the catalogue file.
 
@@ -145,6 +146,30 @@ constexpr std::pair<std::string_view, std::string_view> kGermanWords[] = {
     {"Settings", "Einstellungen"},
 };
 
+/// The mutator buttons other texts name. A text that names one shows it
+/// as the button shows in the same language.
+constexpr std::string_view kButtonNames[] = {
+    "GET MUTATORS",
+};
+
+/// Tells whether a text holds a button's name as its own words: no ASCII
+/// letter just before or just after it.
+///
+/// @param text the text
+/// @param button the button's name
+/// @return true when the text names the button
+bool names_button(std::string_view text, std::string_view button) {
+    for (std::size_t at = text.find(button); at != std::string_view::npos;
+         at = text.find(button, at + 1)) {
+        const std::size_t end = at + button.size();
+        const bool before = at > 0 && letter(text[at - 1]);
+        const bool after = end < text.size() && letter(text[end]);
+        if (!before && !after)
+            return true;
+    }
+    return false;
+}
+
 /// Reads the shipped catalogue and checks the four languages cover it.
 void shipped_catalogue_covers_every_word(const std::filesystem::path& catalogue_path) {
     const std::string file = read_file(catalogue_path);
@@ -212,6 +237,16 @@ void shipped_catalogue_covers_every_word(const std::filesystem::path& catalogue_
             }
             if (count_oa(translated) < count_oa(word))
                 show(std::string(language->tag) + " translates OA in " + std::string(word));
+            for (const std::string_view button : kButtonNames) {
+                if (word == button || !names_button(word, button))
+                    continue;
+                const std::string_view shown_button = catalogue.text(button, *language);
+                if (translated.find(shown_button) == std::string_view::npos)
+                    show(
+                        std::string(language->tag) + " does not name " + std::string(button) +
+                        " as " + std::string(shown_button) + " in " + std::string(word)
+                    );
+            }
         }
     }
     // The lookup the game uses, and the language it is showing stays put.

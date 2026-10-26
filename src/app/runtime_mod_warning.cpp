@@ -16,6 +16,7 @@
 
 #include "oa/app/asset_files.hpp"
 #include "oa/app/game_directory.hpp"
+#include "oa/app/mutators_memory.hpp"
 #include "oa/app/runtime.hpp"
 #include "oa/app/user_folder.hpp"
 #include "oa/data/defs/files.hpp"
@@ -289,29 +290,57 @@ void Runtime::tell_incomplete_mod() {
         show_mod_warning(gaps);
 }
 
-bool Runtime::start_skirmish_from_setup(const entry::Event& event) {
+bool Runtime::note_failed_skirmish_start(const std::exception& failure) {
+    // A start that fails leaves no match and the skirmish setup as it
+    // was, with what went wrong over it.
+    status_ = std::string("Skirmish start failed: ") + failure.what();
+    std::cerr << "open-annihilation: " << status_ << '\n';
+    if (match_)
+        leave_match();
+    else
+        teardown_match();
+    skirmish::setup(state_, skirmish_settings_, preferences_, skirmish_ui_, *this);
+    if (const ModStartGaps gaps = mod_start_gaps(); gaps.games_cannot_start())
+        show_mod_warning(gaps);
+    else if (!offer_mutator_start_question())
+        show_frontend_message(
+            status_, kMessageWidth, entry::message_show_ok, entry::message_fit_width
+        );
+    return false;
+}
+
+bool Runtime::start_skirmish_as_chosen(const entry::Event& event) {
     try {
         return skirmish::handle_event(
             state_, skirmish_settings_, preferences_, skirmish_ui_, event, *this
         );
     } catch (const std::exception& failure) {
-        // A start that fails leaves no match and the skirmish setup as it
-        // was, with what went wrong over it.
-        status_ = std::string("Skirmish start failed: ") + failure.what();
-        std::cerr << "open-annihilation: " << status_ << '\n';
-        if (match_)
-            leave_match();
-        else
-            teardown_match();
-        skirmish::setup(state_, skirmish_settings_, preferences_, skirmish_ui_, *this);
-        if (const ModStartGaps gaps = mod_start_gaps(); gaps.games_cannot_start())
-            show_mod_warning(gaps);
-        else
-            show_frontend_message(
-                status_, kMessageWidth, entry::message_show_ok, entry::message_fit_width
-            );
-        return false;
+        return note_failed_skirmish_start(failure);
     }
+}
+
+bool Runtime::start_skirmish_from_setup(const entry::Event& event) {
+    // A hold this START armed and the match never took must not seat a later one.
+    bool armed_brains = false;
+    try {
+        // START hands the setup's chosen mutators on first, so a set that
+        // cannot be read fails here as any start does, and the set stays.
+        if (button_result(skirmish::MenuHandle{kFrontendMenuHandle}, skirmish::Button::start) !=
+            0) {
+            hand_chosen_mutators(mutators_memory::Setup::skirmish);
+            cancel_brain_seats_once();
+            armed_brains = true;
+            hand_setup_brain_seats(oa::data::brain_library::Setup::skirmish);
+        }
+    } catch (const std::exception& failure) {
+        if (armed_brains)
+            cancel_brain_seats_once();
+        return note_failed_skirmish_start(failure);
+    }
+    const bool started = start_skirmish_as_chosen(event);
+    if (armed_brains && brain_seats_held_for_next_match())
+        cancel_brain_seats_once();
+    return started;
 }
 
 } // namespace oa::app

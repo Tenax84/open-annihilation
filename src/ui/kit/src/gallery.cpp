@@ -656,7 +656,7 @@ int32_t tabs(Builder& b, Point at, int32_t width, std::string_view word) {
            );
 }
 
-/// Buttons: a working button and link, the four looks, then a button and a
+/// Buttons: a working button and link, the five looks, then a button and a
 /// link in each state.
 int32_t buttons_section(Builder& b, Point at, int32_t width, std::string_view word) {
     const GalleryModel& model = *b.model;
@@ -700,13 +700,17 @@ int32_t buttons_section(Builder& b, Point at, int32_t width, std::string_view wo
         b.order.push_back(kLink);
         top += kMetrics.button_height + kLineGap;
     }
-    // The four looks, at rest.
-    constexpr std::array<std::string_view, 4> kLooks{"Accent", "Plain", "Quiet", "Inset"};
-    constexpr std::array<std::string_view, 4> kLookCaptions{
-        "OK", "Cancel", "Open folder", "Roll back"
+    // The five looks, at rest.
+    constexpr std::array<std::string_view, 5> kLooks{"Accent", "Plain", "Quiet", "Inset", "Filled"};
+    constexpr std::array<std::string_view, 5> kLookCaptions{
+        "OK", "Cancel", "Open folder", "Roll back", "Mutators"
     };
-    constexpr std::array<ButtonStyle, 4> kStyles{
-        ButtonStyle::accent, ButtonStyle::plain, ButtonStyle::quiet, ButtonStyle::inset
+    constexpr std::array<ButtonStyle, 5> kStyles{
+        ButtonStyle::accent,
+        ButtonStyle::plain,
+        ButtonStyle::quiet,
+        ButtonStyle::inset,
+        ButtonStyle::filled
     };
     top += add_cells(
                b.list,
@@ -716,13 +720,11 @@ int32_t buttons_section(Builder& b, Point at, int32_t width, std::string_view wo
                kLooks,
                [&](const Rect& rect, std::size_t place) {
                    add_fixed(b.list, rect, {}, Sample::idle, false, [&] {
-                       add_button(
-                           b.list,
-                           rect,
-                           button_look(kLookCaptions[place], kStyles[place], false, false),
-                           no_control,
-                           {}
-                       );
+                       ButtonLook look =
+                           button_look(kLookCaptions[place], kStyles[place], false, false);
+                       // The filled look wears the OA badge, as Mutators does.
+                       look.oa_mark = kStyles[place] == ButtonStyle::filled;
+                       add_button(b.list, rect, look, no_control, {});
                    });
                }
            ) +
@@ -2405,6 +2407,125 @@ int32_t first_run(Builder& b, Point at, int32_t width, std::string_view /*word*/
     return bottom - at.y;
 }
 
+/// A 16 by 16 checker kept for the gallery's life, in two kit colours.
+///
+/// @return the picture
+oa::ui::frontend_renderer::RgbaPicture badge_checker() {
+    static std::vector<uint8_t> pixels;
+    if (pixels.empty()) {
+        constexpr uint32_t side = 16;
+        pixels.assign(
+            static_cast<std::size_t>(side) * side * oa::ui::frontend_renderer::picture_pixel_bytes,
+            0
+        );
+        for (uint32_t y = 0; y < side; ++y) {
+            for (uint32_t x = 0; x < side; ++x) {
+                const Colour ink = ((x / 8) ^ (y / 8)) == 0 ? colour::hint : colour::text;
+                const std::size_t at = (static_cast<std::size_t>(y) * side + x) *
+                                       oa::ui::frontend_renderer::picture_pixel_bytes;
+                pixels[at] = ink.r;
+                pixels[at + 1] = ink.g;
+                pixels[at + 2] = ink.b;
+                pixels[at + 3] = 255;
+            }
+        }
+    }
+    return {16, 16, pixels};
+}
+
+/// Badges and tags: the eight tag icons, a picture, letters and a blank
+/// badge, a pill and a nav entry with a tag, a drag handle in each state,
+/// and a question listing two made-up mutators.
+int32_t badges_section(Builder& b, Point at, int32_t width, std::string_view /*word*/) {
+    constexpr int32_t side = 20;
+    constexpr int32_t gap = 6;
+    int32_t x = at.x;
+    int32_t y = at.y;
+    const auto place_badge = [&](const BadgeLook& look) {
+        if (x > at.x && x + side > at.x + width) {
+            x = at.x;
+            y += side + gap;
+        }
+        add_badge(b.list, {x, y, side, side}, look);
+        x += side + gap;
+    };
+    for (const TagIcon icon : all_tag_icons) {
+        BadgeLook look;
+        look.tag = icon;
+        look.face = colour::hint;
+        place_badge(look);
+    }
+    BadgeLook picture;
+    picture.picture = badge_checker();
+    place_badge(picture);
+    BadgeLook letters;
+    letters.letters = "GA";
+    letters.face = colour::hint;
+    place_badge(letters);
+    place_badge({});
+    y += side + gap;
+
+    PillLook pill;
+    pill.text = "Economy";
+    pill.tag = TagIcon::economy;
+    const int32_t pill_across = pill_width(*b.fonts, pill);
+    add_pill(b.list, {at.x, y, pill_across, pill_height()}, pill, no_control, {});
+
+    const int32_t nav_x = at.x + pill_across + gap;
+    const int32_t nav_across =
+        std::min(kNavSampleWidth, std::max(width - (nav_x - at.x), int32_t{0}));
+    NavLook nav;
+    nav.area = {nav_x, y, nav_across, kNavEntryHeight};
+    nav.rule_column = nav_x + nav_across;
+    NavEntry entry;
+    entry.rect = nav.area;
+    entry.caption = "Maps";
+    entry.tag = TagIcon::maps;
+    nav.entries.push_back(entry);
+    Item& nav_part = add_part(b.list, Role::nav, entry.rect);
+    nav_part.text = entry.caption;
+    nav_part.look = std::move(nav);
+    y += std::max(pill_height(), kNavEntryHeight) + gap;
+
+    const GripLook grips[] = {
+        {},
+        {.hovered = true},
+        {.held = true},
+        {.disabled = true},
+    };
+    int32_t grip_x = at.x;
+    for (const GripLook& grip : grips) {
+        add_grip(b.list, {grip_x, y, grip_width, grip_height}, grip, no_control, {});
+        grip_x += grip_width + gap;
+    }
+    y += grip_height + gap;
+
+    Question question;
+    question.title = "GET GATEHOUSE?";
+    question.paragraphs = {{"Install these mutators.", false}};
+    question.buttons = {{"CANCEL", false, "cancel"}, {"GET", true, "get"}};
+    question.cancel_button = 0;
+    question.primary_button = 1;
+    QuestionItem gatehouse;
+    gatehouse.badge.tag = TagIcon::economy;
+    gatehouse.badge.face = colour::hint;
+    gatehouse.text = "Gatehouse 4.1";
+    gatehouse.aside = " · from Core Prime";
+    QuestionItem keep;
+    keep.badge.tag = TagIcon::maps;
+    keep.badge.face = colour::hint;
+    keep.text = "Gatehouse Keep 2.0";
+    question.items = {std::move(gatehouse), std::move(keep)};
+    GalleryPanel panel;
+    panel.origin = {at.x, y};
+    const int32_t height = place_question(question, b.fonts).height;
+    panel.place = {at.x, y, notice_width, height};
+    panel.list = question_list(question, b.fonts);
+    without_input(panel.list);
+    b.panels.push_back(std::move(panel));
+    return y + height - at.y;
+}
+
 /// One section of the gallery.
 struct Section {
     std::string_view heading{}; ///< its heading, in capitals
@@ -2438,6 +2559,7 @@ constexpr auto kSections = std::to_array<Section>({
     {"NOTICE", "notice", &notice_section},
     {"QUESTION", "question", &question_section},
     {"OA MARK", "oa-mark", &oa_mark},
+    {"BADGES AND TAGS", "badges", &badges_section},
 });
 
 /// Adds a section: its heading, the rule under it and its samples.

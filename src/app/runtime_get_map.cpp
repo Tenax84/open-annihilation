@@ -31,6 +31,7 @@
 #include "oa/data/registry/trust.hpp"
 #include "oa/ui/frontend_multiplayer/get_map.hpp"
 #include "oa/ui/frontend_multiplayer/screens.hpp"
+#include "oa/ui/frontend_state/oa_button_place.hpp"
 #include "oa/ui/kit/components.hpp"
 #include "oa/ui/kit/components_more.hpp"
 #include "oa/ui/kit/controls.hpp"
@@ -60,6 +61,7 @@ namespace {
 
 namespace mp = oa::ui::frontend_multiplayer;
 namespace kit = oa::ui::kit;
+namespace place = oa::ui::frontend_state;
 
 /// GET MAP's screen's name on the OA layer.
 constexpr std::string_view get_map_screen_name = "get-map";
@@ -307,6 +309,10 @@ struct Runtime::GetMapScreen final : LayerScreen {
     /// Takes a press of the button, by the pointer or a finger, and its
     /// release; lets every other pointer input go on to the battle room.
     ///
+    /// A mouse presses the drawn rectangle. A finger presses by its reach
+    /// when no battle-room gadget, the map name included, is nearer the
+    /// point. A point inside a gadget stays that gadget's.
+    ///
     /// @param kind pointer_move, pointer_down or pointer_up
     /// @param button the pointer's button, 1 for the left
     /// @param at the pointer, in the screen's points
@@ -321,9 +327,20 @@ struct Runtime::GetMapScreen final : LayerScreen {
             if (kit::pointer_move(interaction_, list, at).result != kit::PointerResult::none)
                 ++revision_;
         } else if (kind == ScreenInputKind::pointer_down && button == SDL_BUTTON_LEFT) {
+            bool yield = false;
+            if (finger_reach > 0 && shown_ && shown_->button_shown) {
+                const kit::Rect drawn{
+                    shown_->button.x - shown_->box.x,
+                    shown_->button.y - shown_->box.y,
+                    shown_->button.width,
+                    shown_->button.height
+                };
+                const place::PlaceRect button_place{drawn.x, drawn.y, drawn.width, drawn.height};
+                yield = place::nearer_gadget(at.x, at.y, button_place, room_gadgets());
+            }
             const kit::PointerOutcome outcome =
-                finger_reach > 0 ? kit::finger_down(interaction_, list, at, finger_reach)
-                                 : kit::pointer_down(interaction_, list, at);
+                finger_reach > 0 && !yield ? kit::finger_down(interaction_, list, at, finger_reach)
+                                           : kit::pointer_down(interaction_, list, at);
             if (interaction_.pressed == get_map_button_control) {
                 ++revision_;
                 answer = LayerAnswer::redraw;
@@ -444,8 +461,8 @@ struct Runtime::GetMapScreen final : LayerScreen {
     [[nodiscard]] uint64_t revision() const override { return revision_; }
 
     /// Has nothing of its own to close: a download goes on, and its pack's
-    /// maps stay held until it ends.
-    void close(bool /*by_key*/) override {}
+    /// maps stay held until it ends. The rectangle it was showing is cleared.
+    void close(bool /*by_key*/) override { runtime_.get_map_shown_box_ = {}; }
 
   private:
 
@@ -468,12 +485,26 @@ struct Runtime::GetMapScreen final : LayerScreen {
         } else {
             pending_.clear();
         }
-        if (same_shown(next, shown_))
+        if (same_shown(next, shown_)) {
+            remember_box();
             return;
+        }
         shown_ = std::move(next);
         if (!shown_ || !shown_->button_shown)
             interaction_ = {};
+        remember_box();
         ++revision_;
+    }
+
+    /// Stores the rectangle GET MAP is showing, or clears it while nothing shows.
+    void remember_box() {
+        if (!shown_ || shown_->box.width <= 0 || shown_->box.height <= 0) {
+            runtime_.get_map_shown_box_ = {};
+            return;
+        }
+        runtime_.get_map_shown_box_ = {
+            shown_->box.x, shown_->box.y, shown_->box.width, shown_->box.height
+        };
     }
 
     /// Decides what GET MAP shows for the host's pack, going on with a fetch
@@ -644,6 +675,36 @@ struct Runtime::GetMapScreen final : LayerScreen {
         }
         next.box = box;
         return next;
+    }
+
+    /// Returns every battle-room gadget with an area, in the screen's points.
+    ///
+    /// The map name is among them. Hidden controls that still have an area
+    /// are kept. Empty while the line is not showing.
+    ///
+    /// @return the gadgets
+    [[nodiscard]] std::vector<place::PlaceRect> room_gadgets() const {
+        std::vector<place::PlaceRect> gadgets;
+        if (!shown_ || !have_view_)
+            return gadgets;
+        const std::vector<mp::BattleRoomControl> controls = mp::multiplayer_battle_room_controls();
+        gadgets.reserve(controls.size());
+        for (const mp::BattleRoomControl& control : controls) {
+            if (control.width <= 0 || control.height <= 0)
+                continue;
+            const kit::Point origin = to_points(control.x, control.y, false);
+            const kit::Point end =
+                to_points(control.x + control.width, control.y + control.height, true);
+            const place::PlaceRect rect{
+                origin.x - shown_->box.x,
+                origin.y - shown_->box.y,
+                end.x - origin.x,
+                end.y - origin.y
+            };
+            if (rect.width > 0 && rect.height > 0)
+                gadgets.push_back(rect);
+        }
+        return gadgets;
     }
 
     /// Maps a point of the 640 by 480 picture to the layer's points, through
@@ -821,6 +882,10 @@ bool Runtime::ModInstallState::get_map_shows(const Runtime& runtime) {
         return false;
     const LayerPlacement placed = runtime.oa_layer_->placement_of(get_map_screen_name);
     return placed.shown.width > 0 && placed.shown.height > 0;
+}
+
+Runtime::ShownBox Runtime::get_map_box() const noexcept {
+    return get_map_shown_box_;
 }
 
 oa::ui::frontend_multiplayer::LocalPack

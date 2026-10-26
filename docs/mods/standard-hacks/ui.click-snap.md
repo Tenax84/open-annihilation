@@ -15,8 +15,9 @@
 
 A build click with a metal extractor moves to the nearest metal spot,
 and a reclaim click on empty ground moves to the nearest reclaimable
-feature, each within a radius the player may choose; holding Alt places the
-click exactly. 3.1c always uses the clicked cell.
+feature, each within a radius the player may choose, where RECLAIM then
+shows the Reclaim cursor; holding Alt places the click exactly. 3.1c
+always uses the clicked cell.
 
 ![A green metal extractor footprint sitting on plain sand just right of a metal patch.](images/ui.click-snap-off.png)
 
@@ -52,6 +53,9 @@ hacks:
   player's settings, or the options page of
   [ui.options-dialog](ui.options-dialog.md)) replace the defaults and are
   held to 0 and to the maxima.
+- A radius the profile gives no room, with the hack off or its maximum 0,
+  is not the player's choice and is never stored: once the profile, or
+  Developer Mode, gives it room, the radius starts at its default.
 - The defaults are `install` parameters: a profile may also bind them to the
   mod's own settings under `settings`.
 
@@ -80,6 +84,15 @@ While the snap override key (Alt unless the player chose another) is up:
 - A reclaim click on ground with no feature snaps, within the wreck radius,
   to the nearest reclaimable feature that holds metal or energy. A click on
   a feature does not snap.
+- A reclaim click is one given with the order panel's RECLAIM armed,
+  Shift-queued or not. A click with no order armed is not one: beside a
+  feature, a construction unit's default order is a Move, and the click
+  moves it there.
+- With RECLAIM armed, open ground where a click would snap shows the
+  Reclaim cursor, as the feature itself does; elsewhere, and while the snap
+  override key is held, it shows the normal cursor, as in 3.1c. A click
+  that would snap to a feature the order cannot take, such as one on
+  ground never mapped, shows the normal cursor too.
 - When the snapped click queues an order that matches one already queued,
   the queued one is cancelled only when it lies from 8 whole pixels before
   to 7 after the click, on x and on z. An unsnapped click keeps 3.1c's reach
@@ -116,8 +129,14 @@ their own radii and nothing needs to agree between machines.
   [src/sim/match-runtime/src/tick_orders.cpp](../../../src/sim/match-runtime/src/tick_orders.cpp),
   called with the snapped click from
   [src/app/runtime_pointer_press.cpp](../../../src/app/runtime_pointer_press.cpp).
+- `Runtime::shown_match_cursor` in
+  [src/app/runtime_gaf.cpp](../../../src/app/runtime_gaf.cpp) shows the
+  Reclaim cursor where a RECLAIM click would snap.
 - Tests: `app-view-rules` (`click_snap_search`, `view_settings_round_trip`,
-  `options_dialog_round_trip`).
+  `unchosen_snap_radius_not_stored`, `options_dialog_round_trip`) and
+  `native-click-snap`, which shows the cursor and clicks beside a wreck
+  and a metal deposit through SDL input under a profile with the hack on,
+  and `native-click-snap-off`, the same without the hack.
 
 ## Full configuration schema
 

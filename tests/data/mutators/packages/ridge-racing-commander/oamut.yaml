@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+# SPDX-License-Identifier: GPL-3.0-only
+
+oamut: 1
+id: ridge-racing-commander
+name: "Ridge Racing Commander"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+description: "The Arm commander as seven commander mutators stacked leave it: 42 pixels a tick, turning 28800 a tick, speed changing by all of that in one tick, a 3x3 footprint, and building far and fast."
+tags: ["commanders", "statistics"]
+works-with: ["*"]
+layers: ["units"]

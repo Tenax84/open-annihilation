@@ -685,6 +685,7 @@ ViewSettings read_view_settings(
 
 void write_view_settings(
     const ViewSettings& settings,
+    const data::mod_profile::UiRules& ui,
     const std::function<void(std::string_view name, uint32_t value)>& number,
     const std::function<void(std::string_view name, std::string_view value)>& text
 ) {
@@ -699,8 +700,12 @@ void write_view_settings(
         number(setting_name::patrol[order], static_cast<uint32_t>(settings.patrol[order]));
         number(setting_name::guard[order], static_cast<uint32_t>(settings.guard[order]));
     }
-    number(setting_name::mex_snap_radius, static_cast<uint32_t>(settings.mex_snap_radius));
-    number(setting_name::wreck_snap_radius, static_cast<uint32_t>(settings.wreck_snap_radius));
+    // A radius the profile holds at 0 is not the player's choice.
+    const auto locks = dialog_option_locks(ui);
+    if (locks.mex_snap == oa::ui::engine_settings::Lock::none)
+        number(setting_name::mex_snap_radius, static_cast<uint32_t>(settings.mex_snap_radius));
+    if (locks.wreck_snap == oa::ui::engine_settings::Lock::none)
+        number(setting_name::wreck_snap_radius, static_cast<uint32_t>(settings.wreck_snap_radius));
     text(setting_name::chat_macro, settings.chat_macro);
     number(setting_name::panel_background, static_cast<uint32_t>(settings.panel_background));
     number(setting_name::optimize_dt_rows, settings.optimize_dt_rows ? 1U : 0U);

@@ -152,6 +152,16 @@ struct Fixture {
         return host.dispatch_mission(match->state(), s.record, order, events);
     }
 
+    // Rebuilds a player's repair pad list as its knowledge refresh does
+    // every 30 ticks; the game tick is put back afterwards.
+    void file_pads(uint8_t player) {
+        auto& game = match->state().game;
+        const auto tick = game.tick;
+        game.tick = match->sightings(player).refreshed_tick + 30;
+        match->refresh_player_knowledge(player);
+        game.tick = tick;
+    }
+
     // An attack order from `from` at `to` rewritten to `kind`.
     sim::simulation_state::Order&
     attack(sim::unit_spawn::Slot& from, sim::unit_spawn::Slot& to, uint8_t kind) {
@@ -221,10 +231,18 @@ void air_strike() {
     CHECK(f.dispatch(bomber, order, 0) == 2);
     CHECK(order.phase == 3 && order.wait_events == wait_goal_or_cancel);
 
-    // Damaged below three quarters with an active pad in reach: land there.
+    // Damaged below three quarters with an active pad in reach: land there,
+    // once the owner's knowledge refresh has filed the pad on its pad list.
     auto& pad = f.spawn(0, pad_type, 150, 150);
     pad.record.state_flags |= 1;
     bomber.record.health = 70;
+    order.phase = 6;
+    CHECK(f.dispatch(bomber, order, 0) == 0);
+    CHECK(
+        bomber.unit->primary && bomber.unit->primary->kind != sim::ground_orders::vtol_landing_kind
+    );
+    f.file_pads(0);
+    CHECK(f.match->sightings(0).pad_count == 1);
     order.phase = 6;
     CHECK(f.dispatch(bomber, order, 0) == 0);
     CHECK(

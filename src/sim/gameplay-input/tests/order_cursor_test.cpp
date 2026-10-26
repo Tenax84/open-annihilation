@@ -1535,8 +1535,9 @@ void test_resurrector_reclaims_features() {
     check(order(OrderCommand::reclaim, necro) == UnitOrder::none, "nothing to reclaim");
 }
 
-// air.no-repair-retreat-flag: the Move command keeps aircraft marked
-// cantbetransported off repair pads, cursor and order alike.
+// air.no-repair-retreat-flag: the Move command and a right press in the
+// right-click interface keep aircraft marked cantbetransported off repair
+// pads, cursor and order alike.
 void test_no_repair_retreat_flag() {
     Fixture f;
     auto hooks = f.hooks();
@@ -1598,15 +1599,28 @@ void test_no_repair_retreat_flag() {
         order(OrderCommand::unload, lifter) == UnitOrder::vtol_landing,
         "marked: Unload over a pad still lands"
     );
+    // A right press on a pad in the right-click interface does not land a
+    // marked aircraft either: it falls through to the load and guard tests,
+    // then moves.
     f.world->game.interface_type = interface_right_click;
     check(
-        order(OrderCommand::default_order, bomber) == UnitOrder::vtol_landing,
-        "marked: the right-click default order still lands"
+        order(OrderCommand::default_order, bomber) == UnitOrder::vtol_move,
+        "marked: the right-click default order moves"
+    );
+    check(
+        order(OrderCommand::default_order, lifter) == UnitOrder::vtol_follow,
+        "marked: the right-click default order guards"
     );
     f.world->game.interface_type = interface_left_click;
     f.def(1).abilities &= ~OA_UNIT_DEF_ABILITY_CANT_BE_TRANSPORTED;
     check(cursor(OrderCommand::move, bomber) == OrderCursor::unload, "unmarked: the pad cursor");
     check(order(OrderCommand::move, bomber) == UnitOrder::vtol_landing, "unmarked: Move lands");
+    f.world->game.interface_type = interface_right_click;
+    check(
+        order(OrderCommand::default_order, bomber) == UnitOrder::vtol_landing,
+        "unmarked: the right-click default order lands"
+    );
+    f.world->game.interface_type = interface_left_click;
 }
 } // namespace
 

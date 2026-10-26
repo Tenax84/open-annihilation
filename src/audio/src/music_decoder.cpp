@@ -9,12 +9,27 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <numbers>
 #include <span>
 
 namespace oa::audio {
+
+namespace {
+
+// music_set_read_delay: a test's wait before each read; none in the game.
+std::atomic<MusicReadDelay> read_delay{nullptr};
+std::atomic<void*> read_delay_context{nullptr};
+
+void wait_for_music_read() {
+    const MusicReadDelay delay = read_delay.load(std::memory_order_acquire);
+    if (delay != nullptr)
+        delay(read_delay_context.load(std::memory_order_acquire));
+}
+
+} // namespace
 
 /// One encoding's reader: frames in the file's own channel layout and rate.
 class MusicDecoder::Source {
@@ -119,6 +134,7 @@ bool channels_in_range(uint32_t channels) {
 
 // Reads a file as the decoders' read callbacks ask.
 size_t file_read(void* file, void* buffer, size_t bytes) {
+    wait_for_music_read();
     return std::fread(buffer, 1, bytes, static_cast<std::FILE*>(file));
 }
 
@@ -628,6 +644,7 @@ bool MusicDecoder::open(const std::filesystem::path& path, std::string& error) {
         return false;
     }
     std::array<uint8_t, signature_bytes> signature{};
+    wait_for_music_read();
     const std::size_t got = std::fread(signature.data(), 1, signature.size(), file.get());
     if (std::fseek(file.get(), 0, SEEK_SET) != 0) {
         error = "cannot read " + utf8_text(path);
@@ -701,6 +718,16 @@ uint32_t MusicDecoder::source_rate() const noexcept {
 
 uint32_t MusicDecoder::source_channels() const noexcept {
     return source_ != nullptr ? source_->channels : 0;
+}
+
+void music_set_read_delay(MusicReadDelay delay, void* context) noexcept {
+    if (delay == nullptr) {
+        read_delay.store(nullptr, std::memory_order_release);
+        read_delay_context.store(nullptr, std::memory_order_release);
+        return;
+    }
+    read_delay_context.store(context, std::memory_order_release);
+    read_delay.store(delay, std::memory_order_release);
 }
 
 } // namespace oa::audio

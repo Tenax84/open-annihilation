@@ -5,11 +5,13 @@
 """Check the MCP server (tools/mcp/oa_mcp_server.py) against the running game.
 
 The server is started as an MCP client starts it, speaking MCP over its
-standard input and output. Through its tools it starts the game on the dummy
-SDL drivers with a preferences file of its own, and then:
+standard input and output, with --executable naming the game under test.
+Through its tools it starts the game on the dummy SDL drivers, and then:
 
-- game_launch answers the endpoint's hello, and wait_for sees the main menu;
-- controls lists Open Annihilation's main menu's Single Player button, and screenshot answers a PNG
+- game_launch answers the endpoint's hello, and the game was given a new
+  preferences file in the server's scratch folder; wait_for sees the main
+  menu;
+- controls lists the main menu's SINGLE button, and screenshot answers a PNG
   picture of the presented frame;
 - after subscribe, click_control on that button opens Single Player, and Escape
   through press_key goes back to the main menu;
@@ -44,9 +46,10 @@ class McpFailure(Exception):
 class Client:
     """The MCP server, started as a client starts it."""
 
-    def __init__(self):
+    def __init__(self, native):
         self.process = subprocess.Popen(
-            [sys.executable, str(SERVER), *(["--runner", RUNNER] if RUNNER else [])],
+            [sys.executable, str(SERVER), "--executable", str(native),
+             *(["--runner", RUNNER] if RUNNER else [])],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
         self.next_id = 0
 
@@ -81,20 +84,21 @@ class Client:
             self.process.kill()
 
 
-def check(native, game_dir, workdir):
-    preferences = workdir / "mcp.conf"
-    preferences.write_text("open-annihilation-preferences 1\n", encoding="utf-8")
-    client = Client()
+def check(native, game_dir):
+    client = Client(native)
     try:
         info = client.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                          "clientInfo": {"name": "native-mcp-server", "version": "1"}})
         if info["serverInfo"]["name"] != "open-annihilation":
             raise McpFailure(f"initialize named {info['serverInfo']}")
-        launched = client.tool_json("game_launch", executable=str(native), game_dir=str(game_dir),
-                                    headless=True, mute=True, preferences_file=str(preferences),
+        launched = client.tool_json("game_launch", game_dir=str(game_dir), headless=True, mute=True,
                                     timeout=START_SECONDS)
         if launched["hello"].get("automation") != 1:
             raise McpFailure(f"game_launch answered {launched['hello']}")
+        scratch = Path(client.tool_json("game_status")["scratch"])
+        preferences = Path(launched["preferences_file"])
+        if scratch not in preferences.parents or not preferences.is_file():
+            raise McpFailure(f"the game was given no new preferences file in {scratch}: {launched}")
         client.tool_json("wait_for", screen="main_menu", timeout=START_SECONDS)
         names = [control["name"] for control in client.tool_json("controls")["controls"]]
         if SINGLE_PLAYER not in names:
@@ -130,9 +134,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.scratch_root:
         args.scratch_root.mkdir(parents=True, exist_ok=True)
+    # The server makes its own scratch folder in the system's temporary
+    # folder; the check's own is where that is made.
     with tempfile.TemporaryDirectory(dir=args.scratch_root) as scratch:
+        os.environ["TMPDIR"] = scratch
         try:
-            check(args.native, args.game_dir, Path(scratch))
+            check(args.native, args.game_dir)
         except McpFailure as failure:
             print(f"native-mcp-server: {failure}", file=sys.stderr)
             return 1

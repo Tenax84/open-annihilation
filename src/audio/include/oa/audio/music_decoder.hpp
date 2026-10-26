@@ -107,4 +107,18 @@ class MusicDecoder {
     bool finished_{};
 };
 
+/// Runs at the start of each read of a music file.
+using MusicReadDelay = void (*)(void* context);
+
+/// Installs a wait that runs at the start of each read of a music file.
+///
+/// The game installs none, so a read takes only as long as the file does.
+/// A test installs one so the read takes time while the rest of the game
+/// continues. A null delay reads at once. The wait runs on the thread that
+/// reads the file.
+///
+/// @param delay the wait, or null to read at once
+/// @param context passed to the wait
+void music_set_read_delay(MusicReadDelay delay, void* context) noexcept;
+
 } // namespace oa::audio

@@ -29,6 +29,11 @@ inline constexpr std::array<ChoiceWord<ExplosionFlash>, 3> explosion_flash_words
     {ExplosionFlash::reduced, "reduced"},
     {ExplosionFlash::full, "full"},
 }};
+/// Fog of War's words, in fog_of_war_choices' order.
+inline constexpr std::array<ChoiceWord<FogOfWar>, 2> fog_of_war_words{{
+    {FogOfWar::classic, "classic"},
+    {FogOfWar::smooth, "smooth"},
+}};
 /// Menu style's words, in menu_style_choices' order.
 inline constexpr std::array<ChoiceWord<MenuStyle>, 2> menu_style_words{{
     {MenuStyle::classic, "classic"},

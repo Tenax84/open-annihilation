@@ -8,23 +8,26 @@
 # clock or network. The update question asked
 # before an update that may stop saved games loading (update_question.hpp),
 # the questions about the mod the game plays: SWITCH OFF's, PLAY NOW's
-# refusal and ROLL BACK's (mod_questions.hpp), and UNINSTALL's rules, its
-# question and its notices (uninstall.hpp).
+# refusal and ROLL BACK's (mod_questions.hpp), UNINSTALL's rules, its
+# question and its notices (uninstall.hpp), and the order of a mutator's
+# prerequisites, the download plan and GET WITH's question (prerequisites.cpp).
 add_library(oa-ui-library src/library.cpp src/search.cpp src/text.cpp
   src/content.cpp src/game_icon.cpp src/update_question.cpp src/mod_questions.cpp
-  src/uninstall.cpp)
+  src/uninstall.cpp src/prerequisites.cpp)
 # The Library's screens, made of the UI kit's components: their layout at
 # the three size classes, their drawing and their input (screen.hpp).
 target_sources(oa-ui-library PRIVATE src/layout.cpp src/draw.cpp src/input.cpp)
 add_library(oa::ui::library ALIAS oa-ui-library)
 target_include_directories(oa-ui-library PUBLIC include)
 target_compile_features(oa-ui-library PUBLIC cxx_std_20)
-target_link_libraries(oa-ui-library PUBLIC oa-formats-oamod oa-base-sha256 oa-ui-kit PRIVATE
-  oa-base-text oa-data-mod-profile oa-data-content-bundles oa-data-languages oa-options)
+target_link_libraries(oa-ui-library PUBLIC oa-formats-oamod oa-base-sha256 oa-ui-kit
+  oa-data-mutators PRIVATE
+  oa-base-text oa-data-mod-profile oa-data-content-bundles oa-data-languages oa-formats-oamut
+  oa-formats-oabrain oa-options)
 
 if(BUILD_TESTING)
   # Entries and their states, blocking, registries, tabs, each tab's filter,
-  # New, the filters' counts, tags, the Active tab, the order, selection,
+  # New, the filters' counts, tags, brains, the Active tab, the order, selection,
   # buttons, facts, status lines, notes, queue lines and every text.
   add_executable(oa-ui-library-test tests/library_test.cpp)
   target_link_libraries(oa-ui-library-test PRIVATE oa-ui-library oa-data-languages
@@ -53,6 +56,15 @@ if(BUILD_TESTING)
     oa-test-support oa-options)
   add_test(NAME ui-library-uninstall COMMAND oa-ui-library-uninstall-test)
   set_tests_properties(ui-library-uninstall PROPERTIES TIMEOUT 30)
+
+  # The order of mutator prerequisites: the closure, the dependants and
+  # whether a list keeps every prerequisite above what needs it; and the
+  # download plan, GET WITH and its question.
+  add_executable(oa-ui-library-prerequisites-test tests/prerequisites_test.cpp)
+  target_link_libraries(oa-ui-library-prerequisites-test PRIVATE oa-ui-library oa-test-support
+    oa-options)
+  add_test(NAME ui-library-prerequisites COMMAND oa-ui-library-prerequisites-test)
+  set_tests_properties(ui-library-prerequisites PROPERTIES TIMEOUT 30)
 
   # The search: what ranks first, several words, a missing word, folding,
   # tag prefixes, the cap and ties.

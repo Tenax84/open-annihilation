@@ -9,7 +9,9 @@
 #pragma once
 
 #include "oa/ui/frontend_renderer/artless.hpp"
+#include "oa/ui/kit/tag_icon.hpp"
 #include "oa/ui/kit/chrome.hpp"
+#include "oa/ui/kit/text.hpp"
 #include "oa/ui/kit/theme.hpp"
 
 #include <cstddef>
@@ -37,12 +39,14 @@ enum class Mark : uint8_t {
     key,          ///< a signing key, 7 by 7
 };
 
-/// Which of the five button looks a button is drawn in.
+/// Which of the six button looks a button is drawn in.
 enum class ButtonStyle : uint8_t {
     accent, ///< the green button: OK, SWITCH, a notice's OK, MANAGE…
     plain,  ///< no face at rest: Restore defaults, Cancel, a notice's other button
     quiet,  ///< no face at rest, and the band while held: Your files, OPEN MODS FOLDER
     inset,  ///< the list's face at rest: a mod row's ROLL BACK
+    /// the deep green face with white text and rounded corners, over a picture: Mutators
+    filled,
 };
 
 /// What a button draws in place of its caption.
@@ -73,6 +77,11 @@ struct ButtonLook {
     /// An accent button drawn in accent_light while it is not held: the
     /// call to action's bright face. Off leaves every button as it was.
     bool bright{false};
+    /// The OA badge at the button's left and the caption after it, keeping
+    /// to its left edge (button_mark_parts places them). Off centres the caption.
+    bool oa_mark{false};
+    /// The caption's font: the small font unless the caller picks the regular one.
+    FontRole font{FontRole::small};
 };
 
 /// An Off/On switch. The captions are already looked up.
@@ -274,6 +283,9 @@ struct PillLook {
     /// A state icon at the pill's right, inside the capsule, beside the text.
     /// None draws the text alone. The text stays; the icon does not replace it.
     std::optional<StateIcon> icon{};
+    /// A tag icon at the pill's left, inside the capsule, before the word,
+    /// in the pill's text colour. None leaves the word where it was.
+    std::optional<TagIcon> tag{};
 };
 
 /// A row of a list, in its full or its short form, which its rectangle's
@@ -285,8 +297,15 @@ struct ListRowLook {
     /// The badge's picture. It refers to pixels the screen keeps, which must
     /// outlive the display list. Empty, the letters or a blank badge show.
     oa::ui::frontend_renderer::RgbaPicture badge{};
-    std::string title{};              ///< the title, in the regular font
-    std::string by{};                 ///< the byline after the title, in the small font
+    /// A tag icon drawn on badge_colour when the picture is not drawable.
+    /// It takes the place of the letters. None leaves the letters, or the
+    /// dashed square when there are none.
+    std::optional<TagIcon> badge_tag{};
+    std::string title{}; ///< the title, in the regular font
+    std::string by{};    ///< the byline after the title, in the small font
+    /// The byline's colour. Unset draws it in the hint colour, as a row
+    /// with no missing prerequisite does.
+    std::optional<Colour> by_colour{};
     std::vector<std::string> lines{}; ///< the lines under the title, top to bottom
     std::vector<std::string> aside{}; ///< the entries at the right, one a line from the top
     std::optional<ChipLook> chip{};   ///< the chip at the right; none when unset
@@ -328,9 +347,14 @@ struct TabsLook {
     /// for a count above 0, a space and the count.
     std::vector<std::string> readings{};
     /// How far the strip is scrolled, in points from the first tab. The
-    /// layout clamps it so the open tab lies wholly in the strip. 0 draws
-    /// the strip from its start, and a strip whose tabs fit ignores it.
+    /// layout clamps it to the strip and, while keep_selected_in_view is set,
+    /// so the open tab lies wholly in the strip. 0 draws the strip from its
+    /// start, and a strip whose tabs fit ignores it.
     int32_t scroll{};
+    /// Keeps the open tab wholly in the strip. Off, the scroll stays where
+    /// the player left it with an arrow, the wheel or a drag, anywhere from
+    /// the first tab to the last, and the open tab may lie out of view.
+    bool keep_selected_in_view{true};
     /// The tab drawing area's left, in window points, after an arrow. 0
     /// until the strip is placed.
     int32_t view_x{};
@@ -338,6 +362,10 @@ struct TabsLook {
     int32_t view_width{};
     bool left_arrow_hovered{};  ///< the pointer is over the arrow at the left
     bool right_arrow_hovered{}; ///< the pointer is over the arrow at the right
+    /// The points either side of a caption. Negative uses the theme's tab_padding.
+    int32_t side_padding{-1};
+    /// The points between a caption's characters. Negative uses the theme's tab_tracking.
+    int32_t tracking{-1};
 };
 
 /// A card of a grid: a square preview, its chips, a title and a subtitle.
@@ -558,6 +586,33 @@ struct CallToActionLook {
     bool reduced_motion{false}; ///< holds a steady ring instead of sending one out
 };
 
+/// A package badge: a square picture, a tag icon, letters, or a blank.
+/// Drawn in that order. The picture, when drawable, has a control_border
+/// outline. Otherwise a tag's icon is drawn in on_accent on face, its
+/// square 70 percent of the badge's side and centred. Otherwise the letters
+/// are drawn on face, cut to the whole letters that fit, as a list row cuts
+/// them, with no ellipsis. Otherwise the badge is a dashed blank square.
+struct BadgeLook {
+    oa::ui::frontend_renderer::RgbaPicture picture{}; ///< the picture; empty draws none
+    std::optional<TagIcon> tag{};                     ///< the tag's icon, when there is no picture
+    std::string letters{};     ///< the letters, when there is no picture or tag
+    Colour face{colour::hint}; ///< the ground behind a tag icon or the letters
+};
+
+/// A drag handle: two columns of four dots. The rectangle it is drawn in
+/// is grip_width by grip_height. Disabled wins over held, and held over hovered.
+struct GripLook {
+    bool hovered{};  ///< the pointer is over it
+    bool held{};     ///< a press is held on it
+    bool disabled{}; ///< it cannot be dragged
+};
+
+/// A drag handle's width, in points, at every size class.
+inline constexpr int32_t grip_width = 6;
+
+/// A drag handle's height, in points, at every size class.
+inline constexpr int32_t grip_height = 12;
+
 /// What a component item draws. Empty for a generic role. Later components
 /// append looks. A locked fade has no look of its own: its rectangle is the
 /// item's.
@@ -597,6 +652,8 @@ using Look = std::variant<
     CoachMarkLook,
     SpotlightLook,
     PictureWellLook,
-    CallToActionLook>;
+    CallToActionLook,
+    BadgeLook,
+    GripLook>;
 
 } // namespace oa::ui::kit

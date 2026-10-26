@@ -24,6 +24,7 @@
 
 #include <array>
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -203,6 +204,20 @@ struct NetMatchHooks {
     void (*whiteboard_marks)(
         void* context, uint8_t sender_slot, const uint8_t* batch, std::size_t size
     ){};
+
+    /// Hands a chat line to a seat of this machine, a human or a computer
+    /// player, as this machine shows it. A broadcast was addressed to every
+    /// player. A private-channel record is not handed on. Null hears nothing.
+    ///
+    /// @param context NetMatchHooks.context.
+    /// @param sender Player slot of the sender.
+    /// @param addressee Player slot the record was addressed to; the local
+    ///        player for a broadcast.
+    /// @param broadcast The record went to every player.
+    /// @param text The line as this machine shows it, NUL-terminated.
+    void (*seat_chat)(
+        void* context, uint8_t sender, uint8_t addressee, bool broadcast, const char* text
+    ){};
 };
 
 /// The health a unit has in the recorder's eyes before any full record of it was seen.
@@ -362,10 +377,42 @@ bool net_match_loading_frame(NetMatch* match) noexcept;
 
 /// Returns the start position index of a slot once the barrier passed (Player.start_position).
 ///
+/// The host sends each machine the start positions of its own players
+/// only, so another machine's player keeps whatever its record held before;
+/// net_match_fixed_start_positions gives its start when the starts are
+/// fixed.
+///
 /// @param match Running match.
 /// @param slot Player slot, 0..9.
 /// @return The start position, or no_start_position for a slot out of range.
 [[nodiscard]] uint8_t net_match_start_position(const NetMatch* match, uint8_t slot) noexcept;
+
+/// Works out the start position the host gives every slot when the starts
+/// are fixed, the same on every machine of the match.
+///
+/// The host deals fixed starts in its own slot order: every active slot
+/// that is not watching takes the next position, or with
+/// setup.team-start-positions at team-adjacent the team rules place them
+/// (team_rules::team_start_positions). Another machine seats the players in
+/// slots of its own, so it reads the host's order from the host's slot
+/// table, and on a map with neutral units reads the computer players of the
+/// host's machine group as the host's own. Shuffled starts are the host's
+/// alone, so this does not give them.
+///
+/// @param match Running match.
+/// @param host_slots The host's slot table (Game.slot_table, record 0x26) as
+///        the battle room last had it: each of the host's slots' player id,
+///        0 for a free slot, no_player_id for a closed one. The host's
+///        machine reads its own slots instead.
+/// @param[out] positions each of this machine's slots' start position, -1 for none
+/// @return False, with every position -1, when the table does not list this
+///         machine's players as playing once each, or the team rules would
+///         read the host's computer players and the host has no machine group
+[[nodiscard]] bool net_match_fixed_start_positions(
+    const NetMatch* match,
+    std::span<const uint32_t, OA_PLAYER_COUNT> host_slots,
+    std::array<int32_t, OA_PLAYER_COUNT>& positions
+) noexcept;
 
 // Rows of the loading screen (Game.load_progress), each 0..100.
 inline constexpr std::size_t load_progress_rows = 6;
@@ -745,6 +792,25 @@ void net_match_set_speed(NetMatch* match, int32_t speed, bool broadcast) noexcep
 /// @param text Line to send, as this machine holds game text; null sends an
 ///        empty line.
 void net_match_say(NetMatch* match, const char* text) noexcept;
+
+/// Sends a chat line from a computer seat of this machine, from that seat's player id.
+///
+/// Sends nothing unless the seat is in use, a computer player, with a
+/// player id, and the line is not a command ('+' or '.' first, after a
+/// "<Name> " head). Everyone is one broadcast. Chosen players are the
+/// slots `targets` names whose player id is not 0. Allies and enemies are
+/// the remote players by the seat's own alliance row. Any other mode sends
+/// nothing. With Unicode chat the line goes out as the parts say_unicode
+/// makes. NetMatch::said_parts and the recorder are left as they were.
+///
+/// @param[in,out] match Running match; null sends nothing.
+/// @param seat Player slot of the computer seat.
+/// @param line The line, speaker prefix included; null sends nothing.
+/// @param mode Chat mode (OA_CHAT_MODE_*).
+/// @param targets Chosen-player slots; null when the mode names none.
+void net_match_say_from(
+    NetMatch* match, uint8_t seat, const char* line, uint8_t mode, const uint8_t* targets
+) noexcept;
 
 /// Gives a received chat line as this machine shows it, in the form it holds game text.
 ///

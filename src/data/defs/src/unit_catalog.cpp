@@ -16,8 +16,6 @@
 namespace oa::data::defs {
 namespace {
 
-constexpr uint32_t max_unit_defs = 0x10000;     // type ids are 16-bit
-constexpr uint32_t max_download_files = 0x1000; // most DOWNLOAD files read
 constexpr std::size_t key_capacity = 0x20;
 
 struct NameList {

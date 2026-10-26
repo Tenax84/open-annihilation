@@ -8,7 +8,9 @@
 // square at rest and turned, a back-facing polygon left out, textured quads
 // over fixed, animated and team textures with the running and the first
 // frame, units with a depth plane whose polygons are ordered as the plane
-// shows them, one a panel resting on a square drawn after it, a lit
+// shows them, one a panel resting on a square drawn after it, others of
+// polygons that cross and of polygons each over the next in a circle, which
+// no order shows and holes cut in the later polygons do, a lit
 // building's darkened and brightened rows and its flat colours through the
 // shade table, a cloaked unit at half alpha over an opaque canvas, a
 // building under construction with its bands and outline, units under the
@@ -22,8 +24,12 @@
 // --data, every unit model of the installed game at zoom 1, from a cached
 // image without a depth plane and unlit, at rest and turned, and with one
 // as a lit building, held to the bounds of runtime_full.hpp and the figures
-// printed.
+// printed; and every model with a depth plane, each face in a colour of its
+// own, at rest and with the pieces below its root turned and drawn as
+// moving pieces, as a metal extractor's arms spin, the face shown at each
+// pixel held to the processor's.
 #include "runtime_full.hpp"
+#include "renderer_water_shading.hpp"
 
 #include "oa/formats/objects3d.hpp"
 #include "oa/formats/tdf.hpp"
@@ -83,6 +89,7 @@ constexpr uint32_t sampler_window = 0x10000;
 constexpr uint8_t ink = 0x55;
 constexpr uint8_t second_ink = 0x66;
 constexpr uint8_t third_ink = 0x77;
+constexpr uint8_t fourth_ink = 0x88;
 constexpr uint8_t team_colour = 4;
 constexpr uint16_t piece_cached = static_cast<uint16_t>(PieceFlag::cached);
 /// The synthetic frame and where its unit stands.
@@ -136,6 +143,17 @@ constexpr double installed_sweep_far_share = 0.25;
 /// becomes a scaled colour; its coverage is held, its colours reported.
 constexpr double installed_lit_far_share = 0.95;
 constexpr std::size_t least_installed_models = 100;
+/// Bounds on the faces the card shows against the processor's over the
+/// installed models with a depth plane (shown_faces): the share of the
+/// pixels inside faces that show another, over all of them and on each
+/// model, and the pixels a model may show so whatever its share.
+constexpr double installed_other_face_share = 0.001;
+constexpr double installed_model_other_face_share = 0.06;
+constexpr std::size_t installed_model_other_face_pixels = 16;
+/// The turns about the upright axis the installed models' pieces below
+/// their roots take, drawn as moving pieces, as a metal extractor spins its
+/// arms.
+constexpr std::array<int16_t, 2> installed_piece_turns{0x1c00, 0x5400};
 
 /// A gray palette: entry i is (i, i, i).
 oa::Palette gray_palette() {
@@ -331,6 +349,73 @@ std::shared_ptr<Model> turret_model() {
     barrel.parent = 0;
     model->objects[0].first_child = 1;
     model->objects.push_back(barrel);
+    return model;
+}
+
+/// Adds a quad to an object, wound to face the camera, its corners at the
+/// low and the high x and z each at a height of its own.
+///
+/// @param[in,out] object the object
+/// @param x0 the low x, in world units
+/// @param x1 the high x
+/// @param z0 the low z
+/// @param z1 the high z
+/// @param heights the corners' heights: at (x0, z0), (x1, z0), (x1, z1) and (x0, z1)
+/// @param colour its colour
+void add_sloped_quad(
+    Object& object,
+    int32_t x0,
+    int32_t x1,
+    int32_t z0,
+    int32_t z1,
+    const std::array<int32_t, 4>& heights,
+    uint8_t colour
+) {
+    const auto first = static_cast<uint16_t>(object.vertices.size());
+    object.vertices.insert(
+        object.vertices.end(),
+        {{x0 * unit, heights[0] * unit, z0 * unit},
+         {x1 * unit, heights[1] * unit, z0 * unit},
+         {x1 * unit, heights[2] * unit, z1 * unit},
+         {x0 * unit, heights[3] * unit, z1 * unit}}
+    );
+    object.primitives.push_back(primitive(
+        {first,
+         static_cast<uint16_t>(first + 3),
+         static_cast<uint16_t>(first + 2),
+         static_cast<uint16_t>(first + 1)},
+        colour,
+        nullptr
+    ));
+}
+
+/// A square four units up and a panel through it, rising from the ground
+/// at one end to eight units up at the other, so that the panel lies under
+/// the square on one side of the line they cross along and over it on the
+/// other: no order of the two shows both.
+std::shared_ptr<Model> crossed_model() {
+    auto model = std::make_shared<Model>();
+    Object object = square_object(4, ink, nullptr);
+    add_sloped_quad(object, -4, 4, -12, 12, {0, 0, 8, 8}, second_ink);
+    model->objects.push_back(object);
+    return model;
+}
+
+/// Four sloping bands round a square, each over the next where they meet:
+/// one along the low z rising with x, over the one along the high x, which
+/// rises with z, over the one along the high z, which falls with x, over the
+/// one along the low x, which falls with z, over the first: no order of the
+/// four shows them.
+std::shared_ptr<Model> circled_model() {
+    auto model = std::make_shared<Model>();
+    constexpr int32_t low = 2;
+    constexpr int32_t high = 14;
+    Object object;
+    add_sloped_quad(object, -12, 12, -12, -4, {low, high, high, low}, ink);
+    add_sloped_quad(object, 4, 12, -12, 12, {low, low, high, high}, second_ink);
+    add_sloped_quad(object, -12, 12, 4, 12, {high, low, low, high}, third_ink);
+    add_sloped_quad(object, -12, -4, -12, 12, {high, high, low, low}, fourth_ink);
+    model->objects.push_back(object);
     return model;
 }
 
@@ -578,6 +663,8 @@ struct Scene {
     oa::formats::gaf::RenderedFrame shadow_frame;
     std::array<uint8_t, full::team_colour_players> team_colors{};
     uint32_t tick{};
+    float water_shimmer{};
+    std::vector<float>* vertex_heights{}; ///< where the stage keeps its vertices' heights
     uint32_t build_pulse_lag{};
 
     explicit Scene(
@@ -811,6 +898,10 @@ struct Scene {
         in.library = &library;
         in.display = &display;
         in.graphics_flags = world->game.graphics_flags;
+        in.water_shimmer = water_shimmer;
+        in.water_sea_level = world->game.sea_level;
+        in.vertex_heights = vertex_heights;
+        in.water_seconds = tick / 30.0;
         in.build_pulse_tick = tick - build_pulse_lag;
         in.moving_pieces_once_built = renderer.moving_pieces_once_built;
         in.team_colors = team_colors;
@@ -976,6 +1067,98 @@ void print_far(
                 ++printed;
             }
         }
+}
+
+/// Finds the colour the frame's polygons show at a point of the target: that
+/// of the last triangle drawn into the target over it, whose corners share
+/// their colour, as a polygon filled with one colour has them. The frame is
+/// read for its triangles, not drawn, so that the points the card cuts
+/// polygons at count where they lie, between pixels, which SDL's software
+/// renderer moves to whole pixels.
+///
+/// @param frame the frame
+/// @param x the point across, in pixels of the target
+/// @param y the point down
+/// @param[out] colour its colour, each channel a byte
+/// @return false when no triangle lies over the point
+bool card_colour_at(
+    const card::CardFrame& frame, double x, double y, std::array<uint8_t, 3>& colour
+) {
+    const auto byte = [](float level) {
+        return static_cast<uint8_t>(std::lround(std::clamp(level, 0.0F, 1.0F) * 255.0F));
+    };
+    bool found = false;
+    for (const card::Batch& batch : frame.batches) {
+        if (batch.operation != card::Operation::draw || batch.target != card::TargetHandle{})
+            continue;
+        for (uint32_t k = 0; k + 2 < batch.index_count; k += 3) {
+            const card::Vertex& a = frame.vertices[frame.indices[batch.first_index + k]];
+            const card::Vertex& b = frame.vertices[frame.indices[batch.first_index + k + 1]];
+            const card::Vertex& c = frame.vertices[frame.indices[batch.first_index + k + 2]];
+            const auto twice_area =
+                [](double ax, double ay, double bx, double by, double cx, double cy) {
+                    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+                };
+            const double area = twice_area(a.x, a.y, b.x, b.y, c.x, c.y);
+            if (area == 0.0)
+                continue;
+            const double at_a = twice_area(x, y, b.x, b.y, c.x, c.y) / area;
+            const double at_b = twice_area(a.x, a.y, x, y, c.x, c.y) / area;
+            if (at_a < 0.0 || at_b < 0.0 || 1.0 - at_a - at_b < 0.0)
+                continue;
+            colour = {byte(a.colour.red), byte(a.colour.green), byte(a.colour.blue)};
+            found = true;
+        }
+    }
+    return found;
+}
+
+/// The faces a frame shows against the processor's raster of the same list.
+struct ShownFaces {
+    std::size_t inside{}; ///< pixels inside a face of the raster, every neighbour its colour
+    std::size_t other{};  ///< of those, the pixels the frame shows another colour at, or nothing
+};
+
+/// Compares the faces a frame of polygons filled with one colour each shows
+/// with the processor's raster of the same list, the frame's triangles read
+/// at each pixel's corner, where the raster samples, so that the edges the
+/// two sample apart count for nothing.
+///
+/// @param frame the card's frame
+/// @param by_processor the raster
+/// @param scene the scene, for the key colour of the raster's empty pixels
+/// @return the pixels inside the raster's faces and those the frame shows otherwise
+ShownFaces shown_faces(
+    const card::CardFrame& frame, const ProcessorPicture& by_processor, const Scene& scene
+) {
+    ShownFaces shown;
+    const auto drawn_at = [&](int x, int y) -> const uint8_t* {
+        if (x < 0 || y < 0 || x >= static_cast<int>(by_processor.width) ||
+            y >= static_cast<int>(by_processor.height))
+            return nullptr;
+        const uint8_t* pixel = by_processor.at(static_cast<uint32_t>(x), static_cast<uint32_t>(y));
+        return drawn_by_processor(pixel, scene.key) ? pixel : nullptr;
+    };
+    for (int y = 0; y < static_cast<int>(by_processor.height); ++y)
+        for (int x = 0; x < static_cast<int>(by_processor.width); ++x) {
+            const uint8_t* pixel = drawn_at(x, y);
+            if (pixel == nullptr)
+                continue;
+            bool inside = true;
+            for (int dy = -1; dy <= 1 && inside; ++dy)
+                for (int dx = -1; dx <= 1 && inside; ++dx) {
+                    const uint8_t* near = drawn_at(x + dx, y + dy);
+                    inside = near != nullptr && std::equal(pixel, pixel + 3, near);
+                }
+            if (!inside)
+                continue;
+            ++shown.inside;
+            std::array<uint8_t, 3> colour{};
+            if (!card_colour_at(frame, x, y, colour) ||
+                !std::equal(pixel, pixel + 3, colour.data()))
+                ++shown.other;
+        }
+    return shown;
 }
 
 // ---------------------------------------------------------------------------
@@ -1271,6 +1454,59 @@ void test_resting_on_depth_plane() {
     OA_CHECK(card.stage.counts().polygons == 2);
 }
 
+// Units with a depth plane whose polygons no order shows: a panel through a
+// square, which shows over it on one side of the line they cross along and
+// under it on the other, and four bands round a square each over the next.
+// Each polygon leaves out where it lies under one drawn before it, so that
+// every face the processor's plane shows is the card's too; SDL's software
+// renderer moves the corners of the parts cut to whole pixels, so the
+// picture read back is held to the processor's within a pixel and the frame's
+// triangles, read where they lie, at every pixel inside a face.
+void test_no_order_shows() {
+    struct Case {
+        const char* name;
+        std::shared_ptr<Model> model;
+        std::vector<uint8_t> inks;
+    };
+
+    const std::array<Case, 2> cases{
+        Case{"crossed", crossed_model(), {ink, second_ink}},
+        Case{"circled", circled_model(), {ink, second_ink, third_ink, fourth_ink}}
+    };
+    for (const Case& tested : cases) {
+        Scene scene;
+        SceneUnit& drawn_unit = scene.add_unit(tested.model, 1, unit_x, unit_z);
+        drawn_unit.unit->flags2 |= OA_UNIT_FLAG2_Z_BUFFER;
+        Card card(scene);
+        ProcessorPicture processor;
+        scene.begin_frame(processor, 0);
+        scene.plan_unit(drawn_unit);
+        scene.raster_processor(processor);
+        const CardPicture drawn = card.raster(scene);
+        const auto c = compare(drawn, processor, scene);
+        print(tested.name, c);
+        OA_CHECK(c.drawn > 0);
+        OA_CHECK(c.far == 0);
+        OA_CHECK(c.far_coverage == 0);
+        const ShownFaces shown = shown_faces(card.frame, processor, scene);
+        std::printf(
+            "%s: %zu pixels inside faces, %zu showing another\n",
+            tested.name,
+            shown.inside,
+            shown.other
+        );
+        OA_CHECK(shown.inside > 0);
+        OA_CHECK(shown.other == 0);
+        // Every polygon shows somewhere, as each lies over another somewhere.
+        for (const uint8_t colour : tested.inks) {
+            bool seen = false;
+            for (std::size_t i = 0; i + 3 < drawn.rgba.size() && !seen; i += 4)
+                seen = drawn.rgba[i + 3] == 255 && drawn.rgba[i] == colour;
+            OA_CHECK(seen);
+        }
+    }
+}
+
 // A lit building: the squares facing the camera take the bright row their
 // normals give under the light and draw from the bright page, the steep
 // ramp a dark row, and a flat square's colour goes through the shade table.
@@ -1507,8 +1743,9 @@ void test_mobile_nanoframe_once_built() {
     }
 }
 
-// Units under the water line: the viewpoint's own tinted, halved with the
-// blue lift; another player's not drawn at all.
+// With Underwater shimmer at 0%, the viewer's own unit under the water line
+// is halved and lifted towards blue, as 3.1c's blue table tints it, and
+// another player's is not drawn at all.
 void test_underwater() {
     Scene scene;
     scene.world->game.sea_level = 10;
@@ -1550,6 +1787,182 @@ void test_underwater() {
     scene.plan_unit(other);
     scene.raster_processor(processor);
     check_exact("above the water", compare(card.raster(scene), processor, scene));
+}
+
+/// Every submerged piece receives water shading, while the dry upper piece stays exact.
+void test_water_shimmer() {
+    Scene scene;
+    scene.world->game.sea_level = 10;
+    SceneUnit& own = scene.add_unit(stacked_model(), 1, unit_x, unit_z);
+    own.unit->flags2 |= OA_UNIT_FLAG2_Z_BUFFER;
+    own.unit->owner_index = 0;
+    Card card(scene);
+    ProcessorPicture processor;
+    scene.begin_frame(processor, 0);
+    scene.plan_unit(own);
+    const auto classic = card.raster(scene);
+    scene.water_shimmer = 1;
+    const auto wet = card.raster(scene);
+    const auto frozen = card.raster(scene);
+    OA_CHECK(wet.rgba == frozen.rgba);
+    OA_CHECK(wet.rgba != classic.rgba);
+    // Top square is at height 12, above sea level 10.
+    for (int channel = 0; channel < 4; ++channel)
+        OA_CHECK(wet.at(unit_x, unit_z - 6)[channel] == classic.at(unit_x, unit_z - 6)[channel]);
+    scene.water_shimmer = 0;
+    OA_CHECK(card.raster(scene).rgba == classic.rgba);
+}
+
+/// A sloping face crosses sea level. With Underwater shimmer at 0% Full
+/// draws it as 3.1c does, tinted whole as the game's depth rule finds its
+/// polygon under water; above 0% the shading follows the physical height,
+/// so the face's dry end stays as it is drawn out of the water.
+void test_partial_water_model() {
+    Scene scene;
+    SceneUnit& own = scene.add_unit(resting_model(), 1, unit_x, unit_z);
+    own.unit->flags2 |= OA_UNIT_FLAG2_Z_BUFFER;
+    Card card(scene);
+    ProcessorPicture processor;
+    scene.begin_frame(processor, 0);
+    scene.plan_unit(own);
+    const auto dry = card.raster(scene);
+    scene.world->game.sea_level = 8;
+    scene.begin_frame(processor, 0);
+    scene.plan_unit(own);
+    const auto disabled = card.raster(scene);
+    for (const int32_t down : {10, 30}) {
+        const uint8_t* plain = dry.at(unit_x, unit_z + down);
+        const uint8_t* tinted = disabled.at(unit_x, unit_z + down);
+        OA_CHECK(plain[3] == 255 && tinted[3] == 255);
+        OA_CHECK(std::abs(int{tinted[0]} - plain[0] / 2) <= 2);
+        OA_CHECK(std::abs(int{tinted[1]} - plain[1] / 2) <= 2);
+        OA_CHECK(std::abs(int{tinted[2]} - (plain[2] / 2 + 0x32)) <= 2);
+    }
+    scene.water_shimmer = 1;
+    const auto enabled = card.raster(scene);
+    const auto* dry_tip = dry.at(unit_x, unit_z + 30);
+    for (int channel = 0; channel < 4; ++channel)
+        OA_CHECK(enabled.at(unit_x, unit_z + 30)[channel] == dry_tip[channel]);
+    const auto* wet_foot = dry.at(unit_x, unit_z + 10);
+    OA_CHECK(enabled.at(unit_x, unit_z + 10)[0] != wet_foot[0]);
+}
+
+/// Asked for them, the stage keeps beside the frame's vertices the world
+/// height each of a unit's polygons draws it at, NaN for the rest, and
+/// draws the same picture: the square four units up and the panel from
+/// four to twelve.
+void test_vertex_heights() {
+    Scene scene;
+    SceneUnit& own = scene.add_unit(resting_model(), 1, unit_x, unit_z);
+    own.unit->flags2 |= OA_UNIT_FLAG2_Z_BUFFER;
+    Card card(scene);
+    ProcessorPicture processor;
+    scene.begin_frame(processor, 0);
+    scene.plan_unit(own);
+    const auto plain = card.raster(scene);
+    OA_CHECK(!card.frame.vertices.empty());
+    std::vector<float> heights;
+    for (const float shimmer : {0.0F, 1.0F}) {
+        scene.water_shimmer = shimmer;
+        scene.vertex_heights = &heights;
+        heights.clear();
+        const auto measured = card.raster(scene);
+        if (shimmer == 0)
+            OA_CHECK(measured.rgba == plain.rgba);
+        OA_CHECK(!heights.empty() && heights.size() <= card.frame.vertices.size());
+        float lowest = 100, highest = -100;
+        for (const float height : heights)
+            if (std::isfinite(height)) {
+                lowest = std::min(lowest, height);
+                highest = std::max(highest, height);
+            }
+        OA_CHECK(std::abs(lowest - 4) < 0.01F);
+        OA_CHECK(highest > 8 && highest < 12.01F);
+        scene.vertex_heights = nullptr;
+    }
+}
+
+/// A face crossing the sea is cut before shading, so its dry half cannot inherit tint.
+void test_waterline_face_split() {
+    namespace water = oa::app::renderer_water_shading;
+    const std::array<card::Vertex, 3> face{
+        {{.x = -12, .y = 0, .colour = {0.5F, 0.5F, 0.5F, 1}},
+         {.x = 12, .y = 0, .colour = {0.5F, 0.5F, 0.5F, 1}},
+         {.x = 12, .y = 20, .colour = {0.5F, 0.5F, 0.5F, 1}}}
+    };
+    constexpr std::array<card::Index, 3> source{0, 1, 2};
+    std::vector<card::Vertex> vertices;
+    std::vector<card::Index> indices;
+    water::split(
+        face,
+        source,
+        vertices,
+        indices,
+        [](const card::Vertex& vertex) { return vertex.x; },
+        [](card::Vertex& vertex, float depth) { vertex.colour.blue += depth / 100; }
+    );
+    bool sea_edge = false, wet = false;
+    for (const auto& vertex : vertices) {
+        OA_CHECK(vertex.x >= -12 && vertex.x <= 12 && vertex.y >= 0 && vertex.y <= 20);
+        if (vertex.x <= 0)
+            OA_CHECK(vertex.colour.blue == 0.5F);
+        if (vertex.x == 0)
+            sea_edge = true;
+        if (vertex.x > 0)
+            wet = wet || vertex.colour.blue > 0.5F;
+    }
+    OA_CHECK(sea_edge && wet);
+    for (std::size_t i = 0; i < indices.size(); i += 3) {
+        float low = 100, high = -100;
+        for (std::size_t k = 0; k < 3; ++k) {
+            low = std::min(low, vertices[indices[i + k]].x);
+            high = std::max(high, vertices[indices[i + k]].x);
+        }
+        OA_CHECK(low >= 0 || high <= 0);
+    }
+    OA_CHECK(indices.size() <= 3 * 24);
+    water::split(
+        face,
+        source,
+        vertices,
+        indices,
+        [](const card::Vertex&) { return 0.0F; },
+        [](card::Vertex&, float) { OA_CHECK(false); }
+    );
+    OA_CHECK(indices.size() == 3 && vertices.size() == 3);
+    auto dry = face[0];
+    water::apply(dry, 1, 2, -1, 1, 1, 1);
+    OA_CHECK(dry.x == face[0].x && dry.colour.blue == face[0].colour.blue);
+}
+
+/// Deep submerged geometry stays darker and cooler even at a caustic peak.
+void test_water_attenuation_and_contact() {
+    namespace water = oa::app::renderer_water_shading;
+    for (int frame = 0; frame < 40; ++frame) {
+        card::Vertex dry;
+        dry.colour = {0.5F, 0.5F, 0.5F, 1};
+        auto deep = dry;
+        water::apply(deep, 12, 19, 64, frame / 10.0, 1, 1);
+        OA_CHECK(deep.colour.red < dry.colour.red);
+        OA_CHECK(deep.colour.green < dry.colour.green);
+        OA_CHECK(deep.colour.blue < dry.colour.blue);
+        OA_CHECK(deep.colour.blue > deep.colour.red);
+        card::Vertex dark;
+        dark.colour = {0.05F, 0.05F, 0.05F, 1};
+        water::apply(dark, 12, 19, 64, frame / 10.0, 1, 1);
+        OA_CHECK(dark.colour.red >= 0.02F && dark.colour.blue > 0.03F);
+        water::apply(dry, 12, 19, -0.1F, frame / 10.0, 2, 1);
+        OA_CHECK(dry.colour.red == 0.5F && dry.colour.blue == 0.5F);
+        OA_CHECK(dry.x == 0 && dry.y == 0);
+    }
+    card::Vertex contact, below, above;
+    contact.colour = below.colour = above.colour = {0, 0, 0, 1};
+    water::apply(contact, 0, 0, 0.75F, 0, 1, 1);
+    water::apply(below, 0, 0, 2, 0, 1, 1);
+    water::apply(above, 0, 0, 0, 0, 1, 1);
+    OA_CHECK(contact.colour.blue > 0.15F);
+    OA_CHECK(below.colour.blue == 0 && above.colour.blue == 0);
+    OA_CHECK(contact.colour.alpha == 1);
 }
 
 // A digger's polygons below the ground are clipped on both sides.
@@ -1718,6 +2131,113 @@ void test_shadows() {
     OA_CHECK(d.far == 0 && d.far_coverage == 0 && d.shadowed > 0);
 }
 
+// Aircraft shadows: low and high, over land, a plateau and water, the
+// processor's shadow at the processor's place and at the game's darkness,
+// and past it only a soft edge a few pixels wide, a little wider high up;
+// stable poses reuse their uploads, and a landed aircraft's shadow is the
+// processor's.
+void test_aircraft_shadows() {
+    Scene scene;
+    SceneUnit& aircraft = scene.add_unit(square_model(), 1, unit_x, 128);
+    scene.world->unit_defs[1].flags = OA_UNIT_DEF_FLAG_CAN_FLY;
+    constexpr uint16_t flags = draw::graphics_shadows | draw::graphics_vehicle_shadows;
+    Card card(scene);
+    ProcessorPicture processor;
+
+    /// What the card draws of an aircraft's shadow against the processor.
+    struct Shadow {
+        std::size_t matched{};   ///< the processor's shadow pixels the card shades as dark
+        std::size_t wrong{};     ///< the processor's shadow pixels the card shades otherwise
+        std::size_t edge{};      ///< the card's shadow pixels past the processor's shadow
+        std::size_t dark_edge{}; ///< of them, as dark as the shadow itself
+        int reach{};             ///< the farthest of them from the processor's shadow, in pixels
+    };
+
+    const auto render = [&](int altitude, int ground, int sea) {
+        scene.ground = ground;
+        scene.world->game.sea_level = static_cast<uint8_t>(sea);
+        aircraft.unit->position.y = (std::max(ground, sea) + altitude) * unit;
+        scene.begin_frame(processor, flags);
+        scene.plan_unit(aircraft);
+        scene.raster_processor(processor);
+        const CardPicture drawn = card.raster(scene);
+        // The processor's shadow: what it draws where the card draws no body.
+        const auto shaded = [&](int x, int y) {
+            if (x < 0 || y < 0 || x >= frame_width || y >= frame_height)
+                return false;
+            const auto ux = static_cast<uint32_t>(x), uy = static_cast<uint32_t>(y);
+            return drawn_by_processor(processor.at(ux, uy), scene.key) &&
+                   drawn.at(ux, uy)[3] != 255;
+        };
+        constexpr int farthest = 8;
+        Shadow result;
+        for (int y = 0; y < frame_height; ++y)
+            for (int x = 0; x < frame_width; ++x) {
+                const uint8_t* pixel = drawn.at(static_cast<uint32_t>(x), static_cast<uint32_t>(y));
+                const bool black = pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0;
+                if (shaded(x, y)) {
+                    if (black && pixel[3] >= 126 && pixel[3] <= 129)
+                        ++result.matched;
+                    else
+                        ++result.wrong;
+                    continue;
+                }
+                if (!black || pixel[3] == 0 || pixel[3] == 255)
+                    continue;
+                ++result.edge;
+                result.dark_edge += pixel[3] >= 126;
+                int distance = farthest + 1;
+                for (int dy = -farthest; dy <= farthest; ++dy)
+                    for (int dx = -farthest; dx <= farthest; ++dx)
+                        if (shaded(x + dx, y + dy))
+                            distance = std::min(distance, std::max(std::abs(dx), std::abs(dy)));
+                result.reach = std::max(result.reach, distance);
+            }
+        return result;
+    };
+    const auto check_soft = [](const char* what, const Shadow& shadow, int reach) {
+        std::printf(
+            "%s: matched %zu, wrong %zu, edge %zu, dark edge %zu, reach %d\n",
+            what,
+            shadow.matched,
+            shadow.wrong,
+            shadow.edge,
+            shadow.dark_edge,
+            shadow.reach
+        );
+        OA_CHECK(shadow.matched > 0 && shadow.wrong == 0);
+        OA_CHECK(shadow.edge > 0 && shadow.dark_edge == 0);
+        OA_CHECK(shadow.reach <= reach);
+    };
+    // Low, the edge fades over two pixels; at cruise height, over four.
+    const auto low = render(48, 0, 0);
+    check_soft("aircraft shadow low", low, 2);
+    const auto high = render(192, 0, 0);
+    check_soft("aircraft shadow high", high, 4);
+    OA_CHECK(high.matched == low.matched);
+    OA_CHECK(high.edge > low.edge);
+    std::size_t shadow_indices = 0;
+    for (const auto& batch : card.frame.batches)
+        if (batch.operation == card::Operation::draw && batch.target != card::TargetHandle{})
+            shadow_indices += batch.index_count;
+    OA_CHECK(shadow_indices == 6);
+    const auto uploads = card.stage.counts().page_uploads;
+    const auto again = render(192, 0, 0);
+    OA_CHECK(card.stage.counts().page_uploads == uploads);
+    OA_CHECK(again.matched == high.matched && again.edge == high.edge);
+    // Over a plateau and over water the shadow lies where the processor's
+    // does: at the ground's place, the bed's under the water.
+    const auto plateau = render(192, 32, 0);
+    check_soft("aircraft shadow over a plateau", plateau, 4);
+    OA_CHECK(plateau.matched == high.matched && plateau.edge == high.edge);
+    const auto water = render(192, 0, 32);
+    check_soft("aircraft shadow over water", water, 4);
+    OA_CHECK(water.matched == high.matched && water.edge == high.edge);
+    std::ignore = render(0, 0, 0);
+    const auto grounded = compare(card.raster(scene), processor, scene);
+    OA_CHECK(grounded.far == 0 && grounded.far_coverage == 0);
+}
+
 // An unfinished building near the start of building: the bands clear its
 // image, and its shadow, cut by the image's place as the processor cuts it,
 // lies only past the building, so that the ground shows unshaded through
@@ -1835,6 +2355,34 @@ void test_faded_shadows() {
     const CardPicture again = frame_at(1.0F);
     OA_CHECK(again.rgba == full.rgba);
     OA_CHECK(processor.rgb == full_processor.rgb);
+}
+
+/// Model projectiles use their true vertex heights rather than sitting on the surface.
+void test_underwater_projectile() {
+    Scene scene;
+    scene.world->game.sea_level = 20;
+    const std::shared_ptr<const Model> model = square_model(third_ink);
+    const auto& prepared = draw::prepare_model(scene.library, model);
+    Card card(scene);
+    ProcessorPicture processor;
+    const auto frame = [&](int height, float shimmer) {
+        scene.water_shimmer = shimmer;
+        scene.begin_frame(processor, 0);
+        ProjectileDraw shot;
+        shot.position = {30 * unit, height * unit, 30 * unit};
+        shot.object = &model->objects[0];
+        shot.prepared = &prepared.objects[0];
+        shot.region = {0, 0, scene.width - 1, scene.height - 1};
+        scene.list.projectiles.push_back(shot);
+        oa::app::add_world_draw(scene.list, WorldDrawKind::projectile, 0);
+        return card.raster(scene);
+    };
+    const auto plain = frame(10, 0);
+    const auto submerged = frame(10, 1);
+    OA_CHECK(plain.at(30, 25)[3] == 255 && submerged.at(30, 25)[3] == 255);
+    OA_CHECK(plain.at(30, 25)[0] != submerged.at(30, 25)[0]);
+    const auto dry = frame(30, 0);
+    OA_CHECK(frame(30, 1).rgba == dry.rgba);
 }
 
 // A projectile and its shadow sprite, a debris piece and a shatter
@@ -2314,6 +2862,156 @@ void test_installed_unit_models(oa::AssetStore& assets, const char* dumped) {
     OA_CHECK(modes[2].sum.far_share() <= installed_lit_far_share);
 }
 
+/// A copy of a model with every primitive that draws filled with a colour
+/// of its own, numbered in the model's order from 2, past the image key,
+/// round again past the palette's last entry, so that a picture of it names
+/// the face each pixel shows. A textured quad is filled so; a textured
+/// primitive of other corners, which draws nothing, keeps drawing nothing.
+///
+/// @param source the model
+/// @return the numbered copy
+std::shared_ptr<const Model> numbered_model(const Model& source) {
+    constexpr int first_number = 2;
+    constexpr int numbers = OA_PALETTE_COLORS - first_number;
+    constexpr std::size_t quad_corners = 4;
+    auto model = std::make_shared<Model>(source);
+    int number = 0;
+    for (Object& object : model->objects)
+        for (Primitive& drawn : object.primitives) {
+            const bool draws =
+                drawn.is_colored != 0 ||
+                (!drawn.texture_name.empty() && drawn.vertex_indices.size() == quad_corners);
+            drawn.texture_name.clear();
+            drawn.is_colored = draws ? 1 : 0;
+            drawn.color_index = first_number + number++ % numbers;
+        }
+    return model;
+}
+
+/// A palette whose entries all differ, each channel a different multiple
+/// of the entry's number, so that no two faces numbered apart look alike.
+oa::Palette numbered_palette() {
+    oa::Palette palette{};
+    for (int i = 0; i < OA_PALETTE_COLORS; ++i)
+        palette.entries[i] = {
+            static_cast<uint8_t>((i * 53) % 256),
+            static_cast<uint8_t>((i * 97 + 31) % 256),
+            static_cast<uint8_t>((i * 151 + 77) % 256),
+            0
+        };
+    return palette;
+}
+
+/// Whether a unit's every vertex lies within the depths its depth plane's
+/// byte holds: a taller model's top wraps round to the bottom of the plane
+/// in the processor's picture, which the card's order does not follow.
+bool depths_in_plane(const Instance& instance) {
+    for (const auto& piece : instance.pieces())
+        for (const FixedVector3& vertex : piece.transformed_vertices) {
+            const int32_t depth = draw::model_depth_base + (vertex.y >> 16);
+            if (depth < 0 || depth > UINT8_MAX)
+                return false;
+        }
+    return true;
+}
+
+/// Every unit model of the installation with a depth plane, each face in a
+/// colour of its own, at rest and with its pieces below the root turned
+/// about the upright axis and drawn as moving pieces: the face the card
+/// shows at each pixel inside a face of the processor's raster is held to
+/// the processor's, over all of them and on each.
+void test_installed_unit_faces(oa::AssetStore& assets) {
+    Scene scene(numbered_palette());
+    scene.width = installed_width;
+    scene.height = installed_height;
+    scene.tick = 100;
+    Card card(scene);
+    ProcessorPicture processor;
+    std::size_t models = 0;
+    std::size_t out_of_plane = 0;
+    ShownFaces total;
+    std::string worst;
+    double worst_share = 0.0;
+    uint16_t slot = 1;
+    for (const std::string& name : installed_unit_models(assets)) {
+        const auto bytes = assets.load_file_contents("objects3d/" + name + ".3do");
+        if (!bytes || bytes->empty())
+            continue;
+        auto loaded = oa::formats::objects3d::load_3do(std::as_bytes(std::span(*bytes)));
+        if (!loaded.ok())
+            continue;
+        const std::shared_ptr<const Model> model = numbered_model(*loaded.value);
+        bool counted = false;
+        for (std::size_t pose = 0; pose <= installed_piece_turns.size(); ++pose) {
+            scene.units.clear();
+            SceneUnit& drawn_unit = scene.add_unit(model, slot, installed_x, installed_z);
+            slot = static_cast<uint16_t>(slot % 8 + 1);
+            const auto pieces = drawn_unit.instance.pieces();
+            if (pieces.empty())
+                break;
+            drawn_unit.unit->flags2 |= OA_UNIT_FLAG2_Z_BUFFER;
+            if (pose != 0) {
+                for (std::size_t i = 1; i < pieces.size(); ++i) {
+                    pieces[i].rotation.xz = installed_piece_turns[pose - 1];
+                    pieces[i].flags = static_cast<uint16_t>(pieces[i].flags & ~piece_cached);
+                }
+                drawn_unit.instance.rebuild_transforms();
+            }
+            if (!depths_in_plane(drawn_unit.instance)) {
+                if (pose == 0)
+                    ++out_of_plane;
+                break;
+            }
+            counted = true;
+            scene.begin_frame(processor, 0);
+            scene.plan_unit(drawn_unit);
+            scene.raster_processor(processor);
+            std::ignore = card.raster(scene);
+            const ShownFaces shown = shown_faces(card.frame, processor, scene);
+            total.inside += shown.inside;
+            total.other += shown.other;
+            const double share = shown.inside != 0 ? static_cast<double>(shown.other) /
+                                                         static_cast<double>(shown.inside)
+                                                   : 0.0;
+            if (share > worst_share) {
+                worst_share = share;
+                worst = name;
+            }
+            if (shown.other > installed_model_other_face_pixels &&
+                share > installed_model_other_face_share) {
+                std::fprintf(
+                    stderr,
+                    "%s, pose %zu: %zu of %zu pixels inside faces show another\n",
+                    name.c_str(),
+                    pose,
+                    shown.other,
+                    shown.inside
+                );
+                OA_CHECK(false);
+            }
+        }
+        if (counted)
+            ++models;
+        OA_CHECK(card.stage.error().empty());
+    }
+    const double share = total.inside != 0
+                             ? static_cast<double>(total.other) / static_cast<double>(total.inside)
+                             : 1.0;
+    std::printf(
+        "faces: %zu models with a depth plane, %zu left out as their depths pass the plane's "
+        "byte; %zu pixels inside faces, %zu showing another (%.3f%%); worst %s %.1f%%\n",
+        models,
+        out_of_plane,
+        total.inside,
+        total.other,
+        100.0 * share,
+        worst.c_str(),
+        100.0 * worst_share
+    );
+    OA_CHECK(models >= least_installed_models);
+    OA_CHECK(share <= installed_other_face_share);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2325,6 +3023,7 @@ int main(int argc, char** argv) {
         oa::AssetStore assets = oa::test::require_game_assets("the installed unit models");
         // A model named after --data is dumped, for a diagnosis.
         test_installed_unit_models(assets, argc > 2 ? argv[2] : nullptr);
+        test_installed_unit_faces(assets);
     } else {
         test_square();
         test_back_face();
@@ -2332,6 +3031,7 @@ int main(int argc, char** argv) {
         test_textured_trapezoid();
         test_depth_sorted();
         test_resting_on_depth_plane();
+        test_no_order_shows();
         test_lit_building();
         test_cloaked();
         test_nanoframe();
@@ -2339,12 +3039,19 @@ int main(int argc, char** argv) {
         test_nanoframe_pulse_lag();
         test_mobile_nanoframe_once_built();
         test_underwater();
+        test_water_shimmer();
+        test_vertex_heights();
+        test_partial_water_model();
+        test_waterline_face_split();
+        test_water_attenuation_and_contact();
         test_digger();
         test_clearing();
         test_carried();
         test_shadows();
+        test_aircraft_shadows();
         test_unfinished_building_shadow();
         test_faded_shadows();
+        test_underwater_projectile();
         test_flat_objects();
         test_pages_and_gamma();
         test_zoom();

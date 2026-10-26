@@ -27,6 +27,7 @@ in this repository or in the release packages.
 | [dr_mp3 and dr_flac](#dr_mp3-and-dr_flac) | 0.7.3 and 0.13.3, with later fixes | public domain or MIT No Attribution | static | static | static |
 | [Monocypher](#monocypher) | 4.0.2 | BSD-2-Clause | static | static | static |
 | [LZMA SDK](#lzma-sdk) | 25.01, decoder only | public domain | static | static | static |
+| [Lua](#lua) | 5.4.9 | MIT | static | static | static |
 | [mingw-w64 runtime and winpthreads](#mingw-w64-runtime-and-winpthreads) | 15.0.0 | ZPL 2.1, MIT, BSD | | static | |
 | [LLVM runtime libraries](#llvm-runtime-libraries) (libc++, libc++abi, libunwind, compiler-rt) | 23.1.2 | Apache 2.0 with LLVM Exceptions | | static | |
 
@@ -49,6 +50,10 @@ repository with CMake links these components as follows:
 - The LZMA SDK decoder, which reads LZMA and LZMA2 streams, is kept in
   [`src/formats/lzma/vendor/`](src/formats/lzma/vendor/) and compiled into
   every build.
+- Lua 5.4.9, which runs the scripts of a mutator, is kept in
+  [`third_party/lua/`](third_party/lua/) and compiled into every build.
+  The coroutine, debug, input and output, maths, operating-system and
+  package libraries are left out.
 - When CMake is pointed at the SDL that `tools/bootstrap_sdl.py` installs,
   as `run.sh` and the README do, SDL 3.4.16 with the changes described
   under [SDL](#sdl) is linked statically. Otherwise the build takes
@@ -202,6 +207,48 @@ licence text is in
 > THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 > (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 > OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## Lua
+
+Lua 5.4.9, from <https://www.lua.org/ftp/lua-5.4.9.tar.gz> (SHA-256
+`2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6`),
+runs the scripts of a mutator. It is compiled into the game unchanged
+from [`third_party/lua/`](third_party/lua/). The script host also keeps a
+changed copy of the pattern matcher from that release, in
+[`src/data/script-host/src/patterns.cpp`](src/data/script-host/src/patterns.cpp),
+which counts each step of `string.find`, `string.match`, `string.gmatch` and
+`string.gsub` against the script's instruction allowance. It keeps the same
+kind of copy in
+[`src/data/script-host/src/libraries.cpp`](src/data/script-host/src/libraries.cpp)
+for `next`, `rawequal`, `tonumber`, `warn`, `string.byte`, `table.move`,
+`table.insert`, `table.remove`, `table.concat`, `table.pack`,
+`table.unpack`, `table.sort`, `utf8.char`, `utf8.len`, `utf8.codepoint`,
+`utf8.offset` and `utf8.codes`, and in
+[`src/data/script-host/src/string_format.cpp`](src/data/script-host/src/string_format.cpp)
+for `string.format`, counting the bytes, elements or comparisons those
+calls perform. The licence is the MIT licence. The licence text is in
+[`licenses/lua-LICENSE.txt`](licenses/lua-LICENSE.txt).
+
+> Copyright (C) 1994-2026 Lua.org, PUC-Rio.
+>
+> Permission is hereby granted, free of charge, to any person obtaining
+> a copy of this software and associated documentation files (the
+> "Software"), to deal in the Software without restriction, including
+> without limitation the rights to use, copy, modify, merge, publish,
+> distribute, sublicense, and/or sell copies of the Software, and to
+> permit persons to whom the Software is furnished to do so, subject to
+> the following conditions:
+>
+> The above copyright notice and this permission notice shall be
+> included in all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+> EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+> MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+> IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+> CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+> TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+> SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## LZMA SDK
 

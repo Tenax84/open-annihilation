@@ -260,6 +260,7 @@ void view_settings_round_trip() {
     changed.full_rings = false;
     vr::write_view_settings(
         changed,
+        ui,
         [&](std::string_view name, uint32_t value) { numbers[std::string(name)] = value; },
         [&](std::string_view name, std::string_view value) {
             texts[std::string(name)] = std::string(value);
@@ -298,6 +299,57 @@ void view_settings_round_trip() {
         rules.guard_maneuver ==
         oa::data::match_rules::OrdersConPatrolGuardOptionsGuardManeuver::scatter
     );
+}
+
+/// A snap radius the profile gives the player no room to choose (ui.click-snap
+/// off, or that radius's maximum 0) is not stored as the player's choice
+/// when the settings are written: once the profile gives it room, its
+/// default plays, not a 0 written while it had none.
+void unchosen_snap_radius_not_stored() {
+    namespace vr = oa::app::view_rules;
+    using oa::data::match_rules::OrdersConPatrolGuardOptions;
+    const OrdersConPatrolGuardOptions builders{};
+    std::map<std::string, uint32_t> numbers;
+    vr::ViewSettingsStore store{};
+    store.number = [&](std::string_view name) -> std::optional<uint32_t> {
+        const auto found = numbers.find(std::string(name));
+        return found == numbers.end() ? std::nullopt : std::optional<uint32_t>(found->second);
+    };
+    const auto write = [&](const vr::ViewSettings& settings, const UiRules& ui) {
+        vr::write_view_settings(
+            settings,
+            ui,
+            [&](std::string_view name, uint32_t value) { numbers[std::string(name)] = value; },
+            [](std::string_view, std::string_view) {}
+        );
+    };
+    // With ui.click-snap off, OK in the options dialog writes neither radius.
+    const UiRules off{};
+    auto settings = vr::read_view_settings(off, builders, store);
+    OA_CHECK(settings.mex_snap_radius == 0 && settings.wreck_snap_radius == 0);
+    vr::apply_dialog_options(vr::dialog_options(settings, off), off, settings);
+    write(settings, off);
+    OA_CHECK(numbers.count("MexSnapRadius") == 0 && numbers.count("WreckSnapRadius") == 0);
+    // Turned on with its defaults the wreck radius is 1, and the mex radius
+    // has no room and is not written.
+    UiRules on{};
+    on.click_snap.enabled = true;
+    on.click_snap.wreck_default = 1;
+    on.click_snap.wreck_max = 1;
+    settings = vr::read_view_settings(on, builders, store);
+    OA_CHECK(settings.wreck_snap_radius == 1 && settings.mex_snap_radius == 0);
+    write(settings, on);
+    OA_CHECK(numbers.count("WreckSnapRadius") == 1 && numbers.at("WreckSnapRadius") == 1);
+    OA_CHECK(numbers.count("MexSnapRadius") == 0);
+    // Given room later, the mex radius starts at the profile's default.
+    on.click_snap.mex_default = 4;
+    on.click_snap.mex_max = 4;
+    OA_CHECK(vr::read_view_settings(on, builders, store).mex_snap_radius == 4);
+    // A radius the player chose with room for it, 0 included, is kept.
+    settings = vr::read_view_settings(on, builders, store);
+    settings.wreck_snap_radius = 0;
+    write(settings, on);
+    OA_CHECK(vr::read_view_settings(on, builders, store).wreck_snap_radius == 0);
 }
 
 void build_tool_layouts() {
@@ -629,6 +681,7 @@ int main() {
     screenshot_names();
     click_snap_search();
     view_settings_round_trip();
+    unchosen_snap_radius_not_stored();
     build_tool_layouts();
     build_facings();
     facing_toward_points();

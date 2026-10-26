@@ -464,6 +464,22 @@ the game draws its text and how the modern fonts draw it.
   more than you chose. It changes only what your screen shows, never the
   game, and takes effect at once, in a multiplayer game or a replay too.
   Choose Reduced or Off if flashing light is uncomfortable for you.
+- **Fog of War**, Classic or Smooth, Smooth by default. It says how the
+  graphics card draws the edges of the fog of war (Hardware acceleration
+  Full): the black over ground never seen, and the greyed ground seen
+  before but out of sight now.
+  - **Classic**: hard edges that step from sight cell to sight cell, drawn
+    through the game's own fog tiles, as the original game drew them. The
+    greyed band along an edge reaches a few pixels past the black, and
+    under the game's dithered fog (`+dither`) that band, like all ground
+    out of sight, has every other pixel blacked out: the thin chequered
+    fringe the original game shows.
+  - **Smooth**: soft edges that fade across each sight cell.
+
+  While the processor draws the battlefield (Hardware acceleration Off or
+  Basic) the fog is always Classic, as the original game drew it. It
+  changes only what your screen shows, never what any player can see, and
+  takes effect at once, in a multiplayer game or a replay too.
 - **Enhanced graphics**, Off by default. On, shots and explosions glow:
   lasers, lightning, plasma and flame shots and the flashes of explosions
   spread a soft light over what is around them. With Enhanced
@@ -497,6 +513,73 @@ the game draws its text and how the modern fonts draw it.
   zoom out at Automatic the view never goes farther out than 1/2, or 1/6
   with Full hardware acceleration, so choose a farther Maximum zoom out to
   see the dots.
+- **Allow Full 3D Mode**, On by default. With Full hardware acceleration,
+  Alt+drag on the battlefield (Option+drag on a Mac) turns the camera
+  about the point under the pointer, and Alt+Shift+drag pans it; Alt or
+  Option with the middle button turns it too. Alt+R (Option+R) puts the
+  classic view back. A match always starts in the classic top-down view,
+  and Off keeps it there. While an order or a building is armed, Alt+click
+  still places it unsnapped (the click snap's override key) and leaves the
+  camera alone. With Hardware acceleration Off or Basic, Alt and its drags,
+  Alt+R and Alt+U keep their classic uses. The rotated view is drawn by the graphics card
+  through Metal on a Mac or Vulkan elsewhere: on Windows 7 to 11 and Linux
+  where the card's driver offers Vulkan, but not on Windows XP or 95 to
+  Me. Where neither can be used, the first turn fails once and the view
+  stays classic, and Alt keeps its other uses for the rest of the run.
+- **Unlocked Camera**, Off by default, locked ("Needs Allow Full 3D Mode")
+  while Allow Full 3D Mode is Off. On lets the camera turn beyond the
+  angles at which the game's flat art still looks right. Alt+U (Option+U)
+  turns it On or Off during a match and keeps the choice.
+- **Coloured weapon lighting**, **Nanolathe glow**, **Wreck glow** and
+  **Heat distortion**, each from 0% to 200% in steps of 10%. By default
+  with Full hardware acceleration, Coloured weapon lighting and Nanolathe
+  glow are 20%, Wreck glow 30% and Heat distortion 40%; below Full all four
+  are 0%, so Off and Basic keep the game's own look. Setting Hardware
+  acceleration from Full to Basic or Off turns all four to 0%, and back to
+  Full turns each to its own default; below Full each can still be turned
+  on. Zero leaves the effect out
+  and 100% draws it at its standard strength. A weapon lights in the colour
+  its shot is drawn in: a laser or a lightning bolt in its beam's colour,
+  shells, plasma and missiles in a warm light. The lighting sliders change how bright a light is, never how
+  far it reaches or how long it lasts; Heat distortion changes how far the
+  shimmer moves the picture. They apply in the classic and the rotated
+  view and take effect at once, in a match too. A saved Off or On from an
+  earlier build reads as 0% or 100%.
+- **Water ripples**, **Coastal waves**, **Underwater shimmer** and
+  **Naval reflections**, each from 0% to 200% in steps of 10%: by default
+  Water ripples 60%, Coastal waves 30%, and Underwater shimmer and Naval
+  reflections 100%. They are locked ("Needs Full acceleration") while
+  Hardware acceleration is not Full. They apply in the classic and the
+  rotated view, and zero leaves the effect out.
+  - **Water ripples** move the map's own water art gently in one direction
+    the map keeps, the same after a saved game is loaded: broad swells and
+    fine ripples at different speeds, the finer ones shown only up close.
+    What lies on the sea bed, such as an underwater metal patch, moves with
+    the art and lies under the water's foam and rings, while the shore and
+    land stay still. Visible naval shots and hits stir the water around
+    them, and shells that strike the water splash. Torpedoes and their hits
+    stay at their depth and make no splash.
+  - **Coastal waves** run toward the shore, gentler on small, sheltered
+    water.
+  - **Underwater shimmer** tints and lights only the parts of scenery and
+    units that are under the water, more the deeper they lie; what stands
+    above the water keeps its colours. At 0% your own units under the
+    water are darkened and tinted blue as the game draws them at every
+    other Hardware acceleration.
+  - **Naval reflections** draw a faint, soft picture of each visible
+    surface ship on the water, mirrored under its hull: each part of the
+    ship shows as far below its waterline as it stands above it, fainter
+    the higher it stands. They fade as the view turns flat.
+
+  Fine detail fades as the view zooms out, and the reflections of distant
+  fleets are kept few. These effects change only what your screen shows,
+  never the water's depth, movement or what any player can see. With
+  shadows on and Full hardware acceleration, an aircraft's shadow also has
+  a soft edge, a little wider once it climbs to cruise height above the
+  ground or water under it; it keeps the place and the darkness it has at
+  every other Hardware acceleration.
+
+![The end of the Graphics section: the Water ripples, Coastal waves, Underwater shimmer and Naval reflections sliders at their defaults, 60%, 30%, 100% and 100%.](images/settings/graphics-2.png)
 
 Some computers start with other defaults, which Restore defaults puts back
 and which a value you choose always replaces:
@@ -788,17 +871,19 @@ of the game's file types this copy opens.
   menu. **Cancel** leaves it as it was. During a game the row is locked
   and says "Choose from the main menu." The welcome itself is
   [the first-run setup](first-run.md).
-- **File Type Registration**, on Windows, Linux and macOS. Five switches,
+- **File Type Registration**, on Windows, Linux and macOS. Seven switches,
   all On at first:
   - **Mod packages (.oamod)**
   - **Map packs (.oamap)**
   - **Language packs (.oalang)**
   - **Registry files (.oareg)**
+  - **Mutator packages (.oamut)**
+  - **Brain packages (.oabrain)**
   - **Launch files (.oalaunch)**: a launch file opened from the file
     manager starts the game in its battle room
     ([Opening a launch file](command-line.md#opening-a-launch-file))
 
-  ![The end of the System section: File Type Registration with its line, then the Mod packages, Map packs, Language packs, Registry files and Launch files switches, each On.](images/settings/system-2.png)
+  ![The end of the System section: File Type Registration with its line, then the Mod packages, Map packs, Language packs, Registry files, Mutator packages, Brain packages and Launch files switches, each On.](images/settings/system-2.png)
 
   The hint says "Open these files with the game from your file manager."
   **OK** applies a switch you moved, at once. **Cancel** leaves every
@@ -807,7 +892,7 @@ of the game's file types this copy opens.
   the game does not put a type back.
   Each switch is kept as `on` or `off` under
   `open-annihilation.file-types.` and its extension (`.oamod`, `.oamap`,
-  `.oalang`, `.oareg`, `.oalaunch`). A missing key, or any text other than
+  `.oalang`, `.oareg`, `.oamut`, `.oabrain`, `.oalaunch`). A missing key, or any text other than
   `off`, leaves the type on. Each switch acts on its own type alone: moving
   one never registers, withdraws or changes the opener of another.
 
@@ -827,7 +912,7 @@ of the game's file types this copy opens.
   On a Mac, a switch that is on means Open Annihilation is the program
   Finder uses to open that type. The switch shows that choice as it is
   now, not only what was stored. Off hands the type back to the program
-  that opens a zip archive (the three packages, usually Archive Utility)
+  that opens a zip archive (the five packages, usually Archive Utility)
   or plain text (a registry file or a launch file). The app keeps the type
   and its icon either way; only the program that opens it changes. If the
   system refuses, the log says so and the switch shows the choice the
@@ -840,7 +925,7 @@ of the game's file types this copy opens.
   System opens in this run, and it goes away when every switch matches
   what you asked. [macOS](installation/macos.md) says the same for opening
   a file.
-- **File types**, on iPhone and iPad, in place of the five switches. The
+- **File types**, on iPhone and iPad, in place of the seven switches. The
   system takes the types from the app, and there is no way to choose a
   default opener, so there is no switch. The hint is one sentence.
 

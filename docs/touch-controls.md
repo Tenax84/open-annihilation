@@ -104,11 +104,20 @@ prompt and Done button stand in it.
 
 A tap does not have to land exactly on a unit: when nothing lies under the
 finger, the nearest unit within about 12 points is taken. On buttons, in
-menus and dialogs the nearest button within about 22 points is pressed. The
-two buttons at the main menu's bottom right, the **OA** button, which opens
-the Library, and the **Settings** button with the gears, take a tap inside
-them. A button shows pressed while a finger rests on it, and a finger that
-slides off before lifting presses nothing, as with a mouse.
+menus and dialogs the nearest button within about 22 points is pressed.
+Between an OA-layer button (Mutators, MORE MAPS…, GET MAP) and the 3.1c
+gadget beside it, the nearer one is pressed, each measured to its edge, and
+a point inside the gadget stays the gadget's. The two buttons at the main
+menu's bottom right, the **OA** button, which opens the Library, and the
+**Settings** button with the gears, take a tap inside them. A button shows
+pressed while a finger rests on it, and a finger that slides off before
+lifting presses nothing, as with a mouse.
+
+On the open megamap (the `ui.megamap` hack) a tap, a double tap, a drag and
+the order wheel act on the megamap as the mouse's clicks there, at the
+finger and on the icon under it, never on the battlefield hidden under it;
+a tap or a hold with a building armed places it there
+([ui.megamap](mods/standard-hacks/ui.megamap.md#clicks)).
 
 While a finger rests on the battlefield, the order cursor is drawn at the
 finger; on a tablet the status bar names the unit under the finger. The map scrolls by itself while a selection box or a
@@ -123,7 +132,8 @@ button:
 
 - **QUEUE** is Shift for orders: the orders a tap gives join the end of the
   selected units' queues, area orders and buildings queue too, an armed
-  order stays armed, and the queued orders are drawn on the battlefield.
+  order stays armed until QUEUE goes off (as letting Shift go ends it), and
+  the queued orders are drawn on the battlefield.
 - **ADD** is Shift for selecting: a tap on a unit adds it to the selection
   or takes it out, a box adds what it takes in, and a group chip adds its
   group.
@@ -147,8 +157,8 @@ plain tap would give is ringed. A picked order is given at the held point,
 exactly as arming its button and clicking there does. **Info** opens the
 unit info panel for the unit at the point (or the selected unit); **Type**
 selects every unit of that unit's type. The hub in the middle is **QUEUE**
-for the next pick only: the order joins the queue and stays armed. A tap
-outside the wheel closes it.
+for the next pick only: the order joins the queue, and is not left armed
+unless QUEUE is on. A tap outside the wheel closes it.
 
 Holding and then dragging, instead of lifting, draws a selection box.
 

@@ -655,16 +655,21 @@ layout::Rect window_rect_at(const WindowPlace& place, const Edges& edges) {
     return {left, first_row, right - left, bottom - first_row};
 }
 
-/// Returns the canvas rectangle a window rectangle covers: its corners
-/// mapped back through the canvas's placement, as the game maps the
-/// pointer, the top left rounded down and the bottom right up.
+/// Returns the canvas edges a window rectangle covers: its corners mapped
+/// back through the canvas's placement, as the game maps the pointer.
 ///
 /// @param place how the window shows the canvas
 /// @param window the rectangle, in the window's pixels
-/// @return the rectangle, in canvas pixels; the window's own without a renderer
-layout::Rect canvas_rect_of(const WindowPlace& place, const layout::Rect& window) {
+/// @return the edges, in canvas pixels; the window's own without a renderer
+Edges canvas_edges_of(const WindowPlace& place, const layout::Rect& window) {
+    const Edges own{
+        static_cast<double>(window.x),
+        static_cast<double>(window.y),
+        static_cast<double>(window.x) + static_cast<double>(window.width),
+        static_cast<double>(window.y) + static_cast<double>(window.height)
+    };
     if (place.renderer == nullptr)
-        return window;
+        return own;
     const FrameShift shift = renderer_frame_shift(place.renderer);
     const auto to_canvas = [&place,
                             &shift](int32_t x, int32_t y, float& canvas_x, float& canvas_y) {
@@ -686,10 +691,46 @@ layout::Rect canvas_rect_of(const WindowPlace& place, const layout::Rect& window
     float bottom = 0.0F;
     if (!to_canvas(window.x, window.y, left, first_row) ||
         !to_canvas(window.x + window.width, window.y + window.height, right, bottom))
-        return window;
-    const auto down = [](float edge) { return static_cast<int32_t>(std::floor(edge)); };
-    const auto up = [](float edge) { return static_cast<int32_t>(std::ceil(edge)); };
-    return {down(left), down(first_row), up(right) - down(left), up(bottom) - down(first_row)};
+        return own;
+    return {left, first_row, right, bottom};
+}
+
+/// Returns the canvas rectangle a window rectangle covers: its edges
+/// (canvas_edges_of), the top left rounded down and the bottom right up.
+///
+/// @param place how the window shows the canvas
+/// @param window the rectangle, in the window's pixels
+/// @return the rectangle, in canvas pixels; the window's own without a renderer
+layout::Rect canvas_rect_of(const WindowPlace& place, const layout::Rect& window) {
+    const Edges edges = canvas_edges_of(place, window);
+    const auto down = [](double edge) { return static_cast<int32_t>(std::floor(edge)); };
+    const auto up = [](double edge) { return static_cast<int32_t>(std::ceil(edge)); };
+    return {
+        down(edges.left),
+        down(edges.top),
+        up(edges.right) - down(edges.left),
+        up(edges.bottom) - down(edges.top)
+    };
+}
+
+/// Returns how far a canvas point lies from a rectangle's edges, in canvas
+/// pixels.
+///
+/// A point inside the edges is no distance. Outside, the distance is to the
+/// nearest edge, as the touch dispatcher measures a gadget's, unrounded so
+/// that a control drawn between canvas pixels is no nearer than it shows.
+/// Edges with no area are as far as a distance can be.
+///
+/// @param x the point's column, in canvas pixels
+/// @param y the point's row
+/// @param edges the rectangle's edges, in canvas pixels
+/// @return the distance
+float distance_to_edges(float x, float y, const Edges& edges) noexcept {
+    if (!(edges.right > edges.left) || !(edges.bottom > edges.top))
+        return std::numeric_limits<float>::infinity();
+    const double across = std::max({edges.left - x, 0.0, x - edges.right});
+    const double down = std::max({edges.top - y, 0.0, y - edges.bottom});
+    return static_cast<float>(std::hypot(across, down));
 }
 
 /// Sets a control's rectangles: in the window's pixels, and on the canvas.
@@ -800,7 +841,7 @@ std::string_view library_word(void* /*context*/, std::string_view english) {
 /// shown. While the package count is final it is "Library · 1 package" or
 /// "Library · N packages", and "Library · N packages · 1 update" or
 /// "Library · N packages · M updates" while updates wait. A package is a
-/// mod, a map pack, a language pack or a downloaded expansion. While the
+/// mod, a map pack, a language pack, a mutator or a downloaded expansion. While the
 /// count is not final the package count is left out: "Library", or
 /// "Library · 1 update" and "Library · N updates".
 ///
@@ -838,6 +879,22 @@ template <typename Box>
 auto pointed_look(const Box& box) noexcept {
     return std::make_tuple(
         box.hovered, box.pressed, box.marked, box.finger_shift_x, box.finger_shift_y
+    );
+}
+
+/// Returns the parts of a screen's interaction its drawing shows.
+///
+/// @param shown the interaction
+/// @return the hover, the press, the focus, whether it shows and a
+///     finger's shift
+auto pointed_look(const kit::Interaction& shown) noexcept {
+    return std::make_tuple(
+        shown.hovered,
+        shown.pressed,
+        shown.focused,
+        shown.focus_shown,
+        shown.finger_shift.x,
+        shown.finger_shift.y
     );
 }
 
@@ -1241,7 +1298,8 @@ NoticeScreen::pointer(ScreenInputKind kind, uint8_t button, kit::Point at, int32
     default:
         break;
     }
-    return with_moved_look(take(action), pointed_look(notice_) != before, revision_);
+    const LayerAnswer answer = take(action);
+    return with_moved_look(answer, pointed_look(notice_) != before, revision_);
 }
 
 LayerAnswer NoticeScreen::key(kit::Key pressed, uint32_t /*sdl_key*/) {
@@ -1329,26 +1387,29 @@ LayerAnswer
 QuestionScreen::pointer(ScreenInputKind kind, uint8_t button, kit::Point at, int32_t finger_reach) {
     const auto before = pointed_look(question_);
     const int32_t tall = shown_height();
+    // The buttons are tested where the fonts the question is drawn in place them.
+    const kit::Fonts* fonts = layer_.screen_fonts();
     kit::QuestionAnswer outcome{};
     switch (kind) {
     case ScreenInputKind::pointer_move:
-        outcome = kit::question_pointer_move(question_, at, tall);
+        outcome = kit::question_pointer_move(question_, at, tall, fonts);
         break;
     case ScreenInputKind::pointer_down:
         // A finger's press takes the nearest button within reach.
         if (button == SDL_BUTTON_LEFT)
             outcome = finger_reach > 0
-                          ? kit::question_finger_down(question_, at, tall, finger_reach)
-                          : kit::question_pointer_down(question_, at, tall);
+                          ? kit::question_finger_down(question_, at, tall, finger_reach, fonts)
+                          : kit::question_pointer_down(question_, at, tall, fonts);
         break;
     case ScreenInputKind::pointer_up:
         if (button == SDL_BUTTON_LEFT)
-            outcome = kit::question_pointer_up(question_, at, tall);
+            outcome = kit::question_pointer_up(question_, at, tall, fonts);
         break;
     default:
         break;
     }
-    return with_moved_look(take(outcome, 0), pointed_look(question_) != before, revision_);
+    const LayerAnswer answer = take(outcome, 0);
+    return with_moved_look(answer, pointed_look(question_) != before, revision_);
 }
 
 LayerAnswer QuestionScreen::key(kit::Key pressed, uint32_t sdl_key) {
@@ -2189,23 +2250,58 @@ bool OaLayer::finish_pad(LayerScreen& screen, LayerAnswer answer) {
 }
 
 bool OaLayer::take_pad_action(oa::ui::pad_controls::Action action) {
-    LayerScreen* screen = top();
-    if (screen == nullptr)
-        return false;
     lay_out_screens();
-    calling_ = screen;
-    close_asked_ = false;
-    return finish_pad(*screen, screen->pad_action(action));
+    const LayerView seen = view();
+    // A modal screen is the only one offered the action, so Y under a
+    // question never reaches the button. One it passes on becomes a key or a
+    // click, which the modal screen then takes as input.
+    if (LayerScreen* modal = top_modal(seen)) {
+        if (!holds(modal))
+            return false;
+        calling_ = modal;
+        close_asked_ = false;
+        return finish_pad(*modal, modal->pad_action(action));
+    }
+    // The same walk as take_input: top down, skipping a screen that is not
+    // showing, until one answers other than pass.
+    std::vector<LayerScreen*> shown_screens;
+    for (auto it = screens_.rbegin(); it != screens_.rend(); ++it)
+        if (!empty_rect((*it)->placement(seen).shown))
+            shown_screens.push_back(it->get());
+    for (LayerScreen* screen : shown_screens) {
+        if (!holds(screen))
+            continue;
+        calling_ = screen;
+        close_asked_ = false;
+        if (finish_pad(*screen, screen->pad_action(action)))
+            return true;
+    }
+    return false;
 }
 
 bool OaLayer::take_pad_stick(float notches) {
-    LayerScreen* screen = top();
-    if (screen == nullptr)
-        return false;
     lay_out_screens();
-    calling_ = screen;
-    close_asked_ = false;
-    return finish_pad(*screen, screen->pad_stick(notches));
+    const LayerView seen = view();
+    if (LayerScreen* modal = top_modal(seen)) {
+        if (!holds(modal))
+            return false;
+        calling_ = modal;
+        close_asked_ = false;
+        return finish_pad(*modal, modal->pad_stick(notches));
+    }
+    std::vector<LayerScreen*> shown_screens;
+    for (auto it = screens_.rbegin(); it != screens_.rend(); ++it)
+        if (!empty_rect((*it)->placement(seen).shown))
+            shown_screens.push_back(it->get());
+    for (LayerScreen* screen : shown_screens) {
+        if (!holds(screen))
+            continue;
+        calling_ = screen;
+        close_asked_ = false;
+        if (finish_pad(*screen, screen->pad_stick(notches)))
+            return true;
+    }
+    return false;
 }
 
 void OaLayer::take_answer(LayerScreen& screen, LayerAnswer answer, uint32_t key_down) {
@@ -2436,22 +2532,6 @@ class RegisteredKitScreen final : public LayerScreen {
     }
 
   private:
-
-    /// Returns the parts of the screen's interaction its drawing shows.
-    ///
-    /// @param shown the interaction
-    /// @return the hover, the press, the focus, whether it shows and a
-    ///     finger's shift
-    static auto pointed_look(const kit::Interaction& shown) noexcept {
-        return std::make_tuple(
-            shown.hovered,
-            shown.pressed,
-            shown.focused,
-            shown.focus_shown,
-            shown.finger_shift.x,
-            shown.finger_shift.y
-        );
-    }
 
     /// Takes a pointer's move, press or release, as pointer does, before
     /// the look it moved is counted.
@@ -2717,6 +2797,9 @@ void OaLayer::drop_pending_prompts() {
 }
 
 void OaLayer::tick() {
+    // One read of the host's mutators serves placement, this tick, the draw
+    // and the room chat. The draw of this frame still sees the rows.
+    runtime_.drop_host_mutator_fetch_cache();
     // The window's size, and with it the screens' class, may have changed.
     lay_out_screens();
     runtime_.keep_main_menu_screen();
@@ -2728,6 +2811,11 @@ void OaLayer::tick() {
     runtime_.keep_briefing_menu_screen();
     runtime_.keep_presence_card_screen();
     runtime_.keep_more_maps_screen();
+    runtime_.keep_mutator_button_screen();
+    runtime_.keep_brain_seats_screen();
+    runtime_.keep_brain_room_screen();
+    runtime_.offer_differing_results_question();
+    runtime_.follow_mutator_room_chat();
     runtime_.keep_get_map_screen();
     // A tick may close a screen, or open another. The screens waiting are
     // ticked too, so that one whose screen of the game goes leaves the queue.
@@ -2935,6 +3023,17 @@ uint32_t OaLayer::front_darkenings() const {
             return darkens(*screen) && !empty_rect(screen->placement(seen).shown);
         })
     );
+}
+
+void OaLayer::forget_kept_drawings() noexcept {
+    front_drawings_.clear();
+}
+
+uint64_t OaLayer::kept_drawing(const LayerScreen& screen) const noexcept {
+    for (const KeptDrawing& drawing : front_drawings_)
+        if (drawing.screen == screen.identity())
+            return drawing.drawing;
+    return 0;
 }
 
 void OaLayer::darken_front_end(renderer::Surface& frame) const {
@@ -3229,6 +3328,7 @@ OaLayer::FrontFrame OaLayer::prepare_front_end(const SDL_FRect& area) {
     common.icon_height = icon.height;
     common.language = &oa::data::languages::interface_language();
     common.languages = oa::data::languages::registry_generation();
+    common.interface_words = oa::data::languages::interface_generation();
     const oa::present::TextSettings text = oa::present::game_text_settings();
     common.modern_text = text.style.modern_fonts;
     common.outline = text.style.outline;
@@ -4068,6 +4168,51 @@ void OaLayer::automation_controls(std::vector<AutomationControl>& controls) cons
         if (screen.modal())
             break;
     }
+}
+
+std::optional<float> OaLayer::nearest_control(float x, float y, float radius) const {
+    if (!(radius >= 0.0F))
+        return std::nullopt;
+    const LayerView seen = view();
+    const LayerScreen* modal = top_modal(seen);
+    const WindowPlace place = window_place(
+        runtime_.sdl_.renderer,
+        seen.match,
+        static_cast<int32_t>(runtime_.surface_.width),
+        static_cast<int32_t>(runtime_.surface_.height),
+        runtime_.menu_scaling()
+    );
+    float best = radius;
+    bool found = false;
+    const auto consider = [&](const LayerScreen& screen) {
+        const LayerPlacement placed = screen.placement(seen);
+        if (empty_rect(placed.shown) || placed.points_width <= 0 || placed.points_height <= 0)
+            return;
+        const kit::DisplayList list = screen.display_list();
+        const int32_t scale =
+            placed.scale_percent > 0 ? placed.scale_percent : seen.frame.scale_percent;
+        for (const kit::AutomationEntry& entry :
+             kit::automation_parts(list, screen.interaction())) {
+            if (!entry.enabled || !entry.shown || entry.rect.width <= 0 || entry.rect.height <= 0)
+                continue;
+            const Edges edges = screen_edges(placed, entry.rect, scale);
+            const layout::Rect window =
+                place.front_end ? window_rect_at(place, edges) : window_rect_of(place, edges);
+            const float distance = distance_to_edges(x, y, canvas_edges_of(place, window));
+            if (distance <= best) {
+                best = distance;
+                found = true;
+            }
+        }
+    };
+    // A modal screen answers for itself alone. Otherwise every screen that
+    // shows does, and one that does not show adds nothing.
+    if (modal != nullptr)
+        consider(*modal);
+    else
+        for (auto it = screens_.rbegin(); it != screens_.rend(); ++it)
+            consider(**it);
+    return found ? std::optional<float>{best} : std::nullopt;
 }
 
 } // namespace oa::app

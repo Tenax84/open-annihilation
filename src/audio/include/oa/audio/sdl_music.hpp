@@ -9,10 +9,11 @@
 namespace oa::audio {
 
 // Music-file backend for the CD-audio boundary. Each disc track is a file
-// of the MusicDisc, decoded by MusicDecoder on the sound output's thread
-// and played through a stream of its own (oa/audio/sound_output.hpp), so
-// pausing it leaves effects alone. The CD-audio mixer line maps to that
-// stream's gain.
+// of the MusicDisc. A thread of the device's own opens the file and decodes
+// it; the sound output's callback only takes samples that are already
+// decoded, so a slow file never holds a frame. The samples play through a
+// stream of their own (oa/audio/sound_output.hpp), so pausing it leaves
+// effects alone. The CD-audio mixer line maps to that stream's gain.
 struct SdlMusicDevice;
 
 /// Creates a music device over a scanned disc.

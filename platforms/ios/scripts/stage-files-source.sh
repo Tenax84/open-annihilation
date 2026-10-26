@@ -56,6 +56,9 @@ there under the same name is replaced.
                                        "Old PC/Games/Total Annihilation"
                            mod         a folder holding a usable mod profile,
                                        "Picker Test Mod", for ADD FILES
+                           mutator     a mutator package file, "Picker Test
+                                       Mutator.oamut", to tap in the Files
+                                       app: the game asks INSTALL MUTATOR
   --into-documents NAME  Put the game folder into the game's own Documents
                          folder under NAME (a misnamed folder, for I HAVE
                          COPIED IT); the game must be installed
@@ -104,8 +107,8 @@ if [[ "$kinds" -gt 1 ]]; then
     exit 2
 fi
 case "$fixture" in
-    ''|not-a-game|nested|mod) ;;
-    *) printf 'stage-files-source.sh: --fixture is not-a-game, nested or mod, not %s\n' "$fixture" >&2; exit 2 ;;
+    ''|not-a-game|nested|mod|mutator) ;;
+    *) printf 'stage-files-source.sh: --fixture is not-a-game, nested, mod or mutator, not %s\n' "$fixture" >&2; exit 2 ;;
 esac
 case "$name" in
     */*|.|..) printf 'stage-files-source.sh: --name is one name, not a path: %s\n' "$name" >&2; exit 2 ;;
@@ -307,6 +310,31 @@ packaging: {revision: 1, date: 2026-10-04, packager: Open Annihilation}
 PROFILE
     printf 'A test mod of the Game files screen. It changes nothing.\n' > "$target/readme.txt"
     printf 'Wrote the test mod %s\n' "$target"
+elif [[ "$fixture" == mutator ]]; then
+    item_name="${name:-Picker Test Mutator.oamut}"
+    target="$root/$item_name"
+    if [[ "$clear" == 1 ]]; then forget "$target"; fi
+    rm -rf "$target"
+    work="$(mktemp -d)"
+    cat > "$work/oamut.yaml" <<'MANIFEST'
+# A test mutator package: it changes nothing.
+oamut: 1
+id: picker-test-mutator
+name: "Picker Test Mutator"
+version: "1.0"
+author:
+  name: "Ada"
+description: "A made-up mutator."
+tags: ["gameplay"]
+works-with: ["*"]
+layers: ["files"]
+entry: "mutator.lua"
+MANIFEST
+    printf 'return {}\n' > "$work/mutator.lua"
+    printf 'A test mutator package. It changes nothing.\n' > "$work/README.md"
+    (cd "$work" && zip -q -X "$target" oamut.yaml mutator.lua README.md)
+    rm -rf "$work"
+    printf 'Wrote the test mutator package %s\n' "$target"
 else
     source_dir="$(find_game_dir)"
     item_name="${name:-Total Annihilation}"

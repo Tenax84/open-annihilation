@@ -10,6 +10,10 @@
 #include "oa/data/persist/save_sections.hpp"
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/mission_types.hpp"
+#include "oa/present/game_text.hpp"
+#include "oa/ui/frontend_renderer/gadget_draw.hpp"
+#include "oa/ui/frontend_renderer/game_text.hpp"
+#include "oa/ui/gui_layout/gui_gadget.hpp"
 #include "oa/ui/hud/order_panel.hpp"
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -189,6 +193,7 @@ void Runtime::check_download_builds() {
             fail("linked more than the lab's two download buttons");
     }
     snapshot("native-download-page.ppm");
+    const renderer::Surface page_hud = match_hud_cpu_;
 
     click_gadget("ARMFLEA", SDL_BUTTON_LEFT);
     click_gadget("ARMWAR", SDL_BUTTON_LEFT);
@@ -199,6 +204,62 @@ void Runtime::check_download_builds() {
     if (build_captions_.at(4) != "+1" || build_captions_.at(5) != "+2")
         fail("did not count the queued builds on the download buttons");
     snapshot("native-download-queued.ppm");
+    // With the game's fonts, as the check's preferences file leaves them,
+    // each count is written as 3.1c writes a build button's caption: in
+    // hattfont12, centred along the bottom of the button (attribs=32), where
+    // button_caption_pen places it. Nothing else of the button changes.
+    if (!game_text_settings().style.modern_fonts) {
+        ensure_gui_font();
+        if (gui_font_.sequences.empty())
+            fail("did not load hattfont12.gaf");
+        const auto& queued_hud = match_hud_cpu_;
+        if (page_hud.width != queued_hud.width || page_hud.height != queued_hud.height)
+            fail("drew the queued page's HUD at another size");
+        const auto pixel = [](const renderer::Surface& surface, int32_t x, int32_t y) {
+            const auto at =
+                (static_cast<std::size_t>(y) * surface.width + static_cast<std::size_t>(x)) * 3U;
+            return std::array<uint8_t, 3>{
+                surface.rgb[at], surface.rgb[at + 1], surface.rgb[at + 2]
+            };
+        };
+        constexpr int32_t gui_line_gap = 2;
+        const int32_t line_height = renderer::gui_font_baseline(gui_font_) + gui_line_gap;
+        for (const std::size_t slot : {4U, 5U}) {
+            const auto& common = match_hud_->layout.gadgets.at(slot).common;
+            const auto& caption = build_captions_.at(slot);
+            const int32_t width = renderer::measure_gadget_glyphs(gui_font_, caption);
+            const auto pen = oa::ui::gui_layout::button_caption_pen(
+                {common.x, common.y, common.x + common.width - 1, common.y + common.height - 1},
+                static_cast<uint32_t>(common.attributes),
+                width,
+                line_height,
+                false
+            );
+            if (!pen || (static_cast<uint32_t>(common.attributes) &
+                         oa::ui::gui_layout::attribute::bottom_caption) == 0)
+                fail("found no caption along the bottom of", common.name);
+            bool written = false;
+            bool in_font_colour = false;
+            const int32_t right = std::min<int32_t>(common.x + common.width, queued_hud.width);
+            const int32_t bottom = std::min<int32_t>(common.y + common.height, queued_hud.height);
+            for (int32_t y = std::max<int32_t>(common.y, 0); y < bottom; ++y)
+                for (int32_t x = std::max<int32_t>(common.x, 0); x < right; ++x) {
+                    const auto shown = pixel(queued_hud, x, y);
+                    if (shown == pixel(page_hud, x, y))
+                        continue;
+                    if (x < pen->x || x >= pen->x + width || y < pen->y ||
+                        y >= pen->y + line_height)
+                        fail(
+                            "wrote outside the caption's place on",
+                            common.name + " at " + std::to_string(x) + "," + std::to_string(y)
+                        );
+                    written = true;
+                    in_font_colour = in_font_colour || shown == oa::present::gui_font_color;
+                }
+            if (!written || !in_font_colour)
+                fail("did not write the count in hattfont12 on", common.name);
+        }
+    }
     click_gadget("ARMWAR", SDL_BUTTON_RIGHT);
     if (queue(factory, false) != Queue{{flea, 1}, {flea, 1}})
         fail("did not take the Warrior out of the middle of the queue");
@@ -217,8 +278,9 @@ void Runtime::check_download_builds() {
     if (product == 0)
         fail("saw no Flea come out of the lab");
 
-    std::cout << "download build check: ARMDL.GUI linked the lab's Warrior and Flea, and their "
-                 "queue took and lost orders from the middle and the end and built a Flea\n";
+    std::cout << "download build check: ARMDL.GUI linked the lab's Warrior and Flea, their "
+                 "queue took and lost orders from the middle and the end and built a Flea, and "
+                 "the queued counts showed along the bottom of their buttons\n";
 }
 
 void Runtime::check_stockpile_builds() {

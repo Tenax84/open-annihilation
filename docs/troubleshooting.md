@@ -17,6 +17,32 @@ The `+stats` console command shows that memory on its "models" row: the
 megabytes the units' picture holds, "MB of" the most it may take, and "dots"
 when the last frame drew the units as dots.
 
+## Files kept in iCloud
+
+If Documents is in iCloud Drive and Optimize Mac Storage is on, macOS can
+move files you have not used for a while out of the Open Annihilation folder.
+That includes the game's own copy of Total Annihilation in Games and
+Expansions. The files stay in iCloud, and each one downloads again the next
+time something reads it, which can take seconds for each file and minutes
+for the whole game. A match still starts at once, and its music begins when
+the track has arrived. A mod, map or language pack whose files were moved
+can be slow the first time it opens.
+
+A start whose archives are in iCloud waits for them, and the window says
+"Downloading the game's files from iCloud…" with a bar of the files that
+have arrived. Closing the window then ends the game, and the files that
+have arrived stay on this Mac for the next start.
+
+When the game starts, it also asks macOS to download the files under Mods,
+Maps, Languages, Mutators, Games and Expansions that are not on this Mac,
+without waiting for them, and the music folder once a game is mounted. The
+log says how many, in a line that starts `open-annihilation:`.
+
+To keep the folder on this Mac, in the Finder Control-click the Open
+Annihilation folder in Documents and choose Keep Downloaded. Turning off
+Optimize Mac Storage in iCloud Drive's settings keeps every file of iCloud
+Drive on this Mac instead.
+
 ## Downloads
 
 A download that fails says why on its line in the Library, and **RETRY**

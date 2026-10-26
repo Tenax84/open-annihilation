@@ -43,7 +43,7 @@ void TraceRecorder::close() noexcept {
 }
 
 bool rule_state_digest(const Match& match, trace::SectionDigest& digest) noexcept {
-    if (match.rule_state().count == 0)
+    if (match.rule_state().count == 0 && !match.mutator_digest_held())
         return false;
     digest.value = match.fold_rule_state(trace::digest_basis);
     digest.items = match.rule_state().count;

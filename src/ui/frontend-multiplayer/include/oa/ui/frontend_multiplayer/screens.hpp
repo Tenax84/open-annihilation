@@ -132,6 +132,16 @@ void multiplayer_bind_wire_rules(const netgame::WireRules& rules, const char* pr
 /// @param on Unicode chat is on.
 void multiplayer_bind_unicode_chat(bool on) noexcept;
 
+/// Binds how the battle room's chat list measures a line (Lobby::chat_measure),
+/// so a line about a 3.1c player is fitted to the list as the room's mutator
+/// lines are.
+///
+/// The binding survives multiplayer_reset; until one is bound such a line is
+/// cut by bytes alone.
+///
+/// @param measure The list's room and a line's width.
+void multiplayer_bind_chat_measure(const ChatMeasure& measure) noexcept;
+
 /// Binds the presence record this machine sends to the OA players in the battle room
 /// (PresenceRecords::source), without a map pack.
 ///
@@ -142,6 +152,15 @@ void multiplayer_bind_unicode_chat(bool on) noexcept;
 /// @param record the record, type byte first; null binds none
 /// @param size its length; 0, or more than netgame::presence_record_max_bytes, binds none
 void multiplayer_bind_presence_record(const uint8_t* record, std::size_t size) noexcept;
+
+/// Binds the full mutator list this machine draws a part from.
+///
+/// The presence record may be cut so a map pack still fits. The battle room
+/// sends the mutators that did not fit from this list. Null binds none. The
+/// binding is kept across a new game, as the source record is.
+///
+/// @param loadout the list; null binds none
+void multiplayer_bind_mutator_loadout(const netgame::PresenceMutators* loadout) noexcept;
 
 /// Binds the map packs' answer to which pack the host's selected map comes from (LobbyMaps::pack).
 ///
@@ -454,6 +473,44 @@ int32_t multiplayer_presence_badges(PresenceBadgeSpot* out, int32_t capacity) no
 ///     covers it, or the focus is on no player's row
 [[nodiscard]] int32_t multiplayer_focused_player_slot() noexcept;
 
+/// One control of the battle room's panel, in frame pixels.
+struct BattleRoomControl {
+    int32_t index{-1};       ///< the control's index
+    std::string name{};      ///< its name
+    int32_t x{};             ///< its left edge, plus the panel's offset
+    int32_t y{};             ///< its top edge, plus the panel's offset
+    int32_t width{};         ///< its width
+    int32_t height{};        ///< its height
+    int32_t focus_place{-1}; ///< its place in the battle room's focus order, or -1
+};
+
+/// The battle room's controls that have an area, including ones that are hidden.
+///
+/// Empty while the battle room is not the screen in front.
+///
+/// @return the controls, in index order
+[[nodiscard]] std::vector<BattleRoomControl> multiplayer_battle_room_controls();
+
+/// The control the battle room's own focus is on.
+///
+/// @return the control index, or kNoControl while the battle room is not the
+///     screen in front
+[[nodiscard]] int32_t multiplayer_battle_room_focus() noexcept;
+
+/// Moves the battle room's own focus.
+///
+/// Does nothing while the battle room is not the screen in front.
+///
+/// @param index the control, or kNoControl for none
+void multiplayer_set_battle_room_focus(int32_t index) noexcept;
+
+/// Tells whether the battle room is the multiplayer screen.
+///
+/// True while a dialog covers it. False once the room is left.
+///
+/// @return true while the battle room is showing
+[[nodiscard]] bool multiplayer_battle_room_open() noexcept;
+
 class PresenceCardTrigger;
 
 /// Hands the battle room the card trigger Return and the pad's A use.
@@ -689,6 +746,31 @@ void multiplayer_reset() noexcept;
 ///
 /// @param ctx Screen context of the running frontend.
 void multiplayer_reload_unit_headers(app::ScreenContext* ctx);
+
+/// Drops the battle room's unit table, reads it again and restarts unit sync.
+///
+/// The table is read from the install the room already uses. With no install
+/// bound, the table is cleared and sync still restarts.
+void multiplayer_units_changed();
+
+/// Drops one peer and greets it again at once.
+///
+/// @param player_id the peer
+void multiplayer_regreet(uint32_t player_id);
+
+/// Copies the host's mutator list as this guest holds it.
+///
+/// False on the host, and false when the host's records have named no list.
+/// A list that is still arriving is copied as far as it has come.
+///
+/// @param[out] out the list; null asks only whether there is one
+/// @return true when this machine is a guest and the host has named a list
+[[nodiscard]] bool multiplayer_room_mutators(netgame::PresenceLoadoutAssembly* out);
+
+/// How many times the guest's copy of the host's list has changed.
+///
+/// @return the generation, starting at 0
+[[nodiscard]] uint32_t multiplayer_room_mutators_generation() noexcept;
 
 } // namespace oa::ui::frontend_multiplayer
 

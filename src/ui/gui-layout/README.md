@@ -29,6 +29,12 @@ rendering, event dispatch and frontend flow live elsewhere.
   flush with it, and the row that would run past the bottom moves up to end
   flush with it. A rectangle a whole number of tiles high has no bottom row.
   It gives frame numbers and positions only; the drawing lives elsewhere.
+- `button_caption_pen` places a button's caption by the first of its
+  alignment attributes: from the left edge, to the right edge, centred, or
+  centred along the bottom, its line ending 4 rows above the bottom edge, as
+  the game's build pages write their buttons' queued counts. A pressed
+  button's caption moves down a pixel, and right unless right-aligned; a
+  button with none of the four shows no caption.
 
 The loader reads `help`, then immediately clears the complete destination
 buffer before translation. The public model retains the bounded source value as

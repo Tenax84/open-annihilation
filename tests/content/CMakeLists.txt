@@ -28,4 +28,13 @@ if(BUILD_TESTING)
   add_test(NAME installed-tdf-readers COMMAND oa-installed-tdf-readers-test)
   set_tests_properties(installed-tdf-readers PROPERTIES LABELS "content;data")
   oa_game_data_tests(installed-tdf-readers)
+  # An unedited write of every installed TDF text matches the parsed copy,
+  # and one new key in the first section leaves every other section's body
+  # hash where it was.
+  add_executable(oa-installed-tdf-writer-test installed_tdf_writer_test.cpp)
+  target_link_libraries(oa-installed-tdf-writer-test PRIVATE oa-formats-hpi oa-formats-tdf
+    oa-test-game-data oa-options)
+  add_test(NAME installed-tdf-writer COMMAND oa-installed-tdf-writer-test)
+  set_tests_properties(installed-tdf-writer PROPERTIES LABELS "content;data")
+  oa_game_data_tests(installed-tdf-writer)
 endif()

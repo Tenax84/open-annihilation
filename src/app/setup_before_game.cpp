@@ -2222,6 +2222,10 @@ bool setup_before_game_due(const Options& options, bool mount_copy) {
     return setup_due(options, mount_copy);
 }
 
+void apply_stored_interface_language(const Options& options) {
+    apply_early_language(stored_language(options));
+}
+
 void setup_welcome_again() noexcept {
     resume_state().continue_setup = false;
 }

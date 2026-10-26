@@ -6,22 +6,28 @@
 // the Enter key it holds until that key comes up, the mode a press asks for
 // while the window is still switching (as a macOS full-screen space, an X11
 // window manager or a Wayland compositor leaves it for a while), when the
-// pointer is kept on the game's screen, where a window that leaves full
-// screen goes on its display, and windows of SDL's dummy video driver
-// switched to full screen and back, losing and regaining the focus and
-// coming back onto the display, and one opened at native density; the
+// pointer is kept on the game's screen, the point of a full-screen window a
+// pointer past its edge touches on a display with a camera housing, where a
+// window that leaves full screen goes on its display, and windows of SDL's
+// dummy video driver switched to full screen and back, losing and regaining
+// the focus and coming back onto the display, one opened in full screen
+// whose first events were dropped, and one opened at native density; the
 // window's title bar and borders asked for as the game goes from its menus
 // to a game, its game menu and full screen; and the line --trace-input
 // writes of the window, its display and the pointer.
 #include "oa/app/full_screen.hpp"
+#include "oa/ui/hud/camera_scroll.hpp"
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -646,6 +652,166 @@ void test_pointer_window() {
     SDL_Quit();
 }
 
+// The built-in display of a 16-inch MacBook Pro, 1728 by 1117 points, and
+// the full-screen window macOS places below its camera housing: 1728 by
+// 1080 points, 37 points down, the strip beside the housing above it.
+constexpr SDL_Rect notched_display{0, 0, 1728, 1117};
+constexpr SDL_Rect below_housing{0, 37, 1728, 1080};
+
+// Where the pointer comes to rest when the player pushes it toward a point
+// of the notched display: on the game's window while the window holds it
+// (SDL's grab), and anywhere on the display otherwise.
+SDL_FPoint pushed_on_notched_display(SDL_WindowFlags flags, float x, float y) {
+    const SDL_Rect& held =
+        (flags & SDL_WINDOW_MOUSE_GRABBED) != 0 ? below_housing : notched_display;
+    return {
+        std::clamp(x, static_cast<float>(held.x), static_cast<float>(held.x + held.w - 1)),
+        std::clamp(y, static_cast<float>(held.y), static_cast<float>(held.y + held.h - 1))
+    };
+}
+
+// The way the screen's edges scroll the view for a pointer pushed toward a
+// point of the notched display, with the window's flags, at one window
+// point to a layout pixel: the point of the window the pointer touches, on
+// the window or past its edges (full_screen_pointer), as the match's edge
+// test takes it.
+oa::ui::hud::EdgeScroll notched_edge_way(SDL_WindowFlags flags, float x, float y) {
+    const SDL_FPoint rest = pushed_on_notched_display(flags, x, y);
+    const std::optional<SDL_FPoint> touched =
+        oa::app::full_screen_pointer(flags, below_housing, notched_display, rest.x, rest.y);
+    if (!touched)
+        return {};
+    return oa::ui::hud::edge_scroll(
+        static_cast<int32_t>(std::floor(touched->x)),
+        static_cast<int32_t>(std::floor(touched->y)),
+        below_housing.w,
+        below_housing.h,
+        1
+    );
+}
+
+bool scrolls(const oa::ui::hud::EdgeScroll& way, int32_t x, int32_t y) {
+    return way.x == x && way.y == y;
+}
+
+// The point of a full-screen window the pointer touches: on the window
+// where it is, past an edge on the window's display on that edge's last row
+// or column, and nowhere off the display, in a window, or without the
+// focus.
+void test_full_screen_pointer() {
+    using oa::app::full_screen_pointer;
+    constexpr SDL_WindowFlags held = SDL_WINDOW_FULLSCREEN | SDL_WINDOW_INPUT_FOCUS;
+    const auto at = [](const std::optional<SDL_FPoint>& point, float x, float y) {
+        return point && point->x == x && point->y == y;
+    };
+    // On the window, in the window's coordinates.
+    CHECK(at(full_screen_pointer(held, below_housing, notched_display, 864.5F, 37.0F), 864.5F, 0));
+    CHECK(
+        at(full_screen_pointer(held, below_housing, notched_display, 1727.5F, 1116.5F),
+           1727.5F,
+           1079.5F)
+    );
+    // In the strip beside the camera housing: the window's top row.
+    CHECK(at(full_screen_pointer(held, below_housing, notched_display, 864.0F, 10.0F), 864.0F, 0));
+    CHECK(at(full_screen_pointer(held, below_housing, notched_display, 0.0F, 0.0F), 0, 0));
+    CHECK(at(full_screen_pointer(held, below_housing, notched_display, 1727.9F, 36.9F), 1727, 0));
+    // Past the right and bottom edges of a window short of its display's.
+    constexpr SDL_Rect inset{100, 50, 800, 600};
+    constexpr SDL_Rect display{0, 0, 1024, 768};
+    CHECK(at(full_screen_pointer(held, inset, display, 950.0F, 700.0F), 799, 599));
+    CHECK(at(full_screen_pointer(held, inset, display, 20.0F, 300.0F), 0, 250));
+    // Off the window's display, and an empty window.
+    CHECK(!full_screen_pointer(held, below_housing, notched_display, 864.0F, -1.0F));
+    CHECK(!full_screen_pointer(held, below_housing, notched_display, 1728.0F, 500.0F));
+    CHECK(!full_screen_pointer(held, {0, 37, 0, 0}, notched_display, 0.0F, 0.0F));
+    // A window, and full screen without the focus, leave the pointer free.
+    CHECK(!full_screen_pointer(SDL_WINDOW_INPUT_FOCUS, below_housing, notched_display, 864, 10));
+    CHECK(!full_screen_pointer(SDL_WINDOW_FULLSCREEN, below_housing, notched_display, 864, 10));
+    CHECK(!full_screen_pointer(SDL_WINDOW_INPUT_FOCUS, inset, display, 500.0F, 300.0F));
+}
+
+// The edges of the notched display scroll the view toward each of them for
+// a full-screen window with these flags, the top edge from the strip beside
+// the camera housing among them, and the middle of the screen does not.
+void check_notched_edges(SDL_WindowFlags flags) {
+    CHECK(scrolls(notched_edge_way(flags, 864.0F, 10.0F), 0, -1));
+    CHECK(scrolls(notched_edge_way(flags, 864.0F, 0.0F), 0, -1));
+    CHECK(scrolls(notched_edge_way(flags, 864.0F, 37.0F), 0, -1));
+    CHECK(scrolls(notched_edge_way(flags, 864.0F, 1116.0F), 0, 1));
+    CHECK(scrolls(notched_edge_way(flags, -40.0F, 500.0F), -1, 0));
+    CHECK(scrolls(notched_edge_way(flags, 1800.0F, 500.0F), 1, 0));
+    CHECK(scrolls(notched_edge_way(flags, -5.0F, 5.0F), -1, -1));
+    CHECK(scrolls(notched_edge_way(flags, 864.0F, 500.0F), 0, 0));
+    CHECK(scrolls(notched_edge_way(flags, 864.0F, 38.0F), 0, 0));
+}
+
+// The game's window opened in full screen, whose first events the progress
+// dialog drops while the game's archives load at start (drop_window_events),
+// holds the pointer as a window that Alt+Enter switched to full screen does,
+// and on the notched display both scroll the view toward every edge the
+// pointer is pushed against, the top edge from the strip beside the camera
+// housing among them. A close among the dropped events is put back.
+void test_launch_holds_pointer() {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+        ++failures;
+        return;
+    }
+    SDL_Window* window =
+        SDL_CreateWindow("launch test", 640, 480, oa::app::game_window_flags(true, false));
+    CHECK(window != nullptr);
+    if (window == nullptr) {
+        SDL_Quit();
+        return;
+    }
+    (void)SDL_SyncWindow(window);
+    CHECK(!oa::app::drop_window_events(window));
+    CHECK(shows_full_screen(window));
+    CHECK(has_focus(window));
+    CHECK(SDL_GetWindowMouseGrab(window));
+    const SDL_WindowFlags launched = SDL_GetWindowFlags(window);
+    // A close is kept for the screen that answers it.
+    SDL_Event quit{};
+    quit.type = SDL_EVENT_QUIT;
+    CHECK(SDL_PushEvent(&quit));
+    CHECK(oa::app::drop_window_events(window));
+    CHECK(SDL_PeepEvents(nullptr, 0, SDL_PEEKEVENT, SDL_EVENT_QUIT, SDL_EVENT_QUIT) == 1);
+    SDL_FlushEvent(SDL_EVENT_QUIT);
+    oa::app::release_pointer(window);
+    SDL_DestroyWindow(window);
+
+    window = SDL_CreateWindow("toggle test", 640, 480, oa::app::game_window_flags(false, false));
+    CHECK(window != nullptr);
+    if (window == nullptr) {
+        SDL_Quit();
+        return;
+    }
+    FullScreenSwitch full_screen{};
+    pump_window(window, full_screen);
+    CHECK(
+        oa::app::take_full_screen_event(
+            window, full_screen, key_down(SDLK_RETURN, SDL_KMOD_LALT, false)
+        )
+    );
+    CHECK(oa::app::take_full_screen_event(window, full_screen, key_up(SDLK_RETURN, SDL_KMOD_LALT)));
+    pump_window(window, full_screen);
+    CHECK(shows_full_screen(window));
+    CHECK(SDL_GetWindowMouseGrab(window));
+    const SDL_WindowFlags toggled = SDL_GetWindowFlags(window);
+    oa::app::release_pointer(window);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+
+    // The grab is what the two ways share; a pointer macOS lets into the
+    // strip, held or not, still touches the top edge.
+    CHECK((launched & SDL_WINDOW_MOUSE_GRABBED) == (toggled & SDL_WINDOW_MOUSE_GRABBED));
+    check_notched_edges(launched);
+    check_notched_edges(toggled);
+    check_notched_edges(launched & ~SDL_WINDOW_MOUSE_GRABBED);
+    // Without the focus the pointer is free and touches no edge from the strip.
+    CHECK(scrolls(notched_edge_way(launched & ~SDL_WINDOW_INPUT_FOCUS, 864.0F, 10.0F), 0, 0));
+}
+
 // Where a window of SDL's video driver is, and its size, in the desktop's
 // coordinates.
 SDL_Rect window_rect(SDL_Window* window) {
@@ -1241,6 +1407,8 @@ int main() {
     test_window_trace();
     test_window();
     test_pointer_window();
+    test_full_screen_pointer();
+    test_launch_holds_pointer();
     test_window_back_on_display();
     test_window_at_size_on_display();
     test_window_takes_a_size();
@@ -1255,9 +1423,10 @@ int main() {
     std::puts(
         "full screen: the window opens at native density only when asked, Alt+Enter switches, "
         "the mode asked for is kept, the pointer stays on the screen while the window has the "
-        "focus, a window leaving full screen comes back onto its display, at a size asked "
-        "for, a saved place round-trips, the window's frame follows the game, and the "
-        "trace line tells the window's place on its display and the pointer's"
+        "focus, from the start in a window opened in full screen, a pointer past a full-screen "
+        "window's edge touches that edge, a window leaving full screen comes back onto its "
+        "display, at a size asked for, a saved place round-trips, the window's frame follows "
+        "the game, and the trace line tells the window's place on its display and the pointer's"
     );
     return 0;
 }

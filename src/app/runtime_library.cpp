@@ -18,6 +18,7 @@
 #include "oa_layer.hpp"
 #include "package_paths.hpp"
 
+#include "oa/app/brain_seats.hpp"
 #include "oa/app/content/downloads.hpp"
 #include "oa/app/content/pictures.hpp"
 #include "oa/app/content/service.hpp"
@@ -45,8 +46,14 @@
 #include "oa/data/registry/descriptor.hpp"
 #include "oa/data/registry/trust.hpp"
 #include "oa/formats/hpi.hpp"
+#include "oa/data/brain_library/library.hpp"
+#include "oa/data/mutator_library/library.hpp"
+#include "oa/data/script_host/script_host.hpp"
+#include "oa/sim/brains/check.hpp"
 #include "oa/formats/oamod/package_keys.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/formats/url.hpp"
+#include "oa/platform/files.hpp"
 #include "oa/ui/map_previews/map_previews.hpp"
 #include "oa/netgame/http/client.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
@@ -56,6 +63,7 @@
 #include "oa/ui/library/game_icon.hpp"
 #include "oa/ui/library/library.hpp"
 #include "oa/ui/library/mod_questions.hpp"
+#include "oa/ui/library/prerequisites.hpp"
 #include "oa/ui/library/screen.hpp"
 #include "oa/ui/library/text.hpp"
 
@@ -63,11 +71,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
-#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -90,6 +99,7 @@ namespace oa::app {
 namespace settings = oa::ui::engine_settings;
 namespace kit = oa::ui::kit;
 namespace library = oa::ui::library;
+namespace mutators = oa::data::mutators;
 
 namespace {
 
@@ -139,6 +149,10 @@ library::Kind kind_of(data::catalogue::Kind kind) noexcept {
         // The caller lists an expansion on downloadable_expansions and does
         // not build a Library row for it.
         return library::Kind::mod;
+    case data::catalogue::Kind::oamut:
+        return library::Kind::mutator;
+    case data::catalogue::Kind::oabrain:
+        return library::Kind::brain;
     }
     return library::Kind::mod;
 }
@@ -156,36 +170,10 @@ std::optional<library::Kind> kind_of(const package_install::PackageKind* kind) {
         return library::Kind::map_pack;
     if (kind->name == "oalang")
         return library::Kind::language;
-    return std::nullopt;
-}
-
-/// Returns where a queued download stands, as the Library's queue line
-/// says it.
-///
-/// @param state the queue's state
-/// @return the phase; nothing for a cancelled item, which the Library leaves out
-std::optional<library::QueueItem::Phase> phase_of(content::DownloadState state) noexcept {
-    using Phase = library::QueueItem::Phase;
-    switch (state) {
-    case content::DownloadState::waiting:
-    case content::DownloadState::asking:
-    case content::DownloadState::challenge:
-    case content::DownloadState::paused_for_match:
-        return Phase::waiting;
-    case content::DownloadState::downloading:
-        return Phase::downloading;
-    case content::DownloadState::verifying:
-        return Phase::verifying;
-    case content::DownloadState::handing_over:
-    case content::DownloadState::installing:
-        return Phase::installing;
-    case content::DownloadState::failed:
-        return Phase::failed;
-    case content::DownloadState::done:
-        return Phase::installed;
-    case content::DownloadState::cancelled:
-        return std::nullopt;
-    }
+    if (kind->name == "oamut")
+        return library::Kind::mutator;
+    if (kind->name == "oabrain")
+        return library::Kind::brain;
     return std::nullopt;
 }
 
@@ -413,10 +401,153 @@ registry_view(const content::Snapshot& snapshot, std::string_view registry) {
     return nullptr;
 }
 
+/// Reads a mutator's icon and decodes it as a mod badge.
+///
+/// A file larger than max_mod_badge_bytes, an empty file, or one that cannot
+/// be read gives no badge. The bytes are decoded with read_mod_badge.
+///
+/// @param path the icon file
+/// @return the badge; empty when there is none
+ModBadge read_limited_badge(const std::filesystem::path& path) {
+    std::FILE* file = oa::platform::open_file(path, "rb");
+    if (file == nullptr)
+        return {};
+    std::vector<uint8_t> bytes;
+    std::array<uint8_t, 4096> chunk{};
+    bool failed = false;
+    while (!failed) {
+        const std::size_t read = std::fread(chunk.data(), 1, chunk.size(), file);
+        if (read > 0) {
+            if (bytes.size() + read > max_mod_badge_bytes) {
+                failed = true;
+                break;
+            }
+            bytes.insert(
+                bytes.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(read)
+            );
+        }
+        if (read < chunk.size()) {
+            if (std::ferror(file) != 0)
+                failed = true;
+            break;
+        }
+    }
+    std::fclose(file);
+    if (failed || bytes.empty())
+        return {};
+    return read_mod_badge(bytes);
+}
+
+/// Finds the installed mutator whose folder is a package's folder.
+///
+/// @param listing the Mutators folder
+/// @param folder the package's folder
+/// @return the mutator, or null
+const data::mutator_library::InstalledMutator*
+mutator_at(const data::mutator_library::Listing& listing, const std::filesystem::path& folder) {
+    for (const data::mutator_library::InstalledMutator& mutator : listing.mutators) {
+        if (mutator.folder == folder)
+            return &mutator;
+        std::error_code error;
+        if (std::filesystem::equivalent(mutator.folder, folder, error))
+            return &mutator;
+    }
+    return nullptr;
+}
+
+/// Finds the installed brain whose folder is a package's folder.
+///
+/// @param listing the Brains folder
+/// @param folder the package's folder
+/// @return the brain, or null
+const data::brain_library::InstalledBrain*
+brain_at(const data::brain_library::Listing& listing, const std::filesystem::path& folder) {
+    for (const data::brain_library::InstalledBrain& brain : listing.brains) {
+        if (brain.folder == folder)
+            return &brain;
+        std::error_code error;
+        if (std::filesystem::equivalent(brain.folder, folder, error))
+            return &brain;
+    }
+    return nullptr;
+}
+
+/// Fills the names a player reads on a brain's works-with mods. `*` and the
+/// base game stay unnamed. Installed copies are tried before listings.
+///
+/// @param[in,out] inputs the Library's inputs, listings and installed filled
+void name_brain_facts(library::Inputs& inputs) {
+    const auto mod_name = [&](std::string_view id) -> std::string {
+        for (const library::Installed& item : inputs.installed)
+            if (item.kind == library::Kind::mod && item.key == id)
+                return item.name;
+        for (const library::Listing& listing : inputs.listings)
+            if (listing.kind == library::Kind::mod && listing.key == id)
+                return listing.name;
+        return {};
+    };
+    const auto name_one = [&](library::BrainFacts& facts) {
+        for (library::WorksWith& item : facts.works_with) {
+            if (!item.name.empty() || item.id == "*" || item.id == library::supported_base)
+                continue;
+            item.name = mod_name(item.id);
+        }
+    };
+    for (library::Listing& listing : inputs.listings)
+        if (listing.brain)
+            name_one(*listing.brain);
+    for (library::Installed& installed : inputs.installed)
+        if (installed.brain)
+            name_one(*installed.brain);
+}
+
+/// Fills the names a player reads on mutator facts: a prerequisite from a
+/// mutator of that id, a works-with mod from a mod of that id. `*` and the
+/// base game stay unnamed. Installed copies are tried before listings.
+///
+/// @param[in,out] inputs the Library's inputs, listings and installed filled
+void name_mutator_facts(library::Inputs& inputs) {
+    const auto mutator_name = [&](std::string_view id) -> std::string {
+        for (const library::Installed& item : inputs.installed)
+            if (item.kind == library::Kind::mutator && item.key == id)
+                return item.name;
+        for (const library::Listing& listing : inputs.listings)
+            if (listing.kind == library::Kind::mutator && listing.key == id)
+                return listing.name;
+        return {};
+    };
+    const auto mod_name = [&](std::string_view id) -> std::string {
+        for (const library::Installed& item : inputs.installed)
+            if (item.kind == library::Kind::mod && item.key == id)
+                return item.name;
+        for (const library::Listing& listing : inputs.listings)
+            if (listing.kind == library::Kind::mod && listing.key == id)
+                return listing.name;
+        return {};
+    };
+    const auto name_one = [&](library::MutatorFacts& facts) {
+        for (library::Prerequisite& need : facts.needs)
+            if (need.name.empty())
+                need.name = mutator_name(need.id);
+        for (library::WorksWith& item : facts.works_with) {
+            if (!item.name.empty() || item.id == "*" || item.id == library::supported_base)
+                continue;
+            item.name = mod_name(item.id);
+        }
+    };
+    for (library::Listing& listing : inputs.listings)
+        if (listing.mutator)
+            name_one(*listing.mutator);
+    for (library::Installed& installed : inputs.installed)
+        if (installed.mutator)
+            name_one(*installed.mutator);
+}
+
 /// Searches for the installed packages and their updates on the worker:
 /// lists the player's folder, matches each package to the catalogues and
 /// adopts each file install a catalogue lists, finds the updates, and reads
-/// each installed mod's own picture.
+/// each installed mod's own picture and each installed mutator's and
+/// brain's icon.
 ///
 /// @param work the worker's state, whose results it fills under its lock
 /// @param snapshot the catalogues in effect
@@ -428,9 +559,27 @@ void search_updates(
     std::vector<content::Match> matches;
     std::vector<content::Update> updates;
     std::vector<ModBadge> pictures;
+    std::vector<std::optional<library::MutatorFacts>> mutator_facts;
+    std::vector<std::optional<library::BrainFacts>> brain_facts;
+    data::mutator_library::Listing mutators;
+    data::brain_library::Listing brains;
     try {
         if (!folder.empty())
             installed = content::list_installed(folder);
+        if (!folder.empty())
+            mutators = data::mutator_library::list_installed(
+                folder / std::string(data::mutator_library::mutators_folder_name)
+            );
+        if (!folder.empty())
+            brains = data::brain_library::list_installed(
+                folder / std::string(data::brain_library::brains_folder_name)
+            );
+        // A folder with no package SHA-256 is read here, off the main thread,
+        // so the rebuild after this search finds its digest kept.
+        for (const data::mutator_library::InstalledMutator& mutator : mutators.mutators) {
+            if (mutator.package_sha256.empty())
+                std::ignore = work.mutator_digests.digest(mutator.folder);
+        }
         for (const content::InstalledPackage& package : installed) {
             content::Match match = content::match_installed(package, snapshot);
             if (match.provenance == content::Provenance::matched) {
@@ -439,10 +588,30 @@ void search_updates(
                     std::cerr << "open-annihilation: library: " << error << '\n';
             }
             matches.push_back(std::move(match));
-            pictures.push_back(
-                kind_of(package.kind) == library::Kind::mod ? read_mod_summary(package.folder).badge
-                                                            : ModBadge{}
-            );
+            const std::optional<library::Kind> kind = kind_of(package.kind);
+            ModBadge badge;
+            std::optional<library::MutatorFacts> facts;
+            std::optional<library::BrainFacts> one_brain;
+            if (kind == library::Kind::mod)
+                badge = read_mod_summary(package.folder).badge;
+            else if (kind == library::Kind::mutator) {
+                if (const data::mutator_library::InstalledMutator* mutator =
+                        mutator_at(mutators, package.folder)) {
+                    facts = facts_of(mutator->manifest);
+                    if (!mutator->manifest.icon.empty())
+                        badge = read_limited_badge(mutator->folder / mutator->manifest.icon);
+                }
+            } else if (kind == library::Kind::brain) {
+                if (const data::brain_library::InstalledBrain* found =
+                        brain_at(brains, package.folder)) {
+                    one_brain = brain_facts_of(found->manifest, found->network_bytes);
+                    if (!found->manifest.icon.empty())
+                        badge = read_limited_badge(found->folder / found->manifest.icon);
+                }
+            }
+            pictures.push_back(std::move(badge));
+            mutator_facts.push_back(std::move(facts));
+            brain_facts.push_back(std::move(one_brain));
         }
         updates = content::find_updates(installed, snapshot, content::this_engine_rules());
     } catch (const std::exception& error) {
@@ -459,6 +628,10 @@ void search_updates(
     work.matches = std::move(matches);
     work.updates = std::move(updates);
     work.installed_badges = std::move(pictures);
+    work.installed_mutators = std::move(mutator_facts);
+    work.mutator_listing = std::move(mutators);
+    work.installed_brains = std::move(brain_facts);
+    work.brain_listing = std::move(brains);
     ++work.searches;
 }
 
@@ -475,11 +648,13 @@ void library_worker(void* argument) {
         bool search = false;
         bool pictures = false;
         bool match = false;
+        std::optional<MutatorCheck> check;
         std::shared_ptr<const content::Snapshot> snapshot;
         std::filesystem::path folder;
         {
             base::threads::LockGuard guard(work.mutex);
-            while (!work.stop && !work.updates_due && !(work.pictures_due && !work.match_running))
+            while (!work.stop && !work.updates_due && !(work.pictures_due && !work.match_running) &&
+                   !work.check_due)
                 work.wake.wait(work.mutex);
             if (work.stop)
                 return;
@@ -491,6 +666,11 @@ void library_worker(void* argument) {
             pictures = work.pictures_due && !match;
             if (pictures)
                 work.pictures_due = false;
+            if (work.check_due) {
+                work.check_due = false;
+                check = std::move(work.check_job);
+                work.check_job.reset();
+            }
         }
         if (search && snapshot)
             search_updates(work, *snapshot, folder);
@@ -501,6 +681,43 @@ void library_worker(void* argument) {
                 std::cerr << "open-annihilation: library: a picture could not be read: "
                           << error.what() << '\n';
             }
+        }
+        if (check) {
+            MutatorCheckOutcome outcome;
+            outcome.id = check->id;
+            outcome.kind = check->kind;
+            const bool stopped = match || work.check_cancel.load();
+            outcome.key = check->key;
+            outcome.brain_key = check->brain_key;
+            const bool brain = check->kind == CheckKind::brain;
+            const bool ready =
+                brain ? static_cast<bool>(check->brain_work) : static_cast<bool>(check->work);
+            if (stopped || !ready) {
+                outcome.cancelled = true;
+            } else {
+                try {
+                    if (brain) {
+                        outcome.brain = check->brain_work(work.check_cancel);
+                        outcome.cancelled = !outcome.brain.has_value() || work.check_cancel.load();
+                        if (outcome.cancelled)
+                            outcome.brain.reset();
+                    } else {
+                        outcome.record = check->work(work.check_cancel);
+                        outcome.cancelled = !outcome.record.has_value() || work.check_cancel.load();
+                        if (outcome.cancelled)
+                            outcome.record.reset();
+                    }
+                } catch (const std::exception& error) {
+                    std::cerr << "open-annihilation: library: the check failed: " << error.what()
+                              << '\n';
+                    outcome.cancelled = true;
+                } catch (...) {
+                    std::cerr << "open-annihilation: library: the check failed\n";
+                    outcome.cancelled = true;
+                }
+            }
+            base::threads::LockGuard guard(work.mutex);
+            work.check_outcome = std::move(outcome);
         }
     }
 }
@@ -717,6 +934,7 @@ Runtime::LibraryHost::~LibraryHost() {
         join = work.started;
     }
     work.cancel.store(true);
+    work.check_cancel.store(true);
     work.wake.notify_all();
     if (join)
         base::threads::join_thread(work.thread);
@@ -751,6 +969,7 @@ void Runtime::LibraryHost::look_again(Runtime& runtime) {
 void Runtime::LibraryHost::select_kept() {
     if (!kept_selection)
         return;
+    const std::optional<library::EntryId> before = model.selected;
     const auto visible = [this](const library::EntryId& id) {
         for (const std::size_t index : model.visible)
             if (model.entries[index].id == id)
@@ -761,19 +980,32 @@ void Runtime::LibraryHost::select_kept() {
         library::select(model, *kept_selection);
         kept_selection.reset();
         kept_selection_shown.reset();
-        return;
-    }
-    for (const std::size_t index : model.visible) {
-        const library::EntryId& id = model.entries[index].id;
-        if (id.kind == kept_selection->kind && id.key == kept_selection->key) {
-            library::select(model, id);
-            break;
+    } else {
+        for (const std::size_t index : model.visible) {
+            const library::EntryId& id = model.entries[index].id;
+            if (id.kind == kept_selection->kind && id.key == kept_selection->key) {
+                library::select(model, id);
+                break;
+            }
         }
+        kept_selection_shown = model.selected;
     }
-    kept_selection_shown = model.selected;
+    if (model.selected != before)
+        state.reveal_row = selected_row();
+}
+
+int32_t Runtime::LibraryHost::selected_row() const {
+    if (!model.selected)
+        return -1;
+    for (std::size_t place = 0; place < model.visible.size(); ++place)
+        if (model.entries[model.visible[place]].id == *model.selected)
+            return static_cast<int32_t>(place);
+    return -1;
 }
 
 void Runtime::LibraryHost::rebuild(Runtime& runtime) {
+    shown_checked = false;
+    shown_maps.clear();
     // A selection the player made since the kept one was applied stays.
     const bool keeping = kept_selection && model.selected == kept_selection_shown;
     if (!keeping) {
@@ -842,6 +1074,75 @@ void Runtime::LibraryHost::rebuild(Runtime& runtime) {
             still.push_back(kept);
     }
     kept_updates = std::move(still);
+    // A check that is running is `checking`. Otherwise a remembered verdict
+    // is mapped, and a mutator with none remembered is unchecked. With
+    // start_check null every verdict stays unset. An installed mutator with
+    // no facts is not given empty ones.
+    if (feed.start_check != nullptr) {
+        // A mutator installed, updated or removed makes the pass again.
+        std::string installed_now;
+        for (const library::Installed& installed : inputs.installed) {
+            if (installed.kind != library::Kind::mutator)
+                continue;
+            installed_now += installed.key;
+            installed_now.push_back('\t');
+            installed_now += path_to_utf8(installed.folder);
+            installed_now.push_back('\t');
+            installed_now += installed.version;
+            installed_now.push_back('\t');
+            installed_now += std::to_string(installed.release);
+            installed_now.push_back('\n');
+        }
+        if (installed_now != shown_installed) {
+            shown_installed = std::move(installed_now);
+            shown_ready = false;
+        }
+        for (library::Installed& installed : inputs.installed) {
+            if (installed.kind != library::Kind::mutator || !installed.mutator)
+                continue;
+            library::Verdict verdict;
+            if (!checking_id.empty() && checking_kind == CheckKind::mutator &&
+                installed.key == checking_id) {
+                verdict.state = library::Verdict::State::checking;
+            } else if (feed.remembered_verdict != nullptr) {
+                if (const std::optional<oa::data::mutators::VerdictRecord> record =
+                        feed.remembered_verdict(feed.context, installed.key)) {
+                    verdict = library::verdict_of_record(*record, model.text);
+                    const auto maps = shown_maps.find(installed.key);
+                    if (maps != shown_maps.end())
+                        library::apply_map_fact(verdict, *record, maps->second, model.text);
+                } else
+                    verdict.state = library::Verdict::State::unchecked;
+            } else {
+                verdict.state = library::Verdict::State::unchecked;
+            }
+            installed.mutator->verdict = std::move(verdict);
+        }
+    }
+    // A brain check that is running is `checking`. Otherwise a remembered
+    // verdict for this copy and this game is shown, and a brain with none
+    // remembered is unchecked. With start_brain_check null every verdict
+    // stays unset. An installed brain with no facts is not given empty ones.
+    if (feed.start_brain_check != nullptr) {
+        for (library::Installed& installed : inputs.installed) {
+            if (installed.kind != library::Kind::brain || !installed.brain)
+                continue;
+            library::Verdict verdict;
+            if (!checking_id.empty() && checking_kind == CheckKind::brain &&
+                installed.key == checking_id) {
+                verdict.state = library::Verdict::State::checking;
+            } else if (feed.remembered_brain_verdict != nullptr) {
+                if (const std::optional<library::Verdict> remembered =
+                        feed.remembered_brain_verdict(feed.context, installed.key))
+                    verdict = *remembered;
+                else
+                    verdict.state = library::Verdict::State::unchecked;
+            } else {
+                verdict.state = library::Verdict::State::unchecked;
+            }
+            installed.brain->verdict = std::move(verdict);
+        }
+    }
     library::refresh(model, std::move(inputs));
     if (keeping)
         select_kept();
@@ -851,6 +1152,196 @@ void Runtime::LibraryHost::rebuild(Runtime& runtime) {
     update_count = offered;
     refreshed = true;
     ++model_revision;
+}
+
+void Runtime::LibraryHost::wait_turn(MutatorCheck waiting) {
+    for (MutatorCheck& queued : work.checks_waiting) {
+        if (queued.id == waiting.id && queued.kind == waiting.kind) {
+            queued = std::move(waiting);
+            return;
+        }
+    }
+    work.checks_waiting.push_back(std::move(waiting));
+}
+
+bool Runtime::LibraryHost::hand_to_worker(MutatorCheck prepared) {
+    checking_id = prepared.id;
+    checking_kind = prepared.kind;
+    check_open = true;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        work.check_cancel.store(false);
+        work.check_job = std::move(prepared);
+        work.check_due = true;
+    }
+    if (ensure_worker()) {
+        work.wake.notify_all();
+        return true;
+    }
+    // The thread did not start, so nothing will ever record an outcome.
+    // Drop the job or the row stays "Checking…" and later checks wait.
+    {
+        base::threads::LockGuard guard(work.mutex);
+        work.check_job.reset();
+        work.check_due = false;
+    }
+    checking_id.clear();
+    checking_kind = CheckKind::mutator;
+    check_open = false;
+    return false;
+}
+
+void Runtime::LibraryHost::begin_mutator_check(Runtime& runtime, std::string_view id) {
+    if (feed.start_check == nullptr || id.empty())
+        return;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        if (check_open) {
+            wait_turn(MutatorCheck{std::string(id), {}, {}});
+            return;
+        }
+    }
+    prepared_key.reset();
+    auto job = feed.start_check(feed.context, id);
+    if (!job) {
+        prepared_key.reset();
+        return;
+    }
+    MutatorCheck prepared;
+    prepared.id = std::string(id);
+    prepared.work = std::move(job);
+    prepared.key = std::move(prepared_key);
+    prepared_key.reset();
+    hand_to_worker(std::move(prepared));
+    rebuild(runtime);
+}
+
+void Runtime::LibraryHost::begin_brain_check(Runtime& runtime, std::string_view id) {
+    if (feed.start_brain_check == nullptr || id.empty())
+        return;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        if (check_open) {
+            MutatorCheck waiting;
+            waiting.kind = CheckKind::brain;
+            waiting.id = std::string(id);
+            wait_turn(std::move(waiting));
+            return;
+        }
+    }
+    prepared_brain_key.reset();
+    auto job = feed.start_brain_check(feed.context, id);
+    if (!job) {
+        prepared_brain_key.reset();
+        return;
+    }
+    MutatorCheck prepared;
+    prepared.kind = CheckKind::brain;
+    prepared.id = std::string(id);
+    prepared.brain_work = std::move(job);
+    prepared.brain_key = std::move(prepared_brain_key);
+    prepared_brain_key.reset();
+    hand_to_worker(std::move(prepared));
+    rebuild(runtime);
+}
+
+void Runtime::LibraryHost::enqueue_prepared_check(Runtime& runtime, MutatorCheck prepared) {
+    if (prepared.id.empty() || !prepared.work)
+        return;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        if (check_open) {
+            wait_turn(std::move(prepared));
+            return;
+        }
+    }
+    hand_to_worker(std::move(prepared));
+    rebuild(runtime);
+}
+
+bool Runtime::LibraryHost::finish_mutator_check() {
+    std::optional<MutatorCheckOutcome> outcome;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        if (!work.check_outcome)
+            return false;
+        outcome = std::move(*work.check_outcome);
+        work.check_outcome.reset();
+    }
+    if (!outcome->cancelled && outcome->kind == CheckKind::brain) {
+        if (outcome->brain && feed.keep_brain_verdict != nullptr) {
+            delivered_brain_key = std::move(outcome->brain_key);
+            feed.keep_brain_verdict(feed.context, outcome->id, *outcome->brain);
+            delivered_brain_key.reset();
+        }
+    } else if (!outcome->cancelled && outcome->record && feed.keep_verdict != nullptr) {
+        delivered_key = std::move(outcome->key);
+        feed.keep_verdict(feed.context, outcome->id, *outcome->record);
+        delivered_key.reset();
+    }
+
+    check_open = false;
+    checking_id.clear();
+    checking_kind = CheckKind::mutator;
+    // The oldest waiting check that can start goes to the worker. One whose
+    // list no longer resolves starts nothing, and the next one is tried.
+    for (;;) {
+        std::optional<MutatorCheck> next;
+        {
+            base::threads::LockGuard guard(work.mutex);
+            const bool drop_waiting = work.match_running || work.check_cancel.load();
+            if (drop_waiting) {
+                work.checks_waiting.clear();
+            } else if (!work.checks_waiting.empty()) {
+                next = std::move(work.checks_waiting.front());
+                work.checks_waiting.erase(work.checks_waiting.begin());
+            }
+        }
+        if (!next)
+            return true;
+        if (next->kind == CheckKind::brain) {
+            std::function<std::optional<library::Verdict>(const std::atomic<bool>&)> brain_job;
+            std::optional<BrainVerdictKey> brain_key;
+            if (next->brain_work) {
+                brain_job = std::move(next->brain_work);
+                brain_key = std::move(next->brain_key);
+            } else if (feed.start_brain_check != nullptr) {
+                prepared_brain_key.reset();
+                brain_job = feed.start_brain_check(feed.context, next->id);
+                brain_key = std::move(prepared_brain_key);
+                prepared_brain_key.reset();
+            }
+            if (!brain_job)
+                continue;
+            MutatorCheck prepared;
+            prepared.kind = CheckKind::brain;
+            prepared.id = std::move(next->id);
+            prepared.brain_work = std::move(brain_job);
+            prepared.brain_key = std::move(brain_key);
+            if (hand_to_worker(std::move(prepared)))
+                return true;
+            continue;
+        }
+        std::function<std::optional<mutators::VerdictRecord>(const std::atomic<bool>&)> job;
+        std::optional<mutators::VerdictKey> key;
+        if (next->work) {
+            job = std::move(next->work);
+            key = std::move(next->key);
+        } else if (feed.start_check != nullptr) {
+            prepared_key.reset();
+            job = feed.start_check(feed.context, next->id);
+            key = std::move(prepared_key);
+            prepared_key.reset();
+        }
+        if (!job)
+            continue;
+        MutatorCheck prepared;
+        prepared.id = std::move(next->id);
+        prepared.work = std::move(job);
+        prepared.key = std::move(key);
+        if (hand_to_worker(std::move(prepared)))
+            return true;
+    }
 }
 
 bool Runtime::LibraryHost::picture_known(void* context, const library::Entry& entry) {
@@ -1209,7 +1700,14 @@ Runtime::LibraryHost& Runtime::library_host() {
             LibraryHost::own_enqueue,
             LibraryHost::own_cancel,
             LibraryHost::own_retry,
-            LibraryHost::own_built_in
+            LibraryHost::own_built_in,
+            LibraryHost::own_remembered_verdict,
+            LibraryHost::own_start_check,
+            LibraryHost::own_keep_verdict,
+            LibraryHost::own_remembered_brain_verdict,
+            LibraryHost::own_start_brain_check,
+            LibraryHost::own_keep_brain_verdict,
+            LibraryHost::own_installed_listed
         };
         host.model.text = library::TextHooks{nullptr, shown_word};
         // The pictures are kept beside the cached catalogues.
@@ -1280,6 +1778,425 @@ bool Runtime::LibraryHost::own_built_in(void* context, std::string_view registry
         return false;
     const content::RegistryView* view = registry_view(*snapshot, registry);
     return view != nullptr && view->registry.origin == data::registry::Origin::built_in;
+}
+
+bool Runtime::LibraryHost::own_installed_listed(void* context) {
+    LibraryHost& host = static_cast<Runtime*>(context)->library_host();
+    base::threads::LockGuard guard(host.work.mutex);
+    return host.work.searches > 0;
+}
+
+namespace {
+
+/// True when a dry run stopped because it was cancelled. That verdict is not kept.
+///
+/// @param record the verdict
+/// @return true when it is the cancelled reason
+bool cancelled_dry_run(const mutators::VerdictRecord& record) {
+    return record.verdict == mutators::Verdict::failed &&
+           record.reason == mutators::dry_run_cancelled_reason;
+}
+
+/// The On choice for an id, or null when that mutator is not in the set.
+///
+/// @param on the On mutators
+/// @param id the mutator's id
+/// @return the choice, or null
+const MutatorCheckChoice* choice_for(std::span<const MutatorCheckChoice> on, std::string_view id) {
+    for (const MutatorCheckChoice& choice : on)
+        if (choice.id == id)
+            return &choice;
+    return nullptr;
+}
+
+/// True when the list's last mutator, whose verdict is shown, declares the
+/// maps layer. A prerequisite's maps layer is that prerequisite's change.
+///
+/// @param list the mutators, prerequisites included
+/// @return true when the last one does
+bool list_declares_maps(std::span<const mutators::ResolvedMutator> list) {
+    if (list.empty())
+        return false;
+    for (const formats::oamut::Layer layer : list.back().manifest.layers) {
+        if (layer == formats::oamut::Layer::maps)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+void Runtime::LibraryHost::ensure_shown_pass(Runtime& runtime) {
+    if (shown_ready && shown_checked)
+        return;
+    shown_checked = true;
+    uint64_t searched = 0;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        searched = work.searches;
+    }
+    const oa::base::sha256::Digest mod = runtime.mutator_mod_digest();
+    const formats::oamut::ClashMode clash = runtime.mutator_clash_default();
+    if (shown_ready && searched == shown_searches && mod == shown_mod && clash == shown_clash)
+        return;
+    if (!shown_ready || searched != shown_searches) {
+        // The runtime's own rows come from the worker's last search, and so
+        // does this listing. A feed of its own is listed here.
+        bool taken = false;
+        if (own_feed) {
+            base::threads::LockGuard guard(work.mutex);
+            if (work.searches != 0) {
+                shown_listing = work.mutator_listing;
+                searched = work.searches;
+                taken = true;
+            }
+        }
+        if (!taken) {
+            const std::filesystem::path folder =
+                runtime.user_folder() / std::string(data::mutator_library::mutators_folder_name);
+            shown_listing = data::mutator_library::list_installed(folder);
+        }
+        ++shown_listings;
+        shown_stored = runtime.read_mutator_verdicts();
+    }
+    shown_rows.clear();
+    shown_searches = searched;
+    shown_mod = mod;
+    shown_clash = clash;
+    shown_ready = true;
+}
+
+std::optional<std::vector<mutators::ResolvedMutator>> Runtime::LibraryHost::resolve_shown_list(
+    const data::mutator_library::Listing& listing,
+    std::string_view id,
+    std::span<const MutatorCheckChoice> on,
+    mutators::FolderDigests* digests
+) {
+    if (id.empty())
+        return std::nullopt;
+    std::vector<library::Need> graph;
+    graph.reserve(listing.mutators.size());
+    for (const data::mutator_library::InstalledMutator& installed : listing.mutators) {
+        library::Need need;
+        need.id = installed.manifest.id;
+        need.needs.reserve(installed.manifest.requires_mutators.size());
+        for (const formats::oamut::Condition& condition : installed.manifest.requires_mutators)
+            need.needs.push_back(condition.id);
+        graph.push_back(std::move(need));
+    }
+    const std::vector<std::string> roots{std::string(id)};
+    const library::Closure closure = library::prerequisite_closure(graph, roots);
+    if (closure.cyclic || closure.order.empty())
+        return std::nullopt;
+
+    std::vector<mutators::ResolvedMutator> resolved;
+    resolved.reserve(closure.order.size());
+    for (const std::string& member : closure.order) {
+        mutators::MutatorChoice choice;
+        choice.target = member;
+        if (const MutatorCheckChoice* chosen = choice_for(on, member))
+            choice.options = chosen->options;
+        const data::mutator_library::InstalledMutator* installed =
+            data::mutator_library::find(listing, member);
+        if (installed == nullptr)
+            return std::nullopt;
+        std::string choice_error;
+        std::optional<mutators::ResolvedMutator> one =
+            mutators::resolve_installed(choice, *installed, &choice_error, digests);
+        if (!one)
+            return std::nullopt;
+        if (const MutatorCheckChoice* chosen = choice_for(on, member))
+            if (chosen->clashes)
+                one->clashes = *chosen->clashes;
+        resolved.push_back(std::move(*one));
+    }
+    if (resolved.empty())
+        return std::nullopt;
+    return resolved;
+}
+
+std::optional<mutators::VerdictRecord> Runtime::LibraryHost::verdict_for(
+    Runtime& runtime,
+    std::span<const mutators::ResolvedMutator> list,
+    const oa::base::sha256::Digest& mod_digest,
+    std::span<const mutators::RememberedVerdict> stored
+) {
+    if (list.empty())
+        return std::nullopt;
+    return verdict_for_key(runtime, runtime.verdict_key_for_list(list, mod_digest), stored);
+}
+
+std::optional<mutators::VerdictRecord> Runtime::LibraryHost::verdict_for_key(
+    Runtime& runtime,
+    const mutators::VerdictKey& key,
+    std::span<const mutators::RememberedVerdict> stored
+) {
+    LibraryHost& host = runtime.library_host();
+    for (const CachedVerdict& cached : host.verdict_cache)
+        if (cached.key == key)
+            return cached.record;
+    const mutators::VerdictRecord* found = mutators::find_verdict(stored, key);
+    std::optional<mutators::VerdictRecord> record;
+    if (found != nullptr)
+        record = *found;
+    host.verdict_cache.push_back(CachedVerdict{key, record});
+    return record;
+}
+
+std::function<std::optional<mutators::VerdictRecord>(const std::atomic<bool>&)>
+Runtime::LibraryHost::dry_run_work(mutators::DryRunJob job, std::string id) {
+    return [job = std::move(job), id = std::move(id)](
+               const std::atomic<bool>& cancel
+           ) -> std::optional<mutators::VerdictRecord> {
+        const mutators::VerdictRecord record = mutators::run_dry_run(job, cancel);
+        if (!cancelled_dry_run(record)) {
+            const std::string label =
+                record.mod_label.empty() ? std::string("No Mod") : record.mod_label;
+            std::cerr << "open-annihilation: mutator check: " << id << " with " << label << ": "
+                      << mutators::verdict_word(record.verdict) << '\n';
+        }
+        return record;
+    };
+}
+
+std::function<std::optional<mutators::VerdictRecord>(const std::atomic<bool>&)>
+Runtime::LibraryHost::start_default_check(Runtime& runtime, std::string_view id) {
+    const std::filesystem::path folder =
+        runtime.user_folder() / std::string(data::mutator_library::mutators_folder_name);
+    const data::mutator_library::Listing listing = data::mutator_library::list_installed(folder);
+    LibraryHost& host = runtime.library_host();
+    const std::optional<std::vector<mutators::ResolvedMutator>> list =
+        resolve_shown_list(listing, id, {}, &host.work.mutator_digests);
+    if (!list)
+        return {};
+    mutators::DryRunJob job;
+    try {
+        job = runtime.prepare_mutator_check(*list);
+    } catch (const std::exception&) {
+        return {};
+    }
+    host.prepared_key = job.key;
+    const std::string logged =
+        list->back().manifest.id.empty() ? std::string(id) : list->back().manifest.id;
+    return dry_run_work(std::move(job), logged);
+}
+
+void Runtime::LibraryHost::keep_delivered(Runtime& runtime, const mutators::VerdictRecord& record) {
+    LibraryHost& host = runtime.library_host();
+    if (!host.delivered_key)
+        return;
+    const mutators::VerdictKey key = std::move(*host.delivered_key);
+    host.delivered_key.reset();
+    if (cancelled_dry_run(record))
+        return;
+    ++runtime.mutator_dry_runs_;
+    runtime.remember_mutator_verdict(key, record);
+    bool stored = false;
+    for (CachedVerdict& cached : host.verdict_cache) {
+        if (cached.key == key) {
+            cached.record = record;
+            stored = true;
+            break;
+        }
+    }
+    if (!stored)
+        host.verdict_cache.push_back(CachedVerdict{key, record});
+    ++host.verdict_generation;
+}
+
+std::optional<mutators::VerdictRecord>
+Runtime::LibraryHost::own_remembered_verdict(void* context, std::string_view id) {
+    Runtime& runtime = *static_cast<Runtime*>(context);
+    LibraryHost& host = runtime.library_host();
+    host.ensure_shown_pass(runtime);
+    auto row = host.shown_rows.find(id);
+    if (row == host.shown_rows.end()) {
+        ShownRow made;
+        const std::optional<std::vector<mutators::ResolvedMutator>> list =
+            resolve_shown_list(host.shown_listing, id, {}, &host.work.mutator_digests);
+        if (list && !list->empty()) {
+            made.key = runtime.verdict_key_for_list(*list, host.shown_mod);
+            made.maps = list_declares_maps(*list);
+        }
+        row = host.shown_rows.emplace(std::string(id), std::move(made)).first;
+    }
+    if (!row->second.key)
+        return std::nullopt;
+    host.shown_maps.insert_or_assign(std::string(id), row->second.maps);
+    return verdict_for_key(runtime, *row->second.key, host.shown_stored);
+}
+
+std::function<std::optional<mutators::VerdictRecord>(const std::atomic<bool>&)>
+Runtime::LibraryHost::own_start_check(void* context, std::string_view id) {
+    return start_default_check(*static_cast<Runtime*>(context), id);
+}
+
+void Runtime::LibraryHost::own_keep_verdict(
+    void* context, std::string_view /*id*/, const mutators::VerdictRecord& record
+) {
+    keep_delivered(*static_cast<Runtime*>(context), record);
+}
+
+std::optional<BrainVerdictKey>
+Runtime::LibraryHost::brain_verdict_key(Runtime& runtime, std::string_view id) {
+    if (id.empty())
+        return std::nullopt;
+    std::optional<data::brain_library::Listing> copied;
+    {
+        base::threads::LockGuard guard(work.mutex);
+        if (work.searches > 0)
+            copied = work.brain_listing;
+    }
+    data::brain_library::Listing listed;
+    const data::brain_library::Listing* listing = nullptr;
+    if (copied) {
+        listing = &*copied;
+    } else {
+        listed = data::brain_library::list_installed(
+            runtime.user_folder() / std::string(brains_folder_name)
+        );
+        listing = &listed;
+    }
+    const data::brain_library::InstalledBrain* found = data::brain_library::find(*listing, id);
+    if (found == nullptr)
+        return std::nullopt;
+    const oa::data::brain_facts::GameFacts game = runtime.brain_game_facts();
+    BrainVerdictKey key;
+    key.id = std::string(id);
+    key.version = oa::formats::oamut::version_text(found->manifest.version);
+    key.package_sha256 = found->package_sha256;
+    key.mod_id = game.mod.id;
+    key.mod_version = game.mod.version;
+    return key;
+}
+
+std::optional<library::Verdict>
+Runtime::LibraryHost::own_remembered_brain_verdict(void* context, std::string_view id) {
+    Runtime& runtime = *static_cast<Runtime*>(context);
+    LibraryHost& host = runtime.library_host();
+    const std::optional<BrainVerdictKey> key = host.brain_verdict_key(runtime, id);
+    if (!key)
+        return std::nullopt;
+    for (const RememberedBrainVerdict& kept : host.brain_verdicts) {
+        if (kept.key == *key)
+            return kept.verdict;
+    }
+    return std::nullopt;
+}
+
+std::function<std::optional<library::Verdict>(const std::atomic<bool>&)>
+Runtime::LibraryHost::own_start_brain_check(void* context, std::string_view id) {
+    Runtime& runtime = *static_cast<Runtime*>(context);
+    LibraryHost& host = runtime.library_host();
+    const std::optional<BrainVerdictKey> key = host.brain_verdict_key(runtime, id);
+    if (!key)
+        return {};
+    host.prepared_brain_key = *key;
+    const oa::data::brain_facts::GameFacts facts = runtime.brain_game_facts();
+    const std::string summary(library::shown(host.model.text, library::words::fits_this_game));
+    const std::filesystem::path folder = runtime.user_folder() / std::string(brains_folder_name);
+    const std::string brain_id(id);
+    return [facts, summary, folder, brain_id](
+               const std::atomic<bool>& cancel
+           ) -> std::optional<library::Verdict> {
+        try {
+            if (cancel.load())
+                return std::nullopt;
+            std::string error;
+            const std::optional<InstalledBrain> installed =
+                read_installed_brain(folder, brain_id, error);
+            if (cancel.load())
+                return std::nullopt;
+            if (!installed) {
+                library::Verdict verdict;
+                verdict.state = library::Verdict::State::failed;
+                verdict.reason =
+                    error.empty() ? std::string("the brain could not be seated") : error;
+                return verdict;
+            }
+            BrainSeatChoice choice;
+            choice.id = brain_id;
+            ResolvedSeat resolved;
+            if (!resolve_seat(*installed, choice, resolved, error)) {
+                library::Verdict verdict;
+                verdict.state = library::Verdict::State::failed;
+                verdict.reason =
+                    error.empty() ? std::string("the brain could not be seated") : error;
+                return verdict;
+            }
+            std::vector<oa::sim::brains::PackageFile> files;
+            std::vector<oa::sim::brains::OptionValue> options;
+            std::vector<oa::sim::brains::NetworkFile> networks;
+            const oa::sim::brains::SeatSpec spec =
+                seat_spec(0, *installed, resolved, files, options, networks);
+            if (cancel.load())
+                return std::nullopt;
+            const oa::sim::brains::SeatOutcome outcome = oa::sim::brains::check_brain(spec, facts);
+            if (cancel.load())
+                return std::nullopt;
+            library::Verdict verdict;
+            switch (outcome.result) {
+            case oa::sim::brains::SeatResult::seated:
+                verdict.state = library::Verdict::State::compatible;
+                verdict.summary = summary;
+                break;
+            case oa::sim::brains::SeatResult::does_not_fit:
+                verdict.state = library::Verdict::State::incompatible;
+                if (outcome.reason[0] != '\0')
+                    verdict.reason = std::string(outcome.reason.data());
+                break;
+            case oa::sim::brains::SeatResult::refused:
+            case oa::sim::brains::SeatResult::failed:
+                verdict.state = library::Verdict::State::failed;
+                if (outcome.reason[0] != '\0')
+                    verdict.reason = std::string(outcome.reason.data());
+                else {
+                    const std::string described = oa::data::script_host::describe(outcome.error);
+                    verdict.reason = described.empty()
+                                         ? std::string("the brain could not be seated")
+                                         : described;
+                }
+                break;
+            }
+            return verdict;
+        } catch (const std::exception& thrown) {
+            if (cancel.load())
+                return std::nullopt;
+            library::Verdict verdict;
+            verdict.state = library::Verdict::State::failed;
+            verdict.reason = thrown.what();
+            if (verdict.reason.empty())
+                verdict.reason = "the brain could not be seated";
+            return verdict;
+        } catch (...) {
+            if (cancel.load())
+                return std::nullopt;
+            library::Verdict verdict;
+            verdict.state = library::Verdict::State::failed;
+            verdict.reason = "the brain could not be seated";
+            return verdict;
+        }
+    };
+}
+
+void Runtime::LibraryHost::own_keep_brain_verdict(
+    void* context, std::string_view id, const library::Verdict& verdict
+) {
+    Runtime& runtime = *static_cast<Runtime*>(context);
+    LibraryHost& host = runtime.library_host();
+    if (!host.delivered_brain_key)
+        return;
+    const BrainVerdictKey key = std::move(*host.delivered_brain_key);
+    host.delivered_brain_key.reset();
+    if (key.id != id)
+        return;
+    for (RememberedBrainVerdict& kept : host.brain_verdicts) {
+        if (kept.key == key) {
+            kept.verdict = verdict;
+            return;
+        }
+    }
+    host.brain_verdicts.push_back(RememberedBrainVerdict{key, verdict});
 }
 
 uint64_t Runtime::library_feed_generation() {
@@ -1428,6 +2345,29 @@ library::Inputs Runtime::library_inputs() {
             listing.published = package.published;
             listing.supported_games = package.supported_games;
             listing.required_expansions = package.required_expansions;
+            if (package.kind == data::catalogue::Kind::oamut) {
+                // A mutator's base and hacks are not a mod's. Another base,
+                // or a hack list, would block GET for the wrong reason.
+                if (listing.base != library::supported_base)
+                    listing.base.clear();
+                listing.hack_ids.clear();
+                listing.game_hacks = 0;
+                listing.view_hacks = 0;
+                listing.mutator = facts_of(package);
+            }
+            if (package.kind == data::catalogue::Kind::oabrain) {
+                // A brain's base, hacks and expansion list are not a mod's.
+                // Another base, a hack list or a required expansion would
+                // block GET, or replace the row's own fit words.
+                if (listing.base != library::supported_base)
+                    listing.base.clear();
+                listing.hack_ids.clear();
+                listing.game_hacks = 0;
+                listing.view_hacks = 0;
+                listing.required_expansions.clear();
+                listing.supported_games.clear();
+                listing.brain = brain_facts_of(package);
+            }
             const content::RegistryView* view = registry_view(*snapshot, entry.registry);
             for (const data::catalogue::MapEntry& map : package.maps) {
                 library::MapLine line;
@@ -1479,12 +2419,16 @@ library::Inputs Runtime::library_inputs() {
     std::vector<content::Match> matches;
     std::vector<content::Update> updates;
     std::vector<ModBadge> pictures;
+    std::vector<std::optional<library::MutatorFacts>> mutator_facts;
+    std::vector<std::optional<library::BrainFacts>> brain_facts;
     {
         base::threads::LockGuard guard(host.work.mutex);
         installed = host.work.installed;
         matches = host.work.matches;
         updates = host.work.updates;
         pictures = host.work.installed_badges;
+        mutator_facts = host.work.installed_mutators;
+        brain_facts = host.work.installed_brains;
         // searches starts at 0. One more keeps a named reading apart from
         // "the inputs do not say", which is 0.
         inputs.installed_generation = host.work.searches + 1;
@@ -1520,6 +2464,14 @@ library::Inputs Runtime::library_inputs() {
         shown.in_use = *kind == library::Kind::language && language_pack_in_use(package.folder);
         if (index < pictures.size())
             shown.badge = badge_of(pictures[index]);
+        if (index < mutator_facts.size())
+            shown.mutator = std::move(mutator_facts[index]);
+        if (index < brain_facts.size())
+            shown.brain = std::move(brain_facts[index]);
+        if (*kind == library::Kind::brain) {
+            shown.required_expansions.clear();
+            shown.supported_games.clear();
+        }
         inputs.installed.push_back(std::move(shown));
     }
     // The mod folders the game offers, as the Library lists them beside
@@ -1611,6 +2563,8 @@ library::Inputs Runtime::library_inputs() {
             inputs.installed.push_back(std::move(shown));
         }
     }
+    name_mutator_facts(inputs);
+    name_brain_facts(inputs);
     for (const content::Update& update : updates) {
         if (update.installed >= installed.size())
             continue;
@@ -1712,6 +2666,10 @@ library::Inputs Runtime::library_inputs() {
                 played.version = details.version;
             played.badge = badge_of(details.badge);
             inputs.playing_mod = std::move(played);
+            inputs.played.id = details.profile_id;
+            inputs.played.name = mods.mod_names[index];
+            if (details.version != mod_summary_no_version)
+                inputs.played.version = details.version;
             break;
         }
     }
@@ -1825,6 +2783,7 @@ library::Inputs Runtime::library_inputs() {
     const fs::path& game_folder =
         options_.game_folders.empty() ? options_.game_dir : options_.game_folders.back();
     inputs.base_game_badge = base_game_icon(game_folder);
+    inputs.default_brain = default_brain();
     return inputs;
 }
 
@@ -2201,6 +3160,14 @@ struct Runtime::LibraryScreen final : LayerScreen {
         bool moved = false;
         if (runtime_.library_) {
             LibraryHost& host = *runtime_.library_;
+            // A refresh that closes the model's details closes the page and
+            // its drop-down too, so the list the player then sees is the list
+            // Escape closes.
+            if (!host.model.details_open && host.state.details_page) {
+                host.state.details_page = false;
+                host.state.menu = library::MenuKind::none;
+                moved = true;
+            }
             const auto now = static_cast<uint32_t>(SDL_GetTicks());
             uint32_t elapsed = 0;
             if (refresh_clock_started_)
@@ -2212,9 +3179,11 @@ struct Runtime::LibraryScreen final : LayerScreen {
             pulses.reserve(registries.size());
             for (const library::Registry& registry : registries)
                 pulses.push_back({registry.id, registry.refreshing, registry.unreachable});
-            moved = library::step_refresh_marks(
+            const bool marks_moved = library::step_refresh_marks(
                 host.state, host.model.inputs.checking, pulses, elapsed
             );
+            // The page closed above lays the screen out again too.
+            moved = moved || marks_moved;
         }
         if (!runtime_.library_ || (runtime_.library_->model_revision == seen_model_ && !moved))
             return LayerAnswer::none;
@@ -2250,6 +3219,7 @@ struct Runtime::LibraryScreen final : LayerScreen {
             return;
         LibraryHost& host = *runtime_.library_;
         host.state.drag = {};
+        host.state.tab_drag = {};
         host.state.menu = library::MenuKind::none;
         if (host.work.pictures)
             host.work.pictures->drop_all();
@@ -2504,6 +3474,77 @@ struct Runtime::LibraryScreen final : LayerScreen {
         }
     }
 
+    /// Asks GET WITH, then queues every step of the plan, prerequisites first.
+    ///
+    /// CANCEL queues nothing. GET BOTH or GET ALL stops at the first refusal
+    /// and leaves that reason on the question; the steps already queued stay
+    /// queued. Nothing is queued before the player answers.
+    ///
+    /// @param host the host
+    /// @param entry the mutator
+    void get_with(LibraryHost& host, const library::Entry& entry) {
+        const library::GetPlan plan = library::get_plan(host.model, entry);
+        if (!plan.blocked.empty() || plan.steps.size() < 2)
+            return;
+        oa::ui::kit::Question asked = library::get_with_question(host.model, entry);
+        const std::string go_id(
+            plan.steps.size() == 2 ? library::get_with_both_id : library::get_with_all_id
+        );
+        int32_t go = -1;
+        for (std::size_t place = 0; place < asked.buttons.size(); ++place) {
+            if (asked.buttons[place].id == go_id)
+                go = static_cast<int32_t>(place);
+        }
+
+        struct Step {
+            std::string registry;
+            std::string key;
+        };
+
+        std::vector<Step> steps;
+        steps.reserve(plan.steps.size());
+        for (const library::GetStep& step : plan.steps)
+            steps.push_back(Step{step.id.registry, step.id.key});
+        QuestionScreen::Host answers;
+        answers.answer = [this, steps, go](int32_t button) {
+            if (button != go)
+                return true;
+            LibraryHost& feed_host = runtime_.library_host();
+            auto* raw = dynamic_cast<QuestionScreen*>(runtime_.oa_layer().top());
+            for (const Step& step : steps) {
+                std::string why;
+                if (feed_host.feed.enqueue == nullptr || step.registry.empty()) {
+                    if (raw != nullptr) {
+                        raw->question().failure = why;
+                        raw->changed();
+                    }
+                    return false;
+                }
+                forget_note(runtime_, library::EntryId{step.registry, library::Kind::mutator, step.key});
+                const std::optional<uint64_t> item = feed_host.feed.enqueue(
+                    feed_host.feed.context,
+                    step.registry,
+                    step.key,
+                    content::DownloadReason::install,
+                    &why
+                );
+                if (!item) {
+                    if (raw != nullptr) {
+                        raw->question().failure = why;
+                        raw->changed();
+                    }
+                    return false;
+                }
+            }
+            return true;
+        };
+        answers.tick = [this] { return runtime_.screen_ != Screen::main_menu; };
+        OaLayer& layer = runtime_.oa_layer();
+        layer.push(
+            std::make_unique<QuestionScreen>(layer, Screen::main_menu, std::move(asked), answers)
+        );
+    }
+
     /// Carries out an entry's GET, CANCEL, RETRY, UPDATE, ROLL BACK,
     /// UNINSTALL, OPEN FOLDER or HOMEPAGE, as the Library's buttons do;
     /// Runtime::library_entry_press hands them here from Settings.
@@ -2654,6 +3695,10 @@ struct Runtime::LibraryScreen final : LayerScreen {
             return false;
         const library::Entry* entry = library::find_entry(host.model, id);
         switch (action) {
+        case library::Action::get_with:
+            if (entry != nullptr)
+                get_with(host, *entry);
+            return false;
         case library::Action::update_all:
         case library::Action::play_now:
         case library::Action::switch_off:
@@ -2706,6 +3751,22 @@ struct Runtime::LibraryScreen final : LayerScreen {
             if (entry != nullptr)
                 library::turn_on_required(host.model, *entry);
             ++host.model_revision;
+            return false;
+        case library::Action::check_with_mod:
+            if (entry != nullptr) {
+                if (entry->id.kind == library::Kind::brain)
+                    host.begin_brain_check(runtime_, entry->id.key);
+                else
+                    host.begin_mutator_check(runtime_, entry->id.key);
+            }
+            return false;
+        case library::Action::use_by_default:
+            if (entry != nullptr) {
+                const std::string_view chosen =
+                    library::is_built_in_brain(entry->id) ? std::string_view{} : entry->id.key;
+                runtime_.set_default_brain(chosen);
+                host.rebuild(runtime_);
+            }
             return false;
         case library::Action::add_expansion:
             // G22 opens the locator. This press does not.
@@ -2771,12 +3832,16 @@ struct Runtime::LibraryScreen final : LayerScreen {
 // ---------------------------------------------------------------------------------------------
 // Opening and closing the Library
 
-void Runtime::open_library(std::optional<library::Tab> tab) {
+bool Runtime::library_can_open() {
     // Nothing opens over a message box or a frame a package owns, off the
     // main menu, or while the saves notice shows.
-    if (screen_ != Screen::main_menu || frame_owned_by_package() ||
-        oa::ui::frontend_dialogs::dialog_count() != 0 || saves_notice_shown() ||
-        engine_settings_fonts() == nullptr)
+    return screen_ == Screen::main_menu && !frame_owned_by_package() &&
+           oa::ui::frontend_dialogs::dialog_count() == 0 && !saves_notice_shown() &&
+           engine_settings_fonts() != nullptr;
+}
+
+void Runtime::open_library(std::optional<library::Tab> tab) {
+    if (!library_can_open())
         return;
     begin_screen_change("library");
     LibraryHost& host = library_host();
@@ -2854,17 +3919,13 @@ void Runtime::library_screen_closed() {
     leaving.close(false);
 }
 
-/// The longest a run a switch of the mod in the Library began waits for the
-/// Library's worker to list the installed packages before it opens the
-/// Library again anyway, in milliseconds.
-constexpr uint32_t kept_library_wait_ms = 5000;
-
 void Runtime::take_library_return(std::shared_ptr<const LibraryReturn> shown) noexcept {
     library_return_ = std::move(shown);
+    library_return_since_.reset();
 }
 
 void Runtime::keep_library_for_restart() {
-    library_return_.reset();
+    library_kept_.reset();
     if (!library_ || oa_layer().find(library_screen_name) == nullptr)
         return;
     const LibraryHost& host = *library_;
@@ -2874,32 +3935,51 @@ void Runtime::keep_library_for_restart() {
     shown->tag = host.model.tag;
     shown->query = host.model.query;
     shown->selected = host.model.selected;
+    shown->selected_row = host.selected_row();
+    shown->list_scroll = host.state.list_scroll;
     shown->details_open = host.model.details_open;
     shown->details_page = host.state.details_page;
-    library_return_ = std::move(shown);
+    library_kept_ = std::move(shown);
+}
+
+bool Runtime::kept_library_may_show() {
+    // Where the player could open it, and over no other screen of the layer.
+    if (!library_can_open())
+        return false;
+    const LayerScreen* top = oa_layer().top();
+    return top == nullptr || top->name() == WorkScreen::screen_name;
 }
 
 void Runtime::reopen_kept_library() {
     LibraryHost& host = library_host();
     OaLayer& layer = oa_layer();
     const uint32_t now = oa::platform::tick_ms();
-    // The first try asks the worker to list them.
+    // The wait begins on the main menu, and the first try asks the worker
+    // to list the installed packages.
     if (!library_return_since_) {
+        if (screen_ != Screen::main_menu)
+            return;
         library_return_since_ = now;
         host.look_again(*this);
     }
-    // The worker lists the installed packages once the run starts. Until it
-    // has, the mods would show as not installed and move as they arrive.
-    bool listed = !host.own_feed;
-    if (!listed) {
-        base::threads::LockGuard guard(host.work.mutex);
-        listed = host.work.searches > 0;
+    const bool waited = now - *library_return_since_ >= kept_library_wait_ms;
+    // A Library that could not open by the end of the wait is dropped, so
+    // that it does not open later, whenever the main menu is free.
+    if (!kept_library_may_show()) {
+        if (waited)
+            library_return_.reset();
+        return;
     }
-    if (!listed && now - *library_return_since_ < kept_library_wait_ms) {
-        // The switch's work dialog says what is being done meanwhile.
-        if (!options_.restart_line.empty() && layer.find(WorkScreen::screen_name) == nullptr) {
+    // Until the feed lists the installed packages, the mods would show as
+    // not installed and move as they arrive.
+    const bool listed =
+        host.feed.installed_listed == nullptr || host.feed.installed_listed(host.feed.context);
+    if (!listed && !waited) {
+        // The switch's work dialog says what is being done meanwhile. It
+        // gives way to whatever the Library would not open over.
+        if (!options_.restart_line.empty() && layer.top() == nullptr) {
             WorkScreen::Host waiting;
-            waiting.tick = [this] { return !library_return_ || screen_ != Screen::main_menu; };
+            waiting.tick = [this] { return !library_return_ || !kept_library_may_show(); };
             layer.push(
                 std::make_unique<WorkScreen>(
                     layer,
@@ -2912,17 +3992,17 @@ void Runtime::reopen_kept_library() {
         }
         return;
     }
-    if (const LayerScreen* work = layer.find(WorkScreen::screen_name))
-        layer.close(work);
     if (listed)
         host.rebuild(*this);
-    // Until the Library opens, as it does once the main menu is free, it is
-    // tried again each frame.
-    open_library(library_return_->tab);
-    if (layer.find(library_screen_name) == nullptr)
-        return;
+    // The Library opens over the work dialog, which then closes under it:
+    // a screen waiting to be shown waits for the Library.
     const LibraryReturn shown = *library_return_;
     library_return_.reset();
+    open_library(shown.tab);
+    if (const LayerScreen* work = layer.find(WorkScreen::screen_name))
+        layer.close(work);
+    if (layer.find(library_screen_name) == nullptr)
+        return;
     for (std::size_t index = 0; index < library::tab_total; ++index) {
         library::set_tab(host.model, static_cast<library::Tab>(index));
         library::set_filter(host.model, shown.filters[index]);
@@ -2935,6 +4015,13 @@ void Runtime::reopen_kept_library() {
     host.kept_selection = shown.selected;
     host.kept_selection_shown = host.model.selected;
     host.select_kept();
+    // The list is scrolled as it was while the entry chosen is where it was;
+    // otherwise its row is brought into view.
+    host.state.list_scroll = shown.list_scroll;
+    host.state.reveal_row =
+        host.model.selected == shown.selected && host.selected_row() == shown.selected_row
+            ? -1
+            : host.selected_row();
     if (shown.details_open && host.model.selected == shown.selected) {
         library::open_details(host.model);
         host.state.details_page = shown.details_page;
@@ -2949,18 +4036,39 @@ void Runtime::tick_library() {
         base::threads::LockGuard guard(host.work.mutex);
         const bool was_running = host.work.match_running;
         host.work.match_running = in_match;
+        // A match cancels a check the way it stops a picture fetch. The
+        // running work sees check_cancel; a check that has not started is
+        // recorded as cancelled without running, and one that was waiting
+        // is dropped.
+        if (in_match) {
+            host.work.check_cancel.store(true);
+            host.work.checks_waiting.clear();
+            host.work.wake.notify_all();
+        }
         // Pictures held for a match are fetched once it ends.
         if (was_running && !in_match && host.work.pictures && host.work.pictures->waiting()) {
             host.work.pictures_due = true;
             host.work.wake.notify_all();
         }
     }
+    // A check that ended is kept, and a waiting one started, before the
+    // rebuild that shows the verdict, even when the feed's generation has
+    // not moved. The picker asks for checks over SKIRMISH, NEWGAME and the
+    // battle room too, so this runs on every screen but a match's; the
+    // Library's model follows the next time the main menu shows.
+    bool check_ended = false;
+    if (!in_match && screen_ != Screen::loading) {
+        check_ended = host.finish_mutator_check();
+        if (check_ended && screen_ != Screen::main_menu)
+            host.refreshed = false;
+    }
+    // A run a switch of the mod from the Library began shows it again on
+    // the main menu, or drops it once the wait is over on any screen.
+    if (library_return_ && !soft_restart_requested_)
+        reopen_kept_library();
     // The Library and its dot are the main menu's.
     if (screen_ != Screen::main_menu)
         return;
-    // A run a switch of the mod from the Library began shows it again.
-    if (library_return_ && !soft_restart_requested_)
-        reopen_kept_library();
     if (host.own_feed) {
         // A catalogue that moved on, or a package the queue installed,
         // sends the worker to search for updates again.
@@ -2989,7 +4097,7 @@ void Runtime::tick_library() {
     // The model follows its feed, at most once a frame.
     const uint64_t generation =
         host.feed.generation != nullptr ? host.feed.generation(host.feed.context) : 0;
-    if (!host.refreshed || generation != host.feed_generation) {
+    if (check_ended || !host.refreshed || generation != host.feed_generation) {
         host.feed_generation = generation;
         host.rebuild(*this);
     }

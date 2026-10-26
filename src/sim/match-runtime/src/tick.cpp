@@ -130,6 +130,8 @@ void Match::update_player_slots() {
         follow_alliances_in_sight();
         if (player == state().game.viewpoint_player)
             scan_contacts();
+        if (player_contacts_kept(index))
+            scan_player_contacts(index);
     }
     // A multiplayer game ends once no human participant is left.
     if (multiplayer_outcomes_) {
@@ -146,8 +148,12 @@ void Match::update_player_slots() {
 void Match::run_player_controller(uint8_t player) {
     const auto& record = match_player(*this, player);
     const bool computer = record.in_use != 0 && record.status == OA_PLAYER_STATUS_COMPUTER;
-    if (computer)
-        sim::ai::tick_match_computer_orders(*this, player);
+    if (computer) {
+        const SeatHooks hooks = seat_hooks_[player];
+        const bool played = hooks.play != nullptr && hooks.play(hooks.context, *this, player);
+        if (!played)
+            sim::ai::tick_match_computer_orders(*this, player);
+    }
     sweep_weapon_targets(player, computer);
 }
 
@@ -237,7 +243,21 @@ void Match::advance_path_search() {
             slot->record.attach_parent != 0,
             flags
         };
-        sim::ground_orders::accept_path(view, route);
+        const bool unreachable = sim::ground_orders::accept_path(view, route);
+        if (!unreachable)
+            return;
+        const auto* goal = runtime->navigation.goal;
+        auto* goal_order = goal != nullptr ? goal->order : nullptr;
+        if (goal_order == nullptr)
+            return;
+        if (auto* record = ctx.match->runtime_order(goal_order)) {
+            if (record->path_failure_reported)
+                return;
+            record->path_failure_reported = true;
+        }
+        ctx.match->emit_event<&EventHooks::path_failed>(
+            ctx.match->state(), slot->unit_index, goal_order->kind
+        );
     };
     access.occupancy = [](void* c,
                           sim::simulation_state::Unit& unit,
@@ -468,6 +488,12 @@ void Match::link_carried_unit(uint16_t child, uint16_t parent, int8_t piece, uin
             static_cast<uint8_t>((movement->movement.flags & ~3u) | (mode & 3u));
     attachment_local_update(child, parent);
     finalize_attachment(child);
+    // The link is in place. Report the carrier left, then the one joined.
+    // A piece-only change keeps the same carrier and is not reported.
+    if (old != 0 && old != parent)
+        emit_event<&EventHooks::unit_carried>(state(), child, old, false);
+    if (parent != 0 && parent != old)
+        emit_event<&EventHooks::unit_carried>(state(), child, parent, true);
 }
 
 } // namespace oa::sim::match_runtime

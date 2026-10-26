@@ -142,6 +142,7 @@ void renderer_ladder_options() {
         {"memory", oa::app::RenderFaultPoint::memory},
         {"card", oa::app::RenderFaultPoint::card},
         {"full-memory", oa::app::RenderFaultPoint::full_memory},
+        {"effects", oa::app::RenderFaultPoint::effects},
     };
     for (const auto& [name, point] : points) {
         const auto faulted = parse({"--check-renderer-ladder", "--render-fault", name});
@@ -161,8 +162,8 @@ void renderer_ladder_options() {
         );
     }
     const std::string usage =
-        "--render-fault takes create, present, reset, lost, stall, float, memory, card or "
-        "full-memory, optionally @FRAME";
+        "--render-fault takes create, present, reset, lost, stall, float, memory, card, "
+        "full-memory or effects, optionally @FRAME";
     for (const char* refused : {"present@0", "present@x", "present@", "reset@-1", "melt", "@5"})
         expect(rejection({"--check-renderer-ladder", "--render-fault", refused}) == usage, refused);
     expect(
@@ -362,6 +363,7 @@ const std::vector<FlagCase>& flag_cases() {
     static const std::vector<FlagCase> cases{
         {"--choose-game-dir", &Options::choose_game_dir, {}},
         {"--base-game", &Options::base_game, {}},
+        {"--no-mutators", &Options::no_mutators, {}},
         {"--print-profile", &Options::print_profile, {"--game-dir", "ta"}},
         {"--accept-unimplemented-hacks",
          &Options::accept_unimplemented_hacks,
@@ -390,6 +392,14 @@ const std::vector<FlagCase>& flag_cases() {
         {"--check-mod-switch", &Options::check_mod_switch, {}},
         {"--check-map-packs", &Options::check_map_packs, {}},
         {"--check-map-browser", &Options::check_map_browser, {}},
+        {"--check-mutator-button", &Options::check_mutator_button, {}},
+        {"--check-mutator-room", &Options::check_mutator_room, {}},
+        {"--check-brain-room", &Options::check_brain_room, {}},
+        {"--check-mutator-picker", &Options::check_mutator_picker, {}},
+        {"--check-brain-picker", &Options::check_brain_picker, {}},
+        {"--check-brain-seat-buttons", &Options::check_brain_seat_buttons, {}},
+        {"--check-brain-campaign", &Options::check_brain_campaign, {}},
+        {"--check-mutator-prompts", &Options::check_mutator_prompts, {}},
         {"--check-map-pack-lists", &Options::check_map_pack_lists, {}},
         {"--check-mod-map-settings", &Options::check_mod_map_settings, {}},
         {"--check-mod-warning", &Options::check_mod_warning, {}},
@@ -401,7 +411,11 @@ const std::vector<FlagCase>& flag_cases() {
         {"--check-library-install", &Options::check_library_install, {}},
         {"--check-library-map-previews", &Options::check_library_map_previews, {}},
         {"--check-library-content", &Options::check_library_content, {}},
+        {"--check-library-update-question", &Options::check_library_update_question, {}},
         {"--check-renderer-ladder", &Options::check_renderer_ladder, {}},
+        {"--check-renderer-proof", &Options::check_renderer_proof, {}},
+        {"--check-live-renderer", &Options::check_live_renderer, {}},
+        {"--experimental-3d", &Options::experimental_3d, {}},
         {"--check-briefing-narration", &Options::check_briefing_narration, {}},
         {"--check-match-layers", &Options::check_match_layers, {}},
         {"--check-render-tiers", &Options::check_render_tiers, {}},
@@ -409,6 +423,12 @@ const std::vector<FlagCase>& flag_cases() {
         {"--check-side-orders", &Options::check_side_orders, {}},
         {"--check-factory-orders", &Options::check_factory_orders, {}},
         {"--check-unit-speech", &Options::check_unit_speech, {}},
+        {"--check-mutator-layer", &Options::check_mutator_layer, {}},
+        {"--check-mutator-verdicts", &Options::check_mutator_verdicts, {}},
+        {"--check-mutator-dry-run", &Options::check_mutator_dry_run, {}},
+        {"--check-replay-loadout", &Options::check_replay_loadout, {}},
+        {"--check-side-data-per-match", &Options::check_side_data_per_match, {}},
+        {"--check-gadget-art-per-match", &Options::check_gadget_art_per_match, {}},
         {"--check-download-builds", &Options::check_download_builds, {}},
         {"--check-stockpile-builds", &Options::check_stockpile_builds, {}},
         {"--check-unit-page-memory", &Options::check_unit_page_memory, {}},
@@ -416,6 +436,7 @@ const std::vector<FlagCase>& flag_cases() {
         {"--check-match-bars", &Options::check_match_bars, {}},
         {"--check-kill-board", &Options::check_kill_board, {}},
         {"--check-paused-save", &Options::check_paused_save, {}},
+        {"--check-saved-brains", &Options::check_saved_brains, {}},
         {"--check-simulation-hash", &Options::check_simulation_hash, {}},
         {"--check-zoom-memory", &Options::check_zoom_memory, {}},
         {"--check-language-switch", &Options::check_language_switch, {}},
@@ -425,11 +446,13 @@ const std::vector<FlagCase>& flag_cases() {
         {"--check-setup-window", &Options::check_setup_window, {}},
         {"--check-window-place", &Options::check_window_place, {}},
         {"--check-progress", &Options::check_progress, {}},
+        {"--check-icloud-wait", &Options::check_icloud_wait, {}},
         {"--check-text-fit", &Options::check_text_fit, {}},
         {"--check-folder-chooser", &Options::check_folder_chooser, {}},
         {"--check-patrol-reclaim", &Options::check_patrol_reclaim, {}},
         {"--check-reclaim-cursor", &Options::check_reclaim_cursor, {}},
         {"--check-wreck-pick", &Options::check_wreck_pick, {}},
+        {"--check-click-snap", &Options::check_click_snap, {}},
         {"--check-build-preview", &Options::check_build_preview, {}},
         {"--check-pointer-interfaces", &Options::check_pointer_interfaces, {}},
         {"--check-megamap-clicks", &Options::check_megamap_clicks, {}},
@@ -466,6 +489,7 @@ const std::vector<ValueCase>& value_cases() {
         {"--content", "totala", {}},
         {"--archive", "totala1.hpi", {}},
         {"--mod", "mods/x/oamod.yaml", {}},
+        {"--mutator", "ridge-swift:factor=4", {}},
         {"--mod-dir", "mods/x", {}},
         {"--snapshot", "frame.ppm", {}},
         {"--preferences-file", "p.conf", {}},
@@ -495,6 +519,26 @@ const std::vector<ValueCase>& value_cases() {
         {"--zoom", "2", {}},
         {"--camera", "10,20", {}},
         {"--seed", "5", {}},
+        {"--brain-match",
+         "builtin,builtin",
+         {"--headless-check", "--match-ticks", "60", "--brain-map", "Ashap Plateau"}},
+        {"--brain-levels",
+         "easy,hard",
+         {"--headless-check",
+          "--match-ticks",
+          "60",
+          "--brain-match",
+          "builtin,builtin",
+          "--brain-map",
+          "Ashap Plateau"}},
+        {"--brain-map",
+         "Ashap Plateau",
+         {"--headless-check", "--match-ticks", "60", "--brain-match", "builtin,builtin"}},
+        {"--brain-record", "records.txt", {"--headless-check", "--match-ticks", "60"}},
+        {"--brain-shadow", "steady-commander", {}},
+        {"--brain-shadow-log", "shadow-logs", {"--brain-shadow", "steady-commander"}},
+        {"--brain-shadow-sections", "build,attack", {"--brain-shadow", "steady-commander"}},
+        {"--brain-trace", "log.txt", {"--headless-check", "--match-ticks", "60"}},
         {"--render-fault", "present", {"--check-renderer-ladder"}},
         {"--check-unit-pages", "whole:ARMCOM", {}},
         {"--check-unit-language", "fr", {}},
@@ -834,29 +878,36 @@ void version_line_stands_alone() {
 
 } // namespace
 
-// --open, --install-mod, bare files of the four types, macOS's process
-// serial number and --check-mod-install.
+// --open, --install-mod, bare files of the six types the game installs or
+// adds, macOS's process serial number and --check-mod-install.
 void mod_install_options() {
     namespace fs = std::filesystem;
     const auto opened = parse(
         {"a.oalang",
          "B.OAMAP",
          "c.oareg",
+         "F.OAMUT",
          "--open",
          "d.oamod",
          "--install-mod",
          "e.oamod",
+         "--open",
+         "g.oamut",
+         "h.OABRAIN",
          "-psn_0_123",
          "german"}
     );
-    expect(opened.open_files.size() == 5, "--open, --install-mod and bare files are all opened");
+    expect(opened.open_files.size() == 8, "--open, --install-mod and bare files are all opened");
     expect(
-        opened.open_files.size() == 5 && opened.open_files[0].is_absolute() &&
+        opened.open_files.size() == 8 && opened.open_files[0].is_absolute() &&
             opened.open_files[0].filename() == "a.oalang" &&
             opened.open_files[1].filename() == "B.OAMAP" &&
             opened.open_files[2].filename() == "c.oareg" &&
-            opened.open_files[3].filename() == "d.oamod" &&
-            opened.open_files[4].filename() == "e.oamod",
+            opened.open_files[3].filename() == "F.OAMUT" &&
+            opened.open_files[4].filename() == "d.oamod" &&
+            opened.open_files[5].filename() == "e.oamod" &&
+            opened.open_files[6].filename() == "g.oamut" &&
+            opened.open_files[7].filename() == "h.OABRAIN",
         "the files are absolute, in the order given, and --install-mod still opens one"
     );
     expect(opened.skip_intro, "a file opened with the game skips the movies");
@@ -878,7 +929,9 @@ void mod_install_options() {
     expect(
         rejection({"x.oamod", "--headless-check"})
                 .find(
-                    "a file to open (.oamod, .oalang, .oamap or .oareg), after --open or on "
+                    "a file to open (.oamod, .oalang, .oamap, .oamut, .oabrain or .oareg), after "
+                    "--open or "
+                    "on "
                     "its own,"
                 ) != std::string::npos,
         "a bare file's refusal names both ways of giving it"
@@ -977,6 +1030,20 @@ void switch_words_keep_their_spaces() {
     );
 }
 
+// Two --mutator values stay in the order given, and a malformed value is
+// refused before the game starts.
+void mutator_options() {
+    const auto options =
+        parse({"--mutator", "ridge-swift", "--mutator", "packages/ridge-tough:health=2000"});
+    expect(
+        options.mutators.size() == 2 && options.mutators[0] == "ridge-swift" &&
+            options.mutators[1] == "packages/ridge-tough:health=2000",
+        "two --mutator values stay in order"
+    );
+    const std::string refused = rejection({"--mutator", "ridge-swift:factor="});
+    expect(refused.starts_with("--mutator: "), "a malformed --mutator names the option");
+}
+
 int main() {
     renderer_ladder_options();
     game_files_options();
@@ -984,6 +1051,7 @@ int main() {
     switch_words_keep_their_spaces();
     options_by_name();
     value_options();
+    mutator_options();
     const auto plain = parse({"--headless-check"});
     expect(plain.trace_digest.empty() && plain.trace_units.empty(), "no trace without the flag");
     expect(!plain.seed, "no fixed seed without the flag");
@@ -1247,6 +1315,257 @@ int main() {
             "--frame-log, --scroll-camera, --march, --follow and --frame-clock need --frame-rate",
         "--frame-clock needs --frame-rate"
     );
+    const auto brain_match = parse(
+        {"--headless-check",
+         "--match-ticks",
+         "60",
+         "--brain-match",
+         "builtin,builtin",
+         "--brain-levels",
+         "easy,hard",
+         "--brain-map",
+         "Ashap Plateau"}
+    );
+    expect(
+        brain_match.brain_match == "builtin,builtin" && brain_match.brain_levels == "easy,hard" &&
+            brain_match.brain_map == "Ashap Plateau",
+        "a brain match stores its three options"
+    );
+    expect(
+        rejection({"--brain-levels", "easy,hard"}) == "--brain-levels needs --brain-match",
+        "--brain-levels needs --brain-match"
+    );
+    expect(
+        rejection({"--brain-map", "Ashap Plateau"}) == "--brain-map needs --brain-match",
+        "--brain-map needs --brain-match"
+    );
+    expect(
+        rejection({"--brain-shadow-sections", "build,attack"}) ==
+            "--brain-shadow-sections needs --brain-shadow",
+        "--brain-shadow-sections needs --brain-shadow"
+    );
+    expect(
+        rejection({"--brain-shadow-log", "shadow-logs"}) ==
+            "--brain-shadow-log needs --brain-shadow",
+        "--brain-shadow-log needs --brain-shadow"
+    );
+    expect(
+        rejection({"--brain-shadow", ""}) == "--brain-shadow requires a value",
+        "an empty shadow brain is refused"
+    );
+    expect(
+        rejection({"--brain-shadow-sections", ""}) == "--brain-shadow-sections requires a value",
+        "an empty shadow section list is refused"
+    );
+    expect(
+        rejection({"--brain-shadow-log", ""}) == "--brain-shadow-log requires a value",
+        "an empty shadow log folder is refused"
+    );
+    {
+        const auto shadow = parse(
+            {"--brain-shadow",
+             "steady-commander",
+             "--brain-shadow-sections",
+             "build,attack",
+             "--brain-shadow-log",
+             "shadow-logs"}
+        );
+        expect(
+            shadow.brain_shadow == "steady-commander" &&
+                shadow.brain_shadow_sections == "build,attack" &&
+                shadow.brain_shadow_log == "shadow-logs",
+            "a shadow run stores its three options"
+        );
+    }
+    expect(
+        rejection({"--brain-trace", "log.txt"}) == "--brain-trace needs --headless-check",
+        "--brain-trace needs --headless-check"
+    );
+    expect(
+        rejection({"--headless-check", "--brain-trace", "log.txt"}) ==
+            "--brain-trace needs --match-ticks",
+        "--brain-trace needs --match-ticks"
+    );
+    expect(
+        rejection({"--brain-record", "records.txt"}) == "--brain-record needs --headless-check",
+        "--brain-record needs --headless-check"
+    );
+    expect(
+        rejection({"--headless-check", "--brain-record", "records.txt"}) ==
+            "--brain-record needs --match-ticks",
+        "--brain-record needs --match-ticks"
+    );
+    expect(
+        rejection({"--brain-trace"}) == "--brain-trace requires a value",
+        "--brain-trace requires a value"
+    );
+    expect(
+        rejection({"--brain-trace", ""}) == "--brain-trace requires a value",
+        "an empty brain log path is refused"
+    );
+    expect(
+        rejection({"--brain-record"}) == "--brain-record requires a value",
+        "--brain-record requires a value"
+    );
+    expect(
+        rejection({"--brain-record", ""}) == "--brain-record requires a value",
+        "an empty record path is refused"
+    );
+    {
+        const auto logged = parse(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--brain-trace",
+             "log.txt",
+             "--brain-record",
+             "records.txt"}
+        );
+        expect(
+            logged.brain_trace == "log.txt" && logged.brain_record == "records.txt",
+            "the brain log and the record file are stored"
+        );
+    }
+    expect(
+        rejection({"--brain-match", "x,y"}) == "--brain-match needs --headless-check",
+        "--brain-match needs --headless-check"
+    );
+    expect(
+        rejection({"--headless-check", "--brain-match", "x,y", "--brain-map", "Ashap Plateau"}) ==
+            "--brain-match needs --match-ticks",
+        "--brain-match needs --match-ticks"
+    );
+    expect(
+        rejection({"--headless-check", "--match-ticks", "60", "--brain-match", "x,y"}) ==
+            "--brain-match needs --brain-map",
+        "--brain-match needs --brain-map"
+    );
+    expect(
+        rejection(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--brain-map",
+             "Ashap Plateau",
+             "--brain-match",
+             "builtin"}
+        ) == "--brain-match expects two seats",
+        "--brain-match expects two seats"
+    );
+    expect(
+        rejection(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--brain-map",
+             "Ashap Plateau",
+             "--brain-match",
+             "builtin,builtin",
+             "--brain-levels",
+             "silly,hard"}
+        ) == "--brain-levels: a built-in level is easy, medium or hard",
+        "a built-in level is easy, medium or hard"
+    );
+    expect(
+        rejection(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--stage",
+             "s.stage",
+             "--brain-map",
+             "Ashap Plateau",
+             "--brain-match",
+             "builtin,builtin"}
+        ) == "--brain-match cannot be used with --stage",
+        "--brain-match cannot be used with --stage"
+    );
+    expect(
+        rejection(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--combat",
+             "4",
+             "--brain-map",
+             "Ashap Plateau",
+             "--brain-match",
+             "builtin,builtin"}
+        ) == "--brain-match cannot be used with --combat",
+        "--brain-match cannot be used with --combat"
+    );
+    expect(
+        rejection(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--load",
+             "a.sav",
+             "--brain-map",
+             "Ashap Plateau",
+             "--brain-match",
+             "builtin,builtin"}
+        ) == "--brain-match cannot be used with --load",
+        "--brain-match cannot be used with --load"
+    );
+    expect(
+        rejection(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--save-after",
+             "30",
+             "--brain-map",
+             "Ashap Plateau",
+             "--brain-match",
+             "builtin,builtin"}
+        ) == "--brain-match cannot be used with --save-after",
+        "--brain-match cannot be used with --save-after"
+    );
+    expect(
+        rejection(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--campaign",
+             "Arm Campaign",
+             "--mission",
+             "0",
+             "--brain-map",
+             "Ashap Plateau",
+             "--brain-match",
+             "builtin,builtin"}
+        ) == "--brain-match cannot be used with --campaign",
+        "--brain-match cannot be used with --campaign"
+    );
+    expect(
+        rejection(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--frame-rate",
+             "30",
+             "--brain-map",
+             "Ashap Plateau",
+             "--brain-match",
+             "builtin,builtin"}
+        ) == "--brain-match cannot be used with --frame-rate",
+        "--brain-match cannot be used with --frame-rate"
+    );
+    expect(
+        rejection(
+            {"--headless-check",
+             "--match-ticks",
+             "60",
+             "--benchmark",
+             "10",
+             "--brain-map",
+             "Ashap Plateau",
+             "--brain-match",
+             "builtin,builtin"}
+        ) == "--brain-match cannot be used with --benchmark",
+        "--brain-match cannot be used with --benchmark"
+    );
 
     // Without an extension the engine knows none of an extension's options.
     for (const char* flag : {"--extra", "--quiet-extra", "--not-an-option"})
@@ -1505,6 +1824,40 @@ int main() {
         expect(rejection(scripted).find("--choose-game-dir opens a dialog") == 0, scripted.front());
     }
 
+    const auto inspection = parse({"--experimental-3d"});
+    expect(
+        inspection.experimental_3d && !inspection.headless_check && !inspection.fixed_clock &&
+            !inspection.unattended && !inspection.skip_intro,
+        "--experimental-3d keeps the ordinary interactive launch"
+    );
+    expect(
+        rejection({"--experimental-3d", "--choose-game-dir"}).empty(),
+        "the experimental camera allows the player's folder chooser"
+    );
+
+    const auto live = parse({"--check-live-renderer"});
+    expect(
+        live.check_live_renderer && live.experimental_3d && live.headless_check &&
+            live.fixed_clock && live.unattended && live.skip_intro,
+        "--check-live-renderer exercises the experimental renderer offscreen"
+    );
+    expect(
+        rejection({"--render-script", "film.oascript", "--check-live-renderer"}) ==
+            "--render-script cannot be used with --check-live-renderer",
+        "the live renderer check cannot be combined with a director render"
+    );
+
+    const auto proof = parse({"--check-renderer-proof", "--snapshot", "local/proof"});
+    expect(
+        proof.check_renderer_proof && proof.headless_check && proof.fixed_clock &&
+            proof.unattended && proof.skip_intro && proof.snapshot == "local/proof",
+        "--check-renderer-proof is an offscreen, fixed-clock and unattended run"
+    );
+    expect(
+        rejection({"--render-script", "film.oascript", "--check-renderer-proof"}) ==
+            "--render-script cannot be used with --check-renderer-proof",
+        "the renderer proof cannot be combined with a director render"
+    );
     // The render tiers check draws in a window on the fixed clock, with
     // nobody there; --force-capable goes with it alone.
     const auto tiers = parse({"--check-render-tiers"});
@@ -1721,6 +2074,76 @@ int main() {
             "--render-script takes the frame size from the script, not from --resolution",
         "a render's size is the script's"
     );
+    // A render draws its frames on the processor or on the graphics card's
+    // Full tier; Basic draws none of its own.
+    expect(
+        rejection({"--render-script", "game.oascript", "--hardware-acceleration=basic"}) ==
+            "--render-script draws its frames on the processor, or on the graphics card with "
+            "--hardware-acceleration=full; Basic draws no frames of its own",
+        "a render is not drawn by Basic"
+    );
+    expect(
+        parse({"--render-script", "game.oascript", "--hardware-acceleration=full"})
+                    .hardware_acceleration == oa::ui::engine_settings::HardwareAcceleration::full &&
+            parse({"--render-script", "game.oascript", "--hardware-acceleration"})
+                    .hardware_acceleration == oa::ui::engine_settings::HardwareAcceleration::full &&
+            parse({"--render-script", "game.oascript", "--no-hardware-acceleration"})
+                    .hardware_acceleration == oa::ui::engine_settings::HardwareAcceleration::off,
+        "a render is drawn by the card's Full tier or by the processor"
+    );
+    // --effect sets an effect's percent for a render, once for each effect.
+    {
+        const auto effects = parse({"--render-script",
+                                    "game.oascript",
+                                    "--effect",
+                                    "heat-distortion=0",
+                                    "--effect",
+                                    "water-ripples=150"})
+                                 .director_effects;
+        std::size_t set = 0;
+        for (std::size_t index = 0; index < effects.size(); ++index) {
+            const auto name = oa::ui::engine_settings::effect_sliders[index].name;
+            if (name == "heat-distortion")
+                expect(effects[index] == 0U, "--effect heat-distortion=0 sets 0%");
+            else if (name == "water-ripples")
+                expect(effects[index] == 150U, "--effect water-ripples=150 sets 150%");
+            else
+                expect(!effects[index], "--effect leaves the effects it does not name");
+            set += effects[index] ? 1 : 0;
+        }
+        expect(set == 2, "--effect sets the two effects named");
+    }
+    for (const auto* value :
+         {"heat-distortion",
+          "heat-distortion=",
+          "heat-distortion=210",
+          "heat-distortion=15",
+          "heat-distortion=-10",
+          "sparkles=100",
+          "=100",
+          "heat-distortion=1e2"})
+        expect(
+            rejection({"--render-script", "game.oascript", "--effect", value})
+                .starts_with("--effect expects NAME=PERCENT: NAME one of weapon-lighting, "),
+            value
+        );
+    expect(
+        rejection(
+            {"--render-script",
+             "game.oascript",
+             "--effect",
+             "wreck-glow=50",
+             "--effect",
+             "wreck-glow=60"}
+        ) == "--effect names wreck-glow twice",
+        "an effect is set once"
+    );
+    expect(
+        rejection({"--effect", "wreck-glow=50"}) == "--effect needs --render-script" &&
+            rejection({"--generate-script", "game.rec", "--effect", "wreck-glow=50"}) ==
+                "--effect needs --render-script",
+        "--effect belongs to a render"
+    );
     const std::vector<std::vector<const char*>> refused_with_scripts{
         {"--seed", "5"},
         {"--capture-video", "game.mp4"},
@@ -1783,6 +2206,11 @@ int main() {
         parse({"--showcase", "arm-first-mission", "--seed", "9"}).seed == 9u,
         "--seed chooses a showcase's seed"
     );
+    const auto construction = parse({"--showcase", "base-construction"});
+    expect(
+        construction.showcase == oa::app::Showcase::base_construction && construction.unattended,
+        "base construction showcase runs unattended"
+    );
     const auto battle = parse({"--showcase", "skirmish-battle", "--combat", "40"});
     expect(
         battle.showcase == oa::app::Showcase::skirmish_battle && battle.unattended &&
@@ -1791,7 +2219,7 @@ int main() {
     );
     expect(
         rejection({"--showcase", "skirmish"}) ==
-            "--showcase knows two showcases: arm-first-mission and skirmish-battle",
+            "--showcase knows arm-first-mission, skirmish-battle and base-construction",
         "an unknown showcase is refused"
     );
     expect(

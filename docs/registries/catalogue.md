@@ -52,7 +52,7 @@ accepts, including one with a query. The descriptor's `catalogue`,
 
 | Member | Required | Rule |
 |---|---|---|
-| `kind` | yes | `oamod`, `oamap`, `oalang` or `expansion`. |
+| `kind` | yes | `oamod`, `oamap`, `oalang`, `expansion`, `oamut` or `oabrain`. |
 | `id` | yes | The package key. No key contains `@`. |
 | `name` | yes | 1 to 64 bytes. |
 | `release` | yes | A whole number from 1 to 2147483647. |
@@ -60,9 +60,11 @@ accepts, including one with a query. The descriptor's `catalogue`,
 | `sha256` | yes | 64 lower-case hex digits. |
 | `file` | yes | A catalogue reference whose last segment is `<sha256>.<kind>`, or `<sha256>.oaexp` for an expansion. |
 
-A mod or map-pack key is lower-case kebab-case of 1 to 64 bytes. A language
-key is a language tag of 2 to 35 bytes: a first part of letters (`A-Z` or
-`a-z`), then hyphen-joined parts of letters and digits.
+A mod, map-pack, mutator or brain key is lower-case kebab-case of 1 to 64
+bytes, and a key is unique across kinds, so a mutator's or a brain's id
+must not be any other package's id. A language key is a language tag of 2
+to 35 bytes: a first part of letters (`A-Z` or `a-z`), then hyphen-joined
+parts of letters and digits.
 
 A reference is absolute from the host root (`/v1/p/<name>`) or relative to
 the catalogue's folder. It is at most 512 bytes. It has no scheme, no `//`,
@@ -75,7 +77,7 @@ hex digest, a dot, and the kind, except an expansion, whose last segment is
 
 | Member | Required | Rule |
 |---|---|---|
-| `version` | mods and expansions | 1 to 32 bytes. Optional for a map pack or a language pack. |
+| `version` | mods, expansions, mutators and brains | 1 to 32 bytes. A mutator's or a brain's version is a mutator version: one to three dotted parts, each 0 to 65535 with no leading zero. Optional for a map pack or a language pack. |
 | `revision` | mods only | A whole number from 1 to 65535. If any other kind names it, the same rule applies. |
 | `publisher`, `author` | no | 1 to 64 bytes when present. |
 | `summary` | no | 0 to 200 bytes. |
@@ -84,7 +86,7 @@ hex digest, a dot, and the kind, except an expansion, whose last segment is
 | `tags` | no | At most 16. Each is lower-case kebab-case of 1 to 32 bytes. |
 | `badge` | no | A reference ending `.png`. |
 | `published` | no | The day this release was published, `YYYY-MM-DD`: a real Gregorian day, 29 February included in a leap year, with nothing before or after it. Any kind may name it. |
-| `requires` | no | An object. `engine` is a range, below. `base` is any string and is copied as written. Other members are ignored. |
+| `requires` | no | An object. `engine` is a range, below. `base` is any string and is copied as written. On a mutator, `mutators` is the prerequisites, under Mutators. `mutators` is ignored on a brain and on every other kind. Other members are ignored. |
 | `sim_hash` | no | 64 hex digits, either case. |
 | `hacks` | no | `sim` and `view` are whole numbers from 0 to 2147483647. `ids` is at most 256 hack ids, each 1 to 64 bytes of `a-z`, `0-9`, `.` and `-`. Other members are ignored. |
 
@@ -138,6 +140,87 @@ published under the older names,
 OA reads a new name when the table has one, and an older name only when it
 does not. The manifest inside the package is described by the
 [OAMAP standard](../maps/oamap-standard.md).
+
+## Mutators
+
+A mutator (`oamut`) MUST name `version`, and that version MUST be a mutator
+version: one to three dotted parts, each 0 to 65535 with no leading zero,
+in at most 32 bytes. The file's last segment is `<sha256>.oamut`.
+`requires.mutators`, `conflicts_with`, `layers` and `clashes` are read only
+on a mutator. On a brain and on every other kind they are ignored.
+`works_with` and `options` are read on a mutator and on a brain, by the
+rules in this table, and ignored on every other kind.
+
+| Member | Required | Rule |
+|---|---|---|
+| `requires.mutators` | no | At most 16 objects, in the order the prerequisites apply. Each `id` is a mutator key that is not this entry's id and appears once. `version` is optional and is a version range. Other members of an object are ignored. |
+| `conflicts_with` | no | At most 32 objects of the same shape as `requires.mutators`. None is this entry's id or one of its prerequisites. |
+| `works_with` | no | At most 32 strings. Each is a condition: `*`, `ta-3.1c`, or a mod id with an optional version range. `*` stands only alone. |
+| `layers` | no | At most 16 strings. A known layer name is kept once, in the order written. An unknown name is skipped. |
+| `clashes` | no | `add` or `replace`. Absent stays absent; the game's default then applies. Any other value, including `Add` and a number, skips the entry. |
+| `options` | no | At most 16 objects, below. An option of an unknown type is skipped. Other members of an object are ignored. |
+
+The layer names are `files`, `units`, `weapons`, `features`, `sides`,
+`tables`, `menus`, `maps` and `hacks`.
+
+An option names `id` (an option id), `label` (1 to 64 bytes) and `type`.
+An option id is a Lua name of 1 to 32 bytes, `[a-z][a-z0-9_]*`. Lua 5.4's
+reserved words are not ids (`and`, `break`, `do`, `else`, `elseif`, `end`,
+`false`, `for`, `function`, `goto`, `if`, `in`, `local`, `nil`, `not`, `or`,
+`repeat`, `return`, `then`, `true`, `until`, `while`), matched in that case.
+`format`, `ends` and `for_` are ids. `For` is not, because of its capital.
+A reserved word leaves the package out, as any other refused mutator member does.
+`type` is `toggle`, `choice` or `number`. A choice names `values`, 2 to 16
+numbers or 2 to 16 identifiers, all of one kind, and may name `labels`, one
+string of 1 to 64 bytes for each value. An identifier is 1 to 32 bytes of
+ASCII letters, digits, `_`, `-` and `.`. A number names `min`,
+`max` and `step`: numbers, with `min` below `max` and `step` above zero. A
+toggle names nothing more. `default` is optional: `true` or `false` for a
+toggle, one of the values for a choice, or a number on a step from `min` to
+`max` for a number.
+
+`tags` and `badge` keep the rules above. A mutator's `badge` is its icon,
+and `tags` are at most 16.
+
+An older reader leaves an `oamut` entry out as an unknown kind, before the
+duplicate-key check, so neither the entry nor its key affects anything else.
+A reader that knows `oamut` applies the duplicate-key rule across kinds. The
+manifest inside the package is described by
+[oamut.yaml](../../src/formats/oamut/README.md) until the mutator standard
+exists.
+
+## Brains
+
+A brain (`oabrain`) MUST name `version` and `levels`. `version` is a mutator
+version: one to three dotted parts, each 0 to 65535 with no leading zero, in
+at most 32 bytes. The file's last segment is `<sha256>.oabrain`. A brain's
+key is lower-case kebab-case, and it is unique across kinds.
+
+| Member | Required | Rule |
+|---|---|---|
+| `levels` | yes | 1 to 6 objects, in the order written. `id` is lower-case kebab-case of 1 to 32 bytes and appears once. `name` is 1 to 64 bytes. `difficulty` is `easy`, `medium` or `hard`. A level of any other difficulty is skipped. An entry left with no level is left out, and the reason is `levels names no level this build knows`. Other members of a level are ignored. |
+| `full_awareness` | no | `true` or `false`. Absent is false. Any other type leaves the entry out. |
+| `network_bytes` | no | A whole number from 0 to 67108864: the networks' bytes together. Absent is 0. Any other value leaves the entry out. |
+| `works_with` | no | The mutator's rule, above. |
+| `options` | no | The mutator's rule, above. An option of an unknown type is skipped. |
+| `requiredExpansions` | no | The same rule as on every other kind. At most 16 expansion ids, none repeated. An empty list is allowed. Each must extend a game the entry supports. |
+| `supportedGames` | no | The same rule as on every other kind, when written. At most 16 base-game ids, none repeated. An empty list is refused. |
+| `requires.engine` | no | The same range as on every other kind. |
+| `tags` | no | The same rule as on every other kind: at most 16, not limited to the nine a brain manifest allows. |
+| `badge` | no | The same rule as on every other kind. A brain's badge is its icon. |
+
+`requires.mutators`, `conflicts_with`, `layers` and `clashes` are ignored on
+a brain. A brain publishes the expansions its manifest names under
+`requires.expansions` as `requiredExpansions`, the member the Library already
+reads as which expansions a package needs. When `supportedGames` is omitted,
+an expansion in `requiredExpansions` must extend `totala` (both base games
+for a language pack).
+
+An older reader leaves an `oabrain` entry out as an unknown kind, before the
+duplicate-key check, so neither the entry nor its key affects anything else.
+The manifest inside the package is described by
+[oabrain.yaml](../../src/formats/oabrain/README.md) until the OABrain standard
+exists.
 
 ## Language packs
 

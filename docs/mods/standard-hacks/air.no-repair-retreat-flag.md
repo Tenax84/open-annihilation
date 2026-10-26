@@ -13,7 +13,7 @@
 
 ## Description
 
-Aircraft whose unit definition sets a chosen tag never break off to a repair pad when damaged, and the Move command does not land them on a pad. In 3.1c every aircraft below three quarters of its health leaves its order to find a pad.
+Aircraft whose unit definition sets a chosen tag never break off to a repair pad when damaged, and neither the Move command nor a right press in the right-click interface lands them on a pad. In 3.1c every aircraft below three quarters of its health leaves its order to find a pad.
 
 ## Configuration example
 
@@ -42,7 +42,7 @@ A marked aircraft below three quarters of its maximum health (`MaxDamage`) does 
 - patrols;
 - the repair patrol of builder aircraft.
 
-The Move command also changes for a marked aircraft. Over a repair pad, it neither shows the pad cursor nor orders a landing; the pointer falls through to the load, guard and move tests, as it does over any other unit. Only the Move command changes: the right-click default order and the Unload command still land a marked aircraft on an allied pad.
+The Move command also changes for a marked aircraft. Over a repair pad, it neither shows the pad cursor nor orders a landing; the pointer falls through to the load, guard and move tests, as it does over any other unit. A right press on a repair pad in the right-click interface does not land a marked aircraft either: the default order falls through to the same tests, so the aircraft guards the pad or moves to it. The Unload command still lands a marked transport on an allied pad.
 
 Unmarked aircraft behave as in 3.1c.
 
@@ -61,8 +61,8 @@ The machine that owns the aircraft applies the rule. The hack is part of the pro
 ### Implementation notes
 
 - The test for a marked type is `never_retreats_to_repair` in `src/sim/match-runtime/include/oa/sim/match_runtime/attack_orders.hpp`. It is used in `src/sim/match-runtime/src/tick_missions_air.cpp` (attack and strike orders), `src/sim/match-runtime/src/tick_missions_vtol.cpp` (guard and patrol) and `src/sim/match-runtime/src/tick_missions_vtol_build.cpp` (repair patrol). It reads `MatchRules::air.no_repair_retreat_flag.flag` and the type's `OA_UNIT_DEF_ABILITY_CANT_BE_TRANSPORTED` ability bit.
-- The Move command's cursor and order are in `kept_off_pads` in `src/sim/gameplay-input/src/order_cursor.cpp` (module `src/sim/gameplay-input`).
-- Tested by `flagged_aircraft_never_retreat` in `src/sim/match-runtime/tests/order_rules_test.cpp` (ctest `match-order-rules`), for marked and unmarked aircraft with the hack on and off, and by `test_no_repair_retreat_flag` in `src/sim/gameplay-input/tests/order_cursor_test.cpp` (ctest `gameplay-input-order-cursor`) for the Move command.
+- The Move command's cursor and order, and the right-click default order, test `kept_off_pads` in `src/sim/gameplay-input/src/order_cursor.cpp` (module `src/sim/gameplay-input`).
+- Tested by `flagged_aircraft_never_retreat` in `src/sim/match-runtime/tests/order_rules_test.cpp` (ctest `match-order-rules`), for marked and unmarked aircraft with the hack on and off, and by `test_no_repair_retreat_flag` in `src/sim/gameplay-input/tests/order_cursor_test.cpp` (ctest `gameplay-input-order-cursor`) for the Move command and the right-click default order.
 
 ## Full configuration schema
 

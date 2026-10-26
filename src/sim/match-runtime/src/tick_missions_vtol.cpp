@@ -55,7 +55,6 @@ constexpr uint32_t guard_turn = 0x4000;
 constexpr uint32_t guard_turn_jitter = 0x2000;
 constexpr int32_t return_arrival = 0x80;
 constexpr int32_t return_step = 0x3200000;
-constexpr int32_t pad_search_radius = 0xf00;
 constexpr int32_t pad_orbit_arrival = 0x80;
 constexpr uint32_t pad_orbit_turn = 0x4000;
 constexpr int32_t pad_approach_arrival = 0xa0;
@@ -115,11 +114,6 @@ behind(const sim::ground_orders::Point& centre, uint16_t heading, int32_t distan
         centre[1],
         sub_fixed(centre[2], sim::unit_movement::cosine_scaled(heading, distance))
     };
-}
-
-// The high 32 bits of a squared 16.16 delta: squared world units.
-int32_t squared_high(int32_t delta) {
-    return static_cast<int32_t>((static_cast<int64_t>(delta) * delta) >> 32);
 }
 
 bool below(int16_t health, uint32_t limit) {
@@ -320,36 +314,17 @@ class TickHost::VtolMissions {
         return true;
     }
 
-    /// Queues VTOL_Landing on a random active air pad of the owner within
-    /// 0xf00 world units, scanning the owner's unit range in order.
+    /// Queues VTOL_Landing on a random pad of those the owner's pad list
+    /// offers within 0xf00 world units (Match::repair_pads_in_reach).
     ///
     /// @return True when a pad was found and the landing queued.
     bool land_on_nearby_pad() {
-        auto& world = match().state();
-        const auto* owner = oa::world_unit_owner(&world, &s.record);
-        if (!owner)
-            return false;
-        uint32_t count = 0;
-        auto* first = oa::world_player_units(&world, owner, &count);
-        const auto here = vtol::position_of(s.record);
-        constexpr auto pad_flags = OA_UNIT_DEF_FLAG_BUILDER | OA_UNIT_DEF_FLAG_IS_AIRBASE;
-        constexpr auto limit = vtol::pad_search_radius * vtol::pad_search_radius;
-        std::vector<oa::Unit*> pads;
-        for (uint32_t i = 0; first && i < count; ++i) {
-            auto& pad = first[i];
-            if (!pad.type_index || (def_of(pad).flags & pad_flags) != pad_flags ||
-                !(pad.state_flags & 1))
-                continue;
-            const auto dx = vtol::sub_fixed(here[0], pad.position.x);
-            const auto dz = vtol::sub_fixed(here[2], pad.position.z);
-            if (vtol::squared_high(dz) + vtol::squared_high(dx) <= limit)
-                pads.push_back(&pad);
-        }
-        if (pads.empty())
+        const auto pads = match().repair_pads_in_reach(s.record);
+        if (pads == 0)
             return false;
         clear_goal();
-        auto& pad = *pads[host.random(static_cast<uint32_t>(pads.size()))];
-        (void)push_front(sim::ground_orders::vtol_landing_kind, &host.unit_view(pad), nullptr);
+        auto* pad = match().repair_pad_in_reach(s.record, host.random(pads));
+        (void)push_front(sim::ground_orders::vtol_landing_kind, &host.unit_view(*pad), nullptr);
         order.wait_events = 0;
         return true;
     }

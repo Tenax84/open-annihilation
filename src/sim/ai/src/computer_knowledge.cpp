@@ -742,6 +742,8 @@ void adopt_handed_player(
     auto& ai = state->players[player];
     release_knowledge(ai.knowledge);
     ai = {};
+    if (const auto note = host.note_section)
+        note(host.context, player, section_start);
     computer_player_create(ai, player, host.world->game, state->rules.rules().ai);
     if (!create_knowledge(state, host, ai.knowledge)) {
         ai.present = 0;
@@ -775,6 +777,34 @@ void adopt_handed_player(
 }
 
 } // namespace
+
+void computer_profile_lines(
+    std::string_view text, void (*visit)(void* context, const ProfileLine& line), void* context
+) noexcept {
+    if (visit == nullptr || text.data() == nullptr || text.empty())
+        return;
+    const char* cursor = text.data();
+    const char* const end = text.data() + text.size();
+    uint32_t number = 1;
+    for (;;) {
+        const char* line_end = cursor;
+        while (line_end < end && *line_end != '\n')
+            ++line_end;
+        TokenLine tokens;
+        tokenize(tokens, cursor, line_end);
+        if (tokens.count > 0) {
+            ProfileLine line;
+            line.number = number;
+            line.count = tokens.count;
+            line.words = tokens.tokens;
+            visit(context, line);
+        }
+        if (line_end == end)
+            break;
+        cursor = line_end + 1;
+        ++number;
+    }
+}
 
 int32_t truncate_to_int32(double value) noexcept {
     if (!std::isfinite(value) || value >= 2147483648.0 || value < -2147483648.0)
@@ -862,6 +892,8 @@ bool computer_players_initialize(ComputerPlayers* state, const ComputerHost& hos
         const auto& player = host.world->game.players[index];
         if (player.in_use == 0 || player.status != OA_PLAYER_STATUS_COMPUTER)
             continue;
+        if (const auto note = host.note_section)
+            note(host.context, index, section_start);
         computer_player_create(ai, index, host.world->game, state->rules.rules().ai);
         if (!create_knowledge(state, host, ai.knowledge))
             ai.present = 0;

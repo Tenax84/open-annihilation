@@ -6,6 +6,7 @@ add_library(oa-ui-frontend-multiplayer
   src/panel.cpp
   src/lobby_net.cpp
   src/battleroom.cpp
+  src/room_mutators.cpp
   src/team_rules.cpp
   src/unit_sync.cpp
   src/restrict.cpp
@@ -14,12 +15,14 @@ add_library(oa-ui-frontend-multiplayer
   src/map_list.cpp
   src/screens.cpp
   src/presence_card.cpp
-  src/get_map.cpp)
+  src/get_map.cpp
+  src/host_mutators.cpp
+  src/mutator_room.cpp)
 add_library(oa::ui::frontend_multiplayer ALIAS oa-ui-frontend-multiplayer)
 target_include_directories(oa-ui-frontend-multiplayer PUBLIC include)
 target_link_libraries(oa-ui-frontend-multiplayer
   PUBLIC oa-core-types oa-ui-gui-layout oa-ui-gui-input oa-netgame oa-ui-screen-registry oa-options
-    oa-data-campaign oa-data-match-rules oa-ui-kit oa-data-content-bundles
+    oa-data-campaign oa-data-match-rules oa-ui-kit oa-data-content-bundles oa-ui-frontend-state
   PRIVATE oa-platform-shims oa-base-text oa-base-bytes oa-ui-frontend-renderer oa-ui-decoded oa-formats-hpi oa-data-defs-assets oa-formats-tnt oa-data-unit-definitions
     oa-formats-tdf
     oa-data-campaign-assets oa-data-defs oa-data-languages oa-netgame-sync oa-present oa-present-model
@@ -45,9 +48,15 @@ if(BUILD_TESTING)
   # when it opens and closes, over hand-made battle rooms and a synthetic font.
   add_executable(oa-ui-frontend-multiplayer-presence-card-test tests/presence_card_test.cpp)
   target_link_libraries(oa-ui-frontend-multiplayer-presence-card-test PRIVATE
-    oa-ui-frontend-multiplayer oa-ui-kit oa-netgame oa-test-support)
+    oa-ui-frontend-multiplayer oa-ui-kit oa-netgame oa-data-languages oa-test-support)
   add_test(NAME ui-multiplayer-presence-card COMMAND oa-ui-frontend-multiplayer-presence-card-test)
   set_tests_properties(ui-multiplayer-presence-card PROPERTIES TIMEOUT 30)
+  # The battle room's mutator gate, the host's list parts and the unit-sync restart.
+  add_executable(oa-ui-frontend-multiplayer-room-mutators-test tests/room_mutators_test.cpp)
+  target_link_libraries(oa-ui-frontend-multiplayer-room-mutators-test PRIVATE
+    oa-ui-frontend-multiplayer oa-netgame oa-data-languages)
+  add_test(NAME ui-multiplayer-room-mutators COMMAND oa-ui-frontend-multiplayer-room-mutators-test)
+  set_tests_properties(ui-multiplayer-room-mutators PROPERTIES TIMEOUT 30)
   # GET MAP: every state and line over hand-made records, packs and offers;
   # with --data, the battle room's side over the installed GUI files: what a
   # joiner reads of the host's map, the host's pack through
@@ -59,7 +68,22 @@ if(BUILD_TESTING)
   add_test(NAME ui-multiplayer-get-map COMMAND oa-ui-frontend-multiplayer-get-map-test)
   add_test(NAME ui-multiplayer-get-map-data COMMAND oa-ui-frontend-multiplayer-get-map-test --data)
   set_tests_properties(ui-multiplayer-get-map ui-multiplayer-get-map-data PROPERTIES TIMEOUT 30)
+  # The host's mutator lines and where the block sits above Select Map.
+  # No game data.
+  add_executable(oa-ui-frontend-multiplayer-mutator-room-test tests/mutator_room_test.cpp)
+  target_link_libraries(oa-ui-frontend-multiplayer-mutator-room-test PRIVATE
+    oa-ui-frontend-multiplayer oa-data-languages)
+  add_test(NAME ui-multiplayer-mutator-room COMMAND oa-ui-frontend-multiplayer-mutator-room-test)
+  set_tests_properties(ui-multiplayer-mutator-room PROPERTIES TIMEOUT 30)
   oa_game_data_tests(ui-multiplayer-get-map-data)
+  # Whether a guest can fetch one mutator of the host's list: every state
+  # over one hand-made mutator, the 16-digit prefix and a release the
+  # catalogue lists at another SHA-256.
+  add_executable(oa-ui-frontend-multiplayer-host-mutators-test tests/host_mutators_test.cpp)
+  target_link_libraries(oa-ui-frontend-multiplayer-host-mutators-test PRIVATE
+    oa-ui-frontend-multiplayer oa-netgame)
+  add_test(NAME ui-multiplayer-host-mutators COMMAND oa-ui-frontend-multiplayer-host-mutators-test)
+  set_tests_properties(ui-multiplayer-host-mutators PROPERTIES TIMEOUT 30)
   add_executable(oa-ui-frontend-multiplayer-team-rules-test tests/team_rules_test.cpp)
   target_link_libraries(oa-ui-frontend-multiplayer-team-rules-test PRIVATE oa-ui-frontend-multiplayer)
   add_test(NAME ui-multiplayer-team-rules COMMAND oa-ui-frontend-multiplayer-team-rules-test)

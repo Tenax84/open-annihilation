@@ -58,5 +58,15 @@ the signature, the sequence, expiry and key rotation.
   A catalogue is expired when that clock is at or after `expires`.
 - A map's title is 1 to 64 bytes, and a name under `compatible` is 1 to 256
   bytes. A map's stem is whatever text is written before the one `@`.
-- A field that belongs to another kind is ignored.
+- A field that belongs to another kind is ignored. A mutator may name
+  prerequisites, conflicts, what it works with, layers and options. One
+  broken member leaves that entry out. An unknown layer name or option
+  type is skipped. Prerequisites, conflicts, layers and clashes are ignored
+  on every kind but a mutator. What a package works with, and its options,
+  are read on a mutator and on a brain.
+- A brain names a version of one to three parts and one to six levels, and
+  may name full awareness, the networks' size, what it works with and
+  options. A level whose difficulty this build does not know is skipped. An
+  entry left with no level is left out. Tags are not limited to the nine a
+  brain manifest allows.
 - A package's `size` may be 2^32.

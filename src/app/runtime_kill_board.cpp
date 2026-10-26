@@ -277,8 +277,11 @@ void Runtime::overlay_gui_text(
     }
 }
 
-int Runtime::gui_text_width(const oa::present::GafSprites& font, std::string_view text) const {
-    const int scale = hud_text_scale();
+int Runtime::gui_text_width(
+    const oa::present::GafSprites& font, std::string_view text, int scale
+) const {
+    if (scale <= 0)
+        scale = hud_text_scale();
     if (!renderer::needs_text_runs(text, true))
         return renderer::measure_gadget_glyphs(font, text);
     int width = 0;

@@ -85,7 +85,14 @@ class GroundRuntime {
     /// @param tick current game tick
     /// @param sea_level map sea level in whole world units
     /// @param host order host for the navigator tick
-    void drive(sim::simulation_state::Unit& unit, uint32_t tick, uint8_t sea_level, Host& host);
+    /// @param fast_units how a unit faster than any stock unit is steered
+    void drive(
+        sim::simulation_state::Unit& unit,
+        uint32_t tick,
+        uint8_t sea_level,
+        Host& host,
+        FastUnitSteering fast_units
+    );
     /// Saves the movement block ("u%04xmob").
     ///
     /// @return velocity, filtered vector, speed, turn, occupancy tick and the layer and blocked flag bits, little-endian

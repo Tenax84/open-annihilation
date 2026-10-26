@@ -4,10 +4,12 @@
 // The presence record: its bytes, the fields a reader keeps, and the one
 // place a frame's split takes it.
 
+#include "oa/data/mutators/loadout.hpp"
 #include "oa/netgame/frame.hpp"
 #include "oa/netgame/presence.hpp"
 #include "oa/netgame/records.hpp"
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -702,6 +704,994 @@ void the_bundles_and_the_language() {
     CHECK(encode_presence(too_many, out, sizeof out, &written) == WireError::bad_argument);
 }
 
+std::array<uint8_t, presence_mutator_prefix_bytes> prefix_of(uint8_t byte) {
+    std::array<uint8_t, presence_mutator_prefix_bytes> prefix{};
+    prefix.fill(byte);
+    return prefix;
+}
+
+std::string two_digits(int number) {
+    std::string text = std::to_string(number);
+    if (text.size() == 1)
+        text.insert(text.begin(), '0');
+    return text;
+}
+
+void put_states(Value& value, uint64_t states) {
+    for (unsigned shift = 0; shift < 64; shift += 8)
+        value.u8(static_cast<uint8_t>(states >> shift));
+}
+
+void put_mutator_item(Value& value, std::string_view id, std::string_view version) {
+    value.str(id);
+    value.str(version);
+    const auto prefix = prefix_of(0xab);
+    value.raw(prefix.data(), prefix.size());
+    value.u8(0);
+}
+
+Value valid_part_value() {
+    Value part;
+    part.raw(filled(0x11).data(), 32);
+    part.u8(0);
+    put_mutator_item(part, "kept-part", "1");
+    return part;
+}
+
+// Three mutators with options, and a guest field whose positions use every
+// state code, both come back unchanged. So does a part carried with the host.
+void mutators_round_trip() {
+    start_case("mutators_round_trip");
+    PresenceMutator first;
+    first.id = "ridge-wind";
+    first.version = "1.2";
+    first.sha256_prefix = prefix_of(0x11);
+    first.options = {PresenceMutatorOption{"rate", "2"}, PresenceMutatorOption{"mode", "high"}};
+    PresenceMutator second;
+    second.id = "swift-yard";
+    second.version = "4";
+    second.sha256_prefix = prefix_of(0x22);
+    second.options = {PresenceMutatorOption{"cap", "8"}};
+    PresenceMutator third;
+    third.id = "open-keel";
+    third.version = "";
+    third.sha256_prefix = prefix_of(0x33);
+    PresenceMutator fourth;
+    fourth.id = "late-loom";
+    fourth.version = "9";
+    fourth.sha256_prefix = prefix_of(0x44);
+    fourth.options = {PresenceMutatorOption{"bias", "1"}};
+
+    PresenceRecord host;
+    host.engine = PresenceEngine{"0.8.0", "Windows", "x64"};
+    host.mutators = PresenceMutators{};
+    host.mutators->built = true;
+    host.mutators->digest = filled(0x51);
+    host.mutators->layer_digest = filled(0x52);
+    host.mutators->total = 4;
+    host.mutators->held = 4;
+    host.mutators->mutators = {first, second, third};
+    host.mutator_part = PresenceMutatorPart{};
+    host.mutator_part->digest = filled(0x51);
+    host.mutator_part->first = 3;
+    host.mutator_part->mutators = {fourth};
+
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(host, out, sizeof out, &written) == WireError::ok);
+    PresenceRecord decoded;
+    CHECK(decode_presence(out, written, &decoded) == WireError::ok);
+    CHECK(decoded == host);
+    CHECK(presence_mutator_state(decoded.mutators->states, 0) == 0);
+
+    PresenceRecord guest;
+    guest.mutators = PresenceMutators{};
+    guest.mutators->lacking = true;
+    guest.mutators->digest = filled(0x44);
+    guest.mutators->index = 1;
+    guest.mutators->total = 4;
+    guest.mutators->held = 2;
+    presence_mutator_set_state(guest.mutators->states, 0, 0);
+    presence_mutator_set_state(guest.mutators->states, 1, 1);
+    presence_mutator_set_state(guest.mutators->states, 2, 2);
+    presence_mutator_set_state(guest.mutators->states, 3, 3);
+    CHECK(encode_presence(guest, out, sizeof out, &written) == WireError::ok);
+    CHECK(decode_presence(out, written, &decoded) == WireError::ok);
+    CHECK(decoded == guest);
+    CHECK(decoded.mutators->mutators.empty());
+    CHECK(presence_mutator_state(decoded.mutators->states, 0) == 0);
+    CHECK(presence_mutator_state(decoded.mutators->states, 1) == 1);
+    CHECK(presence_mutator_state(decoded.mutators->states, 2) == 2);
+    CHECK(presence_mutator_state(decoded.mutators->states, 3) == 3);
+    CHECK(presence_mutator_state(decoded.mutators->states, 4) == 0);
+}
+
+// The bytes of a small mutators field, written one by one, decode to that
+// field and encode back to the same bytes.
+void a_small_mutators_field_is_encoded_exactly() {
+    start_case("a_small_mutators_field_is_encoded_exactly");
+    Raw record;
+    Value field;
+    field.u8(0x01);
+    field.raw(filled(0x11).data(), 32);
+    field.raw(filled(0x22).data(), 32);
+    field.u8(presence_mutator_index_none);
+    field.u8(1);
+    field.u8(1);
+    put_states(field, 0);
+    field.str("ridge-wind");
+    field.str("1");
+    const auto prefix = prefix_of(0xab);
+    field.raw(prefix.data(), prefix.size());
+    field.u8(1);
+    field.str("rate");
+    field.str("2");
+    record.field(static_cast<uint8_t>(PresenceTag::mutators), field.bytes);
+    record.finish();
+
+    PresenceRecord decoded;
+    CHECK(decode_presence(record.bytes.data(), record.bytes.size(), &decoded) == WireError::ok);
+    CHECK(decoded.mutators);
+    CHECK(decoded.mutators->built && !decoded.mutators->lacking && !decoded.mutators->failed);
+    CHECK(decoded.mutators->digest == filled(0x11));
+    CHECK(decoded.mutators->layer_digest == filled(0x22));
+    CHECK(decoded.mutators->index == presence_mutator_index_none);
+    CHECK(decoded.mutators->total == 1 && decoded.mutators->held == 1);
+    CHECK(decoded.mutators->states == 0);
+    CHECK(decoded.mutators->mutators.size() == 1);
+    const auto& item = decoded.mutators->mutators[0];
+    CHECK(item.id == "ridge-wind" && item.version == "1");
+    CHECK(item.sha256_prefix == prefix);
+    const PresenceMutatorOption rate{"rate", "2"};
+    CHECK(item.options.size() == 1 && item.options[0] == rate);
+
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(decoded, out, sizeof out, &written) == WireError::ok);
+    CHECK(written == record.bytes.size());
+    CHECK(std::memcmp(out, record.bytes.data(), written) == 0);
+}
+
+// Thirty-two mutators in the 533-byte budget are cut whole. Hack ids and
+// developer overrides lose the room before any mutator does, and total stays.
+void a_full_loadout_is_cut_before_hack_ids() {
+    start_case("a_full_loadout_is_cut_before_hack_ids");
+    PresenceRecord record;
+    record.engine = PresenceEngine{"0.8.0", "Windows", "x64"};
+    record.sim_hash = filled(0xab);
+    record.mutators = PresenceMutators{};
+    record.mutators->total = 32;
+    record.mutators->held = 32;
+    for (int number = 0; number < 32; ++number) {
+        PresenceMutator item;
+        item.id = "aaaa-bbbb-" + two_digits(number);
+        item.sha256_prefix = prefix_of(0xcd);
+        record.mutators->mutators.push_back(item);
+    }
+    CHECK(record.mutators->mutators[0].id.size() == 12);
+    const std::string hack(20, 'a');
+    record.developer = PresenceDeveloper{true, 1, {PresenceOverride{hack, true}}};
+    record.game_hacks = PresenceHacks{3, {hack, hack, hack}};
+
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(record, out, 533, &written) == WireError::ok);
+    // Header 4, engine 21, sim 35, mutators fixed field 79, developer prefix 6
+    // and hack prefix 5 leave 383 bytes. Each mutator is 23, so 16 fit.
+    CHECK(written == 518);
+    PresenceRecord decoded;
+    CHECK(decode_presence(out, written, &decoded) == WireError::ok);
+    CHECK(decoded.mutators && decoded.mutators->total == 32);
+    CHECK(decoded.mutators->mutators.size() == 16);
+    for (std::size_t cursor = 0; cursor < 16; ++cursor)
+        CHECK(decoded.mutators->mutators[cursor] == record.mutators->mutators[cursor]);
+    CHECK(decoded.developer && decoded.developer->on && decoded.developer->total == 1);
+    CHECK(decoded.developer->overrides.empty());
+    CHECK(decoded.game_hacks && decoded.game_hacks->total == 3);
+    CHECK(decoded.game_hacks->ids.empty());
+    CHECK(decoded.engine == record.engine);
+    CHECK(decoded.sim_hash == record.sim_hash);
+}
+
+PresenceMutator wide_mutator(int number) {
+    PresenceMutator item;
+    item.id = "mutator-sample" + two_digits(number);
+    item.version = "1234567890123";
+    item.sha256_prefix = prefix_of(static_cast<uint8_t>(number));
+    return item;
+}
+
+// The mutators that miss the 533-byte head travel in two parts, and each
+// part's field fits beside a 533-byte source and beside a full map-pack field.
+void mutator_parts_carry_the_rest() {
+    start_case("mutator_parts_carry_the_rest");
+    PresenceMutators loadout;
+    loadout.digest = filled(0x44);
+    loadout.total = 32;
+    loadout.held = 32;
+    for (int number = 0; number < 32; ++number)
+        loadout.mutators.push_back(wide_mutator(number));
+    CHECK(loadout.mutators[0].id.size() == 16);
+    CHECK(loadout.mutators[0].version.size() == 13);
+
+    PresenceRecord head;
+    head.mutators = loadout;
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(head, out, 533, &written) == WireError::ok);
+    CHECK(written == 523);
+    PresenceRecord decoded;
+    CHECK(decode_presence(out, written, &decoded) == WireError::ok);
+    CHECK(decoded.mutators && decoded.mutators->total == 32);
+    CHECK(decoded.mutators->mutators.size() == 11);
+
+    const std::size_t beside_source = presence_record_max_bytes - 533;
+    const std::size_t beside_pack = presence_record_max_bytes - presence_map_pack_field_max_bytes;
+    const std::size_t part_field_room = beside_source < beside_pack ? beside_source : beside_pack;
+    const std::size_t part_value_room = part_field_room - presence_field_header_bytes;
+    uint8_t part_out[presence_record_max_bytes];
+    std::size_t part_written = 0;
+    uint8_t sent = 0;
+    CHECK(
+        encode_presence_mutator_part(
+            loadout, 11, part_out, part_value_room, &part_written, &sent
+        ) == WireError::ok
+    );
+    CHECK(sent == 11 && part_written == 473);
+    CHECK(presence_field_header_bytes + part_written <= beside_source);
+    CHECK(presence_field_header_bytes + part_written <= beside_pack);
+    uint8_t second[presence_record_max_bytes];
+    std::size_t second_written = 0;
+    uint8_t second_sent = 0;
+    CHECK(
+        encode_presence_mutator_part(
+            loadout,
+            static_cast<uint8_t>(11 + sent),
+            second,
+            part_value_room,
+            &second_written,
+            &second_sent
+        ) == WireError::ok
+    );
+    CHECK(second_sent == 10 && second_written == 433);
+    CHECK(presence_field_header_bytes + second_written <= beside_source);
+    CHECK(presence_field_header_bytes + second_written <= beside_pack);
+    CHECK(static_cast<std::size_t>(11 + sent + second_sent) == loadout.mutators.size());
+
+    uint8_t storage[presence_record_max_bytes];
+    std::memcpy(storage, out, written);
+    std::size_t grown = 0;
+    CHECK(
+        append_presence_field(
+            storage,
+            written,
+            sizeof storage,
+            PresenceTag::mutator_part,
+            std::span<const uint8_t>(part_out, part_written),
+            &grown
+        ) == WireError::ok
+    );
+    CHECK(grown == written + presence_field_header_bytes + part_written);
+    CHECK(grown <= presence_record_max_bytes);
+
+    PresenceMapPack longest;
+    longest.key.assign(64, 'k');
+    longest.release = 9;
+    longest.sha256 = filled(0x5a);
+    longest.registry.assign(32, 'r');
+    longest.descriptor_url.assign(255, 'u');
+    longest.name.assign(64, 'n');
+    longest.version.assign(32, 'v');
+    uint8_t pack[presence_map_pack_field_max_bytes];
+    std::size_t pack_bytes = 0;
+    CHECK(encode_presence_map_pack(longest, pack, sizeof pack, &pack_bytes) == WireError::ok);
+    CHECK(presence_field_header_bytes + pack_bytes == presence_map_pack_field_max_bytes);
+    Raw base;
+    base.finish();
+    std::memcpy(storage, base.bytes.data(), base.bytes.size());
+    std::size_t size = base.bytes.size();
+    CHECK(
+        append_presence_field(
+            storage,
+            size,
+            sizeof storage,
+            PresenceTag::map_pack,
+            std::span<const uint8_t>(pack, pack_bytes),
+            &size
+        ) == WireError::ok
+    );
+    CHECK(
+        append_presence_field(
+            storage,
+            size,
+            sizeof storage,
+            PresenceTag::mutator_part,
+            std::span<const uint8_t>(part_out, part_written),
+            &size
+        ) == WireError::ok
+    );
+    CHECK(
+        size == base.bytes.size() + presence_map_pack_field_max_bytes +
+                    presence_field_header_bytes + part_written
+    );
+    CHECK(size <= presence_record_max_bytes);
+
+    CHECK(
+        encode_presence_mutator_part(
+            loadout, 32, part_out, sizeof part_out, &part_written, &sent
+        ) == WireError::bad_argument
+    );
+    CHECK(
+        encode_presence_mutator_part(loadout, 0, part_out, 1, &part_written, &sent) ==
+        WireError::buffer_too_small
+    );
+    auto broken = loadout;
+    broken.mutators[11].id = "Not-kebab";
+    CHECK(
+        encode_presence_mutator_part(broken, 11, part_out, part_value_room, &part_written, &sent) ==
+        WireError::bad_argument
+    );
+}
+
+PresenceMutator named_mutator(std::string id, uint8_t mark) {
+    PresenceMutator item;
+    item.id = std::move(id);
+    item.version = "1";
+    item.sha256_prefix = prefix_of(mark);
+    return item;
+}
+
+PresenceRecord host_head(const PresenceDigest& digest, const PresenceMutator& item) {
+    PresenceRecord record;
+    record.mutators = PresenceMutators{};
+    record.mutators->built = true;
+    record.mutators->digest = digest;
+    record.mutators->layer_digest = filled(0x52);
+    record.mutators->total = 4;
+    record.mutators->held = 4;
+    record.mutators->mutators = {item};
+    return record;
+}
+
+// Parts in order, out of order, twice, and of another digest. The list is
+// whole only when every mutator has arrived, and a new digest starts again.
+void the_loadout_assembles_from_the_hosts_records() {
+    start_case("the_loadout_assembles_from_the_hosts_records");
+    const auto digest = filled(0x51);
+    const auto first = named_mutator("one", 1);
+    const auto second = named_mutator("two", 2);
+    const auto third = named_mutator("three", 3);
+    const auto fourth = named_mutator("four", 4);
+    const auto head = host_head(digest, first);
+
+    auto with_part = [&](uint8_t at, std::vector<PresenceMutator> items) {
+        PresenceRecord record = head;
+        record.mutator_part = PresenceMutatorPart{};
+        record.mutator_part->digest = digest;
+        record.mutator_part->first = at;
+        record.mutator_part->mutators = std::move(items);
+        return record;
+    };
+    const auto part_late = with_part(2, {third});
+    const auto part_next = with_part(1, {second});
+    const auto part_rest = with_part(2, {third, fourth});
+    auto other = with_part(2, {third});
+    other.mutator_part->digest = filled(0x99);
+    const auto foreign = host_head(filled(0x77), first);
+
+    PresenceLoadoutAssembly assembly;
+    CHECK(presence_assembly_take(assembly, head));
+    CHECK(assembly.mutators.size() == 1 && assembly.total == 4);
+    CHECK(!presence_assembly_whole(assembly));
+    CHECK(!presence_assembly_take(assembly, head));
+    CHECK(!presence_assembly_take(assembly, part_late));
+    CHECK(assembly.mutators.size() == 1);
+    CHECK(presence_assembly_take(assembly, part_next));
+    CHECK(assembly.mutators.size() == 2 && assembly.mutators[1] == second);
+    CHECK(!presence_assembly_whole(assembly));
+    CHECK(!presence_assembly_take(assembly, other));
+    CHECK(presence_assembly_take(assembly, part_rest));
+    CHECK(assembly.mutators.size() == 4);
+    CHECK(assembly.mutators[2] == third && assembly.mutators[3] == fourth);
+    CHECK(presence_assembly_whole(assembly));
+    CHECK(!presence_assembly_take(assembly, part_rest));
+    CHECK(presence_assembly_whole(assembly));
+
+    PresenceLoadoutAssembly in_order;
+    CHECK(presence_assembly_take(in_order, head));
+    CHECK(presence_assembly_take(in_order, part_next));
+    CHECK(!presence_assembly_whole(in_order));
+    CHECK(presence_assembly_take(in_order, part_rest));
+    CHECK(presence_assembly_whole(in_order));
+    CHECK(in_order.digest == digest);
+
+    CHECK(presence_assembly_take(assembly, foreign));
+    CHECK(assembly.digest == filled(0x77));
+    CHECK(assembly.mutators.size() == 1 && assembly.mutators[0] == first);
+    CHECK(!presence_assembly_whole(assembly));
+
+    PresenceRecord quiet;
+    quiet.engine = PresenceEngine{"0.8.0", "Linux", "x64"};
+    CHECK(presence_assembly_take(assembly, quiet));
+    CHECK(assembly.mutators.empty() && assembly.total == 0);
+    CHECK(assembly.digest == PresenceDigest{});
+    CHECK(!presence_assembly_whole(assembly));
+    CHECK(!presence_assembly_take(assembly, quiet));
+}
+
+void expect_field_left_out(const Value& field, uint8_t tag, bool keep_part) {
+    Raw record;
+    Value engine;
+    engine.str("0.8.0");
+    engine.str("Windows");
+    engine.str("x64");
+    record.field(static_cast<uint8_t>(PresenceTag::engine), engine.bytes);
+    Value sim;
+    sim.raw(filled(0xab).data(), 32);
+    record.field(static_cast<uint8_t>(PresenceTag::sim_hash), sim.bytes);
+    if (keep_part)
+        record.field(static_cast<uint8_t>(PresenceTag::mutator_part), valid_part_value().bytes);
+    else {
+        Value kept;
+        kept.u8(0);
+        kept.raw(filled(0x11).data(), 32);
+        uint8_t layer[32] = {};
+        kept.raw(layer, sizeof layer);
+        kept.u8(presence_mutator_index_none);
+        kept.u8(1);
+        kept.u8(0);
+        put_states(kept, 0);
+        put_mutator_item(kept, "kept-head", "1");
+        record.field(static_cast<uint8_t>(PresenceTag::mutators), kept.bytes);
+    }
+    record.field(tag, field.bytes);
+    record.finish();
+
+    PresenceRecord decoded;
+    CHECK(decode_presence(record.bytes.data(), record.bytes.size(), &decoded) == WireError::ok);
+    CHECK(decoded.engine == PresenceEngine("0.8.0", "Windows", "x64"));
+    CHECK(decoded.sim_hash == filled(0xab));
+    if (tag == static_cast<uint8_t>(PresenceTag::mutators)) {
+        CHECK(!decoded.mutators);
+        CHECK(decoded.mutator_part && decoded.mutator_part->mutators.size() == 1);
+        CHECK(decoded.mutator_part->mutators[0].id == "kept-part");
+    } else {
+        CHECK(!decoded.mutator_part);
+        CHECK(decoded.mutators && decoded.mutators->mutators.size() == 1);
+        CHECK(decoded.mutators->mutators[0].id == "kept-head");
+    }
+}
+
+Value fixed_mutators(uint8_t total, uint8_t held, uint8_t index, uint64_t states) {
+    Value field;
+    field.u8(0);
+    field.raw(filled(0x11).data(), 32);
+    uint8_t layer[32] = {};
+    field.raw(layer, sizeof layer);
+    field.u8(index);
+    field.u8(total);
+    field.u8(held);
+    put_states(field, states);
+    return field;
+}
+
+// Each broken mutators or mutator-part value is left out. The record's other
+// fields stay.
+void a_mutator_field_that_breaks_its_rule_is_left_out() {
+    start_case("a_mutator_field_that_breaks_its_rule_is_left_out");
+    const auto tag = static_cast<uint8_t>(PresenceTag::mutators);
+    {
+        auto field = fixed_mutators(1, 0, presence_mutator_index_none, 0);
+        field.str(std::string(65, 'a'));
+        field.str("1");
+        const auto prefix = prefix_of(0xab);
+        field.raw(prefix.data(), prefix.size());
+        field.u8(0);
+        expect_field_left_out(field, tag, true);
+    }
+    {
+        auto field = fixed_mutators(1, 0, presence_mutator_index_none, 0);
+        put_mutator_item(field, "Bad-id", "1");
+        expect_field_left_out(field, tag, true);
+    }
+    {
+        auto field = fixed_mutators(1, 0, presence_mutator_index_none, 0);
+        field.str("ridge-wind");
+        field.str(std::string(33, 'v'));
+        const auto prefix = prefix_of(0xab);
+        field.raw(prefix.data(), prefix.size());
+        field.u8(0);
+        expect_field_left_out(field, tag, true);
+    }
+    {
+        auto field = fixed_mutators(1, 0, presence_mutator_index_none, 0);
+        field.str("ridge-wind");
+        field.str("1");
+        const auto prefix = prefix_of(0xab);
+        field.raw(prefix.data(), prefix.size());
+        field.u8(9);
+        for (int option = 0; option < 9; ++option) {
+            field.str("k");
+            field.str("1");
+        }
+        expect_field_left_out(field, tag, true);
+    }
+    expect_field_left_out(fixed_mutators(0, 0, presence_mutator_index_none, 0), tag, true);
+    expect_field_left_out(fixed_mutators(33, 0, presence_mutator_index_none, 0), tag, true);
+    expect_field_left_out(fixed_mutators(2, 3, presence_mutator_index_none, 0), tag, true);
+    expect_field_left_out(fixed_mutators(3, 0, 7, 0), tag, true);
+    // Position 1 is past a total of 1, so bit 2 of the state word is refused.
+    expect_field_left_out(fixed_mutators(1, 0, presence_mutator_index_none, 0x4), tag, true);
+    {
+        Value field;
+        field.u8(0);
+        field.raw(filled(0x11).data(), 32);
+        field.raw(filled(0x22).data(), 32);
+        field.u8(presence_mutator_index_none);
+        field.u8(1);
+        field.u8(0);
+        put_states(field, 0);
+        expect_field_left_out(field, tag, true);
+    }
+
+    Value part;
+    part.raw(filled(0x11).data(), 32);
+    part.u8(30);
+    put_mutator_item(part, "one", "1");
+    put_mutator_item(part, "two", "1");
+    put_mutator_item(part, "three", "1");
+    expect_field_left_out(part, static_cast<uint8_t>(PresenceTag::mutator_part), false);
+
+    Value flags;
+    flags.u8(0xf9);
+    flags.raw(filled(0x11).data(), 32);
+    flags.raw(filled(0x22).data(), 32);
+    flags.u8(presence_mutator_index_none);
+    flags.u8(1);
+    flags.u8(0);
+    put_states(flags, 0);
+    Raw record;
+    Value engine;
+    engine.str("0.8.0");
+    engine.str("Windows");
+    engine.str("x64");
+    record.field(static_cast<uint8_t>(PresenceTag::engine), engine.bytes);
+    record.field(tag, flags.bytes);
+    record.finish();
+    PresenceRecord decoded;
+    CHECK(decode_presence(record.bytes.data(), record.bytes.size(), &decoded) == WireError::ok);
+    CHECK(decoded.engine == PresenceEngine("0.8.0", "Windows", "x64"));
+    CHECK(decoded.mutators && decoded.mutators->built);
+    CHECK(!decoded.mutators->lacking && !decoded.mutators->failed);
+
+    PresenceRecord refused;
+    refused.mutators = PresenceMutators{};
+    refused.mutators->total = 0;
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(refused, out, sizeof out, &written) == WireError::bad_argument);
+}
+
+// The state reader reports the fixed part and does not need the mutators.
+void presence_mutators_state_reads_the_fixed_part() {
+    start_case("presence_mutators_state_reads_the_fixed_part");
+    PresenceRecord record;
+    record.engine = PresenceEngine{"0.8.0", "Windows", "x64"};
+    record.mutators = PresenceMutators{};
+    record.mutators->built = true;
+    record.mutators->failed = true;
+    record.mutators->digest = filled(0x51);
+    record.mutators->layer_digest = filled(0x52);
+    record.mutators->index = 1;
+    record.mutators->total = 2;
+    record.mutators->held = 1;
+    presence_mutator_set_state(record.mutators->states, 1, 2);
+    record.mutators->mutators = {named_mutator("one", 1), named_mutator("two", 2)};
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(record, out, sizeof out, &written) == WireError::ok);
+    const auto state = presence_mutators_state(out, written);
+    CHECK(state);
+    CHECK(state->built && !state->lacking && state->failed);
+    CHECK(state->digest == filled(0x51) && state->layer_digest == filled(0x52));
+    CHECK(state->index == 1 && state->total == 2 && state->held == 1);
+    CHECK(presence_mutator_state(state->states, 1) == 2);
+
+    CHECK(!presence_mutators_state(kSmallRecord, sizeof kSmallRecord));
+
+    Raw broken;
+    Value engine;
+    engine.str("0.8.0");
+    engine.str("Windows");
+    engine.str("x64");
+    broken.field(static_cast<uint8_t>(PresenceTag::engine), engine.bytes);
+    broken.field(
+        static_cast<uint8_t>(PresenceTag::mutators),
+        fixed_mutators(0, 0, presence_mutator_index_none, 0).bytes
+    );
+    broken.finish();
+    CHECK(!presence_mutators_state(broken.bytes.data(), broken.bytes.size()));
+    PresenceRecord decoded;
+    CHECK(decode_presence(broken.bytes.data(), broken.bytes.size(), &decoded) == WireError::ok);
+    CHECK(!decoded.mutators);
+    CHECK(decoded.engine == PresenceEngine("0.8.0", "Windows", "x64"));
+}
+
+// A record that names no mutators still encodes to the pinned bytes.
+void a_record_without_mutators_matches_the_pinned_bytes() {
+    start_case("a_record_without_mutators_matches_the_pinned_bytes");
+    PresenceRecord record;
+    record.engine = PresenceEngine{"0.8.0", "Windows", "x64"};
+    record.sim_hash = filled(0xab);
+    record.developer = PresenceDeveloper{};
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(record, out, sizeof out, &written) == WireError::ok);
+    CHECK(written == sizeof kSmallRecord);
+    CHECK(std::memcmp(out, kSmallRecord, sizeof kSmallRecord) == 0);
+    CHECK(!record.mutators && !record.mutator_part);
+}
+
+// The sim hash and a field search still find their bytes when mutators are
+// carried too.
+PresenceMutators short_loadout() {
+    PresenceMutators field;
+    field.digest = filled(0x51);
+    field.total = 3;
+    field.held = 3;
+    field.mutators = {
+        named_mutator("ridge-wind", 1),
+        named_mutator("ridge-keel", 2),
+        named_mutator("ridge-loom", 3),
+    };
+    return field;
+}
+
+// Every mask of a three-mutator list comes back as the same bits, and those
+// bits are the clash mode of each entry.
+void every_clash_mask_of_a_short_list_round_trips() {
+    start_case("every_clash_mask_of_a_short_list_round_trips");
+    for (uint32_t mask = 0; mask < 8; ++mask) {
+        PresenceRecord host;
+        host.mutators = short_loadout();
+        host.mutator_modes = mask;
+        uint8_t out[presence_record_max_bytes];
+        std::size_t written = 0;
+        CHECK(encode_presence(host, out, sizeof out, &written) == WireError::ok);
+        PresenceRecord decoded;
+        CHECK(decode_presence(out, written, &decoded) == WireError::ok);
+        CHECK(decoded == host);
+        PresenceClashMode modes[3]{};
+        CHECK(presence_clash_modes(mask, 3, modes) == WireError::ok);
+        for (uint8_t position = 0; position < 3; ++position) {
+            const bool adds = (mask & (uint32_t{1} << position)) != 0;
+            CHECK(modes[position] == (adds ? PresenceClashMode::add : PresenceClashMode::replace));
+        }
+    }
+    PresenceClashMode refused[3]{
+        PresenceClashMode::add, PresenceClashMode::add, PresenceClashMode::add
+    };
+    CHECK(presence_clash_modes(0x8, 3, refused) == WireError::bad_argument);
+    CHECK(refused[0] == PresenceClashMode::add);
+    CHECK(presence_clash_modes(0, 3, nullptr) == WireError::bad_argument);
+}
+
+// A record from a sender that has no 0x52 decodes as that record does today.
+// Building the loadout with Replace for every entry then disagrees with the
+// host's digest whenever any mode is Add.
+void a_record_without_modes_keeps_todays_loadout() {
+    start_case("a_record_without_modes_keeps_todays_loadout");
+    PresenceRecord today;
+    today.mutators = short_loadout();
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(today, out, sizeof out, &written) == WireError::ok);
+    PresenceRecord decoded;
+    CHECK(decode_presence(out, written, &decoded) == WireError::ok);
+    CHECK(decoded == today);
+    CHECK(!decoded.mutator_modes);
+
+    oa::data::mutators::Loadout host;
+    oa::data::mutators::LoadoutEntry wind;
+    wind.id = "ridge-wind";
+    wind.version = "1";
+    wind.clashes = oa::formats::oamut::ClashMode::add;
+    oa::data::mutators::LoadoutEntry keel;
+    keel.id = "ridge-keel";
+    keel.version = "1";
+    host.entries = {wind, keel};
+    oa::data::mutators::Loadout guest = host;
+    for (auto& entry : guest.entries)
+        entry.clashes = oa::formats::oamut::ClashMode::replace;
+    CHECK(oa::data::mutators::loadout_digest(guest) != oa::data::mutators::loadout_digest(host));
+}
+
+// A mask that names a position past the list is not a mode the reader can use.
+void a_clash_mask_past_the_list_is_refused() {
+    start_case("a_clash_mask_past_the_list_is_refused");
+    PresenceRecord host;
+    host.mutators = short_loadout();
+    host.mutator_modes = 0x8;
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(host, out, sizeof out, &written) == WireError::bad_argument);
+
+    Raw record;
+    Value field;
+    field.u8(0);
+    field.raw(filled(0x51).data(), 32);
+    field.raw(filled(0).data(), 32);
+    field.u8(presence_mutator_index_none);
+    field.u8(3);
+    field.u8(3);
+    put_states(field, 0);
+    put_mutator_item(field, "ridge-wind", "1");
+    put_mutator_item(field, "ridge-keel", "1");
+    put_mutator_item(field, "ridge-loom", "1");
+    record.field(static_cast<uint8_t>(PresenceTag::mutators), field.bytes);
+    Value mask;
+    mask.u32(0x8);
+    record.field(static_cast<uint8_t>(PresenceTag::mutator_modes), mask.bytes);
+    record.finish();
+    PresenceRecord decoded;
+    CHECK(decode_presence(record.bytes.data(), record.bytes.size(), &decoded) == WireError::ok);
+    CHECK(decoded.mutators && decoded.mutators->total == 3);
+    CHECK(decoded.mutators->mutators.size() == 3);
+    CHECK(!decoded.mutator_modes);
+
+    Value wide;
+    wide.u32(0);
+    wide.u8(0);
+    record = Raw{};
+    record.field(static_cast<uint8_t>(PresenceTag::mutators), field.bytes);
+    record.field(static_cast<uint8_t>(PresenceTag::mutator_modes), wide.bytes);
+    record.finish();
+    CHECK(decode_presence(record.bytes.data(), record.bytes.size(), &decoded) == WireError::ok);
+    CHECK(!decoded.mutator_modes);
+}
+
+void find_and_sim_hash_see_mutator_fields() {
+    start_case("find_and_sim_hash_see_mutator_fields");
+    PresenceRecord record;
+    record.sim_hash = filled(0xab);
+    record.mutators = PresenceMutators{};
+    record.mutators->digest = filled(0x51);
+    record.mutators->total = 1;
+    record.mutators->held = 1;
+    record.mutators->mutators = {named_mutator("one", 1)};
+    record.mutator_part = PresenceMutatorPart{};
+    record.mutator_part->digest = filled(0x51);
+    record.mutator_part->first = 0;
+    record.mutator_part->mutators = {named_mutator("two", 2)};
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    CHECK(encode_presence(record, out, sizeof out, &written) == WireError::ok);
+    const auto hash = presence_sim_hash(out, written);
+    CHECK(hash && *hash == filled(0xab));
+    std::span<const uint8_t> value;
+    CHECK(find_presence_field(out, written, PresenceTag::sim_hash, &value));
+    CHECK(value.size() == 32);
+    CHECK(find_presence_field(out, written, PresenceTag::mutators, &value));
+    CHECK(value.size() > 76);
+    CHECK(find_presence_field(out, written, PresenceTag::mutator_part, &value));
+    CHECK(value.size() > 33);
+}
+
+PresenceBrain sample_brain(
+    uint32_t player,
+    const char* id,
+    const char* name,
+    const char* version,
+    const char* level_id,
+    const char* level,
+    bool full_awareness
+) {
+    PresenceBrain brain;
+    brain.player = player;
+    brain.id = id;
+    brain.name = name;
+    brain.version = version;
+    brain.level_id = level_id;
+    brain.level = level;
+    brain.full_awareness = full_awareness;
+    return brain;
+}
+
+void write_sample_item(Raw& raw, const PresenceBrain& brain) {
+    raw.u32(brain.player);
+    raw.str(brain.id);
+    raw.str(brain.name);
+    raw.str(brain.version);
+    raw.str(brain.level_id);
+    raw.str(brain.level);
+    raw.u8(brain.full_awareness ? 0x01 : 0x00);
+}
+
+void computer_brains_round_trip() {
+    start_case("computer brains round trip");
+    const PresenceBrain brains[] = {
+        sample_brain(0x11, "steady-commander", "Steady Commander", "1.2", "firm", "Firm", false),
+        sample_brain(0x22, "lantern-scout", "Lantern Scout", "", "wide", "Wide", true),
+        sample_brain(0x33, "ridge-keeper", "Ridge Keeper", "0.4", "calm", "Calm", false),
+    };
+    uint8_t out[presence_record_max_bytes];
+    std::size_t written = 0;
+    std::size_t sent = 0;
+    CHECK(
+        encode_presence_brains(brains, out, sizeof out, &written, &sent) == WireError::ok &&
+        sent == 3
+    );
+    const auto decoded = decode_presence_brains(std::span<const uint8_t>(out, written));
+    CHECK(decoded && decoded->size() == 3);
+    if (decoded && decoded->size() == 3) {
+        CHECK((*decoded)[0] == brains[0]);
+        CHECK((*decoded)[1] == brains[1]);
+        CHECK((*decoded)[2] == brains[2]);
+    }
+
+    Raw exact;
+    exact.u8(1);
+    write_sample_item(exact, brains[0]);
+    written = 0;
+    sent = 0;
+    CHECK(
+        encode_presence_brains(
+            std::span<const PresenceBrain>(brains, 1), out, sizeof out, &written, &sent
+        ) == WireError::ok &&
+        sent == 1 && written == exact.bytes.size() - 4
+    );
+    CHECK(std::equal(out, out + written, exact.bytes.begin() + 4));
+
+    PresenceBrain long_name = brains[0];
+    long_name.name = std::string(30, 'a') + "\xc3\xa9" + "zz";
+    written = 0;
+    sent = 0;
+    CHECK(
+        encode_presence_brains(
+            std::span<const PresenceBrain>(&long_name, 1), out, sizeof out, &written, &sent
+        ) == WireError::ok
+    );
+    const auto cut = decode_presence_brains(std::span<const uint8_t>(out, written));
+    CHECK(cut && cut->size() == 1 && (*cut)[0].name == std::string(30, 'a') + "\xc3\xa9");
+
+    std::size_t one = 0;
+    std::size_t one_sent = 0;
+    CHECK(
+        encode_presence_brains(
+            std::span<const PresenceBrain>(brains, 1), out, sizeof out, &one, &one_sent
+        ) == WireError::ok
+    );
+    written = 0;
+    sent = 99;
+    CHECK(
+        encode_presence_brains(brains, out, one, &written, &sent) == WireError::ok && sent == 1 &&
+        written == one
+    );
+    CHECK(
+        encode_presence_brains(brains, out, one - 1, &written, &sent) == WireError::buffer_too_small
+    );
+}
+
+void computer_brains_refuse_a_broken_value() {
+    start_case("computer brains refuse a broken value");
+    const auto item =
+        sample_brain(7, "steady-commander", "Steady Commander", "1.2", "firm", "Firm", false);
+    auto broken = [&](auto fill) {
+        Raw raw;
+        fill(raw);
+        return decode_presence_brains(
+            std::span<const uint8_t>(raw.bytes.data() + 4, raw.bytes.size() - 4)
+        );
+    };
+    CHECK(!broken([&](Raw& raw) { raw.u8(0); }));
+    CHECK(!broken([&](Raw& raw) {
+        raw.u8(11);
+        for (int index = 0; index < 11; ++index)
+            write_sample_item(raw, item);
+    }));
+    CHECK(!broken([&](Raw& raw) {
+        raw.u8(1);
+        auto upper = item;
+        upper.id = "Steady-commander";
+        write_sample_item(raw, upper);
+    }));
+    CHECK(!broken([&](Raw& raw) {
+        raw.u8(1);
+        auto upper = item;
+        upper.level_id = "Firm";
+        write_sample_item(raw, upper);
+    }));
+    CHECK(!broken([&](Raw& raw) {
+        raw.u8(1);
+        raw.u32(item.player);
+        raw.str(item.id);
+        raw.str(item.name);
+        raw.str(item.version);
+        raw.str("");
+        raw.str(item.level);
+        raw.u8(0);
+    }));
+    CHECK(!broken([&](Raw& raw) {
+        raw.u8(1);
+        raw.u32(item.player);
+        raw.str(item.id);
+        raw.str(item.name);
+        raw.str(item.version);
+        raw.str(item.level_id);
+        raw.str("");
+        raw.u8(0);
+    }));
+    CHECK(!broken([&](Raw& raw) {
+        raw.u8(1);
+        auto flagged = item;
+        write_sample_item(raw, flagged);
+        raw.bytes.back() = 0x02;
+    }));
+    CHECK(!broken([&](Raw& raw) {
+        raw.u8(1);
+        raw.u8(0x11);
+        raw.u8(0x00);
+    }));
+}
+
+void a_record_with_computer_brains_keeps_the_other_fields() {
+    start_case("a record with computer brains keeps the other fields");
+    const auto item =
+        sample_brain(0x42, "steady-commander", "Steady Commander", "1.2", "firm", "Firm", false);
+    Value computers;
+    computers.u32(0x42);
+    computers.u8(2);
+    Value brains;
+    brains.u8(1);
+    Raw writer;
+    write_sample_item(writer, item);
+    brains.raw(writer.bytes.data() + 4, writer.bytes.size() - 4);
+
+    Raw record;
+    record.u8(static_cast<uint8_t>(PresenceTag::sim_hash));
+    record.u16(32);
+    for (int index = 0; index < 32; ++index)
+        record.u8(0xab);
+    record.field(static_cast<uint8_t>(PresenceTag::computers), computers.bytes);
+    record.field(static_cast<uint8_t>(PresenceTag::computer_brains), brains.bytes);
+    record.finish();
+
+    std::span<const uint8_t> value;
+    CHECK(
+        find_presence_field(record.bytes.data(), record.bytes.size(), PresenceTag::sim_hash, &value)
+    );
+    CHECK(value.size() == 32 && value[0] == 0xab);
+    CHECK(find_presence_field(
+        record.bytes.data(), record.bytes.size(), PresenceTag::computers, &value
+    ));
+    CHECK(value.size() == 5);
+    PresenceRecord decoded;
+    CHECK(decode_presence(record.bytes.data(), record.bytes.size(), &decoded) == WireError::ok);
+    CHECK(decoded.sim_hash && (*decoded.sim_hash)[0] == 0xab);
+    const auto hash = presence_sim_hash(record.bytes.data(), record.bytes.size());
+    CHECK(hash && (*hash)[0] == 0xab);
+
+    Raw refused;
+    refused.u8(static_cast<uint8_t>(PresenceTag::sim_hash));
+    refused.u16(32);
+    for (int index = 0; index < 32; ++index)
+        refused.u8(0xcd);
+    refused.field(static_cast<uint8_t>(PresenceTag::computers), computers.bytes);
+    Value bad = brains;
+    bad.bytes.back() = 0x02;
+    refused.field(static_cast<uint8_t>(PresenceTag::computer_brains), bad.bytes);
+    refused.finish();
+    CHECK(decode_presence(refused.bytes.data(), refused.bytes.size(), &decoded) == WireError::ok);
+    CHECK(decoded.sim_hash && (*decoded.sim_hash)[0] == 0xcd);
+    CHECK(
+        find_presence_field(
+            refused.bytes.data(), refused.bytes.size(), PresenceTag::computers, &value
+        ) &&
+        value.size() == 5
+    );
+    CHECK(!decode_presence_brains(bad.bytes));
+}
+
 } // namespace
 
 int main() {
@@ -716,6 +1706,21 @@ int main() {
     only_oa_blocks_are_peers();
     the_content_field();
     the_bundles_and_the_language();
+    mutators_round_trip();
+    a_small_mutators_field_is_encoded_exactly();
+    a_full_loadout_is_cut_before_hack_ids();
+    mutator_parts_carry_the_rest();
+    the_loadout_assembles_from_the_hosts_records();
+    a_mutator_field_that_breaks_its_rule_is_left_out();
+    presence_mutators_state_reads_the_fixed_part();
+    a_record_without_mutators_matches_the_pinned_bytes();
+    every_clash_mask_of_a_short_list_round_trips();
+    a_record_without_modes_keeps_todays_loadout();
+    a_clash_mask_past_the_list_is_refused();
+    find_and_sim_hash_see_mutator_fields();
+    computer_brains_round_trip();
+    computer_brains_refuse_a_broken_value();
+    a_record_with_computer_brains_keeps_the_other_fields();
     if (failures != 0) {
         std::fprintf(stderr, "%d failure(s)\n", failures);
         return 1;

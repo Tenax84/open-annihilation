@@ -44,6 +44,11 @@ enum class SetupBefore : uint8_t {
 /// @return true when the caller should open the window and show the steps
 [[nodiscard]] bool setup_before_game_due(const Options& options, bool mount_copy);
 
+/// Puts the language the preferences store in effect, before a line is drawn.
+///
+/// @param options the parsed command line
+void apply_stored_interface_language(const Options& options);
+
 /// SHOW AGAIN walks language, online features and the buttons. It does not
 /// continue a five-step walk that already copied the game on this start.
 void setup_welcome_again() noexcept;

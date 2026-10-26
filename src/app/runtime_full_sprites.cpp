@@ -44,18 +44,18 @@ constexpr float channel_full = 255.0F;
 /// the light table's row.
 constexpr float reduced_flash_light = 0.5F;
 
-/// The GAF frame each rendered frame of a list was decoded from, for the
-/// frames this frame's draws use (WorldDrawList::kept_decoded).
+/// The GAF frame each decoded frame this frame's draws use was decoded
+/// from, by the decoded frame: WorldDrawList::decoded_of turned around.
 using DecodedFrom = std::unordered_map<const RenderedFrame*, const oa::formats::gaf::Frame*>;
 
 /// Returns the key a sprite's picture is held under on the pages: the
 /// address of the GAF frame it was decoded from, for a frame the list
-/// decoded for this frame's draws alone, which lives in the match's
-/// archives; else the address of the rendered frame itself, which the
-/// match keeps for a feature's animation.
+/// decoded for its draws (WorldDrawList::decoded_of), which lives in the
+/// match's archives; else the address of the rendered frame itself, which
+/// the match keeps for a feature's animation.
 ///
 /// @param frame the rendered frame drawn
-/// @param decoded_from the frames decoded this frame, by their rendered frame
+/// @param decoded_from each decoded frame's GAF frame, by the decoded frame
 /// @return the key
 uint64_t frame_key(const RenderedFrame* frame, const DecodedFrom& decoded_from) {
     if (const auto found = decoded_from.find(frame); found != decoded_from.end())
@@ -481,26 +481,34 @@ struct SpriteFrame::Impl {
         const gpu::TexelRect& rect = found.record.rect;
         // The frame lies over the map pixels from its place less its
         // origin, where the terrain draws them at the zoom.
-        const float left = static_cast<float>(sprite.place.x - sprite.frame->origin_x) * zoom;
-        const float top = static_cast<float>(sprite.place.y - sprite.frame->origin_y) * zoom;
+        const float left =
+            static_cast<float>(sprite.place.x - sprite.frame->origin_x * sprite.effect_scale) *
+            zoom;
+        const float top =
+            static_cast<float>(sprite.place.y - sprite.frame->origin_y * sprite.effect_scale) *
+            zoom;
         // A feature's shadow frame draws as dark as the list's shadow
         // level: under the premultiplied blend, a vertex colour and alpha of
         // the level's strength mix that much of the frame (or of its blend)
         // into what is under it.
         const float strength =
             sprite.shadow ? oa::present::model::shadow_level_strength(inputs.list->shadow_level)
-                          : 1.0F;
+                          : sprite.effect_opacity;
         const card::Colour opaque{strength, strength, strength, strength};
         const float half = translucent_level * strength;
         const card::Colour translucent{half, half, half, half};
         // The glow's pass adds the frame's colour, its alpha 0.
         const card::Colour glowing{glow_sprite_level, glow_sprite_level, glow_sprite_level, 0.0F};
         emitter.quad(
-            {page, card::Blend::alpha_premultiplied, sampling, sprite.on_map, level},
+            {page,
+             card::Blend::alpha_premultiplied,
+             sprite.soft_effect ? card::Sampling::linear : sampling,
+             sprite.on_map,
+             level},
             emitter.place_x(left),
             emitter.place_y(top),
-            static_cast<float>(sprite.frame->width) * zoom * view.scale,
-            static_cast<float>(sprite.frame->height) * zoom * view.scale,
+            static_cast<float>(sprite.frame->width) * sprite.effect_scale * zoom * view.scale,
+            static_cast<float>(sprite.frame->height) * sprite.effect_scale * zoom * view.scale,
             static_cast<float>(rect.x) / size,
             static_cast<float>(rect.y) / size,
             static_cast<float>(rect.x + rect.width) / size,
@@ -542,8 +550,12 @@ struct SpriteFrame::Impl {
         const gpu::TexelRect& rect = found.record.rect;
         // The frame lies over the map pixels from its place less its
         // origin, where the terrain draws them at the zoom.
-        const float left = static_cast<float>(sprite.place.x - sprite.frame->origin_x) * zoom;
-        const float top = static_cast<float>(sprite.place.y - sprite.frame->origin_y) * zoom;
+        const float left =
+            static_cast<float>(sprite.place.x - sprite.frame->origin_x * sprite.effect_scale) *
+            zoom;
+        const float top =
+            static_cast<float>(sprite.place.y - sprite.frame->origin_y * sprite.effect_scale) *
+            zoom;
         const float light =
             (inputs.list->flash_strength == FlashStrength::reduced ? reduced_flash_light : 1.0F) *
             (inputs.glow ? glow_flash_level : 1.0F);
@@ -553,8 +565,8 @@ struct SpriteFrame::Impl {
             {page, blend, sampling, false, level},
             emitter.place_x(left),
             emitter.place_y(top),
-            static_cast<float>(sprite.frame->width) * zoom * view.scale,
-            static_cast<float>(sprite.frame->height) * zoom * view.scale,
+            static_cast<float>(sprite.frame->width) * sprite.effect_scale * zoom * view.scale,
+            static_cast<float>(sprite.frame->height) * sprite.effect_scale * zoom * view.scale,
             static_cast<float>(rect.x) / size,
             static_cast<float>(rect.y) / size,
             static_cast<float>(rect.x + rect.width) / size,

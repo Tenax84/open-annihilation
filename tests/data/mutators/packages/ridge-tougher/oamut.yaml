@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+# SPDX-License-Identifier: GPL-3.0-only
+
+oamut: 1
+id: ridge-tougher
+name: "Ridge Tougher"
+version: "1.0"
+author:
+  name: "Ridge Maker"
+tags: ["gameplay"]
+works-with: ["*"]
+options:
+  health:
+    type: number
+    label: "Health"
+    min: 0
+    max: 30000
+    step: 1000
+    default: 5000
+layers: ["units"]

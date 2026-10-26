@@ -15,6 +15,7 @@
 #include "oa/test/game_data.hpp"
 #include "oa/ui/frontend_multiplayer/get_map.hpp"
 #include "oa/ui/frontend_multiplayer/screens.hpp"
+#include "oa/ui/frontend_state/oa_button_place.hpp"
 #include "oa/ui/frontend_renderer.hpp"
 
 #include <algorithm>
@@ -790,6 +791,30 @@ void the_battle_room_finds_an_installed_map(Driver& d) {
     mp::multiplayer_reset();
 }
 
+/// A point inside the map name, still within a finger's reach of GET MAP,
+/// belongs to the map name. A point on the button, clear of that name, does not.
+void a_point_inside_the_map_name_is_the_map_names() {
+    namespace place = oa::ui::frontend_state;
+    const place::PlaceRect map_name{110, 200, 191, 13};
+    const place::PlaceRect button{221, 170, 80, 22};
+    constexpr int32_t x = 250;
+    constexpr int32_t y = 206;
+    expect(place::point_distance_squared(x, y, map_name) == 0, "the point is inside the map name");
+    expect(
+        place::point_distance_squared(x, y, button) < static_cast<int64_t>(22) * 22,
+        "the point is within a finger's reach of GET MAP"
+    );
+    const place::PlaceRect gadgets[] = {map_name};
+    expect(
+        place::nearer_gadget(x, y, button, gadgets),
+        "a point inside the map name, within reach of GET MAP, is the map name's"
+    );
+    expect(
+        !place::nearer_gadget(250, 180, button, gadgets),
+        "a point on GET MAP, clear of the map name, is the button's"
+    );
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -797,6 +822,7 @@ int main(int argc, char** argv) {
         the_host_pack_from_its_record();
         every_state();
         every_line();
+        a_point_inside_the_map_name_is_the_map_names();
     } else {
         const std::filesystem::path data =
             oa::test::require_game_directory("GET MAP in the battle room");

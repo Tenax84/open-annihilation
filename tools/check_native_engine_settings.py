@@ -19,10 +19,11 @@ preferences file the check writes:
   opens the game menu, Select groups without Alt, the lowest maximum frame
   rate, the performance statistics, hardware
   acceleration at Full and vertical sync, which a headless run has no
-  renderer for, Smooth motion off, the explosions' flashes off, units zoomed out as dots past
-  half scale, the window's frame always shown, and the side column and bars
-  at the original game's size), it writes the same trace stream and reaches
-  the same world digest.
+  renderer for, Smooth motion off, Allow Full 3D Mode off and Unlocked
+  Camera on, the eight effect sliders at 0%, the explosions' flashes off,
+  units zoomed out as dots past half scale, the window's frame always
+  shown, and the side column and bars at the original game's size), it
+  writes the same trace stream and reaches the same world digest.
 - At each level of enhanced anti-aliasing it writes the same trace stream
   and reaches the same world digest, and its last frame differs: units are
   drawn finer.
@@ -31,8 +32,10 @@ preferences file the check writes:
   same trace stream.
 
 The director render (--check-director-render), whose frames and sound are
-pinned, prints its pinned hashes with every key at its default and with
-enhanced anti-aliasing at 16x: director frames draw units as without it.
+pinned, keeps its original frame hashes with the four local lighting and heat
+effects off, also with enhanced anti-aliasing at 16x. With those effects on
+it keeps the same pinned sound; its internal checks compare the drawn world
+with the undrawn replay.
 """
 import argparse
 import hashlib
@@ -74,7 +77,18 @@ DEFAULTS = {
     "open-annihilation.hardware-acceleration": "off",
     "open-annihilation.vertical-sync": "0",
     "open-annihilation.smooth-motion": "1",
+    "open-annihilation.allow-full-3d": "1",
+    "open-annihilation.unlocked-camera": "0",
+    "open-annihilation.weapon-lighting.intensity": "0",
+    "open-annihilation.nanolathe-lighting.intensity": "0",
+    "open-annihilation.wreck-glow.intensity": "0",
+    "open-annihilation.heat-distortion.intensity": "0",
+    "open-annihilation.water-ripples.intensity": "60",
+    "open-annihilation.coastal-waves.intensity": "30",
+    "open-annihilation.underwater-shimmer.intensity": "100",
+    "open-annihilation.naval-reflections.intensity": "100",
     "open-annihilation.explosion-flash": "full",
+    "open-annihilation.fog-of-war": "smooth",
     "open-annihilation.zoomed-out-units": "rendered",
     "open-annihilation.zoomed-out-after": "1/6",
     "open-annihilation.window-frame": "hidden-in-play",
@@ -97,7 +111,18 @@ PRESENTATION = {
     "open-annihilation.hardware-acceleration": "full",
     "open-annihilation.vertical-sync": "1",
     "open-annihilation.smooth-motion": "0",
+    "open-annihilation.allow-full-3d": "0",
+    "open-annihilation.unlocked-camera": "1",
+    "open-annihilation.weapon-lighting.intensity": "100",
+    "open-annihilation.nanolathe-lighting.intensity": "100",
+    "open-annihilation.wreck-glow.intensity": "100",
+    "open-annihilation.heat-distortion.intensity": "100",
+    "open-annihilation.water-ripples.intensity": "0",
+    "open-annihilation.coastal-waves.intensity": "0",
+    "open-annihilation.underwater-shimmer.intensity": "0",
+    "open-annihilation.naval-reflections.intensity": "0",
     "open-annihilation.explosion-flash": "off",
+    "open-annihilation.fog-of-war": "classic",
     "open-annihilation.zoomed-out-units": "dots",
     "open-annihilation.zoomed-out-after": "1/2",
     "open-annihilation.window-frame": "always-shown",
@@ -108,6 +133,9 @@ PRESENTATION = {
     "open-annihilation.text-background": "1",
     SWITCH_ALT_KEY: "1",
 }
+# The director frame reference draws the defaults: a named file's acceleration
+# is Off, so local lighting and heat are off too.
+DIRECTOR_REFERENCE = dict(DEFAULTS)
 HUD_SCALING_KEY = "open-annihilation.hud-scaling"
 SMOOTH_MOTION_KEY = "open-annihilation.smooth-motion"
 ANTI_ALIASING_KEY = "open-annihilation.anti-aliasing"
@@ -152,8 +180,8 @@ def skirmish(native, game_dir, workdir, name, values):
     return match.group(1), trace.read_bytes(), frame.read_bytes()
 
 
-def director_render(native, game_dir, workdir, name, values, pinned):
-    """Runs the director render from a preferences file and checks its pinned hashes."""
+def director_render(native, game_dir, workdir, name, values, pinned, compare_frames=True):
+    """Checks the director's pinned sound, and frames for the original visual reference."""
     directory = workdir / name
     directory.mkdir()
     profile = directory / "director-render.conf"
@@ -164,9 +192,11 @@ def director_render(native, game_dir, workdir, name, values, pinned):
          "--preferences-file", str(profile)],
         cwd=directory, env=environment, timeout=600, check=False, capture_output=True, text=True,
     )
-    if result.returncode != 0 or pinned not in result.stdout:
+    expected = pinned if compare_frames else "sound " + pinned.split(" sound ", 1)[1]
+    if result.returncode != 0 or expected not in result.stdout:
         print(result.stdout + result.stderr, end="")
-        raise SystemExit(f"the director render {name} did not give its pinned frames and sound")
+        checked = "frames and sound" if compare_frames else "sound"
+        raise SystemExit(f"the director render {name} did not give its pinned {checked}")
 
 
 def short(data):
@@ -231,16 +261,19 @@ def main():
         if limits[0][:2] != limits[1][:2]:
             raise SystemExit(f"two runs with a unit limit of {RAISED_UNIT_LIMIT} wrote "
                              "different streams")
-        director_render(native, game_dir, workdir, "director-defaults", DEFAULTS,
+        director_render(native, game_dir, workdir, "director-reference", DIRECTOR_REFERENCE,
                         args.director_hashes)
         director_render(native, game_dir, workdir, "director-aa16",
-                        {**DEFAULTS, ANTI_ALIASING_KEY: "16"}, args.director_hashes)
+                        {**DIRECTOR_REFERENCE, ANTI_ALIASING_KEY: "16"}, args.director_hashes)
+        director_render(native, game_dir, workdir, "director-effects", DEFAULTS,
+                        args.director_hashes, compare_frames=False)
         print(f"engine settings determinism: digest {digest} with no preferences, every default, "
               f"HUD scaling Off, Smooth motion Off, the look and input settings and "
               f"anti-aliasing at "
               f"{', '.join(f'{level}x' for level in ANTI_ALIASING_LEVELS)}; Pathfinding cycles "
               f"at 2x {paths[0][0]}, unit limit {RAISED_UNIT_LIMIT} {limits[0][0]}; the director "
-              f"render's pinned frames and sound at every default and at 16x")
+              f"render's original frames and sound with local effects Off and at 16x, "
+              f"and the same sound with local effects On")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@
 // pause, speed and leave. --net-loopback-check hosts and joins in one
 // process over 127.0.0.1, runs the in-game team panels over the session
 // and compares both worlds after a settled run.
+#include "oa/app/asset_files.hpp"
+#include "oa/app/mutators_memory.hpp"
 #include "oa/app/pack_map_source.hpp"
 #include "oa/app/presence_facts.hpp"
 #include "oa/app/runtime.hpp"
@@ -32,6 +34,10 @@
 #include "oa/netgame/unicode_chat.hpp"
 #include "oa/app/netgame/extension_api.hpp"
 #include "oa/base/sha256.hpp"
+#include "oa/data/defs/layout.hpp"
+#include "oa/data/defs/unit_header.hpp"
+#include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/loadout.hpp"
 #include "oa/base/text.hpp"
 #include "oa/data/languages/interface_text.hpp"
 #include "oa/netgame/sync/unit_checksum.hpp"
@@ -551,6 +557,8 @@ inline constexpr uint32_t view_hack = 0x080;    ///< a view hack's id breaks its
 inline constexpr uint32_t override_id = 0x100;  ///< an override's hack id breaks its rule
 inline constexpr uint32_t no_reserve = 0x200;   ///< the record leaves no room for a map pack
 inline constexpr uint32_t bundles = 0x400;      ///< the base game or an expansion breaks its rule
+inline constexpr uint32_t mutators = 0x800;     ///< the mutator list breaks its rule
+inline constexpr uint32_t mutator_modes = 0x1000; ///< the clash-mode mask breaks its rule
 } // namespace presence_problem
 
 /// The content and language a presence record adds to the facts.
@@ -615,15 +623,24 @@ bool presence_keeps_rules(const oa::netgame::PresenceRecord& record) {
 ///
 /// A fact that breaks the record's rules is left out: a platform or
 /// architecture name, or a mod's version, is sent empty; an engine, a mod,
-/// an origin, a hack or an override is left out. Each kind is reported on
-/// the error stream the first time.
+/// an origin, a hack, an override or the mutator list is left out. Each
+/// kind is reported on the error stream the first time. The mutator list
+/// keeps the room left for the host's map pack: the record is still written
+/// within presence_record_max_bytes less presence_map_pack_field_max_bytes.
 ///
 /// @param facts what this machine is playing
 /// @param[in,out] reported the presence_problem bits already reported
 /// @param played the base game, expansions and language
+/// @param mutators the mutators field, or null when this machine plays none
+/// @param mutator_modes the host's clash-mode mask, sent with the mutator
+///        field; nothing when this machine sends none
 /// @return the record; empty only when nothing could be written
 std::vector<uint8_t> write_presence_record(
-    const PresenceFacts& facts, uint32_t& reported, const PresencePlayed& played
+    const PresenceFacts& facts,
+    uint32_t& reported,
+    const PresencePlayed& played,
+    const oa::netgame::PresenceMutators* mutators,
+    std::optional<uint32_t> mutator_modes
 ) {
     namespace ng = oa::netgame;
     const auto report = [&](uint32_t problem, const char* what) {
@@ -715,6 +732,27 @@ std::vector<uint8_t> write_presence_record(
             report(presence_problem::mod_origin, "where the mod was published");
     }
     record.sim_hash = facts.sim_hash;
+
+    if (mutators != nullptr) {
+        probe = {};
+        probe.mutators = *mutators;
+        if (presence_keeps_rules(probe))
+            record.mutators = std::move(probe.mutators);
+        else
+            report(presence_problem::mutators, "the mutator list");
+    }
+    // The host sends each mutator's mode whenever it sends the list. A mask
+    // the record refuses is left out, and a guest then builds every mode
+    // as Replace.
+    if (record.mutators && mutator_modes) {
+        probe = {};
+        probe.mutators = *record.mutators;
+        probe.mutator_modes = *mutator_modes;
+        if (presence_keeps_rules(probe))
+            record.mutator_modes = *mutator_modes;
+        else
+            report(presence_problem::mutator_modes, "the mutator modes");
+    }
 
     const auto hacks =
         [&](const std::vector<std::string>& ids, uint32_t problem, const char* what) {
@@ -814,9 +852,13 @@ std::string local_time_text(const char* pattern) {
 /// Fills the integrity check's answers about this machine: a digest of the
 /// program line, and one of the profile's sim hash with the map, so two
 /// machines agree exactly when they run the same program on the same rules and
-/// map. A managed copy appends the canonical bytes of its base game and
+/// map. While this match holds a mutator digest, the game-data digest starts
+/// from played_sim_hash, which folds that digest into the profile hash (or
+/// into the baseline a game without a profile plays). Without a mutator
+/// digest the bytes stay the profile hash and the map, as they did before
+/// mutators. A managed copy appends the canonical bytes of its base game and
 /// rule-changing expansions (presence_content_identity). With no bundles
-/// field the digest stays the sim hash and the map.
+/// field and no mutator digest the digest stays the sim hash and the map.
 ///
 /// @param[out] identity the identity
 /// @param runtime the runtime whose profile is read
@@ -830,8 +872,12 @@ void fill_integrity_identity(
     );
     std::memcpy(identity.program, program_digest.data(), sizeof identity.program);
     oa::base::sha256::Hasher data{};
-    if (const auto* profile = runtime.mod_profile())
+    if (runtime.match_mutator_digest()) {
+        const oa::base::sha256::Digest played_hash = played_sim_hash(runtime);
+        oa::base::sha256::update(data, played_hash);
+    } else if (const auto* profile = runtime.mod_profile()) {
         oa::base::sha256::update(data, profile->sim_hash);
+    }
     oa::base::sha256::update(data, {reinterpret_cast<const uint8_t*>(map.data()), map.size()});
     const auto played = played_content(runtime);
     if (played.announce_bundles) {
@@ -849,6 +895,75 @@ void fill_integrity_identity(
     }
     const auto data_digest = oa::base::sha256::finish(data);
     std::memcpy(identity.game_data, data_digest.data(), sizeof identity.game_data);
+    const auto hex = oa::base::sha256::to_hex(data_digest);
+    std::cerr << "multiplayer: integrity game data ";
+    std::cerr.write(hex.data(), 16);
+    std::cerr << '\n';
+    std::cerr.flush();
+}
+
+/// One unit header the store serves: its unit name and the bytes' hash.
+struct ServedHeader {
+    std::string name;
+    uint32_t hash = 0;
+};
+
+/// Reads the unit headers the store serves now.
+///
+/// The same files the match start loads, each one's unit name and the hash
+/// of its bytes. A file that does not parse is left out.
+///
+/// @param assets the store, mutator layer included when one is mounted
+/// @return those headers
+std::vector<ServedHeader> served_unit_headers(const oa::AssetStore& assets) {
+    struct Weapons {
+        oa::data::defs::WeaponTdfSet set{};
+
+        Weapons() { oa::data::defs::weapon_tdf_set_init(&set); }
+
+        ~Weapons() { oa::data::defs::weapon_tdf_set_free(&set); }
+    } weapons;
+
+    const oa::data::defs::Files files = asset_files(assets);
+    const auto& layout = oa::data::defs::data_layout();
+    const oa::data::defs::UnitHeaderSources sources{
+        "", &weapons.set, layout.build_version[0], layout.build_version[1], false, false, nullptr
+    };
+    std::vector<std::string> names;
+    if (files.list != nullptr) {
+        files.list(
+            files.context,
+            oa::data::defs::directory_name(oa::data::defs::DataDirectory::units),
+            oa::data::defs::unit_extension(),
+            [](void* user, const char* name) {
+                static_cast<std::vector<std::string>*>(user)->emplace_back(name);
+            },
+            &names
+        );
+    }
+    std::vector<ServedHeader> headers;
+    headers.reserve(names.size());
+    for (const std::string& file_name : names) {
+        char path[oa::data::defs::path_capacity];
+        oa::data::defs::build_variant_path(
+            &files,
+            path,
+            sizeof path,
+            oa::data::defs::directory_name(oa::data::defs::DataDirectory::units),
+            file_name.c_str(),
+            oa::data::defs::unit_extension(),
+            nullptr
+        );
+        oa::UnitDef unit{};
+        bool refused = false;
+        if (!oa::data::defs::load_unit_header(&files, path, unit, sources, &refused))
+            continue;
+        const char* label = unit.unit_name[0] != '\0' ? unit.unit_name : unit.name;
+        headers.push_back(
+            {std::string(label, ::strnlen(label, sizeof unit.unit_name)), unit.fbi_hash}
+        );
+    }
+    return headers;
 }
 
 /// Computes the content checksum of every unit of the battle room's table,
@@ -858,7 +973,8 @@ void fill_integrity_identity(
 /// @param units the unit table
 /// @param unit_count entries in the table
 /// @return one checksum per entry; the stored content checksum where the
-///         files cannot be read
+///         files cannot be read, and for entry 0, the reserved empty type,
+///         which names no unit's files
 std::vector<uint32_t> unit_content_checksums(
     const oa::AssetStore* assets, const mp::LobbyUnit* units, int32_t unit_count
 ) {
@@ -869,7 +985,7 @@ std::vector<uint32_t> unit_content_checksums(
         return checksums;
     const oa::netgame::sync::StoreUnitFiles files(*assets);
     const auto pages = oa::netgame::sync::list_unit_gui_pages(files);
-    for (int32_t index = 0; units != nullptr && index < unit_count; ++index) {
+    for (int32_t index = 1; units != nullptr && index < unit_count; ++index) {
         const auto& unit = units[index];
         // A failed listing leaves every stored checksum, as each unit's own
         // listing would.
@@ -949,6 +1065,10 @@ struct NetworkPlay::NetHost {
         nm::NetMatchHooks hooks{};
         hooks.context = &play;
         hooks.chat = chat;
+        hooks.seat_chat =
+            [](void* context, uint8_t sender, uint8_t addressee, bool broadcast, const char* line) {
+                hear_remote_seat_chat(self(context).runtime_, sender, addressee, broadcast, line);
+            };
         hooks.notice = notice;
         hooks.translate_game_text = translate_text;
         hooks.rand15 = rand15;
@@ -1038,9 +1158,19 @@ struct NetworkPlay::NetHost {
             return;
         }
         state.hosting = host_slot == local_slot;
-        if (state.hosting)
+        // A joiner that has already seen the start no longer treats a remote
+        // computer as a computer, so this machine's brains go out first. The
+        // joiner then still has them when it records the game.
+        if (state.hosting) {
+            play.runtime_.note_room_computers(lobby);
             nm::net_match_queue_game_start(&state.connection, *lobby.game);
+        }
         state.building_game = lobby.game;
+        std::copy(
+            std::begin(lobby.game->slot_table),
+            std::end(lobby.game->slot_table),
+            state.host_slot_ids.begin()
+        );
         state.loading_pace = {};
         state.load_rows = {};
         try {
@@ -1139,6 +1269,67 @@ struct NetworkPlay::NetHost {
                 oa::netgame::WireError::ok)
                 state.unit_verdicts.push_back(bytes);
         }
+        // The room's layer comes off before the match mounts its own, map
+        // included. The list is the one this room built. The run's own
+        // choice is put back afterwards, including when the start throws,
+        // so a later skirmish does not play this room's list. A match that
+        // never showed the battle room, such as the loopback check, has no
+        // room list, so it plays the run's own, as a single-player start does.
+        const bool followed = runtime.room_followed();
+        if (followed && runtime.room_match_unbuilt()) {
+            std::cerr << "open-annihilation: mutators: room failed: the battle room's "
+                         "list is not built\n";
+            throw std::runtime_error("the battle room's list is not built");
+        }
+        std::vector<oa::data::mutators::ResolvedMutator> saved_choice(
+            runtime.chosen_match_mutators().begin(), runtime.chosen_match_mutators().end()
+        );
+        std::vector<oa::data::mutators::ResolvedMutator> room_chosen;
+        if (followed) {
+            room_chosen.assign(
+                runtime.room_match_mutators().begin(), runtime.room_match_mutators().end()
+            );
+        } else {
+            room_chosen.assign(
+                runtime.chosen_match_mutators().begin(), runtime.chosen_match_mutators().end()
+            );
+        }
+
+        struct RunChoiceRestore {
+            Runtime& runtime;
+            std::vector<oa::data::mutators::ResolvedMutator> saved;
+
+            ~RunChoiceRestore() {
+                try {
+                    runtime.choose_match_mutators(std::move(saved));
+                } catch (...) {
+                }
+            }
+        } run_choice_restore{runtime, std::move(saved_choice)};
+
+        runtime.release_room_mutators();
+        runtime.choose_match_mutators(std::move(room_chosen));
+        // This machine's computers take their brains before the match's first
+        // tick. Another machine's computers are not in the list. The seats
+        // remembered afterwards are in the order this machine seated them.
+        runtime.note_room_computers(lobby);
+        const oa::data::brain_library::Seats room_seats = runtime.room_brain_seats();
+        std::vector<uint8_t> room_computers;
+        room_computers.reserve(room_seats.seats.size());
+        for (const oa::data::brain_library::Seat& room_seat : room_seats.seats) {
+            if (room_seat.place < 0 || room_seat.place > 9)
+                continue;
+            room_computers.push_back(static_cast<uint8_t>(room_seat.place));
+        }
+        runtime.seat_brains_once(runtime.resolve_brain_seats(
+            room_seats, room_computers, oa::data::brain_library::Difficulty::hard
+        ));
+        if (!room_seats.seats.empty()) {
+            oa::data::brain_library::Seats memory_seats = room_seats;
+            for (std::size_t seat_index = 0; seat_index < memory_seats.seats.size(); ++seat_index)
+                memory_seats.seats[seat_index].place = static_cast<int32_t>(seat_index);
+            runtime.remember_brain_seats(oa::data::brain_library::Setup::multiplayer, memory_seats);
+        }
         runtime.bootstrap_match(
             {.units_per_player = limit,
              .place_commanders = false,
@@ -1149,6 +1340,9 @@ struct NetworkPlay::NetHost {
              // at the host's.
              .run_unit_limit = state.hosting}
         );
+        // Other machines' computers, as the room showed them. This machine's
+        // own are the brains the match just seated.
+        runtime.keep_remote_played_brains(lobby);
         mp::unit_sync_destroy(lobby);
         if (!runtime.match_ || runtime.altitude_sight_blocked_)
             throw std::runtime_error(
@@ -1162,6 +1356,19 @@ struct NetworkPlay::NetHost {
         auto& world = runtime.match_->state();
         if (!nm::match_launch_apply(lobby, &world))
             throw std::runtime_error("the lobby has no local slot");
+        // A seat this machine places on a side the match does not have ends
+        // the start here, before the machines wait for each other to load.
+        if (const auto past = nm::match_first_side_past_table(&world); past < OA_PLAYER_COUNT) {
+            const auto& seated = world.game.players[past];
+            const auto* info = world_player_info(&world, &seated);
+            const auto side = info != nullptr ? static_cast<unsigned>(info->side) : 0U;
+            abort(
+                play,
+                std::string(field_text(seated.name, sizeof seated.name)) + ": side " +
+                    std::to_string(side) + " is not one of this game's sides"
+            );
+            return;
+        }
         play.start_reporter(world, lobby.game);
         if (state.hosting)
             world.game.session_flags =
@@ -1228,6 +1435,16 @@ struct NetworkPlay::NetHost {
         state.finish_pending = false;
         state.stalled_player = nm::no_player_id;
         runtime.status_ = "The other players are still loading";
+        // The host's START is the real start. The set this room built is the
+        // multiplayer set the next battle room offers. A guest stores
+        // nothing, a start that threw never reaches here, and an empty list
+        // stores nothing.
+        if (state.hosting && followed) {
+            const auto played = runtime.chosen_match_mutators();
+            runtime.remember_mutators(
+                mutators_memory::Setup::multiplayer, oa::data::mutators::loadout_of(played)
+            );
+        }
     }
 
     // One loading-screen frame, at most every 200 ms as the loading screen
@@ -1292,13 +1509,16 @@ struct NetworkPlay::NetHost {
         for (const auto& [slot, start] : starts)
             start_positions[slot] = start;
         const bool fixed_positions = (host->options & OA_SETUP_OPTION_FIXED_LOCATIONS) != 0;
+        runtime.note_brain_map_starts();
         for (const auto& placed : starts) {
             const uint8_t slot = placed.first;
             // A position an earlier move swapped is read from the table.
             int32_t start = start_positions[slot];
             runtime.move_map_unit_computer_last(start_positions, start, fixed_positions);
-            if (runtime.place_map_units(slot, start))
+            if (runtime.place_map_units(slot, start)) {
+                runtime.remember_brain_player_start(slot, start, true, true);
                 continue;
+            }
             const auto& info = world.player_info[slot];
             const oa::sim::unit_spawn::PlayerSetup setup{
                 info.side, info.color, host->metal_hundreds * 100, host->energy_hundreds * 100
@@ -1314,7 +1534,27 @@ struct NetworkPlay::NetHost {
             );
             if (!started.position_found || started.unit == nullptr)
                 throw std::runtime_error("a local commander could not be placed");
+            runtime.remember_brain_player_start(slot, start, false, true);
         }
+        // Another machine's player is noted at the start the host dealt it,
+        // the same on every machine. The host sends each machine only its
+        // own players' starts, so with fixed starts the others are worked
+        // out as the host deals them, in the host's slot order; nothing
+        // moves a computer player last then. Shuffled starts are the host's
+        // alone, and a machine may then have moved its computer player last,
+        // so another machine's player has none, and a brain reads only its
+        // own start.
+        std::array<int32_t, OA_PLAYER_COUNT> dealt{};
+        dealt.fill(-1);
+        if (fixed_positions)
+            (void)nm::net_match_fixed_start_positions(state.net.get(), state.host_slot_ids, dealt);
+        for (uint8_t slot = 0; slot < OA_PLAYER_COUNT; ++slot) {
+            const auto& player = world.game.players[slot];
+            if (player.in_use == 0 || nm::match_slot_watcher(&world, slot))
+                continue;
+            runtime.remember_brain_player_start(slot, dealt[slot], false, false);
+        }
+        runtime.publish_brain_starts(fixed_positions);
         // Every store starts at the host's resources.
         oa::ui::hud::set_starting_resources(
             world, oa::data::campaign::SessionKind::multiplayer, nullptr, nullptr
@@ -1389,6 +1629,21 @@ struct NetworkPlay::NetHost {
         setup.recorder_text = kProgramLine;
         setup.date_text = local_time_text("%Y-%m-%d %H:%M");
         setup.compress = profile != nullptr && profile->recorder.ta_demo_recorder.compress_files;
+        // Empty text writes no sector, so a game without mutators is unchanged.
+        const std::string loadout_text = runtime.played_loadout_text();
+        if (loadout_text.size() > oa::session::demo::recording_loadout_most_bytes) {
+            std::cerr
+                << "demo mutators: the loadout is too long for the recording and is left out\n";
+        } else {
+            setup.loadout_text = loadout_text;
+        }
+        // Empty text writes no sector, so a game without brains is unchanged.
+        const std::string brains_text = runtime.played_brains_text();
+        if (brains_text.size() > oa::session::demo::recording_brains_most_bytes) {
+            std::cerr << "demo brains: the seats are too long for the recording and are left out\n";
+        } else {
+            setup.brains_text = brains_text;
+        }
         const auto add_player = [&](uint8_t slot) {
             const auto& player = world.game.players[slot];
             oa::session::demo::RecordingPlayer entry{};
@@ -2188,6 +2443,15 @@ void NetworkPlay::net_bind_multiplayer() {
              return static_cast<Runtime*>(context)->translate_ui(interface_text);
          }}
     );
+    // The chat list's measure, so a line about a 3.1c player goes on in a
+    // further line where the list would clip it.
+    mp::multiplayer_bind_chat_measure(
+        {&runtime_,
+         [](void* context) { return static_cast<Runtime*>(context)->chat_list_room(); },
+         [](void* context, std::string_view line) {
+             return static_cast<Runtime*>(context)->chat_list_width(line);
+         }}
+    );
     // Every battle room is told which engine this machine runs, whether
     // Developer Mode is on, and whether a program on this machine may
     // control the game.
@@ -2241,18 +2505,47 @@ void NetworkPlay::follow_unicode_chat() {
 }
 
 void NetworkPlay::follow_presence() {
+    runtime_.follow_room_mutators();
+    // A change to the mutator field while the screens are hidden, such as
+    // the release at a match's start, stays pending until they show again:
+    // taking its generation here would skip writing it into the record.
     if (presence_taken_ && !mp::multiplayer_showing())
         return;
+    const uint32_t generation = runtime_.room_mutators_generation();
+    const bool mutators_changed =
+        !presence_mutators_seen_ || generation != presence_mutator_generation_;
+    if (mutators_changed) {
+        presence_mutators_seen_ = true;
+        presence_mutator_generation_ = generation;
+        const oa::netgame::PresenceMutators* field = runtime_.room_mutators_presence();
+        if (field == nullptr) {
+            presence_mutators_held_ = false;
+            presence_mutators_ = {};
+        } else {
+            presence_mutators_ = *field;
+            presence_mutators_held_ = true;
+        }
+        // The full list, even when the bytes below are cut to the same record.
+        mp::multiplayer_bind_mutator_loadout(
+            presence_mutators_held_ ? &presence_mutators_ : nullptr
+        );
+    }
     const bool first = !presence_taken_;
     presence_taken_ = true;
     auto facts = presence_facts(runtime_);
     const auto played = played_content(runtime_);
     const auto key = played_content_key(played);
-    if (!first && facts == presence_facts_ && key == presence_content_key_)
+    if (!first && facts == presence_facts_ && key == presence_content_key_ && !mutators_changed)
         return;
     presence_facts_ = std::move(facts);
     presence_content_key_ = key;
-    auto record = write_presence_record(presence_facts_, presence_reported_, played);
+    auto record = write_presence_record(
+        presence_facts_,
+        presence_reported_,
+        played,
+        presence_mutators_held_ ? &presence_mutators_ : nullptr,
+        presence_mutators_held_ ? runtime_.room_mutator_modes() : std::nullopt
+    );
     if (!first && record == bound_presence_record_)
         return;
     bound_presence_record_ = std::move(record);
@@ -2494,6 +2787,14 @@ void NetworkPlay::net_send_chat(const char* line) {
     nm::net_match_say(net_->net.get(), line);
 }
 
+void NetworkPlay::net_send_seat_chat(
+    uint8_t seat, const char* line, uint8_t mode, const uint8_t* targets
+) {
+    if (!net_ || !net_->active || net_->loading || line == nullptr || *line == '\0')
+        return;
+    nm::net_match_say_from(net_->net.get(), seat, line, mode, targets);
+}
+
 const char* NetworkPlay::shared_chat_line(const char* line, std::size_t index) const {
     if (!net_ || !net_->active || net_->loading || line == nullptr)
         return nullptr;
@@ -2686,6 +2987,9 @@ int NetworkPlay::run_net_loopback_check(std::size_t ticks) {
     host_info.options ^= mp::option::watching_allowed;
     if (!watching)
         host_info.options ^= mp::option::cheats_allowed;
+    // --net-loopback-fixed-starts: the host's block asks for fixed starts.
+    if (net_options().net_loopback_fixed_starts)
+        host_info.options |= mp::option::fixed_locations;
     mp::lobby_send_player_info(*host.lobby);
     mp::lobby_send_player_info(*client.lobby);
     wait_until(
@@ -2855,14 +3159,27 @@ int NetworkPlay::run_net_loopback_check(std::size_t ticks) {
                   << " in slot " << joiner_seat << "\n";
     }
 
-    // The battle room's unit sync over the installed unit table. The
-    // client's copy of one unit carries a content checksum from other files,
-    // so the host's verdict takes that unit away in both battle
-    // rooms and its restriction row greys out; every other unit stays. The
-    // verdicts stay with each battle room until its launch applies them.
+    // The battle room's unit sync. With a chosen list, the shared mutator
+    // layer is mounted first and the headers are read over it; the layer
+    // comes off before the launch, which mounts the same bytes again. The
+    // check creates no battle-room state, so the launch still plays the
+    // run's own list. The client's copy of one unit carries a content
+    // checksum from other files, so the host's verdict takes that unit away
+    // in both battle rooms and its restriction row greys out; every other
+    // unit stays. The verdicts stay with each battle room until its launch
+    // applies them. The cached headers stay as the layer served them: the
+    // recording's unit table reads that cache, so they are not read again
+    // after the layer comes off.
     uint32_t taken_away_key = 0;
     int32_t synced_units = 0;
     {
+        std::string layer_failure;
+        const bool layered = runtime_.mount_chosen_mutator_layer(layer_failure);
+        require(layer_failure.empty(), layer_failure.c_str());
+        if (layered) {
+            mp::multiplayer_units_changed();
+            std::cout << "net loopback check: unit sync over the mutators' layer\n";
+        }
         int32_t unit_count = 0;
         const CheckHost host_check = check_host(runtime_);
         mp::LobbyUnit* host_units =
@@ -2940,6 +3257,12 @@ int NetworkPlay::run_net_loopback_check(std::size_t ticks) {
             side->lobby->units = nullptr;
             side->lobby->unit_count = 0;
         }
+        if (layered) {
+            require(
+                runtime_.release_chosen_mutator_layer(),
+                "the mutators' layer could not be released before launch"
+            );
+        }
     }
 
     // Each machine left its single-player speed elsewhere; the match start
@@ -2954,6 +3277,22 @@ int NetworkPlay::run_net_loopback_check(std::size_t ticks) {
     };
     hold_speed(runtime_, kHostLeftSpeed);
     hold_speed(joiner, kClientLeftSpeed);
+
+    // The host's battle room sends its slot table every few seconds, and the
+    // joiner launches with it, as from a room that has been open that long.
+    mp::lobby_send_slot_table(*host.lobby);
+    wait_until(
+        [&] {
+            drain(host);
+            drain(client);
+            return std::equal(
+                std::begin(host.lobby->game->slot_table),
+                std::end(host.lobby->game->slot_table),
+                std::begin(client.lobby->game->slot_table)
+            );
+        },
+        "the host's slot table did not reach the joiner"
+    );
 
     // START: the host launches and its 0x08 launches the client. No frame
     // runs while the host builds its world; the loading screen's work goes on
@@ -3013,17 +3352,39 @@ int NetworkPlay::run_net_loopback_check(std::size_t ticks) {
         std::cout << ' ' << static_cast<int>(percent);
     std::cout << '\n';
     // Each launch applied its battle room's verdicts to the unit table it
-    // loaded and dropped them: neither match has the unit taken away, both
-    // have every other.
+    // loaded and dropped them: neither match has the unit taken away, and
+    // every other header the store serves now is in the match, by name.
+    const CheckHost launched_check = check_host(runtime_);
+    const std::vector<ServedHeader> served =
+        served_unit_headers(*launched_check.assets(launched_check.context));
     for (const auto* side : {&host, &client}) {
         const auto& world = *side->play->net_->net->world;
         bool kept = false;
         for (uint32_t type = 1; type < world.unit_def_count; ++type)
             kept = kept || world.unit_defs[type].fbi_hash == taken_away_key;
+        std::string absent;
+        for (const ServedHeader& header : served) {
+            if (header.hash == taken_away_key)
+                continue;
+            bool found = false;
+            for (uint32_t slot = 1; slot < world.unit_def_count; ++slot) {
+                if (world.unit_defs[slot].fbi_hash == header.hash) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                absent = header.name;
+                break;
+            }
+        }
+        const std::string reason =
+            absent.empty() ? std::string("a launch did not apply its battle room's unit verdicts")
+                           : absent + " is absent from the match";
         require(
-            !kept && static_cast<int32_t>(world.unit_def_count) == synced_units &&
+            !kept && absent.empty() && static_cast<int32_t>(world.unit_def_count) == synced_units &&
                 side->lobby->sync.record_count == 0,
-            "a launch did not apply its battle room's unit verdicts"
+            reason.c_str()
         );
     }
     for (const Runtime* side :

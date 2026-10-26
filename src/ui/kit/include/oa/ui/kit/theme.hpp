@@ -67,6 +67,12 @@ inline constexpr Colour accent_light{0xb6, 0xe0, 0x5a};
 inline constexpr Colour accent_held{0x8a, 0xb8, 0x30};
 /// Text on the accent.
 inline constexpr Colour on_accent{0x10, 0x12, 0x0d};
+/// A filled button's face: the accent, deep enough to carry the white text.
+inline constexpr Colour filled{0x3e, 0x52, 0x18};
+/// A filled button's face under the pointer.
+inline constexpr Colour filled_light{0x49, 0x60, 0x1c};
+/// A filled button's face while it is held.
+inline constexpr Colour filled_held{0x35, 0x45, 0x14};
 /// The well of a switch, a level strip and a slider's track.
 inline constexpr Colour well{0x12, 0x14, 0x10};
 /// The border of a switch, a level strip, a slider's track and a footer button.

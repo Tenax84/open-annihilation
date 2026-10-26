@@ -3,6 +3,7 @@
 
 // Runtime glue for the campaign package: binds the campaign object, the
 // NEWGAME lists and the MSNBRIEF panel to the frontend runtime.
+#include "oa/app/mutators_memory.hpp"
 #include "oa/app/runtime.hpp"
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/defs/unit_catalog.hpp"
@@ -12,9 +13,12 @@
 #include "oa/app/asset_files.hpp"
 
 #include "oa/sim/ai.hpp"
+#include "oa/sim/brains/seat.hpp"
 #include "oa/data/campaign/campaign_assets.hpp"
 #include "oa/data/campaign/campaign_file.hpp"
+#include "oa/core/player_setup.h"
 #include "oa/core/unit_def.h"
+#include "oa/core/world.h"
 #include "oa/sim/match_runtime.hpp"
 #include "oa/sim/match_runtime/mission_unit_binding.hpp"
 #include "oa/present/world_renderer/world_camera.hpp"
@@ -410,6 +414,25 @@ static missions::CampaignEnv campaign_env(
         asset_find
     };
     return {&state.files, nullptr, static_cast<int32_t>(difficulty), 0, names};
+}
+
+void Runtime::clear_campaign_map_cache() {
+    campaign_runtime().map.mission_name[0] = '\0';
+}
+
+void Runtime::rebind_campaign_mission() {
+    auto& state = campaign_runtime();
+    const auto env = campaign_env(assets_, preferences_.difficulty, difficulty_names());
+    if (!missions::campaign_bind_mission(
+            &state.file, &env, static_cast<int32_t>(selected_mission_index_)
+        )) {
+        std::string message = "the campaign mission could not be bound again";
+        if (!state.events.message.empty()) {
+            message.append(": ");
+            message.append(state.events.message);
+        }
+        throw std::runtime_error(std::move(message));
+    }
 }
 
 // campaign_env for the calls that list the campaigns, whose reports of the
@@ -984,20 +1007,133 @@ void Runtime::place_mission_feature_draws() {
     }
 }
 
+Runtime::ComputerProfileFile Runtime::computer_profile_file() {
+    ComputerProfileFile file;
+    auto take = [&](const std::string& path) {
+        const std::optional<std::vector<uint8_t>> bytes = assets_.load_file_contents(path);
+        if (!bytes)
+            return false;
+        file.path = path;
+        file.text.assign(bytes->begin(), bytes->end());
+        return true;
+    };
+    if (const auto path = session_ai_profile_path(); !path.empty() && take(path))
+        return file;
+    take(oa::data::defs::data_path(oa::data::defs::DataDirectory::ai, kDefaultAiProfile));
+    return file;
+}
+
 std::string Runtime::read_computer_profile() {
-    std::optional<std::vector<uint8_t>> bytes;
-    if (const auto path = session_ai_profile_path(); !path.empty())
-        bytes = assets_.load_file_contents(path);
-    if (!bytes)
-        bytes = assets_.load_file_contents(
-            oa::data::defs::data_path(oa::data::defs::DataDirectory::ai, kDefaultAiProfile)
-        );
-    return bytes ? std::string(bytes->begin(), bytes->end()) : std::string();
+    return computer_profile_file().text;
+}
+
+void Runtime::clear_brain_start_notes() {
+    brain_starts_noted_ = false;
+    brain_start_rule_ = oa::data::brain_facts::StartRule::unknown;
+    brain_map_starts_.clear();
+    brain_player_start_.fill(-1);
+    brain_player_placed_.fill(false);
+    brain_start_from_map_ = false;
+    brain_start_from_commander_ = false;
+}
+
+void Runtime::note_brain_map_starts() {
+    brain_map_starts_.clear();
+    for (const oa::sim::unit_spawn::StartMarker& marker : selected_start_markers_) {
+        if (marker.kind != 1)
+            continue;
+        oa::data::brain_facts::MapStart stored;
+        stored.index = marker.index;
+        stored.x = marker.x;
+        stored.z = marker.z;
+        brain_map_starts_.push_back(stored);
+    }
+}
+
+void Runtime::note_campaign_map_starts() {
+    brain_map_starts_.clear();
+    const auto& file = campaign_runtime().file;
+    if (file.rules == nullptr)
+        return;
+    for (int32_t rule_index = 0; rule_index < file.rule_count; ++rule_index) {
+        const missions::MissionRule& rule = file.rules[rule_index];
+        if (rule.type != missions::MissionRuleType::start_position)
+            continue;
+        oa::data::brain_facts::MapStart stored;
+        stored.index = rule.index;
+        stored.x = rule.x;
+        stored.z = rule.z;
+        brain_map_starts_.push_back(stored);
+    }
+}
+
+void Runtime::remember_brain_player_start(
+    uint8_t player, int32_t start_index, bool map_placed, bool placed_here
+) {
+    if (player >= OA_PLAYER_COUNT)
+        return;
+    if (!placed_here && brain_player_placed_[player])
+        return;
+    if (start_index < 0 || start_index > 32767)
+        brain_player_start_[player] = -1;
+    else
+        brain_player_start_[player] = static_cast<int16_t>(start_index);
+    if (!placed_here)
+        return;
+    brain_player_placed_[player] = true;
+    if (map_placed)
+        brain_start_from_map_ = true;
+    else
+        brain_start_from_commander_ = true;
+}
+
+void Runtime::publish_brain_starts(bool fixed_by_setup) {
+    bool every_here = true;
+    bool any_player = false;
+    if (match_ != nullptr) {
+        oa::World& world = match_->state();
+        for (uint8_t player = 0; player < OA_PLAYER_COUNT; ++player) {
+            oa::Player& record = world.game.players[player];
+            if (record.in_use == 0)
+                continue;
+            const oa::PlayerSetupInfo* info = oa::world_player_info(&world, &record);
+            if (info != nullptr && (info->options & OA_SETUP_OPTION_WATCHER) != 0)
+                continue;
+            any_player = true;
+            if (!brain_player_placed_[player])
+                every_here = false;
+        }
+    }
+    const bool map_only =
+        any_player && every_here && brain_start_from_map_ && !brain_start_from_commander_;
+    if (campaign_mission_ || map_only)
+        brain_start_rule_ = oa::data::brain_facts::StartRule::fixed;
+    else if (fixed_by_setup)
+        brain_start_rule_ = oa::data::brain_facts::StartRule::fixed;
+    else
+        brain_start_rule_ = oa::data::brain_facts::StartRule::random;
+    brain_starts_noted_ = true;
+    if (match_ == nullptr || !match_->seat_state())
+        return;
+    oa::sim::brains::publish_match_starts(
+        *match_, brain_start_rule_, brain_map_starts_, brain_player_start_
+    );
 }
 
 void Runtime::configure_computer_players() {
     if (!match_)
         return;
+    brain_game_facts_stored_ = false;
+    clear_brain_start_notes();
+    // The facts read every AI profile and the map's mission file, so a match
+    // no brain can be seated in does without them.
+    bool brain_may_play = !options_.brain_shadow.empty() ||
+                          (pending_brain_seats_.has_value() && !pending_brain_seats_->empty());
+    for (const std::optional<BrainSeatChoice>& choice : brain_seat_choices_)
+        brain_may_play = brain_may_play || choice.has_value();
+    if (brain_may_play)
+        store_brain_game_facts();
+    install_brain_log_hooks();
     // Every type's build list as the game holds it, its CANBUILD entries then
     // the download menus': per type, a count then its ids.
     const auto& tables = unit_table_.tables;
@@ -1012,6 +1148,14 @@ void Runtime::configure_computer_players() {
     const auto profile = read_computer_profile();
     if (!oa::sim::ai::configure_match_computer_players(*match_, profile, lists, campaign_mission_))
         throw std::runtime_error("cannot store the computer players' profile and build lists");
+    take_pending_brain_seats();
+}
+
+void Runtime::store_brain_game_facts() {
+    if (!match_ || brain_game_facts_stored_)
+        return;
+    oa::sim::brains::set_match_game_facts(*match_, brain_game_facts());
+    brain_game_facts_stored_ = true;
 }
 
 void Runtime::reload_computer_profiles() {
@@ -1531,6 +1675,10 @@ void Runtime::click_briefing_gadget(std::string name) {
     }
     if (state.events.signal == campaign::signal::back) {
         briefing_art_ = {};
+        // A save's list is only for the briefing's mission. Leaving the
+        // briefing drops it, so the next start plays the set chosen there.
+        if (mutators_held_for_next_match())
+            cancel_loadout_once();
         load(briefing_parent_);
         return;
     }
@@ -1893,6 +2041,9 @@ void Runtime::start_campaign_mission() {
     }
     campaign_mission_ = true;
     bool campaign_seated = false;
+    // A hold this start armed and the match never took must not seat a later
+    // one. A hold already set, for a saved game, is left as it is.
+    bool armed_brains = false;
     try {
         if (!load_campaign_map(mission_file)) {
             campaign_mission_ = false;
@@ -1902,7 +2053,15 @@ void Runtime::start_campaign_mission() {
         configure_campaign_players();
         campaign_seated = true;
         // The mission info sets the unit limit from the GlobalHeader's maxunits
-        // and mission start leaves it for a campaign.
+        // and mission start leaves it for a campaign. A saved game has already
+        // chosen this match's mutators; the campaign's set is what the missions
+        // after this one start with.
+        if (!mutators_held_for_next_match())
+            hand_chosen_mutators(mutators_memory::Setup::campaign);
+        if (!brain_seats_held_for_next_match()) {
+            hand_setup_brain_seats(oa::data::brain_library::Setup::campaign);
+            armed_brains = true;
+        }
         bootstrap_match(
             {.units_per_player = static_cast<uint16_t>(state.file.units_per_player),
              .place_commanders = false}
@@ -1913,7 +2072,11 @@ void Runtime::start_campaign_mission() {
         campaign_mission_ = false;
         status_ = std::string("campaign start: ") + error.what();
         std::cerr << "unsupported operation: " << status_ << '\n';
+        if (match_ == nullptr)
+            offer_mutator_start_question();
     }
+    if (armed_brains && brain_seats_held_for_next_match())
+        cancel_brain_seats_once();
     // A start that never builds a match puts the player's setup back. The
     // preferences then keep those slots, not the mission's two players.
     if (campaign_seated && !match_)

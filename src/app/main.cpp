@@ -11,6 +11,9 @@
 #include "mod_install_watch.hpp"
 #include "pad_state.hpp"
 #include "render_host.hpp"
+#if OA_SELF_CHECKS
+#include "renderer_proof.hpp"
+#endif
 #include "screen_size.hpp"
 #include "oa/app/extension_list.hpp"
 #include "oa/app/full_screen.hpp"
@@ -35,6 +38,11 @@
 #include "oa/data/campaign/campaign_assets.hpp"
 #include "oa/data/campaign/map_catalog.hpp"
 #include "oa/data/content_bundles.hpp"
+#include "oa/data/languages/interface_text.hpp"
+#include "oa/data/brain_library/library.hpp"
+#include "oa/data/mutator_library/library.hpp"
+#include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/pipeline.hpp"
 #include "oa/formats/json.hpp"
 #include "oa/formats/ota.hpp"
 #include "oa/app/platform_hooks.hpp"
@@ -46,6 +54,7 @@
 #include "oa/base/threads.hpp"
 #include "oa/data/defs/layout.hpp"
 #include "oa/platform/allocator.hpp"
+#include "oa/platform/dataless.hpp"
 #include "oa/platform/machine.hpp"
 #include "oa/platform/memory_status.hpp"
 #include "oa/platform/file_types.hpp"
@@ -58,6 +67,7 @@
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -72,6 +82,7 @@
 #include <new>
 #include <optional>
 #include <stdexcept>
+#include <thread>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -577,7 +588,8 @@ struct HostDisplay {
 };
 
 /// Writes each game file and listing a run looks up to a file, one a line,
-/// from whichever thread looks it up (--trace-lookups).
+/// and, for a path a mutator serves or hides, which mutator, from whichever
+/// thread looks it up (--trace-lookups).
 class LookupLog {
   public:
 
@@ -593,11 +605,24 @@ class LookupLog {
     ///
     /// @return the observer
     oa::LookupObserver observer() {
-        return {this, [](void* context, std::string_view name) {
-                    auto& self = *static_cast<LookupLog*>(context);
-                    const oa::base::threads::LockGuard guard(self.lock_);
-                    self.out_ << name << '\n';
-                }};
+        oa::LookupObserver watch{this, nullptr, nullptr};
+        watch.looked_up = [](void* context, std::string_view name) {
+            auto& self = *static_cast<LookupLog*>(context);
+            const oa::base::threads::LockGuard guard(self.lock_);
+            self.out_ << name << '\n';
+        };
+        watch.mutator_layer_used =
+            [](void* context, std::string_view path, std::string_view owner, bool hidden) {
+                auto& self = *static_cast<LookupLog*>(context);
+                const oa::base::threads::LockGuard guard(self.lock_);
+                self.out_ << path << '\t';
+                if (hidden)
+                    self.out_ << "hidden by mutator ";
+                else
+                    self.out_ << "mutator ";
+                self.out_ << owner << '\n';
+            };
+        return watch;
     }
 
   private:
@@ -720,6 +745,55 @@ FolderChooserDisplayHooks display_hooks(ChooserDisplay& chooser) {
     }
 }
 
+/// Frames drawn while the iCloud check holds an archive read.
+std::atomic<int>& icloud_wait_draws() {
+    static std::atomic<int> draws{0};
+    return draws;
+}
+
+/// Marks the check's archive as not on this computer. Every other file is
+/// asked of the system.
+bool icloud_wait_residence(const fs::path& path, oa::platform::FileResidence& residence, void*) {
+    std::error_code error;
+    if (!fs::is_regular_file(path, error) || error)
+        return false;
+    residence.dataless = path.filename() == "totala1.hpi";
+    return true;
+}
+
+/// Holds the archive read until the window has drawn twice more, and fails
+/// when those frames never come. A read on the drawing thread cannot draw.
+void hold_icloud_archive_read(const fs::path&, void*) {
+    const int began = icloud_wait_draws().load(std::memory_order_acquire);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (icloud_wait_draws().load(std::memory_order_acquire) < began + 2) {
+        if (std::chrono::steady_clock::now() > deadline)
+            throw std::runtime_error("icloud wait: the window froze while an archive was read");
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
+/// Asks macOS to fetch the player's folders, including Games and Expansions,
+/// without waiting. The music folder is asked for when music starts.
+void start_player_evicted_fetch(const Options& options) {
+    const fs::path user = resolved_user_folder(options);
+    if (user.empty())
+        return;
+    std::vector<fs::path> roots;
+    for (const std::string_view name :
+         {"Mods", "Maps", "Languages", "Mutators", "Games", "Expansions"})
+        roots.push_back(user / std::string(name));
+    oa::platform::start_startup_evicted_fetch(std::move(roots));
+}
+
+/// Plants one evicted archive and holds its read for the iCloud check.
+void arm_icloud_wait(const Options& options) {
+    plant_icloud_wait_copy(resolved_user_folder(options));
+    icloud_wait_draws().store(0, std::memory_order_release);
+    set_archive_residence_probe(icloud_wait_residence, nullptr);
+    set_evicted_archive_hold(hold_icloud_archive_read, nullptr);
+}
+
 /// Runs the Game files screen until the game folder resolves: the window
 /// opens first, once, and stays for the game. Each PLAY resolves the folder
 /// again; a refused folder opens the screen again with the reason.
@@ -820,6 +894,32 @@ constexpr uint64_t kModSwitchHeapNoise = uint64_t{128} * 1024;
 /// main menu, and the verdict on them.
 class ModSwitchMemory {
   public:
+
+    /// Paints the progress dialog off the screen before the first run is
+    /// sampled. The dialog keeps its fonts, the glyphs it drew and the app
+    /// icon from its first showing, when a step of a start lasts longer than
+    /// long_work_show_after_ms, for the rest of the process. A start slowed
+    /// by a loaded machine would otherwise first show it in a later round,
+    /// and the heap would step up by that much once, as if a switch kept
+    /// memory. The heap it takes is logged.
+    ///
+    /// @param window the game's window
+    /// @param renderer its renderer
+    void warm_progress_dialog(SDL_Window* window, SDL_Renderer* renderer) {
+        oa::platform::HostHeapUse before{};
+        const bool known = oa::platform::sample_host_heap_use(&before);
+        if (!oa::app::warm_progress_dialog(window, renderer)) {
+            std::cout << "mod switch check: the progress dialog could not be painted ahead\n";
+            return;
+        }
+        oa::platform::HostHeapUse after{};
+        if (known && oa::platform::sample_host_heap_use(&after) && after.bytes >= before.bytes)
+            std::cout << "mod switch check: the progress dialog, painted before the first run, "
+                         "keeps "
+                      << (after.bytes - before.bytes) / 1024 << " KiB\n";
+        else
+            std::cout << "mod switch check: the progress dialog was painted before the first run\n";
+    }
 
     /// Notes the host heap's use as a run starts on the main menu, with the
     /// working set beside it.
@@ -1548,6 +1648,120 @@ void take_launch_opened_at_start(Options& options) {
     return net.list_content || net.launch_planned;
 }
 
+/// Refuses a --mutator value the game cannot apply, before a window opens.
+///
+/// A malformed value was already refused while the command line was read.
+/// An id that is not installed, an option the manifest does not have, a
+/// value outside its choices, and a list the manifests refuse (one id
+/// twice, a prerequisite that is not above it, or two that conflict) end
+/// the run with status 2. With no player folder, an id is refused the
+/// same way and is not looked up. `--no-mutators` returns without reading
+/// any mutator, so a list that is not installed does not stop the run.
+///
+/// @param options the parsed command line
+void refuse_unusable_mutators(const Options& options) {
+    if (options.mutators.empty() || options.no_mutators)
+        return;
+    const std::optional<fs::path> player = launch_user_folder(options);
+    fs::path mutators_folder;
+    if (player)
+        mutators_folder = *player / std::string(oa::data::mutator_library::mutators_folder_name);
+    const std::string launch_source = netgame_context().options.launch_source;
+    std::vector<oa::data::mutators::PipelineMutator> listed;
+    std::vector<std::string> versions;
+    listed.reserve(options.mutators.size());
+    versions.reserve(options.mutators.size());
+    for (std::size_t index = 0; index < options.mutators.size(); ++index) {
+        const std::string& value = options.mutators[index];
+        const bool from_file =
+            index < options.mutator_fields.size() && !options.mutator_fields[index].empty();
+        const std::string prefix = from_file
+                                       ? launch_source + ": " + options.mutator_fields[index] + ": "
+                                       : std::string("--mutator: ");
+        std::string error;
+        const std::optional<oa::data::mutators::MutatorChoice> choice =
+            oa::data::mutators::parse_choice(value, &error);
+        if (!choice) {
+            if (from_file)
+                throw netgame::LaunchRefusal(prefix + error);
+            throw std::runtime_error(prefix + error);
+        }
+        if (!choice->by_path && !player) {
+            throw netgame::LaunchRefusal(
+                prefix + "no player folder can be worked out for \"" + choice->target + "\""
+            );
+        }
+        const std::string version = index < options.mutator_versions.size()
+                                        ? options.mutator_versions[index]
+                                        : std::string{};
+        oa::data::mutators::ResolvedMutator resolved;
+        if (!resolve_run_mutator(value, version, mutators_folder, &resolved, &error))
+            throw netgame::LaunchRefusal(prefix + error);
+        oa::data::mutators::PipelineMutator entry;
+        entry.package = resolved.package_folder;
+        entry.manifest = resolved.manifest;
+        entry.options = resolved.options;
+        versions.push_back(oa::formats::oamut::version_text(resolved.manifest.version));
+        listed.push_back(std::move(entry));
+    }
+    const std::string refusal = oa::data::mutators::list_refusal(listed, versions);
+    if (!refusal.empty()) {
+        const bool from_file =
+            !options.mutator_fields.empty() && !options.mutator_fields.front().empty();
+        throw netgame::LaunchRefusal(
+            (from_file ? launch_source + ": content.mutators: " : std::string("--mutator: ")) +
+            refusal
+        );
+    }
+}
+
+/// Refuses a launch brain the game cannot seat, before a window opens.
+///
+/// An id that is not kebab-case was already refused while the launch was
+/// read. One that is not installed, or whose manifest does not read, ends
+/// the run with status 2 and names the id. An empty id is the built-in
+/// player and is not looked up. With no player folder, a named id is
+/// refused the same way.
+///
+/// @param options the parsed command line
+void refuse_unusable_brains(const Options& options) {
+    namespace launch = oa::ui::frontend_multiplayer::launch;
+    const auto& net = netgame_context().options;
+    if (!net.launch_planned)
+        return;
+    const launch::LaunchBlock& block = netgame_context().launch.block;
+    const int32_t count = std::min(block.computer_count, launch::kLaunchComputerLimit);
+    bool named = false;
+    for (int32_t index = 0; index < count; ++index) {
+        if (block.computers[index].brain[0] != '\0')
+            named = true;
+    }
+    if (!named)
+        return;
+    bool from_option = false;
+    for (const auto& replaced : net.launch_replaced) {
+        if (replaced.first == "computer-players" && replaced.second.starts_with("--"))
+            from_option = true;
+    }
+    oa::data::brain_library::Listing listing;
+    if (const std::optional<fs::path> player = launch_user_folder(options)) {
+        listing = oa::data::brain_library::list_installed(
+            *player / std::string(oa::data::brain_library::brains_folder_name)
+        );
+    }
+    for (int32_t index = 0; index < count; ++index) {
+        const char* id = block.computers[index].brain;
+        if (id[0] == '\0')
+            continue;
+        if (oa::data::brain_library::find(listing, id) != nullptr)
+            continue;
+        const std::string field = "computer-players[" + std::to_string(index + 1) + "].brain";
+        const std::string place =
+            from_option ? std::string("--computer-player brain") : launch_place(field);
+        throw netgame::LaunchRefusal(place + ": " + id + " is not installed");
+    }
+}
+
 /// Runs the game once: finds the game folders and their profile, with the
 /// Game files screen where the platform brings game files in and none is
 /// usable, opens the window the first time, plays the intro movies the
@@ -1575,7 +1789,10 @@ int run_once(
     RestartCarry& carried
 ) {
     options.game_dir_named = !options.game_dir.empty();
+    start_player_evicted_fetch(options);
     resolve_launch_mod(options);
+    refuse_unusable_mutators(options);
+    refuse_unusable_brains(options);
     // Captured before game_dir is filled with the folder this start plays:
     // the second compose, after a copy made on this start, still runs.
     const bool mount_copy = mount_managed_copy(options);
@@ -1650,11 +1867,93 @@ int run_once(
             );
     };
     const bool folder_aside = display.initialized && (options.unattended || options.headless_check);
+    // An interactive start composes the managed copy aside. That compose
+    // reads the archives, which is what iCloud holds. A folder dialog stays
+    // on this thread, inside find_game_directory.
+    const bool compose_aside = display.initialized && !folder_aside && mount_copy;
+    if (options.check_icloud_wait && !compose_aside)
+        throw std::runtime_error("--check-icloud-wait draws in a window");
+    if (compose_aside)
+        apply_stored_interface_language(options);
+    if (options.check_icloud_wait)
+        arm_icloud_wait(options);
+    if (compose_aside) {
+        bool saw_icloud = false;
+        std::string published_line;
+        // A close while iCloud holds a read ends the game: the read cannot be
+        // stopped, and waiting for it is what made players force quit.
+        const LongWorkResult waited = run_long_work(
+            display.window,
+            display.renderer_host.renderer(),
+            &display.renderer_host,
+            "Open Annihilation",
+            "Loading the game's archives",
+            [&](oa::ui::paint::Canvas& canvas) {
+                if (options.check_icloud_wait) {
+                    icloud_wait_draws().fetch_add(1, std::memory_order_release);
+                    if (archive_wait_line() == icloud_download_line)
+                        saw_icloud = true;
+                }
+                fill_progress_behind(canvas, nullptr);
+            },
+            [&](LongWork& work) {
+                const ArchiveWait progress{
+                    [](void* context, std::string_view key) {
+                        static_cast<LongWork*>(context)->use_line(key);
+                    },
+                    [](void* context, int32_t done, int32_t whole) {
+                        auto& job = *static_cast<LongWork*>(context);
+                        job.whole.store(whole, std::memory_order_release);
+                        job.done.store(done, std::memory_order_release);
+                    },
+                    [](void* context) {
+                        return static_cast<LongWork*>(context)->stop.load(
+                            std::memory_order_acquire
+                        );
+                    },
+                    &work,
+                };
+                set_archive_wait(&progress);
+                struct Clear {
+                    ~Clear() { set_archive_wait(nullptr); }
+                } clear;
+                game_directory = compose_for_run(options);
+                published_line = work.line_key({});
+            },
+            long_work_show_after_ms,
+            LongWorkClose::ends_game
+        );
+        if (options.check_icloud_wait)
+            require_icloud_download_lines();
+        // Only macOS keeps a file's bytes in iCloud. Elsewhere the archive
+        // the check marks is read at once, and the line never names iCloud.
+        if (options.check_icloud_wait && !oa::platform::host_reports_dataless_files()) {
+            if (!published_line.empty())
+                throw std::runtime_error(
+                    "icloud wait: the line changed to \"" + published_line +
+                    "\" on a system that keeps no file in iCloud"
+                );
+            std::cout << "icloud wait: this system keeps no file in iCloud; the line stays\n";
+        } else if (options.check_icloud_wait) {
+            const int draws = icloud_wait_draws().load(std::memory_order_acquire);
+            if (!waited.shown || !waited.bar || draws < 2 || !saw_icloud)
+                throw std::runtime_error(
+                    "icloud wait: the window did not keep drawing the iCloud line (" +
+                    std::to_string(draws) + " frames)"
+                );
+            const std::string shown(oa::data::languages::interface_text(icloud_download_line));
+            std::cout << "icloud wait: " << shown << '\n';
+            if (shown == icloud_download_line &&
+                oa::data::languages::interface_language().tag != "en" &&
+                oa::data::languages::interface_language().tag != "system")
+                throw std::runtime_error("icloud wait: the line was not in the player's language");
+        }
+    }
     if (folder_aside) {
         // A folder dialog stays on this thread. A run nobody watches can look
         // aside, and the progress dialog covers a look that lasts.
         const std::string_view folder_line =
-            options.restarts == 0            ? std::string_view("Loading the game's archives")
+            options.restarts == 0          ? std::string_view("Loading the game's archives")
             : options.restart_line.empty() ? std::string_view("Applying your changes")
                                            : std::string_view(options.restart_line);
         std::ignore = run_long_work(
@@ -1666,10 +1965,20 @@ int run_once(
             [](oa::ui::paint::Canvas& canvas) { fill_progress_behind(canvas, nullptr); },
             [&](LongWork&) { resolve_folder(); }
         );
-    } else {
+    } else if (!compose_aside) {
+        resolve_folder();
+    } else if (!game_directory) {
+        // The copy did not mount. A folder dialog, when one is due, stays
+        // on this thread.
         resolve_folder();
     }
     oa::platform::log_files::note_timing_span("game folder", folder_began);
+    if (options.check_icloud_wait) {
+        if (!game_directory || game_directory->archives.empty())
+            throw std::runtime_error("icloud wait: the folder step did not continue");
+        std::cout << "icloud wait: continued\n";
+        return 0;
+    }
     if (listing && !game_directory)
         throw std::runtime_error(
             "--list-content: no Total Annihilation folder is known; name it with --game-dir PATH"
@@ -1711,6 +2020,10 @@ int run_once(
                 " (name it with --game-dir PATH)"
             );
     }
+#if OA_SELF_CHECKS
+    if (options.check_renderer_proof)
+        return renderer_proof::run(options.game_dir, options.snapshot);
+#endif
     // Quit leaves before the silent copy. Skip with no folder leaves too,
     // without opening a dialog. A copy that finished here is the one the
     // start plays, so the silent copy does not run again.
@@ -1820,7 +2133,7 @@ int run_once(
     const uint32_t mount_began = oa::platform::tick_ms();
     const bool mount_shown = display.window != nullptr && !options.headless_check;
     const std::string_view mount_line =
-        options.restarts == 0            ? std::string_view("Loading the game's archives")
+        options.restarts == 0          ? std::string_view("Loading the game's archives")
         : options.restart_line.empty() ? std::string_view("Applying your changes")
                                        : std::string_view(options.restart_line);
     std::ignore = run_long_work(
@@ -1891,6 +2204,8 @@ int run_once(
 
     runtime->take_video_capture(std::move(capture));
     runtime->take_full_screen_switch(display.full_screen);
+    if (check_mod_switch && restarts == 0)
+        switch_memory.warm_progress_dialog(display.window, display.renderer_host.renderer());
     runtime->take_library_return(std::move(carried.library));
     if (check_mod_switch)
         switch_memory.sample(restarts);
@@ -2033,7 +2348,7 @@ bool file_types_not_applied(const oa::platform::file_types::Registration& done) 
 }
 
 /// The file types whose preference is not the word off. A missing file, a
-/// missing key, or a failure to read the preferences leaves all five on.
+/// missing key, or a failure to read the preferences leaves all seven on.
 ///
 /// @return the types to register
 oa::platform::file_types::TypeSet enabled_file_types() {
@@ -2059,6 +2374,10 @@ oa::platform::file_types::TypeSet enabled_file_types() {
             enabled.map = false;
         if (off(key::file_type_oareg))
             enabled.registry = false;
+        if (off(key::file_type_oamut))
+            enabled.mutator = false;
+        if (off(key::file_type_oabrain))
+            enabled.brain = false;
         if (off(key::file_type_oalaunch))
             enabled.launch = false;
     } catch (const std::exception&) {

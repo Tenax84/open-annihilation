@@ -5,11 +5,14 @@
 // written from the patterns in text.hpp.
 #include "oa/ui/library/text.hpp"
 
+#include "oa/data/mutators/verdicts.hpp"
+#include "oa/formats/oamut/manifest.hpp"
 #include "oa/ui/kit/text.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -312,6 +315,25 @@ std::string engine_text(const formats::oamod::EngineRange& range, const TextHook
     return range_text(range, false, text);
 }
 
+std::string range_words(std::string_view range_text, const TextHooks& text) {
+    if (range_text.empty())
+        return {};
+    const std::optional<formats::oamut::VersionRange> range =
+        formats::oamut::parse_version_range(range_text);
+    if (!range)
+        return std::string(range_text);
+    std::string joined;
+    for (const auto& [comparison, version] : range->terms) {
+        if (!joined.empty()) {
+            joined += shown(text, words::list_separator);
+            joined.push_back(' ');
+        }
+        const std::string number = formats::oamut::version_text(version);
+        joined += filled(text, comparison_pattern(comparison, false), {{"version", number}});
+    }
+    return joined;
+}
+
 std::string engine_short_text(const formats::oamod::EngineRange& range, const TextHooks& text) {
     return range_text(range, true, text);
 }
@@ -324,6 +346,10 @@ std::string_view tab_text(Tab tab, bool compact, const TextHooks& text) {
         return shown(text, words::tab_mods);
     case Tab::maps:
         return shown(text, words::tab_maps);
+    case Tab::mutators:
+        return shown(text, words::tab_mutators);
+    case Tab::brains:
+        return shown(text, words::tab_brains);
     case Tab::languages:
         return shown(text, compact ? words::tab_languages_short : words::tab_languages);
     case Tab::updates:
@@ -418,8 +444,113 @@ std::string_view action_text(Action action, const TextHooks& text) {
         return shown(text, words::action_turn_off);
     case Action::turn_on:
         return shown(text, words::action_turn_on);
+    case Action::check_with_mod:
+        return shown(text, words::action_check_with_mod);
+    case Action::use_by_default:
+        return shown(text, words::action_use_by_default);
+    case Action::get_with:
+        return shown(text, words::action_get_with);
     }
     return {};
+}
+
+namespace {
+
+/// Joins phrases with a comma between all but the last pair, which uses `last`.
+///
+/// @param text how texts are looked up
+/// @param parts the phrases
+/// @param last the pattern for the last pair, `names_and` or `names_or`
+/// @return the joined phrases; empty when there are none
+std::string
+join_parts(const TextHooks& text, const std::vector<std::string>& parts, std::string_view last) {
+    if (parts.empty())
+        return {};
+    if (parts.size() == 1)
+        return parts.front();
+    std::string joined = parts.front();
+    for (std::size_t index = 1; index + 1 < parts.size(); ++index)
+        joined = filled(text, words::names_comma, {{"left", joined}, {"right", parts[index]}});
+    return filled(text, last, {{"left", joined}, {"right", parts.back()}});
+}
+
+/// Writes one non-zero count, singular at one.
+///
+/// @param text how texts are looked up
+/// @param count the count; zero writes nothing
+/// @param one the singular pattern
+/// @param many the plural pattern
+/// @return the phrase; empty when the count is zero
+std::string
+count_phrase(const TextHooks& text, uint32_t count, std::string_view one, std::string_view many) {
+    if (count == 0)
+        return {};
+    return filled(text, count == 1 ? one : many, {{"count", std::to_string(count)}});
+}
+
+/// Writes a compatible verdict's counts, non-zero ones in ChangeCounts order.
+///
+/// @param counts the counts
+/// @param text how texts are looked up
+/// @return the summary; empty when every count is zero
+std::string counts_summary(const oa::data::mutators::ChangeCounts& counts, const TextHooks& text) {
+    std::vector<std::string> parts;
+    const auto add = [&](uint32_t count, std::string_view one, std::string_view many) {
+        std::string phrase = count_phrase(text, count, one, many);
+        if (!phrase.empty())
+            parts.push_back(std::move(phrase));
+    };
+    add(counts.units_changed, words::changes_units_one, words::changes_units);
+    add(counts.units_added, words::adds_units_one, words::adds_units);
+    add(counts.units_removed, words::removes_units_one, words::removes_units);
+    add(counts.weapons_changed, words::changes_weapons_one, words::changes_weapons);
+    add(counts.weapons_added, words::adds_weapons_one, words::adds_weapons);
+    add(counts.weapons_removed, words::removes_weapons_one, words::removes_weapons);
+    add(counts.features_changed, words::changes_features_one, words::changes_features);
+    add(counts.features_added, words::adds_features_one, words::adds_features);
+    add(counts.features_removed, words::removes_features_one, words::removes_features);
+    add(counts.menu_entries_changed, words::changes_menus_one, words::changes_menus);
+    add(counts.files_added, words::adds_files_one, words::adds_files);
+    add(counts.files_hidden, words::hides_files_one, words::hides_files);
+    return join_parts(text, parts, words::names_and);
+}
+
+} // namespace
+
+Verdict verdict_of_record(const oa::data::mutators::VerdictRecord& record, const TextHooks& text) {
+    Verdict verdict;
+    verdict.reason = record.reason;
+    switch (record.verdict) {
+    case oa::data::mutators::Verdict::compatible:
+        verdict.state = Verdict::State::compatible;
+        verdict.summary = counts_summary(record.counts, text);
+        if (verdict.summary.empty())
+            verdict.summary = std::string(shown(text, words::changes_other_data));
+        break;
+    case oa::data::mutators::Verdict::no_effect:
+        verdict.state = Verdict::State::no_effect;
+        break;
+    case oa::data::mutators::Verdict::incompatible:
+        verdict.state = Verdict::State::incompatible;
+        break;
+    case oa::data::mutators::Verdict::failed:
+        verdict.state = Verdict::State::failed;
+        break;
+    }
+    return verdict;
+}
+
+void apply_map_fact(
+    Verdict& verdict,
+    const oa::data::mutators::VerdictRecord& record,
+    bool declares_maps,
+    const TextHooks& text
+) {
+    if (!declares_maps || verdict.state != Verdict::State::compatible)
+        return;
+    if (oa::data::mutators::any(record.counts))
+        return;
+    verdict.summary = std::string(shown(text, words::changes_map_on_start));
 }
 
 std::string registry_initials(std::string_view name) {

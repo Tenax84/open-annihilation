@@ -169,6 +169,7 @@ inline constexpr uint32_t right_aligned = 0x4;         // text alignment; value 
 inline constexpr uint32_t checkbox = 0x8;              // button flips status on release
 inline constexpr uint32_t text_list = 0x10;            // list backed by text lines; button holds
 inline constexpr uint32_t image_list = 0x20;           // list backed by an image pointer array
+inline constexpr uint32_t bottom_caption = 0x20;       // button caption centred along the bottom
 inline constexpr uint32_t toggle = 0x40;               // button toggles; list click stays clean
 inline constexpr uint32_t image_records = 0x80;        // list backed by 0x18-byte image records
 inline constexpr uint32_t cycle_frames = 0x100;        // button cycles frames; list non-selectable

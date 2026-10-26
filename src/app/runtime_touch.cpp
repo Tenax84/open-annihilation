@@ -8,6 +8,7 @@
 // shows once a gamepad sent input (docs/touch-controls.md).
 #include "oa/app/runtime.hpp"
 #include "engine_settings_state.hpp"
+#include "oa_layer.hpp"
 #include "touch_state.hpp"
 #include "oa/app/extension.hpp"
 #include "oa/app/input_hints.hpp"
@@ -26,6 +27,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <optional>
@@ -701,7 +703,7 @@ float TouchDispatchAccess::points_to_pixels(const Runtime& runtime, float points
 }
 
 void TouchDispatchAccess::send_mouse(
-    Runtime& runtime, uint32_t type, float x, float y, uint8_t clicks
+    Runtime& runtime, uint32_t type, float x, float y, uint8_t clicks, uint8_t button
 ) {
     SDL_Event event{};
     event.type = type;
@@ -715,7 +717,7 @@ void TouchDispatchAccess::send_mouse(
         event.button.timestamp = SDL_GetTicksNS();
         event.button.windowID = 0;
         event.button.which = SDL_TOUCH_MOUSEID;
-        event.button.button = SDL_BUTTON_LEFT;
+        event.button.button = button;
         event.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
         event.button.clicks = clicks;
         event.button.x = x;
@@ -766,6 +768,18 @@ TouchDispatchAccess::hud_gadget_at(const Runtime& runtime, float x, float y, boo
     return *hit;
 }
 
+std::array<float, 2>
+TouchDispatchAccess::frontend_panel_point(const Runtime& runtime, float x, float y) {
+    const auto& gadgets = runtime.resources_.layout.gadgets;
+    if (runtime.screen_ == Screen::map_selection && !gadgets.empty()) {
+        const auto& modal_root = gadgets.front().common;
+        x -= static_cast<float>((kCanvasWidth - static_cast<int>(modal_root.width)) / 2);
+        y -= static_cast<float>((kCanvasHeight - static_cast<int>(modal_root.height)) / 2);
+    }
+    const auto origin = runtime.panel_origin();
+    return {x - static_cast<float>(origin.x), y - static_cast<float>(origin.y)};
+}
+
 std::optional<std::size_t>
 TouchDispatchAccess::frontend_gadget_at(const Runtime& runtime, float x, float y, bool* on_gadget) {
     if (on_gadget != nullptr)
@@ -774,17 +788,11 @@ TouchDispatchAccess::frontend_gadget_at(const Runtime& runtime, float x, float y
     if (runtime.screen_ == Screen::match || gadgets.empty())
         return std::nullopt;
     // The point the pointer's hover tests, as update_pointer finds it.
-    if (runtime.screen_ == Screen::map_selection) {
-        const auto& modal_root = gadgets.front().common;
-        x -= static_cast<float>((kCanvasWidth - static_cast<int>(modal_root.width)) / 2);
-        y -= static_cast<float>((kCanvasHeight - static_cast<int>(modal_root.height)) / 2);
-    }
-    const auto origin = runtime.panel_origin();
-    x -= static_cast<float>(origin.x);
-    y -= static_cast<float>(origin.y);
+    const auto [panel_x, panel_y] = frontend_panel_point(runtime, x, y);
     const oa::ui::gui_input::MenuObject menu{gadgets, -1};
-    const auto hit =
-        oa::ui::gui_input::hit_test(menu, static_cast<int32_t>(x), static_cast<int32_t>(y));
+    const auto hit = oa::ui::gui_input::hit_test(
+        menu, static_cast<int32_t>(panel_x), static_cast<int32_t>(panel_y)
+    );
     if (!hit || *hit >= gadgets.size())
         return std::nullopt;
     if (on_gadget != nullptr)
@@ -792,6 +800,23 @@ TouchDispatchAccess::frontend_gadget_at(const Runtime& runtime, float x, float y
     if (!runtime.frontend_gadget_pressable(*hit))
         return std::nullopt;
     return *hit;
+}
+
+float TouchDispatchAccess::frontend_gadget_distance(
+    const Runtime& runtime, float x, float y, std::size_t gadget
+) {
+    const auto rect = oa::ui::gui_input::gadget_geometry(runtime.resources_.layout.gadgets, gadget);
+    if (!rect)
+        return std::numeric_limits<float>::infinity();
+    // A press finds the gadget from its left column up to the column after
+    // its right one, and the same down its rows.
+    const auto [panel_x, panel_y] = frontend_panel_point(runtime, x, y);
+    const auto outside = [](float at, int32_t first, int32_t last) {
+        return std::max({static_cast<float>(first) - at, 0.0F, at - static_cast<float>(last + 1)});
+    };
+    return std::hypot(
+        outside(panel_x, rect->left, rect->right), outside(panel_y, rect->top, rect->bottom)
+    );
 }
 
 std::optional<std::array<float, 2>> TouchDispatchAccess::nearest_gadget(
@@ -925,18 +950,31 @@ void TouchDispatchAccess::claim(Runtime& runtime, ClaimedFinger& finger) {
         finger.target = TouchTarget::frontend;
         return;
     }
-    // 3. Off the match a finger is a pointer pressing the nearest gadget.
+    // 3. Off the match a finger is a pointer pressing the nearest gadget,
+    //    unless an OA screen that shows has a pressable control under the
+    //    point, or no farther than that gadget. That finger keeps its own
+    //    point, and no gadget is named for it.
     if (!on_match) {
         finger.target = TouchTarget::frontend;
         bool on = false;
         if (const auto exact = frontend_gadget_at(runtime, x, y, &on))
             finger.gadget = static_cast<int16_t>(*exact);
         else if (!on) {
+            const float pick = points_to_pixels(runtime, hud::gadget_pick_points);
+            const std::optional<float> control = runtime.oa_layer().nearest_control(x, y, pick);
             std::size_t found = 0;
             if (const auto snapped = nearest_gadget(runtime, x, y, true, &found)) {
-                finger.gadget = static_cast<int16_t>(found);
-                finger.press_x = finger.sent_x = (*snapped)[0];
-                finger.press_y = finger.sent_y = (*snapped)[1];
+                // The control and the gadget, each to its rectangle's edge:
+                // the nearer takes the finger, as the OA buttons judge it,
+                // and a tie is the control's.
+                const bool prefer_control =
+                    control.has_value() &&
+                    *control <= frontend_gadget_distance(runtime, x, y, found);
+                if (!prefer_control) {
+                    finger.gadget = static_cast<int16_t>(found);
+                    finger.press_x = finger.sent_x = (*snapped)[0];
+                    finger.press_y = finger.sent_y = (*snapped)[1];
+                }
             }
         }
         return;
@@ -1041,6 +1079,7 @@ void TouchDispatchAccess::reset_fingers(Runtime& runtime) {
     dispatch.finger_count = 0;
     dispatch.finger_point.reset();
     dispatch.box_active = false;
+    dispatch.megamap_drag = false;
     dispatch.scroll_active = false;
     dispatch.ghost_drag = false;
     dispatch.auto_scrolling = false;

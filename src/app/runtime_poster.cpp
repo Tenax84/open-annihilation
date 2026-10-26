@@ -17,14 +17,18 @@
 #include "oa/platform/files.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <memory>
 #include <new>
+#include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -68,6 +72,12 @@ constexpr int32_t kFilmTicksPerSecond = 30;
 // until it is this much longer than Game.output_directory holds.
 constexpr std::size_t kLongFolderNameLength = 60;
 constexpr std::size_t kLongFolderExtra = 40;
+// The tiers' poster check: its folder under the save root, the zoom the
+// view stands at as each poster is made, and the fewest colours the
+// standard tier's poster of the map holds.
+constexpr const char* kTierPosterFolder = "poster-tiers";
+constexpr float kTierPosterZoom = 0.5F;
+constexpr std::size_t kLeastPosterColours = 16;
 
 // Nearest palette entry by summed channel difference, the first on ties.
 uint8_t nearest_index(const oa::PaletteBytes& palette, uint8_t r, uint8_t g, uint8_t b) {
@@ -295,6 +305,19 @@ void Runtime::render_poster(
         }
     }
     if (!strip.empty()) {
+        // Every view is drawn as the standard tier draws it, whatever the
+        // tier: in the Full tier the graphics card draws the battlefield and
+        // the world layer holds only the overlay canvas. The view's place on
+        // screen is left alone, as for every reader that keeps a picture, and
+        // the frame drawn after the poster is the tier's own again.
+        struct StandardTierDraws {
+            bool& suspended;
+            bool kept{};
+
+            ~StandardTierDraws() { suspended = kept; }
+        } standard_tier_draws{accelerated_.suspended, accelerated_.suspended};
+
+        accelerated_.suspended = true;
         const PosterScene scene = enter_poster_scene();
         oa::Surface surface{};
         present::init_surface(surface, width, strip_rows, width, strip.data());
@@ -573,6 +596,165 @@ Runtime::check_long_output_directory(const std::function<void(const char*)>& ent
     return "; and into a folder " + std::to_string(relative.size()) +
            " characters long, too long for Game.output_directory, SHOT0001.pcx, "
            "BIGSHOT0001.bmp and FRAM0001.pcx";
+}
+
+void Runtime::check_poster_tiers(
+    const std::function<void(oa::ui::engine_settings::HardwareAcceleration)>& set_level,
+    std::span<const oa::ui::engine_settings::HardwareAcceleration> levels,
+    const std::function<void(float)>& at_zoom,
+    const fs::path& report_directory
+) {
+    using oa::ui::engine_settings::HardwareAcceleration;
+    const auto fail = [](const std::string& what) {
+        throw std::runtime_error("render tiers check: poster: " + what);
+    };
+    if (!match_ || levels.empty() || levels.front() != HardwareAcceleration::off)
+        fail("needs a match and the standard tier first");
+    const auto tier_name = [](HardwareAcceleration level) -> std::string {
+        switch (level) {
+        case HardwareAcceleration::off:
+            return "standard";
+        case HardwareAcceleration::basic:
+            return "basic";
+        case HardwareAcceleration::full:
+            return "full";
+        }
+        return "standard";
+    };
+    // Whole ticks, the interface's clock held and the cursor in the blank
+    // corner right of the bottom bar, so that every tier's poster and frame
+    // are of one moment. The clock runs again when the check ends, however
+    // it ends.
+    set_presentation_alpha(1.0F);
+
+    struct HeldClock {
+        Runtime& runtime;
+        std::optional<uint32_t> kept{};
+
+        ~HeldClock() { runtime.fake_frontend_tick_ = kept; }
+    } held_clock{*this, fake_frontend_tick_};
+
+    fake_frontend_tick_ = frontend_tick();
+    update_pointer(
+        static_cast<float>(match_layout_.width - 1), static_cast<float>(match_layout_.height - 1)
+    );
+    const auto presented = [&]() {
+        renderer::Surface frame;
+        capture_frame_ = &frame;
+        render();
+        capture_frame_ = nullptr;
+        return frame;
+    };
+    const auto read = [](const fs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {});
+    };
+    const auto le32 = [](const std::vector<uint8_t>& contents, std::size_t at) {
+        return static_cast<int32_t>(
+            contents[at] | contents[at + 1] << 8 | contents[at + 2] << 16 |
+            static_cast<uint32_t>(contents[at + 3]) << 24
+        );
+    };
+    const oa::Game& game = match_->state().game;
+    const auto folder = save_game_root() / kTierPosterFolder;
+    const auto poster = folder / "BIGSHOT0001.bmp";
+    std::error_code error;
+    fs::remove_all(folder, error);
+    fs::create_directories(folder, error);
+    // The rectangle, two views at 1:1 wide and high within the map, is
+    // taken about the view of the first tier and kept for the others.
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+    std::vector<uint8_t> standard;
+    std::size_t colours = 0;
+    for (const auto level : levels) {
+        const std::string tier = tier_name(level);
+        set_level(level);
+        if ((level == HardwareAcceleration::full) != full_presentation() ||
+            (level != HardwareAcceleration::off) != accelerated_presentation())
+            fail("the " + tier + " tier did not switch on");
+        at_zoom(kTierPosterZoom);
+        const auto before = presented();
+        if (width == 0) {
+            width = std::min(game.map_pixel_width, 2 * match_layout_.battlefield_width());
+            height = std::min(game.map_pixel_height, 2 * match_layout_.battlefield_height());
+            x = std::clamp(
+                static_cast<int32_t>(game.camera_x) + visible_map_width() / 2 - width / 2,
+                0,
+                game.map_pixel_width - width
+            );
+            y = std::clamp(
+                static_cast<int32_t>(game.camera_y) + visible_map_height() / 2 - height / 2,
+                0,
+                game.map_pixel_height - height
+            );
+        }
+        const int32_t camera_x = match_camera_x_;
+        const int32_t camera_z = match_camera_z_;
+        fs::remove(poster, error);
+        render_poster(kTierPosterFolder, "BIGSHOT", x, y, width, height);
+        if (match_zoom_ != kTierPosterZoom || match_camera_x_ != camera_x ||
+            match_camera_z_ != camera_z)
+            fail("the " + tier + " tier's poster did not put the zoom and the camera back");
+        if (level == HardwareAcceleration::full && !full_frame_drawn())
+            fail("the full tier's poster left the frame drawn by the processor");
+        const auto after = presented();
+        // The first poster rebuilt the sight grids from what the units see
+        // now (enter_poster_scene); from the second on, the frame is as it was.
+        if (!standard.empty() && (after.width != before.width || after.height != before.height ||
+                                  after.rgb != before.rgb))
+            fail("the frame presented after the " + tier + " tier's poster changed");
+        const auto bytes = read(poster);
+        const int32_t stride = (width + 3) & ~3;
+        if (bytes.size() !=
+                static_cast<std::size_t>(present::bmp_pixel_offset) +
+                    static_cast<std::size_t>(stride) * static_cast<std::size_t>(height) ||
+            le32(bytes, 18) != width || le32(bytes, 22) != height || bytes[28] != 8)
+            fail("the " + tier + " tier's poster is not an 8-bit picture of the rectangle");
+        if (level == HardwareAcceleration::off) {
+            // The map's terrain, in many colours: not a blank picture.
+            std::array<bool, OA_PALETTE_COLORS> used{};
+            for (int32_t row = 0; row < height; ++row)
+                for (int32_t column = 0; column < width; ++column)
+                    used[bytes
+                             [static_cast<std::size_t>(present::bmp_pixel_offset) +
+                              static_cast<std::size_t>(row) * static_cast<std::size_t>(stride) +
+                              static_cast<std::size_t>(column)]] = true;
+            colours = static_cast<std::size_t>(std::count(used.begin(), used.end(), true));
+            if (colours < kLeastPosterColours)
+                fail(
+                    "the standard tier's poster holds " + std::to_string(colours) +
+                    " colours, not the map's terrain"
+                );
+            standard = bytes;
+            continue;
+        }
+        if (bytes != standard) {
+            std::size_t differing = 0;
+            for (std::size_t at = static_cast<std::size_t>(present::bmp_pixel_offset);
+                 at < bytes.size();
+                 ++at)
+                differing += bytes[at] != standard[at] ? 1U : 0U;
+            fs::create_directories(report_directory, error);
+            fs::copy_file(
+                poster,
+                report_directory / ("native-render-tiers-poster-" + tier + ".bmp"),
+                fs::copy_options::overwrite_existing,
+                error
+            );
+            fail(
+                "the " + tier + " tier's poster differs from the standard tier's in " +
+                std::to_string(differing) + " bytes"
+            );
+        }
+    }
+    fs::remove_all(folder, error);
+    std::cout << "render tiers check: poster: MakePoster of " << width << 'x' << height
+              << " map pixels at zoom " << kTierPosterZoom
+              << " writes the standard tier's battlefield in " << colours
+              << " colours in every tier, and leaves the frame on screen as it was\n";
 }
 
 } // namespace oa::app

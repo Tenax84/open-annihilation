@@ -102,6 +102,8 @@ void Runtime::handle_sdl_event(SDL_Event& event, bool& running) {
     // still reaches the window.
     if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST)
         std::ignore = middle_pan_take(event);
+    if (live_renderer_take_event(event))
+        return;
     // The character a quick key types after its press answered a panel over
     // the match goes nowhere, though the panel is closed by then; while the
     // surrender confirmation is up, typing reaches neither the chat line nor
@@ -325,6 +327,10 @@ void Runtime::handle_sdl_event(SDL_Event& event, bool& running) {
         // nothing to do; any other left press clears that mark.
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT)
             radar_left_press_held_ = false;
+        // An open unit info panel takes a press on it, and the release that
+        // ends it, before anything under it; the side column takes none.
+        if (unit_info_pointer(event, x, y))
+            return;
         // The selection bar takes a press on it first; the commander
         // placement (setup.commander-warp) takes the pointer next;
         // ui.resource-panel's panel floats over the battlefield and takes it

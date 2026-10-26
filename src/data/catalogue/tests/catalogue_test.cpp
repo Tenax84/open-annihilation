@@ -88,6 +88,8 @@ std::string bare(
     json += '"';
     if (kind == "oamod")
         json += ",\"version\":\"1\",\"revision\":1";
+    if (kind == "oamut")
+        json += ",\"version\":\"1\"";
     if (kind == "oamap" && with_maps) {
         json += ",\"maps\":[{\"map\":\"stem@";
         json += id;
@@ -915,6 +917,798 @@ void test_expansion() {
     skips_one(expansion_entry("cavedog-units", true, {}), "extends");
 }
 
+/// One mutator entry. `version_member` is a JSON member such as `"version":"1"`, or empty to omit it.
+std::string
+mutator_body(std::string_view id, std::string_view version_member, std::string_view extra) {
+    const std::string hash =
+        hex_of(std::string("mutator/") + std::string(id) + std::string(version_member));
+    std::string json = "{\"kind\":\"oamut\",\"id\":\"";
+    json += id;
+    json += "\",\"name\":\"Steady Hands\",\"release\":1,\"size\":4,\"sha256\":\"";
+    json += hash;
+    json += "\",\"file\":\"/v1/p/";
+    json += hash;
+    json += ".oamut\"";
+    if (!version_member.empty()) {
+        json += ',';
+        json += version_member;
+    }
+    if (!extra.empty()) {
+        json += ',';
+        json += extra;
+    }
+    json += '}';
+    return json;
+}
+
+void test_mutator() {
+    namespace mut = oa::formats::oamut;
+    OA_CHECK(std::string(catalogue::kind_name(catalogue::Kind::oamut)) == "oamut");
+    OA_CHECK(std::string(catalogue::package_extension(catalogue::Kind::oamut)) == "oamut");
+    OA_CHECK(catalogue::valid_package_key(catalogue::Kind::oamut, "steady-hands"));
+    OA_CHECK(!catalogue::valid_package_key(catalogue::Kind::oamut, "Steady"));
+    OA_CHECK(!catalogue::valid_package_key(catalogue::Kind::oamut, "steady-hands@1"));
+
+    const std::string facts =
+        "\"publisher\":\"OA team\",\"author\":\"OA team\","
+        "\"summary\":\"A made-up mutator\",\"notes\":\"Smoother aim\","
+        "\"homepage\":\"https://example.com/steady-hands\","
+        "\"badge\":\"/v1/i/badge.png\",\"published\":\"2026-10-12\","
+        "\"tags\":[\"aim\",\"units\"],"
+        "\"requires\":{\"engine\":\">= 0.8.0\",\"base\":\"ta-3.1c\",\"later\":true,"
+        "\"mutators\":[{\"id\":\"gatehouse\",\"version\":\">= 1.0\",\"note\":\"kept out\"},"
+        "{\"id\":\"calm-seas\"}]},"
+        "\"works_with\":[\"ta-3.1c\",\"ridge >= 1.0\"],"
+        "\"conflicts_with\":[{\"id\":\"shaky-grip\",\"version\":\"< 2\"}],"
+        "\"layers\":[\"units\",\"later-layer\",\"weapons\",\"units\",1],"
+        "\"options\":["
+        "{\"id\":\"steady\",\"label\":\"Steady\",\"type\":\"toggle\",\"default\":true,\"extra\":1},"
+        "{\"id\":\"grip\",\"label\":\"Grip\",\"type\":\"choice\",\"values\":[\"soft\",\"firm\"],"
+        "\"labels\":[\"Soft\",\"Firm\"],\"default\":\"firm\"},"
+        "{\"id\":\"sway\",\"label\":\"Sway\",\"type\":\"number\",\"min\":-1,\"max\":1,"
+        "\"step\":0.5,\"default\":-0.5},"
+        "{\"id\":\"hands\",\"label\":\"Hands\",\"type\":\"choice\",\"values\":[1,2],"
+        "\"default\":1.0},"
+        "{\"id\":\"future\",\"label\":\"Future\",\"type\":\"slider\"}"
+        "]";
+    const auto out =
+        read_ok(catalogue_of(bare("oamut", "steady-hands", facts) + "," + bare("oamod", "keeper")));
+    OA_CHECK(out.problems.empty());
+    OA_CHECK(out.packages.size() == 2);
+    if (out.packages.size() == 2) {
+        const catalogue::Package& package = out.packages[0];
+        OA_CHECK(package.kind == catalogue::Kind::oamut);
+        OA_CHECK(package.id == "steady-hands");
+        OA_CHECK(package.version == "1");
+        OA_CHECK(package.revision == 0);
+        OA_CHECK(package.publisher == "OA team");
+        OA_CHECK(package.author == "OA team");
+        OA_CHECK(package.summary == "A made-up mutator");
+        OA_CHECK(package.notes == "Smoother aim");
+        OA_CHECK(package.homepage == "https://example.com/steady-hands");
+        OA_CHECK(package.badge == "/v1/i/badge.png");
+        OA_CHECK(package.published == "2026-10-12");
+        OA_CHECK(package.tags == std::vector<std::string>({"aim", "units"}));
+        OA_CHECK(package.requires_engine_text == ">= 0.8.0");
+        OA_CHECK(package.requires_engine.has_value());
+        OA_CHECK(package.requires_base == "ta-3.1c");
+        OA_CHECK(package.requires_mutators.size() == 2);
+        if (package.requires_mutators.size() == 2) {
+            OA_CHECK(package.requires_mutators[0].id == "gatehouse");
+            OA_CHECK(package.requires_mutators[0].range_text == ">= 1.0");
+            OA_CHECK(package.requires_mutators[0].range.has_value());
+            OA_CHECK(package.requires_mutators[1].id == "calm-seas");
+            OA_CHECK(package.requires_mutators[1].range_text.empty());
+            OA_CHECK(!package.requires_mutators[1].range.has_value());
+        }
+        OA_CHECK(package.works_with == std::vector<std::string>({"ta-3.1c", "ridge >= 1.0"}));
+        OA_CHECK(package.conflicts_with.size() == 1);
+        if (!package.conflicts_with.empty()) {
+            OA_CHECK(package.conflicts_with[0].id == "shaky-grip");
+            OA_CHECK(package.conflicts_with[0].range_text == "< 2");
+            OA_CHECK(package.conflicts_with[0].range.has_value());
+        }
+        OA_CHECK(!package.clashes.has_value());
+        OA_CHECK(package.layers.size() == 2);
+        if (package.layers.size() == 2) {
+            OA_CHECK(package.layers[0] == mut::Layer::units);
+            OA_CHECK(package.layers[1] == mut::Layer::weapons);
+        }
+        OA_CHECK(package.options.size() == 4);
+        if (package.options.size() == 4) {
+            const catalogue::OptionSummary& toggle = package.options[0];
+            OA_CHECK(toggle.id == "steady");
+            OA_CHECK(toggle.label == "Steady");
+            OA_CHECK(toggle.type == mut::OptionType::toggle);
+            OA_CHECK(toggle.default_text == "true");
+            OA_CHECK(toggle.values.empty());
+            OA_CHECK(toggle.minimum.empty());
+            const catalogue::OptionSummary& choice = package.options[1];
+            OA_CHECK(choice.id == "grip");
+            OA_CHECK(choice.type == mut::OptionType::choice);
+            OA_CHECK(choice.values.size() == 2);
+            if (choice.values.size() == 2) {
+                OA_CHECK(!choice.values[0].number && choice.values[0].text == "soft");
+                OA_CHECK(!choice.values[1].number && choice.values[1].text == "firm");
+            }
+            OA_CHECK(choice.value_labels == std::vector<std::string>({"Soft", "Firm"}));
+            OA_CHECK(choice.default_text == "firm");
+            const catalogue::OptionSummary& number = package.options[2];
+            OA_CHECK(number.type == mut::OptionType::number);
+            OA_CHECK(number.minimum == "-1");
+            OA_CHECK(number.maximum == "1");
+            OA_CHECK(number.step == "0.5");
+            OA_CHECK(number.default_text == "-0.5");
+            OA_CHECK(number.values.empty());
+            const catalogue::OptionSummary& numbered = package.options[3];
+            OA_CHECK(numbered.values.size() == 2);
+            if (numbered.values.size() == 2) {
+                OA_CHECK(numbered.values[0].number && numbered.values[0].text == "1");
+                OA_CHECK(numbered.values[1].number && numbered.values[1].text == "2");
+            }
+            OA_CHECK(numbered.value_labels.empty());
+            OA_CHECK(numbered.default_text == "1.0");
+        }
+        OA_CHECK(
+            package.file.size() >= 6 &&
+            package.file.compare(package.file.size() - 6, 6, ".oamut") == 0
+        );
+        const catalogue::Package& keeper = out.packages[1];
+        OA_CHECK(keeper.id == "keeper");
+        OA_CHECK(keeper.requires_mutators.empty());
+        OA_CHECK(keeper.works_with.empty());
+        OA_CHECK(keeper.conflicts_with.empty());
+        OA_CHECK(keeper.layers.empty());
+        OA_CHECK(!keeper.clashes.has_value());
+        OA_CHECK(keeper.options.empty());
+    }
+
+    const auto any_mod =
+        read_ok(catalogue_of(bare("oamut", "steady-hands", "\"works_with\":[\"*\"]")));
+    OA_CHECK(any_mod.packages.size() == 1);
+    if (!any_mod.packages.empty())
+        OA_CHECK(any_mod.packages[0].works_with == std::vector<std::string>({"*"}));
+    const auto on_minimum = read_ok(catalogue_of(bare(
+        "oamut",
+        "steady-hands",
+        "\"options\":[{\"id\":\"sway\",\"label\":\"Sway\",\"type\":\"number\","
+        "\"min\":0,\"max\":1,\"step\":0.5,\"default\":0}]"
+    )));
+    OA_CHECK(on_minimum.packages.size() == 1);
+    if (!on_minimum.packages.empty() && !on_minimum.packages[0].options.empty())
+        OA_CHECK(on_minimum.packages[0].options[0].default_text == "0");
+
+    const auto sixteen = read_ok(catalogue_of(bare(
+        "oamut",
+        "steady-hands",
+        "\"requires\":{\"mutators\":["
+        "{\"id\":\"m0\"},{\"id\":\"m1\"},{\"id\":\"m2\"},{\"id\":\"m3\"},"
+        "{\"id\":\"m4\"},{\"id\":\"m5\"},{\"id\":\"m6\"},{\"id\":\"m7\"},"
+        "{\"id\":\"m8\"},{\"id\":\"m9\"},{\"id\":\"m10\"},{\"id\":\"m11\"},"
+        "{\"id\":\"m12\"},{\"id\":\"m13\"},{\"id\":\"m14\"},{\"id\":\"m15\"}]}"
+    )));
+    OA_CHECK(sixteen.packages.size() == 1);
+    if (!sixteen.packages.empty())
+        OA_CHECK(sixteen.packages[0].requires_mutators.size() == 16);
+
+    const auto ignored = read_ok(catalogue_of(bare(
+        "oamod",
+        "ridge",
+        "\"requires\":{\"mutators\":[{\"id\":\"!!!\"},1],\"engine\":\">= 0.8.0\"},"
+        "\"works_with\":[\"not a condition\"],\"conflicts_with\":[{}],"
+        "\"layers\":[\"nope\"],\"options\":[{\"type\":\"slider\",\"id\":\"!!!\"}]"
+    )));
+    OA_CHECK(ignored.problems.empty());
+    OA_CHECK(ignored.packages.size() == 1);
+    if (!ignored.packages.empty()) {
+        OA_CHECK(ignored.packages[0].requires_mutators.empty());
+        OA_CHECK(ignored.packages[0].works_with.empty());
+        OA_CHECK(ignored.packages[0].conflicts_with.empty());
+        OA_CHECK(ignored.packages[0].layers.empty());
+        OA_CHECK(ignored.packages[0].options.empty());
+        OA_CHECK(ignored.packages[0].requires_engine_text == ">= 0.8.0");
+    }
+
+    skips_one(mutator_body("steady-hands", "", {}), "version");
+    skips_one(mutator_body("steady-hands", "\"version\":\"hello\"", {}), "mutator version");
+    skips_one(mutator_body("steady-hands", "\"version\":\"1.2.3.4\"", {}), "mutator version");
+    skips_one(mutator_body("steady-hands", "\"version\":\"01\"", {}), "mutator version");
+    skips_one(
+        bare("oamut", "steady-hands", "\"requires\":{\"mutators\":\"gatehouse\"}"),
+        "requires.mutators is not a list"
+    );
+    {
+        std::string many = "\"requires\":{\"mutators\":[";
+        for (int slot = 0; slot < 17; ++slot) {
+            if (slot != 0)
+                many += ',';
+            many += "{\"id\":\"m" + std::to_string(slot) + "\"}";
+        }
+        many += "]}";
+        skips_one(bare("oamut", "steady-hands", many), "lists more than 16");
+    }
+    skips_one(
+        bare("oamut", "steady-hands", "\"requires\":{\"mutators\":[\"gatehouse\"]}"),
+        "requires.mutators[0] is not an object"
+    );
+    skips_one(
+        bare("oamut", "steady-hands", "\"requires\":{\"mutators\":[{\"id\":\"Gatehouse\"}]}"),
+        "requires.mutators[0].id is not a mutator key"
+    );
+    skips_one(
+        bare("oamut", "steady-hands", "\"requires\":{\"mutators\":[{\"id\":\"steady-hands\"}]}"),
+        "requires.mutators[0].id is this mutator"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"requires\":{\"mutators\":[{\"id\":\"calm-seas\"},{\"id\":\"calm-seas\"}]}"
+        ),
+        "requires.mutators[1].id is repeated"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"requires\":{\"mutators\":[{\"id\":\"m0\"},{\"id\":\"m1\"},"
+            "{\"id\":\"m2\",\"version\":\"soon\"}]}"
+        ),
+        "requires.mutators[2].version is not a version range"
+    );
+    skips_one(
+        bare("oamut", "steady-hands", "\"conflicts_with\":{}"), "conflicts_with is not a list"
+    );
+    {
+        std::string many = "\"conflicts_with\":[";
+        for (int slot = 0; slot < 33; ++slot) {
+            if (slot != 0)
+                many += ',';
+            many += "{\"id\":\"c" + std::to_string(slot) + "\"}";
+        }
+        many += ']';
+        skips_one(bare("oamut", "steady-hands", many), "lists more than 32");
+    }
+    skips_one(
+        bare("oamut", "steady-hands", "\"conflicts_with\":[{\"id\":\"steady-hands\"}]"),
+        "conflicts_with[0].id is this mutator"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"requires\":{\"mutators\":[{\"id\":\"gatehouse\",\"version\":\">= 1\"}]},"
+            "\"conflicts_with\":[{\"id\":\"gatehouse\",\"version\":\"< 2\"}]"
+        ),
+        "conflicts_with[0].id is a prerequisite"
+    );
+    skips_one(
+        bare("oamut", "steady-hands", "\"conflicts_with\":[{\"id\":\"shaky-grip\",\"version\":1}]"),
+        "conflicts_with[0].version is not a version range"
+    );
+    skips_one(bare("oamut", "steady-hands", "\"works_with\":\"*\""), "works_with is not a list");
+    {
+        std::string many = "\"works_with\":[";
+        for (int slot = 0; slot < 33; ++slot) {
+            if (slot != 0)
+                many += ',';
+            many += "\"m" + std::to_string(slot) + "\"";
+        }
+        many += ']';
+        skips_one(bare("oamut", "steady-hands", many), "lists more than 32");
+    }
+    skips_one(
+        bare("oamut", "steady-hands", "\"works_with\":[\"Ridge\"]"),
+        "works_with[0] is not a condition"
+    );
+    skips_one(
+        bare("oamut", "steady-hands", "\"works_with\":[\"* >= 1\"]"),
+        "works_with[0] is not a condition"
+    );
+    skips_one(
+        bare("oamut", "steady-hands", "\"works_with\":[\"*\",\"ridge\"]"),
+        "works_with[0] is not alone"
+    );
+    {
+        std::string many = "\"layers\":[";
+        for (int slot = 0; slot < 17; ++slot) {
+            if (slot != 0)
+                many += ',';
+            many += "\"units\"";
+        }
+        many += ']';
+        skips_one(bare("oamut", "steady-hands", many), "layers lists more than 16");
+    }
+    skips_one(bare("oamut", "steady-hands", "\"layers\":\"units\""), "layers is not a list");
+    const auto added = read_ok(catalogue_of(bare("oamut", "steady-hands", "\"clashes\":\"add\"")));
+    OA_CHECK(added.packages.size() == 1);
+    if (!added.packages.empty())
+        OA_CHECK(added.packages[0].clashes == mut::ClashMode::add);
+    const auto replaced =
+        read_ok(catalogue_of(bare("oamut", "steady-hands", "\"clashes\":\"replace\"")));
+    OA_CHECK(replaced.packages.size() == 1);
+    if (!replaced.packages.empty())
+        OA_CHECK(replaced.packages[0].clashes == mut::ClashMode::replace);
+    skips_one(
+        bare("oamut", "steady-hands", "\"clashes\":\"Add\""), "clashes must be add or replace"
+    );
+    skips_one(
+        bare("oamut", "steady-hands", "\"clashes\":\"merge\""), "clashes must be add or replace"
+    );
+    skips_one(bare("oamut", "steady-hands", "\"clashes\":1"), "clashes must be add or replace");
+    {
+        std::string many = "\"options\":[";
+        for (int slot = 0; slot < 17; ++slot) {
+            if (slot != 0)
+                many += ',';
+            many += "{\"id\":\"sway\",\"label\":\"Sway\",\"type\":\"toggle\"}";
+        }
+        many += ']';
+        skips_one(bare("oamut", "steady-hands", many), "options lists more than 16");
+    }
+    skips_one(bare("oamut", "steady-hands", "\"options\":[1]"), "options[0] is not an object");
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"1sway\",\"label\":\"Sway\",\"type\":\"toggle\"}]"
+        ),
+        "options[0].id is not an option id"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"" + std::string(33, 'a') +
+                "\",\"label\":\"Sway\",\"type\":\"toggle\"}]"
+        ),
+        "options[0].id is not an option id"
+    );
+    {
+        constexpr std::array<std::string_view, 22> reserved{
+            "and",      "break",  "do",   "else", "elseif", "end",   "false", "for",
+            "function", "goto",   "if",   "in",   "local",  "nil",   "not",   "or",
+            "repeat",   "return", "then", "true", "until",  "while",
+        };
+        for (const std::string_view word : reserved) {
+            skips_one(
+                bare(
+                    "oamut",
+                    "steady-hands",
+                    "\"options\":[{\"id\":\"" + std::string{word} +
+                        "\",\"label\":\"Sway\",\"type\":\"toggle\"}]"
+                ),
+                "options[0].id is a word Lua reserves"
+            );
+        }
+    }
+    {
+        const auto kept = read_ok(catalogue_of(
+            bare(
+                "oamut",
+                "steady-hands",
+                "\"options\":["
+                "{\"id\":\"format\",\"label\":\"Format\",\"type\":\"toggle\"},"
+                "{\"id\":\"ends\",\"label\":\"Ends\",\"type\":\"toggle\"},"
+                "{\"id\":\"for_\",\"label\":\"For underscore\",\"type\":\"toggle\"}]"
+            ) +
+            "," + bare("oamod", "keeper")
+        ));
+        OA_CHECK(kept.packages.size() == 2);
+        OA_CHECK(kept.problems.empty());
+        if (kept.packages.size() == 2) {
+            OA_CHECK(kept.packages[0].id == "steady-hands");
+            OA_CHECK(kept.packages[0].options.size() == 3);
+            if (kept.packages[0].options.size() == 3) {
+                OA_CHECK(kept.packages[0].options[0].id == "format");
+                OA_CHECK(kept.packages[0].options[1].id == "ends");
+                OA_CHECK(kept.packages[0].options[2].id == "for_");
+            }
+            OA_CHECK(kept.packages[1].id == "keeper");
+        }
+    }
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"For\",\"label\":\"For\",\"type\":\"toggle\"}]"
+        ),
+        "options[0].id is not an option id"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"sway\",\"label\":\"\",\"type\":\"toggle\"}]"
+        ),
+        "options[0].label is not 1 to 64 bytes"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"sway\",\"label\":\"" + std::string(65, 'a') +
+                "\",\"type\":\"toggle\"}]"
+        ),
+        "options[0].label is not 1 to 64 bytes"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"grip\",\"label\":\"Grip\",\"type\":\"choice\",\"values\":["
+            "\"only\"]}]"
+        ),
+        "options[0].values is not 2 to 16 values"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"grip\",\"label\":\"Grip\",\"type\":\"choice\","
+            "\"values\":[\"soft\",1]}]"
+        ),
+        "options[0].values[1] is not the same kind of value"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"grip\",\"label\":\"Grip, firm.\",\"type\":\"choice\","
+            "\"values\":[\"a b\",\"firm\"]}]"
+        ),
+        "options[0].values[0] is not a number or 1 to 32 letters, digits, _, - or ."
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"sway\",\"label\":\"Sway\",\"type\":\"number\","
+            "\"min\":1,\"max\":1,\"step\":1}]"
+        ),
+        "options[0].min is not below max"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"sway\",\"label\":\"Sway\",\"type\":\"number\","
+            "\"min\":0,\"max\":1,\"step\":0}]"
+        ),
+        "options[0].step is not above zero"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"sway\",\"label\":\"Sway\",\"type\":\"number\","
+            "\"min\":0,\"max\":1,\"step\":0.5,\"default\":0.25}]"
+        ),
+        "options[0].default is not on a step"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"steady\",\"label\":\"Steady\",\"type\":\"toggle\","
+            "\"default\":\"yes\"}]"
+        ),
+        "options[0].default is not true or false"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"grip\",\"label\":\"Grip\",\"type\":\"choice\","
+            "\"values\":[\"soft\",\"firm\"],\"default\":\"other\"}]"
+        ),
+        "options[0].default is not one of the values"
+    );
+    skips_one(
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"options\":[{\"id\":\"grip\",\"label\":\"Grip\",\"type\":\"choice\","
+            "\"values\":[\"soft\",\"firm\"],\"labels\":[\"Soft\"]}]"
+        ),
+        "options[0].labels is not one label for each value"
+    );
+
+    std::string wrong_file = bare("oamut", "steady-hands");
+    const auto suffix = wrong_file.rfind(".oamut");
+    OA_CHECK(suffix != std::string::npos);
+    if (suffix != std::string::npos)
+        wrong_file.replace(suffix, 6, ".oamod");
+    skips_one(wrong_file, "file not named");
+    skips_one("{\"kind\":\"oafuture\",\"id\":\"steady-hands\"}", "unknown kind");
+
+    const auto duplicate = read_ok(catalogue_of(
+        bare("oamut", "ridge") + "," + bare("oamod", "ridge") + "," + bare("oamod", "keeper")
+    ));
+    OA_CHECK(duplicate.packages.size() == 1);
+    if (!duplicate.packages.empty())
+        OA_CHECK(duplicate.packages[0].id == "keeper");
+    OA_CHECK(duplicate.problems.size() == 2);
+    if (duplicate.problems.size() == 2) {
+        OA_CHECK(duplicate.problems[0].find("same key") != std::string::npos);
+        OA_CHECK(duplicate.problems[0].find("ridge") != std::string::npos);
+    }
+}
+
+/// One brain entry. `members` is the JSON members after `file`, without a leading comma.
+std::string brain_entry(std::string_view id, std::string_view members) {
+    const std::string hash = hex_of(std::string("brain/") + std::string(id) + std::string(members));
+    std::string json = "{\"kind\":\"oabrain\",\"id\":\"";
+    json += id;
+    json += "\",\"name\":\"Steady Commander\",\"release\":1,\"size\":4,\"sha256\":\"";
+    json += hash;
+    json += "\",\"file\":\"/v1/p/";
+    json += hash;
+    json += ".oabrain\"";
+    if (!members.empty()) {
+        json += ',';
+        json += members;
+    }
+    json += '}';
+    return json;
+}
+
+void test_brain() {
+    namespace brain = oa::formats::oabrain;
+    namespace mut = oa::formats::oamut;
+    OA_CHECK(std::string(catalogue::kind_name(catalogue::Kind::oabrain)) == "oabrain");
+    OA_CHECK(std::string(catalogue::package_extension(catalogue::Kind::oabrain)) == "oabrain");
+    OA_CHECK(catalogue::valid_package_key(catalogue::Kind::oabrain, "steady-commander"));
+    OA_CHECK(!catalogue::valid_package_key(catalogue::Kind::oabrain, "Steady"));
+    OA_CHECK(!catalogue::valid_package_key(catalogue::Kind::oabrain, "steady-commander@1"));
+
+    const std::string facts =
+        "\"version\":\"1.2\",\"publisher\":\"OA team\",\"author\":\"OA team\","
+        "\"summary\":\"A made-up brain\",\"notes\":\"Teaches the opening\","
+        "\"homepage\":\"https://example.com/steady-commander\","
+        "\"badge\":\"/v1/i/badge.png\",\"published\":\"2026-10-12\","
+        "\"tags\":[\"economy\",\"teaching\",\"custom\"],"
+        "\"requires\":{\"engine\":\">= 0.8.0\",\"base\":\"ta-3.1c\","
+        "\"mutators\":\"gatehouse\",\"later\":true},"
+        "\"supportedGames\":[\"totala\"],\"requiredExpansions\":[\"core-contingency\"],"
+        "\"works_with\":[\"ta-3.1c\",\"ridge >= 28\"],"
+        "\"conflicts_with\":1,\"layers\":\"units\",\"clashes\":\"merge\","
+        "\"full_awareness\":false,\"network_bytes\":2100000,"
+        "\"levels\":["
+        "{\"id\":\"careful\",\"name\":\"Careful\",\"difficulty\":\"easy\",\"note\":\"kept out\"},"
+        "{\"id\":\"steady\",\"name\":\"Steady\",\"difficulty\":\"medium\"}"
+        "],"
+        "\"options\":["
+        "{\"id\":\"teach\",\"label\":\"Teaching\",\"type\":\"toggle\",\"default\":true},"
+        "{\"id\":\"future\",\"label\":\"Future\",\"type\":\"slider\"}"
+        "]";
+    const auto out = read_ok(
+        catalogue_of(brain_entry("steady-commander", facts) + "," + bare("oamod", "keeper"))
+    );
+    OA_CHECK(out.problems.empty());
+    OA_CHECK(out.packages.size() == 2);
+    if (out.packages.size() == 2) {
+        const catalogue::Package& package = out.packages[0];
+        OA_CHECK(package.kind == catalogue::Kind::oabrain);
+        OA_CHECK(package.id == "steady-commander");
+        OA_CHECK(package.name == "Steady Commander");
+        OA_CHECK(package.version == "1.2");
+        OA_CHECK(package.revision == 0);
+        OA_CHECK(package.publisher == "OA team");
+        OA_CHECK(package.author == "OA team");
+        OA_CHECK(package.summary == "A made-up brain");
+        OA_CHECK(package.notes == "Teaches the opening");
+        OA_CHECK(package.homepage == "https://example.com/steady-commander");
+        OA_CHECK(package.badge == "/v1/i/badge.png");
+        OA_CHECK(package.published == "2026-10-12");
+        OA_CHECK(package.tags == std::vector<std::string>({"economy", "teaching", "custom"}));
+        OA_CHECK(package.requires_engine_text == ">= 0.8.0");
+        OA_CHECK(package.requires_engine.has_value());
+        OA_CHECK(package.requires_base == "ta-3.1c");
+        OA_CHECK(package.requires_mutators.empty());
+        OA_CHECK(package.supported_games == std::vector<std::string>({"totala"}));
+        OA_CHECK(package.required_expansions == std::vector<std::string>({"core-contingency"}));
+        OA_CHECK(package.works_with == std::vector<std::string>({"ta-3.1c", "ridge >= 28"}));
+        OA_CHECK(package.conflicts_with.empty());
+        OA_CHECK(package.layers.empty());
+        OA_CHECK(!package.clashes.has_value());
+        OA_CHECK(!package.full_awareness);
+        OA_CHECK(package.network_bytes == 2100000);
+        OA_CHECK(package.levels.size() == 2);
+        if (package.levels.size() == 2) {
+            OA_CHECK(package.levels[0].id == "careful");
+            OA_CHECK(package.levels[0].name == "Careful");
+            OA_CHECK(package.levels[0].difficulty == brain::Difficulty::easy);
+            OA_CHECK(package.levels[1].id == "steady");
+            OA_CHECK(package.levels[1].name == "Steady");
+            OA_CHECK(package.levels[1].difficulty == brain::Difficulty::medium);
+        }
+        OA_CHECK(package.options.size() == 1);
+        if (!package.options.empty()) {
+            OA_CHECK(package.options[0].id == "teach");
+            OA_CHECK(package.options[0].label == "Teaching");
+            OA_CHECK(package.options[0].type == mut::OptionType::toggle);
+            OA_CHECK(package.options[0].default_text == "true");
+        }
+        OA_CHECK(
+            package.file.size() >= 8 &&
+            package.file.compare(package.file.size() - 8, 8, ".oabrain") == 0
+        );
+        const catalogue::Package& keeper = out.packages[1];
+        OA_CHECK(keeper.id == "keeper");
+        OA_CHECK(keeper.levels.empty());
+        OA_CHECK(!keeper.full_awareness);
+        OA_CHECK(keeper.network_bytes == 0);
+        OA_CHECK(keeper.works_with.empty());
+        OA_CHECK(keeper.options.empty());
+    }
+
+    const std::string levels_only =
+        "\"levels\":[{\"id\":\"careful\",\"name\":\"Careful\",\"difficulty\":\"easy\"}]";
+    const std::string one_level = "\"version\":\"1\"," + levels_only;
+    const auto defaults = read_ok(catalogue_of(brain_entry("steady-commander", one_level)));
+    OA_CHECK(defaults.packages.size() == 1);
+    if (!defaults.packages.empty()) {
+        OA_CHECK(!defaults.packages[0].full_awareness);
+        OA_CHECK(defaults.packages[0].network_bytes == 0);
+        OA_CHECK(defaults.packages[0].levels.size() == 1);
+    }
+
+    const auto skipped = read_ok(catalogue_of(brain_entry(
+        "steady-commander",
+        "\"version\":\"1\",\"levels\":["
+        "{\"id\":\"careful\",\"name\":\"Careful\",\"difficulty\":\"easy\"},"
+        "{\"id\":\"brutal\",\"name\":\"Brutal\",\"difficulty\":\"brutal\"}"
+        "]"
+    )));
+    OA_CHECK(skipped.problems.empty());
+    OA_CHECK(skipped.packages.size() == 1);
+    if (!skipped.packages.empty()) {
+        OA_CHECK(skipped.packages[0].levels.size() == 1);
+        if (!skipped.packages[0].levels.empty())
+            OA_CHECK(skipped.packages[0].levels[0].id == "careful");
+    }
+    skips_one(
+        brain_entry(
+            "steady-commander",
+            "\"version\":\"1\",\"levels\":["
+            "{\"id\":\"brutal\",\"name\":\"Brutal\",\"difficulty\":\"brutal\"}]"
+        ),
+        "levels names no level this build knows"
+    );
+
+    skips_one(brain_entry("steady-commander", levels_only), "version is missing");
+    skips_one(
+        brain_entry("steady-commander", "\"version\":\"1.2.3.4\"," + levels_only),
+        "version is not a mutator version"
+    );
+    const std::string long_version(33, '1');
+    skips_one(
+        brain_entry("steady-commander", "\"version\":\"" + long_version + "\"," + levels_only),
+        "version is not 1 to 32 bytes"
+    );
+    skips_one(brain_entry("steady-commander", "\"version\":\"1\""), "levels is missing");
+    skips_one(
+        brain_entry("steady-commander", "\"version\":\"1\",\"levels\":\"easy\""),
+        "levels is not a list"
+    );
+    skips_one(
+        brain_entry("steady-commander", "\"version\":\"1\",\"levels\":[]"), "levels lists none"
+    );
+    std::string many_levels = "\"version\":\"1\",\"levels\":[";
+    for (int index = 0; index < 7; ++index) {
+        if (index != 0)
+            many_levels += ',';
+        many_levels += "{\"id\":\"level-";
+        many_levels += std::to_string(index);
+        many_levels += "\",\"name\":\"Level\",\"difficulty\":\"easy\"}";
+    }
+    many_levels += ']';
+    skips_one(brain_entry("steady-commander", many_levels), "levels lists more than 6");
+    skips_one(
+        brain_entry("steady-commander", "\"version\":\"1\",\"levels\":[1]"),
+        "levels[0] is not an object"
+    );
+    skips_one(
+        brain_entry(
+            "steady-commander",
+            "\"version\":\"1\",\"levels\":[{\"id\":\"Careful\",\"name\":\"Careful\","
+            "\"difficulty\":\"easy\"}]"
+        ),
+        "levels[0].id is not a level id"
+    );
+    skips_one(
+        brain_entry(
+            "steady-commander",
+            "\"version\":\"1\",\"levels\":["
+            "{\"id\":\"careful\",\"name\":\"Careful\",\"difficulty\":\"easy\"},"
+            "{\"id\":\"careful\",\"name\":\"Again\",\"difficulty\":\"hard\"}]"
+        ),
+        "levels[1].id is repeated"
+    );
+    const std::string long_name(65, 'n');
+    skips_one(
+        brain_entry(
+            "steady-commander",
+            "\"version\":\"1\",\"levels\":["
+            "{\"id\":\"careful\",\"name\":\"Careful\",\"difficulty\":\"easy\"},"
+            "{\"id\":\"steady\",\"name\":\"" +
+                long_name + "\",\"difficulty\":\"medium\"}]"
+        ),
+        "levels[1].name is not 1 to 64 bytes"
+    );
+    skips_one(
+        brain_entry("steady-commander", one_level + ",\"full_awareness\":\"yes\""),
+        "full_awareness is not true or false"
+    );
+    skips_one(
+        brain_entry("steady-commander", one_level + ",\"network_bytes\":67108865"),
+        "network_bytes is not a whole number from 0 to 67108864"
+    );
+    skips_one(
+        brain_entry("steady-commander", one_level + ",\"works_with\":\"*\""),
+        "works_with is not a list"
+    );
+    skips_one(
+        brain_entry(
+            "steady-commander",
+            one_level + ",\"options\":[{\"id\":\"teach\",\"label\":\"Teaching\","
+                        "\"type\":\"toggle\",\"default\":\"yes\"}]"
+        ),
+        "options[0].default is not true or false"
+    );
+
+    const auto untouched = read_ok(catalogue_of(
+        bare(
+            "oamod",
+            "ridge",
+            "\"levels\":\"nope\",\"full_awareness\":\"yes\",\"network_bytes\":-1,"
+            "\"works_with\":[\"*\"],\"options\":[1]"
+        ) +
+        "," +
+        bare(
+            "oamut",
+            "steady-hands",
+            "\"levels\":1,\"full_awareness\":\"yes\",\"network_bytes\":\"lots\""
+        )
+    ));
+    OA_CHECK(untouched.problems.empty());
+    OA_CHECK(untouched.packages.size() == 2);
+    if (untouched.packages.size() == 2) {
+        OA_CHECK(untouched.packages[0].kind == catalogue::Kind::oamod);
+        OA_CHECK(untouched.packages[0].levels.empty());
+        OA_CHECK(!untouched.packages[0].full_awareness);
+        OA_CHECK(untouched.packages[0].network_bytes == 0);
+        OA_CHECK(untouched.packages[0].works_with.empty());
+        OA_CHECK(untouched.packages[1].kind == catalogue::Kind::oamut);
+        OA_CHECK(untouched.packages[1].levels.empty());
+        OA_CHECK(!untouched.packages[1].full_awareness);
+        OA_CHECK(untouched.packages[1].network_bytes == 0);
+    }
+
+    std::string wrong_file = brain_entry("steady-commander", one_level);
+    const auto suffix = wrong_file.rfind(".oabrain");
+    OA_CHECK(suffix != std::string::npos);
+    if (suffix != std::string::npos)
+        wrong_file.replace(suffix, 8, ".oamod");
+    skips_one(wrong_file, "file not named");
+    skips_one("{\"kind\":\"oafuture\",\"id\":\"steady-commander\"}", "unknown kind");
+
+    const auto duplicate = read_ok(catalogue_of(
+        brain_entry("ridge", one_level) + "," + bare("oamod", "ridge") + "," +
+        bare("oamod", "keeper")
+    ));
+    OA_CHECK(duplicate.packages.size() == 1);
+    if (!duplicate.packages.empty())
+        OA_CHECK(duplicate.packages[0].id == "keeper");
+    OA_CHECK(duplicate.problems.size() == 2);
+    if (duplicate.problems.size() == 2) {
+        OA_CHECK(duplicate.problems[0].find("same key") != std::string::npos);
+        OA_CHECK(duplicate.problems[0].find("ridge") != std::string::npos);
+        OA_CHECK(duplicate.problems[1].find("same key") != std::string::npos);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -928,5 +1722,7 @@ int main() {
     test_published();
     test_content_needs();
     test_expansion();
+    test_mutator();
+    test_brain();
     return oa::test::check_exit_status();
 }

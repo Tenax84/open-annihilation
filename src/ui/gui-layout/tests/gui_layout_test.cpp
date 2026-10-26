@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 #include "oa/ui/gui_layout.hpp"
+#include "oa/ui/gui_layout/gui_gadget.hpp"
 
 #include <cstdint>
 #include <exception>
@@ -307,6 +308,43 @@ void skin_tiles_end_flush_with_the_far_edges() {
     require(gui::skin_tiles(40, 20, 0, 64).empty(), "a zero-width frame took tiles");
 }
 
+void button_captions_follow_their_alignment() {
+    using Pen = gui::CaptionPen;
+    namespace attribute = gui::attribute;
+    // A build page's second unit button (64x64 at 64,155, attribs=32) and a
+    // 14-pixel caption in a font 14 rows high: centred across, its line
+    // ending 4 rows above the bottom edge.
+    const gui::Rect build{64, 155, 127, 218};
+    const auto pen = [&](uint32_t attributes, int32_t width, bool pressed) {
+        return gui::button_caption_pen(build, attributes, width, 14, pressed);
+    };
+    require(pen(attribute::bottom_caption, 14, false) == Pen{89, 200}, "bottom caption misplaced");
+    require(
+        pen(attribute::bottom_caption, 14, true) == Pen{90, 201},
+        "a pressed bottom caption did not move one pixel right and down"
+    );
+    require(pen(attribute::centered, 14, false) == Pen{89, 179}, "centred caption misplaced");
+    require(pen(attribute::horizontal, 14, true) == Pen{68, 180}, "left caption misplaced");
+    require(pen(attribute::right_aligned, 14, true) == Pen{110, 180}, "right caption misplaced");
+    // A caption wider than the button: centred it starts left of the edge,
+    // half the overflow rounded toward zero; aligned right it starts at it.
+    require(pen(attribute::centered, 70, false) == Pen{62, 179}, "wide centred caption misplaced");
+    require(
+        pen(attribute::right_aligned, 70, false) == Pen{64, 179}, "wide right caption misplaced"
+    );
+    // The first alignment the attributes hold decides.
+    require(
+        pen(attribute::horizontal | attribute::bottom_caption, 14, false) == Pen{67, 179},
+        "left alignment did not come before the bottom caption"
+    );
+    require(
+        pen(attribute::centered | attribute::bottom_caption, 14, false) == Pen{89, 179},
+        "centring did not come before the bottom caption"
+    );
+    require(!pen(0, 14, false), "a button without an alignment placed a caption");
+    require(!pen(attribute::toggle, 14, false), "a toggle without an alignment placed a caption");
+}
+
 } // namespace
 
 int main() {
@@ -317,6 +355,7 @@ int main() {
         positioned_rectangle_adds_root_origin_only_for_nonzero_type();
         shipped_score_eof_is_an_implicit_top_level_close();
         skin_tiles_end_flush_with_the_far_edges();
+        button_captions_follow_their_alignment();
     } catch (const std::exception& error) {
         std::cerr << "gui-layout test failure: " << error.what() << '\n';
         return 1;

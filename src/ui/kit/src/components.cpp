@@ -231,7 +231,15 @@ ButtonColours button_colours(const ButtonLook& look) noexcept {
     }
     const bool hovered = look.enabled && look.hovered;
     const bool held = look.enabled && look.held;
-    if (look.style == ButtonStyle::plain && !look.enabled)
+    if (look.style == ButtonStyle::filled && look.enabled) {
+        Colour face = colour::filled;
+        if (held)
+            face = colour::filled_held;
+        else if (hovered)
+            face = colour::filled_light;
+        return {face, hovered ? colour::accent : colour::accent_held, colour::text};
+    }
+    if ((look.style == ButtonStyle::plain || look.style == ButtonStyle::filled) && !look.enabled)
         return {std::nullopt, colour::control_border, colour::switch_idle};
     const Colour border = hovered ? colour::control_hover : colour::control_border;
     const Colour caption = hovered ? colour::text : colour::button_text;
@@ -476,6 +484,14 @@ void paint_item(const Canvas& canvas, const Item& item) {
         if (const auto* look = std::get_if<CallToActionLook>(&item.look))
             draw_call_to_action(drawn, item.rect, *look);
         break;
+    case Role::package_badge:
+        if (const auto* look = std::get_if<BadgeLook>(&item.look))
+            draw_badge(drawn, item.rect, *look);
+        break;
+    case Role::grip:
+        if (const auto* look = std::get_if<GripLook>(&item.look))
+            draw_grip(drawn, item.rect, *look);
+        break;
     case Role::header_bar:
     case Role::badge:
     case Role::header_text:
@@ -594,6 +610,159 @@ constexpr bool key_strokes_fit() noexcept {
 }
 
 static_assert(key_strokes_fit(), "the key glyph stays inside its square");
+
+/// The statistics tag: two axes and three bars.
+constexpr std::array<IconStroke, 5> kStatisticsStrokes{{
+    {{12, 12}, {12, 84}},
+    {{12, 84}, {84, 84}},
+    {{32, 68}, {32, 52}},
+    {{52, 68}, {52, 28}},
+    {{72, 68}, {72, 40}},
+}};
+/// The economy tag: a closed bolt.
+constexpr std::array<IconStroke, 6> kEconomyStrokes{{
+    {{52, 8}, {12, 56}},
+    {{12, 56}, {48, 56}},
+    {{48, 56}, {44, 88}},
+    {{44, 88}, {84, 40}},
+    {{84, 40}, {48, 40}},
+    {{48, 40}, {52, 8}},
+}};
+/// The commanders tag: a closed ten-point star.
+constexpr std::array<IconStroke, 10> kCommandersStrokes{{
+    {{48, 8}, {60, 32}},
+    {{60, 32}, {86, 36}},
+    {{86, 36}, {67, 54}},
+    {{67, 54}, {72, 80}},
+    {{72, 80}, {48, 68}},
+    {{48, 68}, {24, 80}},
+    {{24, 80}, {29, 54}},
+    {{29, 54}, {10, 36}},
+    {{10, 36}, {36, 32}},
+    {{36, 32}, {48, 8}},
+}};
+/// The new-units tag: a square with square corners, and a plus.
+constexpr std::array<IconStroke, 6> kNewUnitsStrokes{{
+    {{12, 12}, {84, 12}},
+    {{84, 12}, {84, 84}},
+    {{84, 84}, {12, 84}},
+    {{12, 84}, {12, 12}},
+    {{48, 32}, {48, 64}},
+    {{32, 48}, {64, 48}},
+}};
+/// The disable tag: a sixteen-sided ring of radius 9 units, and a slash.
+constexpr std::array<IconStroke, 17> kDisableStrokes{{
+    {{84, 48}, {81, 62}},
+    {{81, 62}, {73, 73}},
+    {{73, 73}, {62, 81}},
+    {{62, 81}, {48, 84}},
+    {{48, 84}, {34, 81}},
+    {{34, 81}, {23, 73}},
+    {{23, 73}, {15, 62}},
+    {{15, 62}, {12, 48}},
+    {{12, 48}, {15, 34}},
+    {{15, 34}, {23, 23}},
+    {{23, 23}, {34, 15}},
+    {{34, 15}, {48, 12}},
+    {{48, 12}, {62, 15}},
+    {{62, 15}, {73, 23}},
+    {{73, 23}, {81, 34}},
+    {{81, 34}, {84, 48}},
+    {{22, 22}, {74, 74}},
+}};
+/// The gameplay tag: a pole and a closed pennant.
+constexpr std::array<IconStroke, 6> kGameplayStrokes{{
+    {{20, 88}, {20, 12}},
+    {{20, 16}, {68, 16}},
+    {{68, 16}, {58, 34}},
+    {{58, 34}, {68, 52}},
+    {{68, 52}, {20, 52}},
+    {{20, 52}, {20, 16}},
+}};
+/// The ai tag: a 12-unit square with square corners, and eight pins.
+constexpr std::array<IconStroke, 12> kAiStrokes{{
+    {{24, 24}, {72, 24}},
+    {{72, 24}, {72, 72}},
+    {{72, 72}, {24, 72}},
+    {{24, 72}, {24, 24}},
+    {{36, 8}, {36, 24}},
+    {{60, 8}, {60, 24}},
+    {{36, 72}, {36, 88}},
+    {{60, 72}, {60, 88}},
+    {{8, 36}, {24, 36}},
+    {{8, 60}, {24, 60}},
+    {{72, 36}, {88, 36}},
+    {{72, 60}, {88, 60}},
+}};
+/// The maps tag: a closed folded outline and its two folds.
+constexpr std::array<IconStroke, 10> kMapsStrokes{{
+    {{12, 24}, {36, 16}},
+    {{36, 16}, {60, 24}},
+    {{60, 24}, {84, 16}},
+    {{84, 16}, {84, 72}},
+    {{84, 72}, {60, 80}},
+    {{60, 80}, {36, 72}},
+    {{36, 72}, {12, 80}},
+    {{12, 80}, {12, 24}},
+    {{36, 16}, {36, 72}},
+    {{60, 24}, {60, 80}},
+}};
+
+/// Reports whether every tag stroke's round ends stay inside the icon square.
+///
+/// @return true when every end is kStrokeHalf inside the square
+constexpr bool tag_strokes_fit() noexcept {
+    constexpr int64_t least = kStrokeHalf;
+    constexpr int64_t most = kIconGrid - kStrokeHalf;
+    const std::array<std::span<const IconStroke>, 8> designs{
+        kStatisticsStrokes,
+        kEconomyStrokes,
+        kCommandersStrokes,
+        kNewUnitsStrokes,
+        kDisableStrokes,
+        kGameplayStrokes,
+        kAiStrokes,
+        kMapsStrokes,
+    };
+    for (const std::span<const IconStroke> design : designs) {
+        for (const IconStroke& stroke : design) {
+            const IconPoint ends[] = {stroke.from, stroke.to};
+            for (const IconPoint end : ends) {
+                if (end.x < least || end.x > most || end.y < least || end.y > most)
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
+static_assert(tag_strokes_fit(), "every tag icon stays inside its square");
+
+/// Returns a tag icon's strokes.
+///
+/// @param icon the icon
+/// @return its strokes, in quarter units
+std::span<const IconStroke> tag_strokes(TagIcon icon) noexcept {
+    switch (icon) {
+    case TagIcon::statistics:
+        return kStatisticsStrokes;
+    case TagIcon::economy:
+        return kEconomyStrokes;
+    case TagIcon::commanders:
+        return kCommandersStrokes;
+    case TagIcon::new_units:
+        return kNewUnitsStrokes;
+    case TagIcon::disable:
+        return kDisableStrokes;
+    case TagIcon::gameplay:
+        return kGameplayStrokes;
+    case TagIcon::ai:
+        return kAiStrokes;
+    case TagIcon::maps:
+        return kMapsStrokes;
+    }
+    return {};
+}
 
 /// Returns a state icon's strokes.
 ///
@@ -1207,6 +1376,15 @@ void draw_state_icon(const Canvas& canvas, const Rect& rect, StateIcon icon, Col
     blend_coverage(canvas, rect, coverage, ink);
 }
 
+void draw_tag_icon(const Canvas& canvas, const Rect& rect, TagIcon icon, Colour ink) {
+    if (!drawable(canvas))
+        return;
+    const Point pixels = covered_pixels(canvas, rect);
+    if (pixels.x <= 0 || pixels.y <= 0 || pixels.x > kMostIconPixels || pixels.y > kMostIconPixels)
+        return;
+    blend_coverage(canvas, rect, stroke_coverage(tag_strokes(icon), pixels.x, pixels.y), ink);
+}
+
 void draw_focus_ring(const Canvas& canvas, const Rect& control, bool around) {
     if (!drawable(canvas))
         return;
@@ -1296,10 +1474,56 @@ void draw_button(const Canvas& canvas, const Rect& area, const ButtonLook& look)
         return;
     }
     const ButtonColours colours = button_colours(look);
-    if (colours.face)
-        fill_rect(canvas, area, *colours.face);
-    outline_rect(canvas, area, colours.border);
-    paint_text(canvas, FontRole::small, look.caption, area, Align::centre, colours.caption);
+    if (look.style == ButtonStyle::filled) {
+        // Rounded: the edge is the whole shape and the face the shape one
+        // point in, so a partial pixel is one colour or the other.
+        const int32_t radius = filled_radius(area);
+        if (colours.face) {
+            fill_corner_rect(canvas, area, radius, colours.border);
+            if (area.width > 2 && area.height > 2)
+                fill_corner_rect(
+                    canvas,
+                    {area.x + 1, area.y + 1, area.width - 2, area.height - 2},
+                    std::max(radius - 1, int32_t{0}),
+                    *colours.face
+                );
+        } else {
+            outline_corner_rect(canvas, area, radius, colours.border);
+        }
+    } else {
+        if (colours.face)
+            fill_rect(canvas, area, *colours.face);
+        outline_rect(canvas, area, colours.border);
+    }
+    if (look.oa_mark) {
+        const ButtonMarkParts parts = button_mark_parts(area);
+        if (parts.mark.width > 0)
+            draw_state_icon(canvas, parts.mark, StateIcon::oa, colours.caption);
+        if (parts.caption.width > 0)
+            paint_text(
+                canvas, look.font, look.caption, parts.caption, Align::left, colours.caption
+            );
+        return;
+    }
+    paint_text(canvas, look.font, look.caption, area, Align::centre, colours.caption);
+}
+
+int32_t filled_radius(const Rect& area) noexcept {
+    return std::max(std::min(area.width, area.height) / 4, int32_t{2});
+}
+
+ButtonMarkParts button_mark_parts(const Rect& area) noexcept {
+    const int32_t pad = std::max(area.height / 5, int32_t{2});
+    const int32_t side = area.height - 2 * pad;
+    if (side <= 0 || area.width < side + 3 * pad)
+        return {};
+    ButtonMarkParts parts;
+    parts.mark = {area.x + pad, area.y + pad, side, side};
+    const int32_t caption_x = parts.mark.x + side + pad;
+    parts.caption = {caption_x, area.y, area.x + area.width - pad - caption_x, area.height};
+    if (parts.caption.width <= 0)
+        parts.caption = {};
+    return parts;
 }
 
 void draw_switch(const Canvas& canvas, const Rect& area, const SwitchLook& look) {

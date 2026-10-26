@@ -6,10 +6,16 @@
 #include "oa/audio/music_decoder.hpp"
 #include "oa/audio/sound_output.hpp"
 
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
+#include <filesystem>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -20,23 +26,38 @@ constexpr int output_rate = static_cast<int>(music_output_rate);
 constexpr int output_channels = static_cast<int>(music_output_channels);
 constexpr int32_t music_aux_device = 0;
 constexpr uint32_t full_aux_volume = 0xffffffffU;
+// Decoded blocks kept ready for the callback, about a third of a second.
+constexpr std::size_t decoded_blocks_ahead = 4;
 
 } // namespace
 
 struct SdlMusicDevice {
+    enum class Phase { idle, need_open, decoding, quit };
+
     MusicDisc disc;
     std::unique_ptr<OutputStream> stream;
-    MusicDecoder decoder;
-    std::vector<float> scratch;
     std::string error;
     int32_t current{};  // disc track being decoded
     int32_t to_track{}; // exclusive end of the range, 0 for the disc end
-    uint64_t frames{};  // decoded frames of the current track
+    uint64_t frames{};  // decoded frames of the current track handed to the stream
     uint32_t aux_volume{full_aux_volume};
     bool active{}; // a range is loaded
     bool paused{};
     bool held{};       // sdl_music_device_hold: the stream stays paused
     bool range_done{}; // the decoder reached the end of the range
+    // The first open of a play reports a failure by stopping. A later track
+    // of the same range reports it by ending the range.
+    bool opening_initial{};
+
+    mutable std::mutex queue_mu;
+    std::condition_variable queue_cv;
+    std::deque<std::vector<float>> ready;
+    std::filesystem::path job_path;
+    uint64_t epoch{};
+    Phase phase{Phase::idle};
+    bool load_failed{};
+    bool load_ended{};
+    std::thread loader;
 };
 
 namespace {
@@ -67,28 +88,135 @@ bool track_in_disc(const SdlMusicDevice& device, int32_t track) {
     return track >= music_disc_first_audio_track && track <= device.disc.track_count;
 }
 
+// Opens and decodes on this thread. The callback only takes blocks that are
+// already in the queue, and never waits for a read.
+void load_music(SdlMusicDevice& device) {
+    MusicDecoder decoder;
+    for (;;) {
+        std::filesystem::path path;
+        uint64_t epoch = 0;
+        SdlMusicDevice::Phase phase = SdlMusicDevice::Phase::idle;
+        {
+            std::unique_lock lock(device.queue_mu);
+            device.queue_cv.wait(lock, [&] {
+                if (device.phase == SdlMusicDevice::Phase::quit)
+                    return true;
+                if (device.phase == SdlMusicDevice::Phase::need_open)
+                    return true;
+                return device.phase == SdlMusicDevice::Phase::decoding &&
+                       device.ready.size() < decoded_blocks_ahead;
+            });
+            if (device.phase == SdlMusicDevice::Phase::quit)
+                return;
+            phase = device.phase;
+            epoch = device.epoch;
+            path = device.job_path;
+        }
+        // The file is opened, read and closed with the lock released, so the
+        // callback never waits for the disk.
+        bool close_file = false;
+        if (phase == SdlMusicDevice::Phase::need_open) {
+            decoder.close();
+            std::string reason;
+            const bool opened = decoder.open(path, reason);
+            {
+                std::lock_guard lock(device.queue_mu);
+                if (device.phase == SdlMusicDevice::Phase::quit)
+                    return;
+                if (device.epoch != epoch) {
+                    close_file = true;
+                } else if (!opened) {
+                    device.error = std::move(reason);
+                    device.load_failed = true;
+                    device.phase = SdlMusicDevice::Phase::idle;
+                } else {
+                    device.phase = SdlMusicDevice::Phase::decoding;
+                }
+            }
+        } else {
+            std::vector<float> block;
+            const bool more = decoder.decode(block);
+            std::lock_guard lock(device.queue_mu);
+            if (device.phase == SdlMusicDevice::Phase::quit)
+                return;
+            if (device.epoch != epoch) {
+                close_file = true;
+            } else {
+                if (!block.empty())
+                    device.ready.push_back(std::move(block));
+                if (!more) {
+                    device.load_ended = true;
+                    device.phase = SdlMusicDevice::Phase::idle;
+                    close_file = true;
+                }
+            }
+        }
+        if (close_file)
+            decoder.close();
+    }
+}
+
+void request_track(SdlMusicDevice& device, int32_t track, bool initial) {
+    device.current = track;
+    device.frames = 0;
+    device.opening_initial = initial;
+    {
+        std::lock_guard lock(device.queue_mu);
+        ++device.epoch;
+        device.ready.clear();
+        device.load_failed = false;
+        device.load_ended = false;
+        device.error.clear();
+        device.job_path = device.disc.tracks[static_cast<std::size_t>(track)];
+        device.phase = SdlMusicDevice::Phase::need_open;
+    }
+    device.queue_cv.notify_all();
+}
+
 void feed_stream(void* user, OutputStream& stream, int32_t additional) {
     auto& device = *static_cast<SdlMusicDevice*>(user);
     while (additional > 0 && device.active && !device.range_done) {
-        device.scratch.clear();
-        const bool more = device.decoder.decode(device.scratch);
-        if (!device.scratch.empty()) {
-            const auto bytes = static_cast<int>(device.scratch.size() * sizeof(float));
-            (void)stream.put(device.scratch.data(), bytes);
-            additional -= bytes;
-            device.frames += device.scratch.size() / output_channels;
+        std::vector<float> block;
+        bool failed = false;
+        bool ended = false;
+        {
+            std::lock_guard lock(device.queue_mu);
+            if (!device.ready.empty()) {
+                block = std::move(device.ready.front());
+                device.ready.pop_front();
+            } else if (device.load_failed) {
+                failed = true;
+                device.load_failed = false;
+            } else if (device.load_ended) {
+                ended = true;
+                device.load_ended = false;
+            } else {
+                break;
+            }
         }
-        if (more)
+        device.queue_cv.notify_all();
+        if (!block.empty()) {
+            const auto bytes = static_cast<int>(block.size() * sizeof(float));
+            (void)stream.put(block.data(), bytes);
+            additional -= bytes;
+            device.frames += block.size() / output_channels;
             continue;
-        device.decoder.close();
+        }
+        if (failed) {
+            if (device.opening_initial)
+                device.active = false;
+            else
+                device.range_done = true;
+            break;
+        }
+        if (!ended)
+            break;
         const int32_t next = device.current + 1;
         const bool in_range =
             device.to_track == 0 ? next <= device.disc.track_count : next < device.to_track;
-        if (in_range && track_in_disc(device, next) &&
-            device.decoder.open(device.disc.tracks[static_cast<std::size_t>(next)], device.error)) {
-            device.current = next;
-            device.frames = 0;
-            continue;
+        if (in_range && track_in_disc(device, next)) {
+            request_track(device, next, false);
+            break;
         }
         device.range_done = true;
     }
@@ -127,10 +255,19 @@ bool device_stop(void* context) {
         return true;
     device.stream->pause();
     StreamLock lock(device);
-    device.decoder.close();
     device.active = false;
     device.paused = false;
     device.range_done = false;
+    device.opening_initial = false;
+    {
+        std::lock_guard queue(device.queue_mu);
+        ++device.epoch;
+        device.ready.clear();
+        device.load_failed = false;
+        device.load_ended = false;
+        device.phase = SdlMusicDevice::Phase::idle;
+    }
+    device.queue_cv.notify_all();
     device.stream->clear();
     return true;
 }
@@ -179,17 +316,12 @@ bool device_play(void* context, int32_t from, int32_t to) {
         return false;
     {
         StreamLock lock(device);
-        device.decoder.close();
         device.stream->clear();
-        device.active =
-            device.decoder.open(device.disc.tracks[static_cast<std::size_t>(from)], device.error);
-        device.current = from;
         device.to_track = to;
-        device.frames = 0;
         device.paused = false;
         device.range_done = false;
-        if (!device.active)
-            return false;
+        device.active = true;
+        request_track(device, from, true);
     }
     if (!device.held)
         device.stream->resume();
@@ -265,8 +397,15 @@ bool device_set_aux_volume(void* context, int32_t aux, uint32_t packed) {
 
 SdlMusicDevice* sdl_music_device_create(MusicDisc disc) {
     auto* device = new (std::nothrow) SdlMusicDevice{};
-    if (device != nullptr)
-        device->disc = std::move(disc);
+    if (device == nullptr)
+        return nullptr;
+    device->disc = std::move(disc);
+    try {
+        device->loader = std::thread(load_music, std::ref(*device));
+    } catch (...) {
+        delete device;
+        return nullptr;
+    }
     return device;
 }
 
@@ -274,6 +413,13 @@ void sdl_music_device_destroy(SdlMusicDevice* device) noexcept {
     if (device == nullptr)
         return;
     device_close(device);
+    {
+        std::lock_guard lock(device->queue_mu);
+        device->phase = SdlMusicDevice::Phase::quit;
+    }
+    device->queue_cv.notify_all();
+    if (device->loader.joinable())
+        device->loader.join();
     delete device;
 }
 
@@ -337,7 +483,12 @@ bool sdl_music_decoder_available() noexcept {
 }
 
 const char* sdl_music_device_error(const SdlMusicDevice* device) noexcept {
-    return device != nullptr ? device->error.c_str() : "";
+    if (device == nullptr)
+        return "";
+    thread_local std::string copy;
+    std::lock_guard lock(device->queue_mu);
+    copy = device->error;
+    return copy.c_str();
 }
 
 double sdl_music_device_position(SdlMusicDevice* device) noexcept {

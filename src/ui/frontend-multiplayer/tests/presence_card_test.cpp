@@ -12,6 +12,8 @@
 // The synthetic font's glyph for byte b is 2 + b % 4 columns wide, so the
 // widths the cutting tests read are sums of those columns.
 
+#include "oa/data/languages.hpp"
+#include "oa/data/languages/interface_text.hpp"
 #include "oa/formats/fnt.hpp"
 #include "oa/netgame/presence.hpp"
 #include "oa/netgame/records.hpp"
@@ -23,6 +25,7 @@
 #include "oa/ui/kit/controls.hpp"
 #include "oa/ui/kit/input.hpp"
 #include "oa/ui/kit/layout.hpp"
+#include "oa/ui/kit/text.hpp"
 #include "oa/ui/kit/theme.hpp"
 
 #include <algorithm>
@@ -612,14 +615,37 @@ void the_look_shows_the_sample() {
     OA_CHECK(look.mark);
     OA_CHECK(look.title == "KIRBY" && look.aside.empty());
     OA_CHECK(look.width == mp::presence_card_compact_width);
-    OA_CHECK(look.rows.size() == card->lines.size());
-    for (std::size_t index = 0; index < look.rows.size() && index < card->lines.size(); ++index) {
-        OA_CHECK(look.rows[index].label == card->lines[index].label);
-        OA_CHECK(look.rows[index].value == card->lines[index].value);
-        OA_CHECK(
-            look.rows[index].value_colour == (index == 3 ? kit::colour::lock : kit::colour::text)
-        );
+    std::size_t row = 0;
+    for (const mp::PresenceCardLine& line : card->lines) {
+        OA_CHECK(row < look.rows.size());
+        if (row >= look.rows.size())
+            break;
+        OA_CHECK(look.rows[row].label == line.label);
+        if (look.rows[row].value == line.value) {
+            ++row;
+            continue;
+        }
+        // A difference line wraps. Its rows, joined by spaces, are the line.
+        OA_CHECK(line.label.empty());
+        std::string joined = look.rows[row].value;
+        std::size_t taken = 1;
+        while (joined != line.value && row + taken < look.rows.size() &&
+               taken < mp::presence_card_difference_lines) {
+            OA_CHECK(look.rows[row + taken].label.empty());
+            joined += ' ';
+            joined += look.rows[row + taken].value;
+            ++taken;
+        }
+        OA_CHECK(taken > 1 && joined == line.value);
+        row += taken;
     }
+    OA_CHECK(row == look.rows.size());
+    bool rules_are_amber = false;
+    for (const kit::HoverCardRow& shown : look.rows) {
+        if (shown.label == "Rules")
+            rules_are_amber = shown.value_colour == kit::colour::lock;
+    }
+    OA_CHECK(rules_are_amber);
     OA_CHECK(
         look.block ==
         (std::vector<std::string>{
@@ -630,9 +656,13 @@ void the_look_shows_the_sample() {
     // The size is the kit's.
     const kit::Point size = kit::hover_card_size(fonts(), look);
     OA_CHECK(size.x == look.width);
+    const int32_t shown_lines =
+        static_cast<int32_t>(look.rows.size() + look.block.size()) + (look.mark ? 1 : 0);
     OA_CHECK(
-        size.y == 12 * kit::compact_metrics.small_line + 2 * kit::compact_metrics.hover_card_padding
+        size.y ==
+        shown_lines * kit::compact_metrics.small_line + 2 * kit::compact_metrics.hover_card_padding
     );
+    OA_CHECK(size.y <= 480 - 2 * mp::presence_card_edge_gap);
 
     // Lime for an installed pack.
     mp::PresenceCard lime;
@@ -678,6 +708,66 @@ void a_long_value_is_cut() {
     const std::string& block = look.block[0];
     OA_CHECK(block.ends_with("...") && block.starts_with("economy."));
     OA_CHECK(kit::text_width(fonts(), kit::FontRole::small, block) <= look.width - 2 * padding);
+}
+
+/// The rows a difference line shows on a Compact card in a 640-point window.
+///
+/// @param value the line
+/// @return the card's rows
+std::vector<kit::HoverCardRow> difference_rows(const std::string& value) {
+    mp::PresenceCard card;
+    card.title = "VISITOR";
+    card.lines.push_back({"", value, mp::CardTone::amber});
+    const kit::HoverCardLook look =
+        mp::presence_card_look(card, kit::SizeClass::compact, 640, fonts());
+    OA_CHECK(kit::hover_card_size(fonts(), look).y <= 480 - 2 * mp::presence_card_edge_gap);
+    return look.rows;
+}
+
+// A difference line wider than the card wraps, as the kit wraps it, onto at
+// most presence_card_difference_lines lines. Those lines are whole. Only the
+// last is cut with "..." when the rest does not fit. The card stays inside a
+// 640x480 window.
+void a_difference_line_wraps() {
+    const int32_t room =
+        mp::presence_card_compact_width - 2 * kit::compact_metrics.hover_card_padding;
+    const auto measure = [](std::string_view text) {
+        return kit::text_width(fonts(), kit::FontRole::small, text);
+    };
+    const auto whole = [&](const std::string& value, std::size_t lines) {
+        const std::vector<std::string> wrapped = kit::wrap(value, room, measure, {});
+        OA_CHECK(wrapped.size() == lines);
+        const std::vector<kit::HoverCardRow> rows = difference_rows(value);
+        OA_CHECK(rows.size() == wrapped.size());
+        for (std::size_t index = 0; index < rows.size() && index < wrapped.size(); ++index) {
+            OA_CHECK(rows[index].label.empty());
+            OA_CHECK(rows[index].value == wrapped[index]);
+            OA_CHECK(!rows[index].value.ends_with("..."));
+            OA_CHECK(measure(rows[index].value) <= room);
+            OA_CHECK(rows[index].value_colour == kit::colour::lock);
+        }
+    };
+    whole("Different from the host: no Ridge.", 1);
+    whole(
+        "The game cannot start until Visitor gets it, or the host turns it off. "
+        "The visitor still has to fetch it.",
+        2
+    );
+    whole(
+        "The game cannot start until Visitor gets it, or the host turns it off. "
+        "The visitor still has to fetch it from a registry that offers the host's release, "
+        "or the host turns it off before START.",
+        3
+    );
+
+    const std::vector<kit::HoverCardRow> cut = difference_rows(
+        std::string(80, 'w') + " " + std::string(80, 'm') + " " + std::string(80, 'n')
+    );
+    OA_CHECK(cut.size() == mp::presence_card_difference_lines);
+    for (std::size_t index = 0; index < cut.size(); ++index) {
+        OA_CHECK(cut[index].value.ends_with("...") == (index + 1 == cut.size()));
+        OA_CHECK(measure(cut[index].value) <= room);
+    }
 }
 
 /// One window the card is placed in.
@@ -893,7 +983,6 @@ void the_open_tip_lists_its_lines() {
     const std::vector<kit::AutomationEntry> entries = kit::automation_parts(list, {});
     const std::size_t lines = look.rows.size() + look.block.size();
     OA_CHECK(entries.size() == lines);
-    OA_CHECK(entries.size() == card->lines.size());
     for (std::size_t index = 0; index < entries.size() && index < look.rows.size(); ++index) {
         const kit::AutomationEntry& entry = entries[index];
         OA_CHECK(entry.name == "battleroom.tip.line." + std::to_string(index));
@@ -906,15 +995,12 @@ void the_open_tip_lists_its_lines() {
                                 static_cast<int32_t>(index) * kit::compact_metrics.small_line
         );
     }
-    bool names_the_gap = false;
-    bool names_the_hold = false;
-    for (const kit::AutomationEntry& entry : entries) {
-        if (entry.text == "Different from the host: no Battle Tactics.")
-            names_the_gap = true;
-        if (entry.text.find("cannot start until") != std::string::npos)
-            names_the_hold = true;
-    }
-    OA_CHECK(names_the_gap && names_the_hold);
+    std::string shown;
+    for (const kit::AutomationEntry& entry : entries)
+        shown += entry.text;
+    OA_CHECK(shown.find("Different from the host: no") != std::string::npos);
+    OA_CHECK(shown.find("Battle Tactics.") != std::string::npos);
+    OA_CHECK(shown.find("cannot start until") != std::string::npos);
 
     SampleRoom sample;
     const auto sampled = mp::presence_card(*sample.room.lobby, sample.kirby, {});
@@ -952,6 +1038,163 @@ void taps_toggle_the_card() {
     OA_CHECK(trigger.open_slot() == mp::presence_card_no_slot);
 }
 
+// Mutator rows follow Rules. The host's card marks every one present. A
+// guest's card names what that player has, and the amber difference lines
+// follow the content lines. An empty set adds no rows.
+void the_mutator_rows() {
+    SampleRoom sample;
+    const auto plain = mp::presence_card(*sample.room.lobby, sample.kirby, {});
+    OA_CHECK(plain && plain->lines.size() == 7);
+    OA_CHECK(
+        plain && line_is(*plain, 3, "Rules", "Differ from the host's (rev 4)", mp::CardTone::amber)
+    );
+    OA_CHECK(plain && line_is(*plain, 4, "Game", "8 hacks change the game"));
+
+    const std::vector<mp::CardMutator> set{
+        {"Ridge", mp::CardMutatorHave::has},
+        {"Keep", mp::CardMutatorHave::missing},
+        {"Watch", mp::CardMutatorHave::other_release},
+    };
+    const auto guest = mp::presence_card(*sample.room.lobby, sample.kirby, {}, set);
+    OA_CHECK(guest.has_value());
+    if (!guest)
+        return;
+    OA_CHECK(line_is(*guest, 3, "Rules", "Differ from the host's (rev 4)", mp::CardTone::amber));
+    OA_CHECK(line_is(*guest, 4, "Mutators", "Ridge ✓"));
+    OA_CHECK(line_is(*guest, 5, "", "Keep: not installed", mp::CardTone::amber));
+    OA_CHECK(line_is(*guest, 6, "", "Watch: another release here", mp::CardTone::amber));
+    OA_CHECK(line_is(*guest, 7, "Game", "8 hacks change the game"));
+    OA_CHECK(line_is(*guest, 8, "View", "4 view-only hacks"));
+    OA_CHECK(line_is(*guest, 9, "Dev mode", "Off"));
+    OA_CHECK(line_is(*guest, 10, "", "Different from the host: no Keep.", mp::CardTone::amber));
+    OA_CHECK(line_is(
+        *guest, 11, "", "Different from the host: another release of Watch.", mp::CardTone::amber
+    ));
+    OA_CHECK(line_is(
+        *guest,
+        12,
+        "",
+        "The game cannot start until Kirby gets it, or the host turns it off.",
+        mp::CardTone::amber
+    ));
+    OA_CHECK(guest->lines.size() == 13);
+
+    const auto host = mp::presence_card(*sample.room.lobby, 0, {}, set);
+    OA_CHECK(host.has_value());
+    if (host) {
+        OA_CHECK(line_is(*host, 3, "Rules", "The host's"));
+        OA_CHECK(line_is(*host, 4, "Mutators", "Ridge ✓"));
+        OA_CHECK(line_is(*host, 5, "", "Keep ✓"));
+        OA_CHECK(line_is(*host, 6, "", "Watch ✓"));
+        OA_CHECK(line_is(*host, 7, "Game", "No hacks change the game"));
+        bool names_a_difference = false;
+        for (const mp::PresenceCardLine& line : host->lines) {
+            if (line.value.find("Different from the host") != std::string::npos ||
+                line.value.find("cannot start") != std::string::npos)
+                names_a_difference = true;
+        }
+        OA_CHECK(!names_a_difference);
+    }
+
+    const auto hash = filled_hash(0x44);
+    Room room(true, "Steve");
+    const int32_t kirby = room.seat(kGuestId, "Kirby", true);
+    auto host_record_bytes = bundled_record(
+        hash,
+        {"campaign", "core-contingency", "battle-tactics", "cavedog-units", "cavedog-tilesets"}
+    );
+    host_record_bytes.engine = ng::PresenceEngine{"0.8.0", "macOS", "arm64"};
+    room.own(encoded(host_record_bytes));
+    room.receive(
+        kGuestId,
+        encoded(bundled_record(
+            hash, {"campaign", "core-contingency", "cavedog-units", "cavedog-tilesets", "music"}
+        ))
+    );
+    const std::vector<mp::CardMutator> one{{"Ridge", mp::CardMutatorHave::missing}};
+    const auto mixed = mp::presence_card(*room.lobby, kirby, {}, one);
+    OA_CHECK(mixed && line_is(*mixed, 6, "Rules", "Same as the host's"));
+    OA_CHECK(mixed && line_is(*mixed, 7, "Mutators", "Ridge: not installed", mp::CardTone::amber));
+    OA_CHECK(
+        mixed &&
+        line_is(*mixed, 8, "", "Different from the host: no Battle Tactics.", mp::CardTone::amber)
+    );
+    OA_CHECK(
+        mixed && line_is(
+                     *mixed,
+                     9,
+                     "",
+                     "The game cannot start until Kirby turns it on, or the host turns it off.",
+                     mp::CardTone::amber
+                 )
+    );
+    OA_CHECK(
+        mixed && line_is(*mixed, 10, "", "Different from the host: no Ridge.", mp::CardTone::amber)
+    );
+    OA_CHECK(
+        mixed && line_is(
+                     *mixed,
+                     11,
+                     "",
+                     "The game cannot start until Kirby gets it, or the host turns it off.",
+                     mp::CardTone::amber
+                 )
+    );
+
+    const std::vector<mp::CardMutator> pending{
+        {"Ridge", mp::CardMutatorHave::unknown},
+        {"Keep", mp::CardMutatorHave::missing},
+    };
+    const auto waiting = mp::presence_card(*sample.room.lobby, sample.kirby, {}, pending);
+    OA_CHECK(waiting.has_value());
+    if (waiting) {
+        bool names_ridge_mutator = false;
+        bool says_keep_missing = false;
+        for (const mp::PresenceCardLine& line : waiting->lines) {
+            // The mod line already says "Ridge 4.8". This asks only whether
+            // the unknown mutator is drawn as installed, missing or lacking.
+            if (line.value.find("Ridge:") != std::string::npos ||
+                line.value.find("Ridge ✓") != std::string::npos ||
+                line.value.find("no Ridge") != std::string::npos)
+                names_ridge_mutator = true;
+            if (line.value == "Keep: not installed")
+                says_keep_missing = true;
+        }
+        OA_CHECK(!names_ridge_mutator);
+        OA_CHECK(says_keep_missing);
+    }
+    const std::vector<mp::CardMutator> unknown_only{{"Ridge", mp::CardMutatorHave::unknown}};
+    const auto quiet = mp::presence_card(*sample.room.lobby, sample.kirby, {}, unknown_only);
+    OA_CHECK(plain && quiet && quiet->lines.size() == plain->lines.size());
+    if (quiet) {
+        for (const mp::PresenceCardLine& line : quiet->lines)
+            OA_CHECK(line.value.find("not installed") == std::string::npos);
+    }
+
+    translations = {{"Mutators", "LOBBY"}, {"Game", "SPIEL"}};
+    sample.room.lobby->services.translate = translate;
+    const auto lobby_words = mp::presence_card(*sample.room.lobby, sample.kirby, {}, set);
+    sample.room.lobby->services.translate = nullptr;
+    translations.clear();
+    OA_CHECK(lobby_words && line_is(*lobby_words, 4, "Mutators", "Ridge ✓"));
+    OA_CHECK(lobby_words && line_is(*lobby_words, 7, "SPIEL", "8 hacks change the game"));
+
+    oa::data::languages::InterfaceText catalogue;
+    OA_CHECK(catalogue.add(
+        "[Mutators]\n{\nde=Mutatoren;\n}\n"
+        "[{item}: not installed]\n{\nde={item}: nicht installiert;\n}\n"
+    ));
+    const oa::data::languages::Language* german = oa::data::languages::find_by_tag("de");
+    OA_CHECK(german != nullptr);
+    if (german != nullptr) {
+        oa::data::languages::set_interface_language(&catalogue, *german);
+        const auto said = mp::presence_card(*sample.room.lobby, sample.kirby, {}, set);
+        oa::data::languages::set_interface_language(nullptr, oa::data::languages::english());
+        OA_CHECK(said && line_is(*said, 4, "Mutatoren", "Ridge ✓"));
+        OA_CHECK(said && line_is(*said, 5, "", "Keep: nicht installiert", mp::CardTone::amber));
+    }
+}
+
 } // namespace
 
 int main() {
@@ -964,9 +1207,11 @@ int main() {
     the_hosts_card_names_its_map_pack();
     a_31c_player_has_no_card();
     the_words_go_through_the_translation();
+    the_mutator_rows();
     the_look_shows_the_sample();
     the_width_follows_the_class();
     a_long_value_is_cut();
+    a_difference_line_wraps();
     the_card_lies_by_its_badge();
     hover_opens_after_the_kits_delay();
     moving_between_badges_waits_again();

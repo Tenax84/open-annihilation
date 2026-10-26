@@ -945,6 +945,16 @@ struct Air {
         runtime::MatchTickAccess host(*match);
         return host.dispatch_mission(match->state(), s.record, order, events);
     }
+
+    // Rebuilds a player's repair pad list as its knowledge refresh does
+    // every 30 ticks; the game tick is put back afterwards.
+    void file_pads(uint8_t player) {
+        auto& game = match->state().game;
+        const auto tick = game.tick;
+        game.tick = match->sightings(player).refreshed_tick + 30;
+        match->refresh_player_knowledge(player);
+        game.tick = tick;
+    }
 };
 
 // air.no-repair-retreat-flag: below three quarters of its health an aircraft
@@ -963,6 +973,7 @@ void flagged_aircraft_never_retreat() {
             Air f(rules, flagged);
             auto& pad = f.spawn(0, Air::pad, 150, 150);
             pad.record.state_flags |= 1;
+            f.file_pads(0);
 
             // A bombing run, past its pass.
             auto& bomber = f.spawn(0, Air::fighter, 100, 100);

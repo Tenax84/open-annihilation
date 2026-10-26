@@ -133,6 +133,10 @@ struct Runtime::EndgameState {
     // The last frame keeps the display at its own size until the darkening
     // ends, when the display goes back to the frontend's 640x480.
     bool battlefield_sized = false;
+    // The finished campaign mission's canonical loadout, for a save made on
+    // the end screen after the layer is released. Empty when that mission
+    // played none, and when the kept match is not a campaign mission.
+    std::string played_loadout{};
 };
 
 void Runtime::destroy_endgame_state(EndgameState* state) noexcept {
@@ -143,6 +147,12 @@ Runtime::EndgameState& Runtime::endgame_state() {
     if (!endgame_)
         endgame_.reset(new EndgameState());
     return *endgame_;
+}
+
+std::string Runtime::finished_campaign_loadout_text() const {
+    if (endgame_ == nullptr)
+        return {};
+    return endgame_->played_loadout;
 }
 
 uint32_t Runtime::endgame_now() const {
@@ -280,6 +290,9 @@ void Runtime::keep_finished_match() {
         world.game.mission_results
     );
     campaign::build_score_summary(world, state.game_options);
+    // The end screen's save is written after the layer is released, which
+    // forgets the loadout. A campaign mission keeps the text it played.
+    state.played_loadout = campaign_mission_ ? played_loadout_text() : std::string{};
     std::copy_n(
         world.game.mission_results,
         sizeof world.game.mission_results - 1,
@@ -505,6 +518,7 @@ void Runtime::release_endgame() {
     endgame_->ending.reset();
     endgame_->battlefield = {};
     endgame_->battlefield_sized = false;
+    endgame_->played_loadout.clear();
 }
 
 void Runtime::resume_endgame_after_disc() {

@@ -190,7 +190,7 @@ int main() {
     }
     unit.type.maximum_turn = 1024;
     unit.type.maximum_speed = 65536;
-    steer_ground(unit, motion, nav, 4096, 4096, 0);
+    steer_ground(unit, motion, nav, 4096, 4096, 0, FastUnitSteering::as_3_1c);
     CHECK(motion.speed >= 0 && motion.turn == -1024);
     unit.cell = {5, 0};
     unit.position = {88 * 65536, 0, 8 * 65536};
@@ -239,7 +239,7 @@ int main() {
     CHECK(aircraft.movement.flags == 1 && aircraft.geometry.type.flags == 0x800);
     Navigation empty;
     motion.speed = 4096;
-    steer_ground(unit, motion, empty, 4096, 4096, 0);
+    steer_ground(unit, motion, empty, 4096, 4096, 0, FastUnitSteering::as_3_1c);
     CHECK(motion.speed == 0 && motion.turn == 0);
     Navigation searched;
     searched.flags = search_pending_flag;
@@ -324,7 +324,9 @@ int main() {
     mirrored_unit.type.maximum_turn = 1024;
     mirrored_unit.type.maximum_speed = 65536;
     mirrored_unit.position = {8 * 65536, 0, 8 * 65536};
-    steer_ground(mirrored_unit, mirrored_motion, mirrored_route, 4096, 4096, 0);
+    steer_ground(
+        mirrored_unit, mirrored_motion, mirrored_route, 4096, 4096, 0, FastUnitSteering::as_3_1c
+    );
     CHECK(mirrored_motion.turn == -1024);
     oa::sim::simulation_state::Order replaced;
     Goal first_goal;
@@ -360,4 +362,122 @@ int main() {
     type.flags = 0;
     GroundRuntime mirrored(slot, definition);
     CHECK(mirrored.mirrored_driver && mirrored.mirrored_navigation.count == 0);
+
+    // In a match that applied mutators, a unit faster than any stock unit is
+    // held to its route: it does not step past the route's end, comes on no
+    // faster than its braking can stop it, and slows while it turns. A unit
+    // no faster steers as before, and in any other match every unit steers
+    // as 3.1c steers it.
+    {
+        constexpr Fixed pixel = 65536;
+        constexpr Fixed racing_acceleration = 10404577; // 158.76 pixels a tick, a tick
+        constexpr Fixed racing_braking = 21965455;      // 335.16
+        constexpr uint16_t east = 0xc000;
+        constexpr auto held = FastUnitSteering::held_to_route;
+        constexpr auto as_3_1c = FastUnitSteering::as_3_1c;
+        Navigation road;
+        road.count = 2;
+        road.flags = route_present_flag;
+        road.points[0] = {6274, 5704};
+        road.points[1] = {6296, 5704};
+        oa::sim::unit_movement::Unit racer;
+        racer.type.maximum_turn = 28800;
+        racer.type.maximum_speed = 42 * pixel;
+        racer.position = {6274 * pixel, 0, 5704 * pixel};
+        racer.heading = east;
+        oa::sim::unit_movement::Unit unheld = racer;
+        oa::sim::unit_movement::Movement racing;
+        steer_ground(racer, racing, road, racing_acceleration, racing_braking, 0, held);
+        // 22 pixels short of the end, at 42 a tick, it steps onto the end.
+        CHECK(racing.speed == 22 * pixel);
+        CHECK(std::abs(racer.position[0] + racing.velocity[0] - 6296 * pixel) < pixel);
+        CHECK(std::abs(racer.position[2] + racing.velocity[2] - 5704 * pixel) < pixel);
+        // Steered as 3.1c steers it, it steps the whole 42, 20 past the end.
+        oa::sim::unit_movement::Movement unheld_racing;
+        steer_ground(unheld, unheld_racing, road, racing_acceleration, racing_braking, 0, as_3_1c);
+        CHECK(unheld_racing.speed == 42 * pixel);
+        CHECK(unheld.position[0] + unheld_racing.velocity[0] - 6296 * pixel > 19 * pixel);
+
+        // At the fastest stock step, 3 pixels short, it still steps 6.
+        oa::sim::unit_movement::Unit stock = racer;
+        stock.type.maximum_speed = 6 * pixel;
+        stock.position = {6293 * pixel, 0, 5704 * pixel};
+        oa::sim::unit_movement::Movement stock_motion;
+        steer_ground(stock, stock_motion, road, racing_acceleration, racing_braking, 0, held);
+        CHECK(stock_motion.speed == 6 * pixel);
+
+        // Braking 0.19 a tick, 300 pixels from the end, it starts at no more
+        // than the speed that braking stops in 300 pixels, about 10.7; as
+        // 3.1c steers it, at the whole 42.
+        road.points[0] = {5996, 5704};
+        oa::sim::unit_movement::Unit coaster = racer;
+        coaster.position = {5996 * pixel, 0, 5704 * pixel};
+        oa::sim::unit_movement::Unit unheld_coaster = coaster;
+        oa::sim::unit_movement::Movement coasting;
+        steer_ground(coaster, coasting, road, racing_acceleration, 12452, 0, held);
+        CHECK(coasting.speed > 10 * pixel && coasting.speed < 11 * pixel);
+        oa::sim::unit_movement::Movement unheld_coasting;
+        steer_ground(unheld_coaster, unheld_coasting, road, racing_acceleration, 12452, 0, as_3_1c);
+        CHECK(unheld_coasting.speed == 42 * pixel);
+
+        // Turning 960 a tick, facing north with the end 40 pixels east, it
+        // creeps while it turns, a little over a pixel a tick; as 3.1c steers
+        // it, it sets off at the whole 42.
+        road.points[0] = {6256, 5704};
+        oa::sim::unit_movement::Unit turner = racer;
+        turner.type.maximum_turn = 960;
+        turner.position = {6256 * pixel, 0, 5704 * pixel};
+        turner.heading = 0;
+        oa::sim::unit_movement::Unit unheld_turner = turner;
+        oa::sim::unit_movement::Movement turning;
+        steer_ground(turner, turning, road, racing_acceleration, racing_braking, 0, held);
+        CHECK(turning.turn == -960);
+        CHECK(turning.speed > pixel && turning.speed < 2 * pixel);
+        oa::sim::unit_movement::Movement unheld_turning;
+        steer_ground(
+            unheld_turner, unheld_turning, road, racing_acceleration, racing_braking, 0, as_3_1c
+        );
+        CHECK(unheld_turning.turn == -960 && unheld_turning.speed == 42 * pixel);
+    }
+
+    // An empty route raises the failure only when a goal is set and the unit
+    // is outside it. A route, a unit already inside its goal, and a navigator
+    // with no goal raise nothing.
+    {
+        oa::sim::simulation_state::Order failed_order;
+        Goal goal;
+        goal.order = &failed_order;
+        goal.shape = GoalShape::circle;
+        goal.cell = {10, 10};
+        Navigation failed_nav;
+        failed_nav.goal = &goal;
+        failed_nav.flags = search_pending_flag;
+        oa::sim::unit_movement::Unit geometry;
+        geometry.cell = {0, 0};
+        oa::sim::unit_movement::Movement failed_motion;
+        std::array<uint8_t, 3> failed_weapons{};
+        UnitView failed_view{state, geometry, failed_motion, failed_nav, false, failed_weapons};
+        CHECK(accept_path(failed_view, {}) == true);
+        CHECK((failed_order.raised_events & path_failed_event) != 0);
+        CHECK((failed_nav.flags & route_present_flag) == 0);
+        CHECK((failed_nav.flags & search_pending_flag) == 0);
+
+        failed_order.raised_events = 0;
+        geometry.cell = {10, 10};
+        failed_nav.flags = search_pending_flag;
+        CHECK(accept_path(failed_view, {}) == false);
+        CHECK(failed_order.raised_events == 0);
+
+        failed_nav.flags = search_pending_flag;
+        const RoutePoint route[] = {{1, 2}, {3, 4}};
+        CHECK(accept_path(failed_view, route) == false);
+        CHECK(failed_order.raised_events == 0);
+        CHECK(failed_nav.count == 2 && (failed_nav.flags & route_present_flag) != 0);
+
+        failed_nav.goal = nullptr;
+        failed_nav.flags = search_pending_flag;
+        geometry.cell = {0, 0};
+        CHECK(accept_path(failed_view, {}) == false);
+        CHECK(failed_order.raised_events == 0);
+    }
 }

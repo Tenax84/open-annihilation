@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Alt+Enter: switching the game's window between full screen and a window,
-// the pointer kept on the game's screen in full screen, the window brought
-// back onto its display when it leaves full screen, its title bar and
-// borders shown or hidden, and the line --trace-input writes of it.
+// the pointer kept on the game's screen in full screen, also while a screen
+// drops the window's events, and the edge a pointer past a full-screen
+// window's edge touches; the window brought back onto its display when it
+// leaves full screen, its title bar and borders shown or hidden, and the
+// line --trace-input writes of it.
 #include "oa/app/full_screen.hpp"
 
 #include <SDL3/SDL.h>
@@ -325,6 +327,25 @@ void release_pointer(SDL_Window* window) {
     std::ignore = SDL_SetWindowMouseRect(window, nullptr);
 }
 
+bool drop_window_events(SDL_Window* window) {
+    bool closed = false;
+    bool bounds_changed = false;
+    SDL_Event polled{};
+    while (SDL_PollEvent(&polled)) {
+        if (polled.type == SDL_EVENT_QUIT || polled.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+            std::ignore = SDL_PushEvent(&polled);
+            closed = true;
+            break;
+        }
+        bounds_changed = bounds_changed || changes_pointer_bounds(polled);
+    }
+    // SDL has updated the window's flags by the time its event is read, so
+    // the flags settle the hold whichever of the events came last.
+    if (bounds_changed)
+        keep_pointer_on_screen(window);
+    return closed;
+}
+
 namespace {
 
 /// Tells whether a rectangle holds a point of the desktop: the points of its
@@ -358,6 +379,40 @@ pointer_place(float x, float y, const SDL_Rect& window, const SDL_Rect& display)
     if (holds_point(window, x, y))
         return PointerPlace::window;
     return holds_point(display, x, y) ? PointerPlace::display : PointerPlace::elsewhere;
+}
+
+std::optional<SDL_FPoint> full_screen_pointer(
+    SDL_WindowFlags window_flags, const SDL_Rect& window, const SDL_Rect& display, float x, float y
+) noexcept {
+    if (!keeps_pointer_on_screen(window_flags) || window.w <= 0 || window.h <= 0)
+        return std::nullopt;
+    const PointerPlace place = pointer_place(x, y, window, display);
+    if (place == PointerPlace::elsewhere)
+        return std::nullopt;
+    const double column = static_cast<double>(x) - static_cast<double>(window.x);
+    const double row = static_cast<double>(y) - static_cast<double>(window.y);
+    if (place == PointerPlace::window)
+        return SDL_FPoint{static_cast<float>(column), static_cast<float>(row)};
+    return SDL_FPoint{
+        static_cast<float>(std::clamp(column, 0.0, static_cast<double>(window.w - 1))),
+        static_cast<float>(std::clamp(row, 0.0, static_cast<double>(window.h - 1)))
+    };
+}
+
+std::optional<SDL_FPoint> read_full_screen_pointer(SDL_Window* window) {
+    if (window == nullptr)
+        return std::nullopt;
+    const SDL_DisplayID display = SDL_GetDisplayForWindow(window);
+    SDL_Rect bounds{};
+    SDL_Rect contents{};
+    if (display == 0 || !SDL_GetDisplayBounds(display, &bounds) ||
+        !SDL_GetWindowPosition(window, &contents.x, &contents.y) ||
+        !SDL_GetWindowSize(window, &contents.w, &contents.h))
+        return std::nullopt;
+    float x = 0.0F;
+    float y = 0.0F;
+    std::ignore = SDL_GetGlobalMouseState(&x, &y);
+    return full_screen_pointer(SDL_GetWindowFlags(window), contents, bounds, x, y);
 }
 
 std::string window_trace_line(const WindowTrace& trace) {

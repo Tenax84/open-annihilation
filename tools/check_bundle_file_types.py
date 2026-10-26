@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Check that the macOS and iOS bundles declare .oamod, .oalang, .oamap, .oareg and .oalaunch as the game's own types.
+"""Check that the macOS and iOS bundles declare .oamod, .oalang, .oamap, .oamut, .oabrain, .oareg and .oalaunch as the game's own types.
 
 Reads the two Info.plist templates (src/app/Info.plist.in and platforms/ios/Info.plist.in, or
 the two named) as property lists and fails unless each, for every type in TYPES:
@@ -24,6 +24,15 @@ the two named) as property lists and fails unless each, for every type in TYPES:
              type of public.plain-text alone, LSHandlerRank None), so that `open -f -a`
              hands the game a launch piped in.
 
+It also fails unless the files kept by hand beside the bundles name every type in TYPES:
+
+  installer  the Windows uninstaller (packaging/windows/open-annihilation.nsi) withdraws each
+             type once, with the extension, program identifier and MIME type the run-time
+             registration names, and withdraws no other;
+  opened     iOS's platform code (platforms/ios/src/ios_platform.mm) brings in each type the
+             game installs or adds when the system opens one in the game (kOpenedExtensions):
+             every type but the launch file, once each.
+
 Exit status is 1 on any finding and 2 when a file cannot be read.
 """
 import argparse
@@ -41,6 +50,10 @@ TYPES = (
      "application/x-oalang", "language", ["public.data"]),
     ("net.coreprime.open-annihilation.oamap", "Open Annihilation map pack", "oamap",
      "application/x-oamap", "map", ["public.data"]),
+    ("net.coreprime.open-annihilation.oamut", "Open Annihilation mutator", "oamut",
+     "application/x-oamut", "mutator", ["public.data"]),
+    ("net.coreprime.open-annihilation.oabrain", "Open Annihilation brain", "oabrain",
+     "application/x-oabrain", "brain", ["public.data"]),
     ("net.coreprime.open-annihilation.oareg", "Open Annihilation registry", "oareg",
      "application/x-oareg", "registry", ["public.data"]),
     ("net.coreprime.open-annihilation.oalaunch", "Open Annihilation launch file", "oalaunch",
@@ -52,6 +65,17 @@ ARCHIVE_TYPE_ID = "net.coreprime.open-annihilation.game-archive"
 ICON_PLACEHOLDER = "${MACOSX_BUNDLE_ICON_FILE}"
 # The run-time registration's constants, which the bundles must agree with.
 FILE_TYPES_HEADER = Path("src/platform/file-types/include/oa/platform/file_types.hpp")
+# The Windows installer, whose uninstaller withdraws each type for the account that runs it.
+INSTALLER = Path("packaging/windows/open-annihilation.nsi")
+NSIS_DEFINE_RE = re.compile(r'^!define (\w+) "([^"]*)"', re.MULTILINE)
+NSIS_REFERENCE_RE = re.compile(r"\$\{(\w+)\}")
+WITHDRAW_RE = re.compile(r'^\s*\$\{OA_WithdrawUserType\} "([^"]*)" "([^"]*)" "([^"]*)"', re.MULTILINE)
+# iOS's platform code, which brings in each file opened in the game that it knows by extension.
+IOS_PLATFORM = Path("platforms/ios/src/ios_platform.mm")
+OPENED_RE = re.compile(r"kOpenedExtensions\[\] = \{([^}]*)\}")
+OPENED_ITEM_RE = re.compile(r'@"([^"]*)"')
+# The prefix of the one type the game does not install or add.
+LAUNCH_PREFIX = "launch"
 CONSTANT_RE = re.compile(r'inline constexpr std::string_view (\w+) = "([^"]*)";')
 ICON_FILE_RE = re.compile(r"MACOSX_BUNDLE_ICON_FILE\s+(\S+)")
 # Bound on each file read.
@@ -171,7 +195,7 @@ def check_bundle_icon(root, findings):
 def check_constants(root, findings):
     """Checks that the run-time registration names each type as the bundles do."""
     header = root / FILE_TYPES_HEADER
-    constants = dict(CONSTANT_RE.findall(read_bytes(header).decode("utf-8")))
+    constants = read_constants(root)
     if constants.get("desktop_id") != BUNDLE_ID:
         findings.append(f"{header}: exports: desktop_id is {constants.get('desktop_id')!r}, not {BUNDLE_ID!r}")
     for _type_id, type_name, extension, mime_type, prefix, _conforms_to in TYPES:
@@ -183,6 +207,50 @@ def check_constants(root, findings):
         for key, wanted in expected.items():
             if constants.get(key) != wanted:
                 findings.append(f"{header}: exports: {key} is {constants.get(key)!r}, not {wanted!r}")
+
+
+def read_constants(root):
+    """Returns the run-time registration's string constants, by name."""
+    return dict(CONSTANT_RE.findall(read_bytes(root / FILE_TYPES_HEADER).decode("utf-8")))
+
+
+def check_installer(root, findings):
+    """Checks that the Windows uninstaller withdraws each type as the registration names it."""
+    constants = read_constants(root)
+    script = root / INSTALLER
+    text = read_bytes(script).decode("utf-8")
+    defines = dict(NSIS_DEFINE_RE.findall(text))
+
+    def expanded(value):
+        return NSIS_REFERENCE_RE.sub(lambda match: defines.get(match.group(1), match.group(0)), value)
+
+    withdrawn = [tuple(expanded(value) for value in found) for found in WITHDRAW_RE.findall(text)]
+    wanted = [("." + str(constants.get(f"{prefix}_extension")), constants.get(f"{prefix}_program_id"),
+               constants.get(f"{prefix}_mime_type"))
+              for _type_id, _type_name, _extension, _mime_type, prefix, _conforms_to in TYPES]
+    for each in wanted:
+        count = withdrawn.count(each)
+        if count != 1:
+            findings.append(f"{script}: installer: the uninstaller withdraws {each[0]} as {each[1]}, "
+                            f"{each[2]} {count} times, not once")
+    for each in withdrawn:
+        if each not in wanted:
+            findings.append(f"{script}: installer: the uninstaller withdraws {each[0]} as {each[1]}, "
+                            f"{each[2]}, which is none of the types")
+
+
+def check_ios_opened(root, findings):
+    """Checks that iOS's platform code brings in each type the game installs or adds."""
+    source = root / IOS_PLATFORM
+    match = OPENED_RE.search(read_bytes(source).decode("utf-8"))
+    if match is None:
+        findings.append(f"{source}: opened: kOpenedExtensions is not there")
+        return
+    listed = OPENED_ITEM_RE.findall(match.group(1))
+    wanted = [extension for _type_id, _type_name, extension, _mime_type, prefix, _conforms_to in TYPES
+              if prefix != LAUNCH_PREFIX]
+    if sorted(listed) != sorted(wanted):
+        findings.append(f"{source}: opened: kOpenedExtensions is {listed}, not {wanted} in any order")
 
 
 def check(root, macos_path, ios_path):
@@ -208,6 +276,8 @@ def check(root, macos_path, ios_path):
         findings.append(f"{macos_path}: exports: the types are not named under the bundle's identifier")
     check_bundle_icon(root, findings)
     check_constants(root, findings)
+    check_installer(root, findings)
+    check_ios_opened(root, findings)
     return findings
 
 
@@ -229,8 +299,9 @@ def main(argv=None):
     if findings:
         print(f"check_bundle_file_types: {len(findings)} finding(s)", file=sys.stderr)
         return 1
-    print("check_bundle_file_types: both bundles declare and open .oamod, .oalang, .oamap, .oareg "
-          "and .oalaunch, and macOS takes plain text it is handed")
+    print("check_bundle_file_types: both bundles declare and open .oamod, .oalang, .oamap, "
+          ".oamut, .oabrain, .oareg and .oalaunch, macOS takes plain text it is handed, the Windows "
+          "uninstaller withdraws all seven and iOS brings in the six the game installs or adds")
     return 0
 
 

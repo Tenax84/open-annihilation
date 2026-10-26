@@ -3,6 +3,8 @@
 
 // Command-line parsing for oa-game.
 #include "oa/app/app.hpp"
+#include "oa/app/brain_match.hpp"
+#include "oa/data/mutators/choice.hpp"
 #include "oa/app/extension.hpp"
 #include "oa/app/game_directory.hpp"
 #include "net_options.hpp"
@@ -293,6 +295,14 @@ void check_game_files_options(Options& options) {
         {options.check_mod_switch, "--check-mod-switch"},
         {options.check_map_packs, "--check-map-packs"},
         {options.check_map_browser, "--check-map-browser"},
+        {options.check_mutator_picker, "--check-mutator-picker"},
+        {options.check_brain_picker, "--check-brain-picker"},
+        {options.check_brain_seat_buttons, "--check-brain-seat-buttons"},
+        {options.check_brain_campaign, "--check-brain-campaign"},
+        {options.check_mutator_prompts, "--check-mutator-prompts"},
+        {options.check_mutator_button, "--check-mutator-button"},
+        {options.check_mutator_room, "--check-mutator-room"},
+        {options.check_brain_room, "--check-brain-room"},
         {options.check_map_pack_lists, "--check-map-pack-lists"},
         {options.check_mod_map_settings, "--check-mod-map-settings"},
         {options.check_mod_warning, "--check-mod-warning"},
@@ -304,8 +314,11 @@ void check_game_files_options(Options& options) {
         {options.check_library_install, "--check-library-install"},
         {options.check_library_map_previews, "--check-library-map-previews"},
         {options.check_library_content, "--check-library-content"},
+        {options.check_library_update_question, "--check-library-update-question"},
         {!options.open_files.empty(), "--open"},
         {options.check_renderer_ladder, "--check-renderer-ladder"},
+        {options.check_renderer_proof, "--check-renderer-proof"},
+        {options.check_live_renderer, "--check-live-renderer"},
         {options.check_briefing_narration, "--check-briefing-narration"},
         {options.check_match_layers, "--check-match-layers"},
         {options.check_render_tiers, "--check-render-tiers"},
@@ -313,6 +326,12 @@ void check_game_files_options(Options& options) {
         {options.check_side_orders, "--check-side-orders"},
         {options.check_factory_orders, "--check-factory-orders"},
         {options.check_unit_speech, "--check-unit-speech"},
+        {options.check_mutator_layer, "--check-mutator-layer"},
+        {options.check_mutator_verdicts, "--check-mutator-verdicts"},
+        {options.check_mutator_dry_run, "--check-mutator-dry-run"},
+        {options.check_replay_loadout, "--check-replay-loadout"},
+        {options.check_side_data_per_match, "--check-side-data-per-match"},
+        {options.check_gadget_art_per_match, "--check-gadget-art-per-match"},
         {options.check_download_builds, "--check-download-builds"},
         {options.check_stockpile_builds, "--check-stockpile-builds"},
         {options.check_unit_page_memory, "--check-unit-page-memory"},
@@ -321,6 +340,7 @@ void check_game_files_options(Options& options) {
         {!options.check_unit_pages.empty(), "--check-unit-pages"},
         {options.check_kill_board, "--check-kill-board"},
         {options.check_paused_save, "--check-paused-save"},
+        {options.check_saved_brains, "--check-saved-brains"},
         {options.check_simulation_hash, "--check-simulation-hash"},
         {options.check_zoom_memory, "--check-zoom-memory"},
         {!options.check_unit_language.empty(), "--check-unit-language"},
@@ -331,11 +351,13 @@ void check_game_files_options(Options& options) {
         {options.check_setup_window, "--check-setup-window"},
         {options.check_window_place, "--check-window-place"},
         {options.check_progress, "--check-progress"},
+        {options.check_icloud_wait, "--check-icloud-wait"},
         {options.check_text_fit, "--check-text-fit"},
         {options.check_folder_chooser, "--check-folder-chooser"},
         {options.check_patrol_reclaim, "--check-patrol-reclaim"},
         {options.check_reclaim_cursor, "--check-reclaim-cursor"},
         {options.check_wreck_pick, "--check-wreck-pick"},
+        {options.check_click_snap, "--check-click-snap"},
         {options.check_build_preview, "--check-build-preview"},
         {options.check_pointer_interfaces, "--check-pointer-interfaces"},
         {options.check_megamap_clicks, "--check-megamap-clicks"},
@@ -407,8 +429,10 @@ void check_game_files_options(Options& options) {
         return Showcase::arm_first_mission;
     if (text == "skirmish-battle")
         return Showcase::skirmish_battle;
+    if (text == "base-construction")
+        return Showcase::base_construction;
     throw std::runtime_error(
-        "--showcase knows two showcases: arm-first-mission and skirmish-battle"
+        "--showcase knows arm-first-mission, skirmish-battle and base-construction"
     );
 }
 
@@ -467,6 +491,52 @@ void check_game_files_options(Options& options) {
     }
 }
 
+/// Takes an --effect value, NAME=PERCENT: an effect's name
+/// (engine_settings::EffectSlider) and a whole percent from 0 to 200 in steps
+/// of 10, as the effect's slider sets it.
+///
+/// Throws std::runtime_error for any other value, and for an effect named
+/// twice.
+///
+/// @param text the option's value
+/// @param[in,out] effects the percents taken so far, in effect_sliders' order
+void take_effect(
+    std::string_view text,
+    std::array<std::optional<uint32_t>, oa::ui::engine_settings::effect_sliders.size()>& effects
+) {
+    namespace settings = oa::ui::engine_settings;
+    constexpr uint32_t most_percent = 200;
+    constexpr uint32_t percent_step = 10;
+    const auto refuse = [] {
+        std::string names;
+        for (const auto& slider : settings::effect_sliders)
+            names += (names.empty() ? "" : ", ") + std::string(slider.name);
+        throw std::runtime_error(
+            "--effect expects NAME=PERCENT: NAME one of " + names +
+            ", PERCENT from 0 to 200 in steps of 10"
+        );
+    };
+    const auto equals = text.find('=');
+    if (equals == std::string_view::npos)
+        refuse();
+    const auto name = text.substr(0, equals);
+    const auto digits = text.substr(equals + 1);
+    uint32_t percent = 0;
+    const auto result = std::from_chars(digits.data(), digits.data() + digits.size(), percent);
+    if (digits.empty() || result.ec != std::errc{} || result.ptr != digits.data() + digits.size() ||
+        percent > most_percent || percent % percent_step != 0)
+        refuse();
+    for (std::size_t index = 0; index < settings::effect_sliders.size(); ++index) {
+        if (settings::effect_sliders[index].name != name)
+            continue;
+        if (effects[index])
+            throw std::runtime_error("--effect names " + std::string(name) + " twice");
+        effects[index] = percent;
+        return;
+    }
+    refuse();
+}
+
 /// Checks the director's options against the others, and has a director
 /// run headless: --generate-script and --render-script run on their own,
 /// on the fixed clock and seed, so that a script's analysis and its render
@@ -480,6 +550,11 @@ void check_game_files_options(Options& options) {
 void check_director_options(Options& options) {
     const bool generate = !options.generate_script.empty();
     const bool render = !options.render_script.empty();
+    const bool effects = std::any_of(
+        options.director_effects.begin(),
+        options.director_effects.end(),
+        [](const std::optional<uint32_t>& percent) { return percent.has_value(); }
+    );
     if (!generate && !render) {
         if (!options.director_output.empty())
             throw std::runtime_error("--output needs --generate-script or --render-script");
@@ -487,6 +562,8 @@ void check_director_options(Options& options) {
             throw std::runtime_error("--chunks needs --render-script");
         if (!options.director_stills.empty())
             throw std::runtime_error("--stills needs --render-script");
+        if (effects)
+            throw std::runtime_error("--effect needs --render-script");
         return;
     }
     if (generate && render)
@@ -495,9 +572,19 @@ void check_director_options(Options& options) {
         throw std::runtime_error("--chunks needs --render-script");
     if (generate && !options.director_stills.empty())
         throw std::runtime_error("--stills needs --render-script");
+    if (generate && effects)
+        throw std::runtime_error("--effect needs --render-script");
     if (render && options.window_resolution)
         throw std::runtime_error(
             "--render-script takes the frame size from the script, not from --resolution"
+        );
+    // A render's frames are the processor's, or the graphics card's Full
+    // tier's; Basic presents the processor's frames and draws none itself.
+    if (render &&
+        options.hardware_acceleration == oa::ui::engine_settings::HardwareAcceleration::basic)
+        throw std::runtime_error(
+            "--render-script draws its frames on the processor, or on the graphics card with "
+            "--hardware-acceleration=full; Basic draws no frames of its own"
         );
     const char* run = generate ? "--generate-script" : "--render-script";
     // Options of other runs, and those that would change the match, its
@@ -534,6 +621,12 @@ void check_director_options(Options& options) {
         {options.check_side_orders, "--check-side-orders"},
         {options.check_factory_orders, "--check-factory-orders"},
         {options.check_unit_speech, "--check-unit-speech"},
+        {options.check_mutator_layer, "--check-mutator-layer"},
+        {options.check_mutator_verdicts, "--check-mutator-verdicts"},
+        {options.check_mutator_dry_run, "--check-mutator-dry-run"},
+        {options.check_replay_loadout, "--check-replay-loadout"},
+        {options.check_side_data_per_match, "--check-side-data-per-match"},
+        {options.check_gadget_art_per_match, "--check-gadget-art-per-match"},
         {options.check_download_builds, "--check-download-builds"},
         {options.check_stockpile_builds, "--check-stockpile-builds"},
         {options.check_unit_page_memory, "--check-unit-page-memory"},
@@ -542,6 +635,7 @@ void check_director_options(Options& options) {
         {!options.check_unit_pages.empty(), "--check-unit-pages"},
         {options.check_kill_board, "--check-kill-board"},
         {options.check_paused_save, "--check-paused-save"},
+        {options.check_saved_brains, "--check-saved-brains"},
         {options.check_simulation_hash, "--check-simulation-hash"},
         {options.check_zoom_memory, "--check-zoom-memory"},
         {!options.check_unit_language.empty(), "--check-unit-language"},
@@ -552,11 +646,13 @@ void check_director_options(Options& options) {
         {options.check_setup_window, "--check-setup-window"},
         {options.check_window_place, "--check-window-place"},
         {options.check_progress, "--check-progress"},
+        {options.check_icloud_wait, "--check-icloud-wait"},
         {options.check_text_fit, "--check-text-fit"},
         {options.check_folder_chooser, "--check-folder-chooser"},
         {options.check_patrol_reclaim, "--check-patrol-reclaim"},
         {options.check_reclaim_cursor, "--check-reclaim-cursor"},
         {options.check_wreck_pick, "--check-wreck-pick"},
+        {options.check_click_snap, "--check-click-snap"},
         {options.check_build_preview, "--check-build-preview"},
         {options.check_pointer_interfaces, "--check-pointer-interfaces"},
         {options.check_megamap_clicks, "--check-megamap-clicks"},
@@ -576,6 +672,14 @@ void check_director_options(Options& options) {
         {options.check_mod_switch, "--check-mod-switch"},
         {options.check_map_packs, "--check-map-packs"},
         {options.check_map_browser, "--check-map-browser"},
+        {options.check_mutator_picker, "--check-mutator-picker"},
+        {options.check_brain_picker, "--check-brain-picker"},
+        {options.check_brain_seat_buttons, "--check-brain-seat-buttons"},
+        {options.check_brain_campaign, "--check-brain-campaign"},
+        {options.check_mutator_prompts, "--check-mutator-prompts"},
+        {options.check_mutator_button, "--check-mutator-button"},
+        {options.check_mutator_room, "--check-mutator-room"},
+        {options.check_brain_room, "--check-brain-room"},
         {options.check_map_pack_lists, "--check-map-pack-lists"},
         {options.check_mod_map_settings, "--check-mod-map-settings"},
         {options.check_mod_warning, "--check-mod-warning"},
@@ -587,8 +691,11 @@ void check_director_options(Options& options) {
         {options.check_library_install, "--check-library-install"},
         {options.check_library_map_previews, "--check-library-map-previews"},
         {options.check_library_content, "--check-library-content"},
+        {options.check_library_update_question, "--check-library-update-question"},
         {!options.open_files.empty(), "--open"},
         {options.check_renderer_ladder, "--check-renderer-ladder"},
+        {options.check_renderer_proof, "--check-renderer-proof"},
+        {options.check_live_renderer, "--check-live-renderer"},
     };
     for (const auto& [given, name] : refused)
         if (given)
@@ -617,6 +724,12 @@ void check_director_options(Options& options) {
         {options.check_side_orders, "--check-side-orders"},
         {options.check_factory_orders, "--check-factory-orders"},
         {options.check_unit_speech, "--check-unit-speech"},
+        {options.check_mutator_layer, "--check-mutator-layer"},
+        {options.check_mutator_verdicts, "--check-mutator-verdicts"},
+        {options.check_mutator_dry_run, "--check-mutator-dry-run"},
+        {options.check_replay_loadout, "--check-replay-loadout"},
+        {options.check_side_data_per_match, "--check-side-data-per-match"},
+        {options.check_gadget_art_per_match, "--check-gadget-art-per-match"},
         {options.check_download_builds, "--check-download-builds"},
         {options.check_stockpile_builds, "--check-stockpile-builds"},
         {options.check_unit_page_memory, "--check-unit-page-memory"},
@@ -625,6 +738,7 @@ void check_director_options(Options& options) {
         {!options.check_unit_pages.empty(), "--check-unit-pages"},
         {options.check_kill_board, "--check-kill-board"},
         {options.check_paused_save, "--check-paused-save"},
+        {options.check_saved_brains, "--check-saved-brains"},
         {options.check_simulation_hash, "--check-simulation-hash"},
         {options.check_zoom_memory, "--check-zoom-memory"},
         {!options.check_unit_language.empty(), "--check-unit-language"},
@@ -635,12 +749,14 @@ void check_director_options(Options& options) {
         {options.check_setup_window, "--check-setup-window"},
         {options.check_window_place, "--check-window-place"},
         {options.check_progress, "--check-progress"},
+        {options.check_icloud_wait, "--check-icloud-wait"},
         {options.check_text_fit, "--check-text-fit"},
         {!options.check_languages.empty(), "--check-language"},
         {options.check_folder_chooser, "--check-folder-chooser"},
         {options.check_patrol_reclaim, "--check-patrol-reclaim"},
         {options.check_reclaim_cursor, "--check-reclaim-cursor"},
         {options.check_wreck_pick, "--check-wreck-pick"},
+        {options.check_click_snap, "--check-click-snap"},
         {options.check_build_preview, "--check-build-preview"},
         {options.check_pointer_interfaces, "--check-pointer-interfaces"},
         {options.check_megamap_clicks, "--check-megamap-clicks"},
@@ -663,6 +779,14 @@ void check_director_options(Options& options) {
         {options.check_mod_switch, "--check-mod-switch"},
         {options.check_map_packs, "--check-map-packs"},
         {options.check_map_browser, "--check-map-browser"},
+        {options.check_mutator_picker, "--check-mutator-picker"},
+        {options.check_brain_picker, "--check-brain-picker"},
+        {options.check_brain_seat_buttons, "--check-brain-seat-buttons"},
+        {options.check_brain_campaign, "--check-brain-campaign"},
+        {options.check_mutator_prompts, "--check-mutator-prompts"},
+        {options.check_mutator_button, "--check-mutator-button"},
+        {options.check_mutator_room, "--check-mutator-room"},
+        {options.check_brain_room, "--check-brain-room"},
         {options.check_map_pack_lists, "--check-map-pack-lists"},
         {options.check_mod_map_settings, "--check-mod-map-settings"},
         {options.check_mod_warning, "--check-mod-warning"},
@@ -674,7 +798,10 @@ void check_director_options(Options& options) {
         {options.check_library_install, "--check-library-install"},
         {options.check_library_map_previews, "--check-library-map-previews"},
         {options.check_library_content, "--check-library-content"},
+        {options.check_library_update_question, "--check-library-update-question"},
         {options.check_renderer_ladder, "--check-renderer-ladder"},
+        {options.check_renderer_proof, "--check-renderer-proof"},
+        {options.check_live_renderer, "--check-live-renderer"},
     };
     for (const auto& [given, name] : checks)
         if (given)
@@ -738,9 +865,10 @@ namespace {
         {"memory", RenderFaultPoint::memory},
         {"card", RenderFaultPoint::card},
         {"full-memory", RenderFaultPoint::full_memory},
+        {"effects", RenderFaultPoint::effects},
     };
     const char* const usage = "--render-fault takes create, present, reset, lost, stall, float, "
-                              "memory, card or full-memory, optionally @FRAME";
+                              "memory, card, full-memory or effects, optionally @FRAME";
     const auto at = text.find('@');
     const auto name = text.substr(0, at);
     const auto named = std::find_if(std::begin(points), std::end(points), [&](const auto& point) {
@@ -784,7 +912,7 @@ namespace {
 /// Tells whether a bare argument names a file to open, by its extension, any case.
 ///
 /// @param argument the argument
-/// @return true for a .oamod, .oalang, .oamap or .oareg file
+/// @return true for a .oamod, .oalang, .oamap, .oamut, .oabrain or .oareg file
 [[nodiscard]] bool names_opened_file(std::string_view argument) {
     return package_install::opens_file(path_from_utf8(argument));
 }
@@ -800,6 +928,7 @@ struct FlagOption {
 constexpr FlagOption kFlagOptions[] = {
     {"--choose-game-dir", &Options::choose_game_dir},
     {"--base-game", &Options::base_game},
+    {"--no-mutators", &Options::no_mutators},
     {"--print-profile", &Options::print_profile},
     {"--accept-unimplemented-hacks", &Options::accept_unimplemented_hacks},
     {"--force-capable", &Options::force_capable},
@@ -826,6 +955,14 @@ constexpr FlagOption kFlagOptions[] = {
     {"--check-mod-switch", &Options::check_mod_switch},
     {"--check-map-packs", &Options::check_map_packs},
     {"--check-map-browser", &Options::check_map_browser},
+    {"--check-mutator-button", &Options::check_mutator_button},
+    {"--check-mutator-room", &Options::check_mutator_room},
+    {"--check-brain-room", &Options::check_brain_room},
+    {"--check-mutator-picker", &Options::check_mutator_picker},
+    {"--check-brain-picker", &Options::check_brain_picker},
+    {"--check-brain-seat-buttons", &Options::check_brain_seat_buttons},
+    {"--check-brain-campaign", &Options::check_brain_campaign},
+    {"--check-mutator-prompts", &Options::check_mutator_prompts},
     {"--check-map-pack-lists", &Options::check_map_pack_lists},
     {"--check-mod-map-settings", &Options::check_mod_map_settings},
     {"--check-mod-warning", &Options::check_mod_warning},
@@ -837,7 +974,11 @@ constexpr FlagOption kFlagOptions[] = {
     {"--check-library-install", &Options::check_library_install},
     {"--check-library-map-previews", &Options::check_library_map_previews},
     {"--check-library-content", &Options::check_library_content},
+    {"--check-library-update-question", &Options::check_library_update_question},
     {"--check-renderer-ladder", &Options::check_renderer_ladder},
+    {"--check-renderer-proof", &Options::check_renderer_proof},
+    {"--check-live-renderer", &Options::check_live_renderer},
+    {"--experimental-3d", &Options::experimental_3d},
     {"--check-briefing-narration", &Options::check_briefing_narration},
     {"--check-match-layers", &Options::check_match_layers},
     {"--check-render-tiers", &Options::check_render_tiers},
@@ -845,6 +986,12 @@ constexpr FlagOption kFlagOptions[] = {
     {"--check-side-orders", &Options::check_side_orders},
     {"--check-factory-orders", &Options::check_factory_orders},
     {"--check-unit-speech", &Options::check_unit_speech},
+    {"--check-mutator-layer", &Options::check_mutator_layer},
+    {"--check-mutator-verdicts", &Options::check_mutator_verdicts},
+    {"--check-mutator-dry-run", &Options::check_mutator_dry_run},
+    {"--check-replay-loadout", &Options::check_replay_loadout},
+    {"--check-side-data-per-match", &Options::check_side_data_per_match},
+    {"--check-gadget-art-per-match", &Options::check_gadget_art_per_match},
     {"--check-download-builds", &Options::check_download_builds},
     {"--check-stockpile-builds", &Options::check_stockpile_builds},
     {"--check-unit-page-memory", &Options::check_unit_page_memory},
@@ -852,6 +999,7 @@ constexpr FlagOption kFlagOptions[] = {
     {"--check-match-bars", &Options::check_match_bars},
     {"--check-kill-board", &Options::check_kill_board},
     {"--check-paused-save", &Options::check_paused_save},
+    {"--check-saved-brains", &Options::check_saved_brains},
     {"--check-simulation-hash", &Options::check_simulation_hash},
     {"--check-zoom-memory", &Options::check_zoom_memory},
     {"--check-language-switch", &Options::check_language_switch},
@@ -861,11 +1009,13 @@ constexpr FlagOption kFlagOptions[] = {
     {"--check-setup-window", &Options::check_setup_window},
     {"--check-window-place", &Options::check_window_place},
     {"--check-progress", &Options::check_progress},
+    {"--check-icloud-wait", &Options::check_icloud_wait},
     {"--check-text-fit", &Options::check_text_fit},
     {"--check-folder-chooser", &Options::check_folder_chooser},
     {"--check-patrol-reclaim", &Options::check_patrol_reclaim},
     {"--check-reclaim-cursor", &Options::check_reclaim_cursor},
     {"--check-wreck-pick", &Options::check_wreck_pick},
+    {"--check-click-snap", &Options::check_click_snap},
     {"--check-build-preview", &Options::check_build_preview},
     {"--check-pointer-interfaces", &Options::check_pointer_interfaces},
     {"--check-megamap-clicks", &Options::check_megamap_clicks},
@@ -1117,6 +1267,38 @@ take_match_option(std::string_view argument, ArgumentCursor& cursor, Options& op
         options.seed = parse_seed(option_value(cursor));
         return true;
     }
+    if (argument == "--brain-match") {
+        options.brain_match = option_value(cursor);
+        return true;
+    }
+    if (argument == "--brain-levels") {
+        options.brain_levels = option_value(cursor);
+        return true;
+    }
+    if (argument == "--brain-map") {
+        options.brain_map = option_value(cursor);
+        return true;
+    }
+    if (argument == "--brain-shadow") {
+        options.brain_shadow = option_value(cursor);
+        return true;
+    }
+    if (argument == "--brain-shadow-sections") {
+        options.brain_shadow_sections = option_value(cursor);
+        return true;
+    }
+    if (argument == "--brain-shadow-log") {
+        options.brain_shadow_log = option_value(cursor);
+        return true;
+    }
+    if (argument == "--brain-trace") {
+        options.brain_trace = option_value(cursor);
+        return true;
+    }
+    if (argument == "--brain-record") {
+        options.brain_record = option_value(cursor);
+        return true;
+    }
     return false;
 }
 
@@ -1229,6 +1411,10 @@ take_recording_option(std::string_view argument, ArgumentCursor& cursor, Options
         options.director_stills = parse_stills(option_value(cursor));
         return true;
     }
+    if (argument == "--effect") {
+        take_effect(option_value(cursor), options.director_effects);
+        return true;
+    }
     if (argument == "--trace-lookups") {
         options.trace_lookups = path_from_utf8(option_value(cursor));
         return true;
@@ -1263,6 +1449,14 @@ take_recording_option(std::string_view argument, ArgumentCursor& cursor, Options
 /// @return true when the option is one of these
 [[nodiscard]] bool
 take_engine_option(std::string_view argument, ArgumentCursor& cursor, Options& options) {
+    if (argument == "--mutator") {
+        const std::string value{option_value(cursor)};
+        std::string error;
+        if (!oa::data::mutators::parse_choice(value, &error))
+            throw std::runtime_error("--mutator: " + error);
+        options.mutators.push_back(value);
+        return true;
+    }
     if (argument == "--content") {
         options.content = std::string(option_value(cursor));
         return true;
@@ -1413,6 +1607,7 @@ void write_startup_line(std::string_view text) {
             usage << "usage: open-annihilation [--version] [--game-dir PATH | --choose-game-dir] "
                      "[--archive PATH]... "
                      "[--mod FILE] [--mod-dir PATH | --base-game] "
+                     "[--mutator PATH|ID[:OPTION=VALUE,...]] [--no-mutators] "
                      "[--content GAME[:EXPANSION,...]] [--print-profile] "
                      "[--accept-unimplemented-hacks] "
                      "[--skip-intro] [--first-run] [--frames N] [--headless-check] "
@@ -1424,20 +1619,26 @@ void write_startup_line(std::string_view text) {
                      "[--check-match-dialogs] [--check-match-layers] "
                      "[--check-render-tiers [--force-capable]] "
                      "[--check-match-orders] [--check-side-orders] [--check-factory-orders] "
-                     "[--check-unit-speech] [--check-download-builds] [--check-stockpile-builds] "
+                     "[--check-unit-speech] [--check-mutator-layer] [--check-mutator-verdicts] "
+                     "[--check-replay-loadout] "
+                     "[--check-side-data-per-match] "
+                     "[--check-gadget-art-per-match] "
+                     "[--check-download-builds] [--check-stockpile-builds] "
                      "[--check-unit-page-memory] [--check-side-column] [--check-match-bars] "
                      "[--check-unit-pages whole|scaled:TYPE,...] "
-                     "[--check-kill-board] [--check-paused-save] [--check-simulation-hash] "
+                     "[--check-kill-board] [--check-paused-save] [--check-saved-brains] "
+                     "[--check-simulation-hash] "
                      "[--check-zoom-memory] "
                      "[--check-unit-language TAG] "
                      "[--check-language-switch [--check-language TAG]] "
                      "[--check-language-registry] "
                      "[--check-language-notice] [--check-first-run] [--check-setup-window] "
                      "[--check-window-place] "
-                     "[--check-progress] "
+                     "[--check-progress] [--check-icloud-wait] "
                      "[--check-text-fit [--check-language TAG]...] "
                      "[--check-folder-chooser] "
                      "[--check-patrol-reclaim] [--check-reclaim-cursor] [--check-wreck-pick] "
+                     "[--check-click-snap] "
                      "[--check-build-preview] "
                      "[--check-megamap-clicks] [--check-radar-orders] "
                      "[--check-pointer-interfaces] [--check-pad-controls] [--check-touch-controls] "
@@ -1449,13 +1650,19 @@ void write_startup_line(std::string_view text) {
                      "[--check-registered-kit] [--check-kit-gallery] "
                      "[--check-user-folder] [--check-mod-switch] [--check-map-packs] "
                      "[--check-map-pack-lists] [--check-mod-map-settings] "
-                     "[--check-map-browser] "
-                     "[--check-mod-warning] "
+                     "[--check-map-browser] [--check-mutator-button] [--check-mutator-picker] "
+                     "[--check-brain-picker] "
+                     "[--check-brain-seat-buttons] "
+                     "[--check-brain-campaign] "
+                     "[--check-mutator-prompts] [--check-mutator-dry-run] "
+                     "[--check-mutator-room] [--check-brain-room] [--check-mod-warning] "
                      "[--check-mod-install] [--check-language-install] [--check-challenge] "
                      "[--check-registries] "
                      "[--check-library] [--check-library-install] "
                      "[--check-library-map-previews] [--check-library-content] "
+                     "[--check-library-update-question] "
                      "[--check-renderer-ladder [--render-fault POINT[@FRAME]]] "
+                     "[--check-renderer-proof] [--check-live-renderer] "
                      "[--check-briefing-narration] [--check-director-view] "
                      "[--check-director-render] [--check-interpolation] "
                      "[--check-unit-playout] [--check-running-while-inactive] "
@@ -1464,7 +1671,7 @@ void write_startup_line(std::string_view text) {
                   << "[--debug-order-lines] "
                      "[--max-fps N] "
                      "[--hardware-acceleration[=off|basic|full] | --no-hardware-acceleration] "
-                     "[--native-density] [--display-modes MODES] "
+                     "[--experimental-3d] [--native-density] [--display-modes MODES] "
                      "[--benchmark FRAMES] [--match-ticks N "
                      "[--frame-rate FPS [--frame-log FILE] [--scroll-camera] [--march] "
                      "[--follow] [--frame-clock MS]]] "
@@ -1483,9 +1690,14 @@ void write_startup_line(std::string_view text) {
                   << extension_text(extension, ExtensionText::usage_runs, "")
                   << "[--save-after TICK] "
                      "[--save-file PATH.sav] [--load PATH.sav] [--give-orders] [--seed N] "
+                     "[--brain-match A,B] [--brain-levels L1,L2] [--brain-map NAME] "
+                     "[--brain-shadow BRAIN [--brain-shadow-sections LIST] "
+                     "[--brain-shadow-log DIR]] "
+                     "[--brain-trace FILE] [--brain-record FILE] "
                      "[--trace-digest FILE] [--trace-units FILE] [--trace-lookups FILE] "
                      "[--draw-threads N] "
-                     "[--capture-video PATH.mp4] [--showcase arm-first-mission|skirmish-battle] "
+                     "[--capture-video PATH.mp4] [--showcase "
+                     "arm-first-mission|skirmish-battle|base-construction] "
                      "[--open FILE]... [--install-mod FILE]... "
                      "[--generate-script RECORDING [--output PATH.oascript|PATH.oamovie] "
                      "[--resolution WxH]] "
@@ -1519,7 +1731,8 @@ void write_startup_line(std::string_view text) {
             // macOS names the process it started from the Finder; nothing to read.
             continue;
         } else if (names_opened_file(argument)) {
-            // One of the four file types, opened with the game or dropped on it.
+            // One of the six file types the game installs or adds, opened with the
+            // game or dropped on it.
             result.open_files.push_back(opened_file_path(argument));
         } else {
             switch_words.push_back(argv[index]);
@@ -1599,18 +1812,66 @@ void write_startup_line(std::string_view text) {
     if (const auto env = oa::platform::environment_value("OA_DRAW_THREADS");
         !result.draw_threads && env && !env->empty())
         result.draw_threads = parse_draw_threads(*env, "OA_DRAW_THREADS");
-    // The director view check runs headless, where SDL is never started.
+    // These checks skip the window and intro; an offscreen GPU check starts
+    // only the SDL subsystems it needs.
     if (result.check_director_view || result.check_director_render || result.check_interpolation ||
-        result.check_unit_playout) {
+        result.check_unit_playout || result.check_renderer_proof || result.check_live_renderer) {
         result.headless_check = true;
         result.skip_intro = true;
     }
+    if (result.check_live_renderer)
+        result.experimental_3d = true;
     check_director_options(result);
     if (result.busy_combat && result.combat_units == 0)
         throw std::runtime_error("--busy-combat needs --combat");
     if (!result.stage_file.empty() &&
         (!result.match_ticks || !result.load_file.empty() || !result.campaign.empty()))
         throw std::runtime_error("--stage stages a headless skirmish of --match-ticks ticks");
+    if (!result.brain_levels.empty() && result.brain_match.empty())
+        throw std::runtime_error("--brain-levels needs --brain-match");
+    if (!result.brain_map.empty() && result.brain_match.empty())
+        throw std::runtime_error("--brain-map needs --brain-match");
+    if (!result.brain_shadow_sections.empty() && result.brain_shadow.empty())
+        throw std::runtime_error("--brain-shadow-sections needs --brain-shadow");
+    if (!result.brain_shadow_log.empty() && result.brain_shadow.empty())
+        throw std::runtime_error("--brain-shadow-log needs --brain-shadow");
+    if (!result.brain_trace.empty()) {
+        if (!result.headless_check)
+            throw std::runtime_error("--brain-trace needs --headless-check");
+        if (!result.match_ticks)
+            throw std::runtime_error("--brain-trace needs --match-ticks");
+    }
+    if (!result.brain_record.empty()) {
+        if (!result.headless_check)
+            throw std::runtime_error("--brain-record needs --headless-check");
+        if (!result.match_ticks)
+            throw std::runtime_error("--brain-record needs --match-ticks");
+    }
+    if (!result.brain_match.empty()) {
+        if (!result.headless_check)
+            throw std::runtime_error("--brain-match needs --headless-check");
+        if (!result.match_ticks)
+            throw std::runtime_error("--brain-match needs --match-ticks");
+        if (result.brain_map.empty())
+            throw std::runtime_error("--brain-match needs --brain-map");
+        if (!result.stage_file.empty())
+            throw std::runtime_error("--brain-match cannot be used with --stage");
+        if (result.combat_units != 0)
+            throw std::runtime_error("--brain-match cannot be used with --combat");
+        if (!result.load_file.empty())
+            throw std::runtime_error("--brain-match cannot be used with --load");
+        if (result.save_after)
+            throw std::runtime_error("--brain-match cannot be used with --save-after");
+        if (!result.campaign.empty())
+            throw std::runtime_error("--brain-match cannot be used with --campaign");
+        if (result.frame_rate)
+            throw std::runtime_error("--brain-match cannot be used with --frame-rate");
+        if (result.benchmark_frames)
+            throw std::runtime_error("--brain-match cannot be used with --benchmark");
+        std::string error;
+        if (!parse_brain_match(result.brain_match, result.brain_levels, error))
+            throw std::runtime_error(error);
+    }
     if (result.check_render_tiers && result.headless_check)
         throw std::runtime_error(
             "--check-render-tiers draws in a window and cannot be used with --headless-check"
@@ -1618,6 +1879,10 @@ void write_startup_line(std::string_view text) {
     if (result.check_progress && result.headless_check)
         throw std::runtime_error(
             "--check-progress draws in a window and cannot be used with --headless-check"
+        );
+    if (result.check_icloud_wait && result.headless_check)
+        throw std::runtime_error(
+            "--check-icloud-wait draws in a window and cannot be used with --headless-check"
         );
     if (result.check_running_while_inactive && result.headless_check)
         throw std::runtime_error(
@@ -1647,22 +1912,30 @@ void write_startup_line(std::string_view text) {
         result.check_mod_warning || result.check_mod_install || result.check_language_install ||
         result.check_challenge || result.check_registries || result.check_library ||
         result.check_library_install || result.check_library_map_previews ||
-        result.check_library_content || result.check_renderer_ladder || result.check_match_orders ||
-        result.check_factory_orders || result.check_unit_speech || result.check_download_builds ||
-        result.check_stockpile_builds || result.check_unit_page_memory ||
-        result.check_side_column || result.check_match_bars || !result.check_unit_pages.empty() ||
-        result.check_kill_board || !result.check_unit_language.empty() ||
-        result.check_language_switch || result.check_language_registry ||
-        result.check_language_notice || result.check_first_run || result.check_setup_window ||
-        result.check_window_place || result.check_progress || result.check_text_fit ||
-        result.check_folder_chooser || result.check_patrol_reclaim || result.check_reclaim_cursor ||
-        result.check_wreck_pick || result.check_build_preview || result.check_pointer_interfaces ||
-        result.check_megamap_clicks || result.check_radar_orders || result.check_touch_controls ||
-        result.check_pad_controls || result.check_running_while_inactive ||
-        result.check_director_view || result.check_director_render || result.check_interpolation ||
-        result.check_unit_playout || result.check_paused_save || result.check_simulation_hash ||
+        result.check_library_content || result.check_library_update_question ||
+        result.check_renderer_ladder || result.check_match_orders || result.check_factory_orders ||
+        result.check_unit_speech || result.check_mutator_layer || result.check_mutator_verdicts ||
+        result.check_mutator_dry_run || result.check_replay_loadout ||
+        result.check_side_data_per_match || result.check_gadget_art_per_match ||
+        result.check_download_builds || result.check_stockpile_builds ||
+        result.check_unit_page_memory || result.check_side_column || result.check_match_bars ||
+        !result.check_unit_pages.empty() || result.check_kill_board ||
+        !result.check_unit_language.empty() || result.check_language_switch ||
+        result.check_language_registry || result.check_language_notice || result.check_first_run ||
+        result.check_setup_window || result.check_window_place || result.check_progress ||
+        result.check_text_fit || result.check_folder_chooser || result.check_patrol_reclaim ||
+        result.check_reclaim_cursor || result.check_wreck_pick || result.check_build_preview ||
+        result.check_pointer_interfaces || result.check_megamap_clicks ||
+        result.check_radar_orders || result.check_touch_controls || result.check_pad_controls ||
+        result.check_running_while_inactive || result.check_director_view ||
+        result.check_director_render || result.check_interpolation || result.check_unit_playout ||
+        result.check_paused_save || result.check_saved_brains || result.check_simulation_hash ||
         result.check_zoom_memory || result.check_map_packs || result.check_map_browser ||
-        result.check_map_pack_lists || result.check_mod_map_settings || result.check_side_orders;
+        result.check_mutator_button || result.check_mutator_room || result.check_brain_room ||
+        result.check_mutator_picker || result.check_brain_picker ||
+        result.check_brain_seat_buttons || result.check_brain_campaign ||
+        result.check_mutator_prompts || result.check_map_pack_lists ||
+        result.check_mod_map_settings || result.check_side_orders || result.check_click_snap;
     // A capture and a showcase need the application's own loop and window,
     // which checks and benchmarks do not run.
     const bool check_run = result.fixed_clock || result.check_navigation ||
@@ -1752,12 +2025,16 @@ void write_startup_line(std::string_view text) {
     // run nobody watches never shows; --check-mod-install answers them itself.
     if (!result.open_files.empty() && result.headless_check)
         throw std::runtime_error(
-            "a file to open (.oamod, .oalang, .oamap or .oareg), after --open or on its own, "
+            "a file to open (.oamod, .oalang, .oamap, .oamut, .oabrain or .oareg), after --open or "
+            "on its "
+            "own, "
             "needs the game's window, which asks before it installs"
         );
     if (!result.open_files.empty() && result.unattended && !result.check_mod_install)
         throw std::runtime_error(
-            "a file to open (.oamod, .oalang, .oamap or .oareg), after --open or on its own, "
+            "a file to open (.oamod, .oalang, .oamap, .oamut, .oabrain or .oareg), after --open or "
+            "on its "
+            "own, "
             "is asked about before it installs, which headless, check, benchmark, --frames and "
             "--snapshot runs never show"
         );

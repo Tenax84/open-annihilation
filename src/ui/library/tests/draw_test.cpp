@@ -26,8 +26,13 @@
 // library-active-locked-compact.png,
 // library-updates-<class>.png, library-registries-<class>.png,
 // library-languages-compact.png, library-languages-zh-compact.png,
-// library-maps-one-large.png and library-maps-several-large.png there.
+// library-maps-one-large.png, library-maps-several-large.png,
+// library-mutators-compact.png, library-mutators-regular.png and
+// library-mutators-large.png there.
 // languages-zh-compact is 简体中文 installed and in use, on its details page.
+// The Mutators pictures add made-up mutators on that drawing only: one with
+// a picture, one whose badge is its first tag's icon, one with letters,
+// one that needs another mutator and one that does not fit the mod in play.
 //
 //   oa-ui-library-draw-test --data [--frames DIR]
 
@@ -58,6 +63,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -155,6 +161,47 @@ struct Drawing {
     int32_t scale{1};            ///< pixels a point
     kit::Point window{};         ///< the window's size, in points
 };
+
+/// Dresses the Mutators picture with made-up mutators, on this drawing only.
+///
+/// Beacon has a picture. Signal has none, so its badge is the economy icon.
+/// Plain Mark has no tag, so its badge is its letters. Odd Mark's tag is not
+/// one of the eight, so it has no icon. Gatehouse Keep needs Gatehouse.
+/// Ridge Walls works with Ridge, and no mod is being played. Both Marks
+/// needs another mutator and does not fit this mod.
+///
+/// @param[in,out] library the scene's library
+void dress_mutators(lib::Library& library) {
+    lib::Inputs inputs = std::move(library.inputs);
+    const auto add = [&](std::string key, std::string name, std::vector<std::string> tags) {
+        lib::Listing made;
+        made.registry = std::string(fixture::core);
+        made.kind = lib::Kind::mutator;
+        made.key = std::move(key);
+        made.name = std::move(name);
+        made.version = "1.0";
+        made.author = "Fixture Author";
+        made.summary = "A made-up mutator.";
+        made.size = 4096;
+        lib::MutatorFacts facts;
+        facts.tags = std::move(tags);
+        made.mutator = std::move(facts);
+        inputs.listings.push_back(std::move(made));
+    };
+    add("beacon", "Beacon", {"gameplay"});
+    inputs.listings.back().badge = fixture::gradient_badge();
+    add("signal", "Signal", {"economy", "statistics"});
+    add("plain-mark", "Plain Mark", {});
+    add("odd-mark", "Odd Mark", {"custom"});
+    add("gatehouse-keep", "Gatehouse Keep", {"economy"});
+    inputs.listings.back().mutator->needs.push_back({"gatehouse", {}, "Gatehouse"});
+    add("ridge-walls", "Ridge Walls", {"commanders"});
+    inputs.listings.back().mutator->works_with.push_back({"ridge", {}, "Ridge"});
+    add("both-marks", "Both Marks", {"economy"});
+    inputs.listings.back().mutator->needs.push_back({"north-tower", {}, "North Tower"});
+    inputs.listings.back().mutator->works_with.push_back({"ridge", {}, "Ridge"});
+    lib::refresh(library, std::move(inputs));
+}
 
 /// Dresses the Languages picture: the fixture's built-in language pack names
 /// its author, and an installed copy of it is added, on this drawing only.
@@ -542,6 +589,8 @@ Drawing draw_scene(const Scene& scene, const kit::Fonts& fonts) {
         dress_registries(library);
     else if (scene.tab == lib::Tab::languages)
         dress_languages(library);
+    else if (scene.tab == lib::Tab::mutators)
+        dress_mutators(library);
     if (!scene.in_use_language.empty())
         show_language_in_use(library, scene.in_use_language);
     if (scene.previews)
@@ -555,8 +604,11 @@ Drawing draw_scene(const Scene& scene, const kit::Fonts& fonts) {
     lib::select(library, fixture::ridge_id());
     lib::set_tab(library, scene.tab);
     if (!scene.select_key.empty()) {
-        const lib::Kind kind =
-            scene.tab == lib::Tab::languages ? lib::Kind::language : lib::Kind::map_pack;
+        lib::Kind kind = lib::Kind::map_pack;
+        if (scene.tab == lib::Tab::languages)
+            kind = lib::Kind::language;
+        else if (scene.tab == lib::Tab::mutators)
+            kind = lib::Kind::mutator;
         lib::select(library, {scene.select_registry, kind, scene.select_key});
     }
     lib::ScreenState state;
@@ -798,6 +850,27 @@ int main(int argc, char** argv) {
          true,
          std::string(fixture::added),
          "desert-pack"},
+        {"mutators-compact",
+         window_of(640, 480, 100),
+         false,
+         lib::Tab::mutators,
+         false,
+         std::string(fixture::core),
+         "signal"},
+        {"mutators-regular",
+         window_of(1920, 1080, 200),
+         false,
+         lib::Tab::mutators,
+         false,
+         std::string(fixture::core),
+         "signal"},
+        {"mutators-large",
+         window_of(2560, 1440, 200),
+         false,
+         lib::Tab::mutators,
+         false,
+         std::string(fixture::core),
+         "signal"},
     };
     for (const Scene& scene : scenes) {
         const Drawing first = draw_scene(scene, fonts);

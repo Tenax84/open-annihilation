@@ -5,6 +5,7 @@
 
 #include "oa/base/text.hpp"
 #include "oa/data/languages/translation.hpp"
+#include "oa/ui/gui_layout/gui_gadget.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -588,6 +589,28 @@ std::optional<Rect> gadget_rectangle(std::span<const Gadget> gadgets, std::size_
     };
 }
 
+std::optional<CaptionPen> button_caption_pen(
+    const Rect& button, uint32_t attributes, int32_t text_width, int32_t line_height, bool pressed
+) noexcept {
+    // A caption starts this far in from the edge it is aligned to; a bottom
+    // caption's line ends this many rows above the bottom edge.
+    constexpr int32_t edge_inset = 3;
+    constexpr int32_t bottom_gap = 4;
+    const int32_t press = pressed ? 1 : 0;
+    const int32_t span_x = button.right - button.left;
+    const int32_t centred_x = button.left + (span_x - text_width) / 2 + press + 1;
+    const int32_t centred_y = button.top + (button.bottom - button.top - line_height) / 2 + press;
+    if ((attributes & attribute::horizontal) != 0)
+        return CaptionPen{button.left + press + edge_inset, centred_y};
+    if ((attributes & attribute::right_aligned) != 0)
+        return CaptionPen{std::max(button.right - text_width - edge_inset, button.left), centred_y};
+    if ((attributes & attribute::centered) != 0)
+        return CaptionPen{centred_x, centred_y};
+    if ((attributes & attribute::bottom_caption) != 0)
+        return CaptionPen{centred_x, button.bottom + press - line_height - bottom_gap};
+    return std::nullopt;
+}
+
 std::vector<SkinTile>
 skin_tiles(int32_t width, int32_t height, int32_t tile_width, int32_t tile_height) {
     std::vector<SkinTile> tiles;
@@ -627,6 +650,52 @@ TranslationLookup game_translation_lookup() {
             translated->resize(oa::base::text::whole_characters(*translated, limit::text_bytes));
         return translated;
     };
+}
+
+bool keyboard_focusable(
+    int8_t active,
+    uint32_t attributes,
+    uint8_t type,
+    bool button_grayed,
+    bool scroll_locked,
+    int32_t width,
+    int32_t height
+) noexcept {
+    if (active == 0 || (attributes & attribute::no_focus) != 0)
+        return false;
+    switch (type) {
+    case static_cast<uint8_t>(GadgetType::button):
+        return !button_grayed;
+    case static_cast<uint8_t>(GadgetType::text_box):
+    case static_cast<uint8_t>(GadgetType::hot_surface):
+        return true;
+    case static_cast<uint8_t>(GadgetType::scroll_bar):
+        if (width < height || scroll_locked)
+            return false;
+        return true;
+    case static_cast<uint8_t>(GadgetType::list_box):
+        return (attributes & attribute::cycle_frames) == 0;
+    default:
+        return false;
+    }
+}
+
+bool keyboard_focusable(const Gadget& gadget) noexcept {
+    bool button_grayed = false;
+    bool scroll_locked = false;
+    if (const auto* button = std::get_if<ButtonFields>(&gadget.fields))
+        button_grayed = button->grayed_out;
+    if (const auto* bar = std::get_if<ScrollBarFields>(&gadget.fields))
+        scroll_locked = bar->locked;
+    return keyboard_focusable(
+        gadget.common.active,
+        static_cast<uint32_t>(gadget.common.attributes),
+        static_cast<uint8_t>(gadget.common.type),
+        button_grayed,
+        scroll_locked,
+        gadget.common.width,
+        gadget.common.height
+    );
 }
 
 } // namespace oa::ui::gui_layout

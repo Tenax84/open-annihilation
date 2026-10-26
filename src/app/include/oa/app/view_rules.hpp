@@ -553,11 +553,19 @@ void apply_builder_options(
 
 /// Writes the settings, one value each.
 ///
+/// A snap radius is written only while the profile lets the player choose
+/// it, as the options dialog does (dialog_option_locks): one the profile
+/// gives no room is not the player's choice, so the value stored before
+/// stays, and with none the profile's default plays once it has room.
+///
 /// @param settings the settings
+/// @param ui the profile's display rules, which say which snap radii the
+///     player may choose
 /// @param number stores a number under a name
 /// @param text stores text under a name
 void write_view_settings(
     const ViewSettings& settings,
+    const data::mod_profile::UiRules& ui,
     const std::function<void(std::string_view name, uint32_t value)>& number,
     const std::function<void(std::string_view name, std::string_view value)>& text
 );

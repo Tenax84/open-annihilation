@@ -20,8 +20,10 @@
 #include "oa/ui/frontend_multiplayer/launch_block.hpp"
 #include "oa/ui/frontend_multiplayer/lobby_net.hpp"
 #include "oa/ui/frontend_multiplayer/panel.hpp"
+#include "oa/ui/frontend_multiplayer/room_mutators.hpp"
 #include "oa/ui/frontend_multiplayer/team_rules.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -391,6 +393,52 @@ struct PresenceRecords {
     /// while the baseline does not resolve. Under a 3.1c host the rules dot
     /// compares a player's record with it (lobby_rules_differ_from_host).
     std::optional<netgame::PresenceDigest> plain_sim_hash{};
+    /// The host's loadout as this machine holds it (presence_assembly_take).
+    /// A guest's copy of the list the host's records have carried. Empty
+    /// until a host record with a mutator field is kept, and emptied when a
+    /// host record carries none.
+    netgame::PresenceLoadoutAssembly host_loadout{};
+    /// The host record last folded into host_loadout, so a record that
+    /// arrived before the host slot was known is folded when it is.
+    uint16_t host_fed_size{};
+    uint64_t host_fed_hash{};
+    /// Counts the changes of host_loadout, from 0, lobby_reset's emptying
+    /// among them. A guest copies the assembly when this changes.
+    uint32_t host_loadout_generation{};
+    /// The full mutator field this machine sends parts from. The bound
+    /// source may be cut to leave room for a map pack; a part is drawn from
+    /// this, which keeps every mutator. Empty when this machine sends none.
+    std::optional<netgame::PresenceMutators> part_source{};
+    /// The loadout digest last named when a mutator part would not fit
+    /// beside the map pack. One line is logged for each digest.
+    std::optional<netgame::PresenceDigest> part_refused_digest{};
+};
+
+/// How the battle room's chat list measures a line it is to show
+/// (multiplayer_bind_chat_measure). The list draws one stored line on one
+/// row and clips the rest, so a line the room posts is fitted to it first.
+struct ChatMeasure {
+    void* context{};
+    /// The room the list has for a line, in the units width gives; 0 or
+    /// less while it is not known.
+    int32_t (*room)(void* context){};
+    /// The width a UTF-8 line takes in the list once posted: with Unicode
+    /// chat off, in the code page it is stored in.
+    int32_t (*width)(void* context, std::string_view line){};
+};
+
+/// The brain one computer player plays, as the battle room shows it.
+///
+/// Absent on a slot means the built-in player. Another machine does not need
+/// the brain installed: the name, version and level travel in the presence
+/// record.
+struct ComputerBrain {
+    std::string id;        ///< the brain's id
+    std::string name;      ///< the brain's name
+    std::string version;   ///< the brain's version; may be empty
+    std::string level_id;  ///< the level's id
+    std::string level;     ///< the level's name
+    bool full_awareness{}; ///< the brain sees every unit
 };
 
 struct Lobby {
@@ -449,17 +497,37 @@ struct Lobby {
     /// The presence record this machine sends to the OA players of other
     /// machines, and the ones they sent (PresenceRecords).
     PresenceRecords presence_records{};
+    /// The mutator hold last logged for this host, and whether one was logged.
+    MutatorsBlock mutators_hold_logged{};
+    bool mutators_hold_seen{};
+    /// The room has posted its lines for the host's current mutator field.
+    /// Cleared when that field goes, so the next one posts once.
+    bool classic_lines_posted{};
+    /// How the chat list measures the lines about a 3.1c player
+    /// (lobby_post_classic_line); unbound, they are cut by bytes alone.
+    ChatMeasure chat_measure{};
     /// Difficulty of a computer player in this slot, 0 easy, 1 medium, 2 hard.
     /// Shown before the start. Zero, and computer_difficulty_set false, until
     /// this machine seats the player or a presence record names it.
     uint8_t computer_difficulty[kSlotCount]{};
     bool computer_difficulty_set[kSlotCount]{};
+    /// The brain a computer player in this slot plays. Empty is the built-in
+    /// player. This machine sets its own; a peer's presence record sets the
+    /// computers that peer runs. A slot swap carries the brain with the player.
+    std::array<std::optional<ComputerBrain>, kSlotCount> computer_brain{};
+    /// The brain id a launch named for the computer player in this slot.
+    /// Empty leaves the remembered seat and the default. A slot swap carries
+    /// it with the player, and clearing the slot forgets it.
+    std::array<std::string, kSlotCount> computer_launch_brain{};
     /// A change the host asked of another machine's computer player, kept
     /// until that machine echoes it. Kind 0 is none. The player id names the
     /// computer player, so a slot swap does not move the command.
     uint32_t computer_command_player{};
     uint8_t computer_command_kind{};
     uint8_t computer_command_value{};
+    /// The side last named for this slot in the line about a side this game
+    /// does not have, or -1 when nothing was posted.
+    int16_t side_past_table_posted[kSlotCount]{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 };
 
 // ---------------------------------------------------------------------------
@@ -575,6 +643,8 @@ struct StartedOptions {
 /// No player is stalled, and a game with no player timeout gets
 /// kDefaultPlayerTimeoutSeconds. The presence records other players sent
 /// and what was sent to them are forgotten; this machine's own record stays.
+/// The previous host's mutator list is emptied as a change of it, and the
+/// next host's record is folded even when its bytes are the same.
 /// The plain baseline's sim hash is set (PresenceRecords::plain_sim_hash),
 /// resolved the first time a lobby is reset and kept for the run.
 ///
@@ -1162,6 +1232,28 @@ void lobby_publish_session(Lobby& lobby) noexcept;
 /// @return False when no slot can take the player.
 bool lobby_add_player(Lobby& lobby, uint32_t player_id, const char* name) noexcept;
 
+/// Keeps the brain a computer player of this machine plays, and its difficulty.
+///
+/// Only a computer player this machine runs is changed. A remote slot, an
+/// empty slot and a slot outside the table are left as they are. An empty
+/// brain is the built-in player. The difficulty is noted as a presence
+/// record's computer list notes it: 0 easy, 1 medium, 2 hard.
+///
+/// @param[in,out] lobby Lobby state.
+/// @param slot Player slot.
+/// @param brain The brain, or nothing for the built-in player.
+/// @param difficulty 0 easy, 1 medium or 2 hard.
+void lobby_set_computer_brain(
+    Lobby& lobby, int32_t slot, std::optional<ComputerBrain> brain, uint8_t difficulty
+) noexcept;
+
+/// Returns the brain a computer player in a slot plays.
+///
+/// @param lobby Lobby state.
+/// @param slot Player slot.
+/// @return The brain, or null for the built-in player and for a slot outside the table.
+[[nodiscard]] const ComputerBrain* lobby_computer_brain(const Lobby& lobby, int32_t slot) noexcept;
+
 /// Seats a computer player in an open slot as a session player of this machine.
 ///
 /// Its session name is "AI:" and the local player's name, sixteen characters
@@ -1328,6 +1420,38 @@ struct RowBadgeState {
 /// @return True when content does not refuse the start.
 [[nodiscard]] bool lobby_content_allows_start(Lobby& lobby) noexcept;
 
+/// Finds the first playing seat whose side is past the room's side count.
+///
+/// Slot order. A seat plays when it is in use and local, a computer, or a
+/// remote player still playing, and it is not watching. A remote seat counts
+/// only once this machine has that player's own block. Nothing is found when
+/// the lobby has no game, when the side count is 0, or when every playing
+/// seat's side is one the room has.
+///
+/// @param lobby Lobby state.
+/// @return The slot, or -1 when there is none.
+[[nodiscard]] int32_t lobby_first_side_past_table(Lobby& lobby) noexcept;
+
+/// Tells whether this host may start, from the seated sides.
+///
+/// True when this machine is not the host. Otherwise no playing seat has a
+/// side past the room's side count. A side count of 0 refuses nothing.
+///
+/// @param lobby Lobby state.
+/// @return True when sides do not refuse the start.
+[[nodiscard]] bool lobby_sides_allow_start(Lobby& lobby) noexcept;
+
+/// Posts the host's line for each playing seat on a side the game does not have.
+///
+/// The host only. For each such seat whose side differs from the one last
+/// posted for that slot, posts "*** {player} chose a side this game does not
+/// have." and remembers the side. A seat back inside the table, emptied or
+/// watching, forgets it, so the next side past the table posts once. A
+/// guest's machine posts nothing. The lines are not sent.
+///
+/// @param[in,out] lobby Lobby state.
+void lobby_note_sides_past_table(Lobby& lobby) noexcept;
+
 // ---------------------------------------------------------------------------
 // Machine groups: the players one machine seats share Player.machine_group
 // (1..10), which the host hands out; its own machine is group 1. The lobby
@@ -1376,6 +1500,26 @@ void lobby_request_machine_groups(Lobby& lobby) noexcept;
 /// @param[in,out] lobby Lobby state.
 /// @param host Whether this machine hosts the game.
 void unit_sync_create(Lobby& lobby, bool host) noexcept;
+
+/// Starts the handshake again from the lobby's current unit table.
+///
+/// A guest drops its table and seeds it again. The host refills the records
+/// from the current table, keeps a peer whose setup block lacks the Open
+/// Annihilation signature with what that peer reported, drops every other
+/// peer, and re-evaluates every record. A peer with no setup block is
+/// dropped. The next tick greets a dropped peer again.
+///
+/// @param[in,out] lobby Lobby state.
+void unit_sync_rebuild(Lobby& lobby) noexcept;
+
+/// Drops one peer so the host greets it again.
+///
+/// The host only. A player the host is not waiting on is left as it is.
+/// The next tick sends the greeting.
+///
+/// @param[in,out] lobby Lobby state.
+/// @param player_id The peer to greet again.
+void unit_sync_regreet(Lobby& lobby, uint32_t player_id) noexcept;
 
 /// Drops the table.
 ///

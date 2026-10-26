@@ -30,12 +30,16 @@
 
 #include "engine_settings_state.hpp"
 #include "full_fog.hpp"
+#include "full_effects.hpp"
+#include "renderer_effect_sources.hpp"
 #include "full_presentation.hpp"
 #include "graphics_report.hpp"
 #include "match_models.hpp"
 #include "render_host.hpp"
 #include "render_run.hpp"
 #include "runtime_full.hpp"
+#include "renderer_water_classic.hpp"
+#include "oa/sim/visibility_state.hpp"
 #include "xrgb_conversion.hpp"
 
 #include "oa/app/renderer_records.hpp"
@@ -75,6 +79,9 @@ namespace wr = oa::present::world_renderer;
 /// What --render-fault card makes the card's frame fail with.
 constexpr std::string_view forced_card_failure =
     "the card refused the frame: forced by --render-fault card";
+/// What --render-fault effects makes the effects pass fail with.
+constexpr std::string_view forced_effects_failure =
+    "the effects readback failed: forced by --render-fault effects";
 /// Bytes a texel of a page or a target holds.
 constexpr uint64_t bytes_per_texel = card::texel_bytes;
 
@@ -1062,6 +1069,8 @@ void Runtime::free_full_match_textures() noexcept {
             full.greyed_mosaic_pages[index]
         );
     full.destroy_fog_mask();
+    full.executor.destroy_page(full.dither_page);
+    full.dither_page = {};
     full.page_bytes = 0;
     full.pages_from_load = false;
     full.executor.destroy_target(full.target);
@@ -1090,6 +1099,7 @@ void Runtime::free_full_match_textures() noexcept {
     full.atlas_source = {};
     full.frame = {};
     full.overlay_texture.reset();
+    full.effects_upload.reset();
     full.overlay = {};
     full.opaque_bands = {};
     full.uploaded_bands = {};
@@ -1470,6 +1480,7 @@ void Runtime::ensure_full_executor() {
         full.fog_mask_page_width = 0;
         full.fog_mask_page_height = 0;
         full.fog_mask_held = {};
+        full.dither_page = {};
         full.card_pages.clear();
         full.pages_from_load = false;
         full.atlas_source = {};
@@ -1712,14 +1723,17 @@ bool Runtime::present_full_match_layers(bool dialogs) {
         // The front end's prescale target is not kept during a match.
         accelerated_.screen_prescale.destroy();
         const auto frame_format = opaque_layer_format();
-        ensure_streaming_texture(
-            match_hud_tex_,
-            frame_format,
-            static_cast<int>(match_hud_cpu_.width),
-            static_cast<int>(match_hud_cpu_.height),
-            match_hud_tex_w_,
-            match_hud_tex_h_
-        );
+        // A director's frame of the battlefield alone has no HUD layer.
+        const bool hud_layer = !match_hud_cpu_.rgb.empty();
+        if (hud_layer)
+            ensure_streaming_texture(
+                match_hud_tex_,
+                frame_format,
+                static_cast<int>(match_hud_cpu_.width),
+                static_cast<int>(match_hud_cpu_.height),
+                match_hud_tex_w_,
+                match_hud_tex_h_
+            );
         // The HUD layer's prescale target and the layout's bookkeeping, as
         // Basic's frame makes them, so that the HUD strips are drawn by
         // sharp_draw from that target at every chrome scale as Basic draws
@@ -1771,7 +1785,7 @@ bool Runtime::present_full_match_layers(bool dialogs) {
             throw_present_error("SDL_RenderClear");
         // In placed mode the HUD's pieces are drawn after the world
         // (finish_match_layers).
-        if (!oa::ui::display_layout::placed_mode(match_layout_))
+        if (hud_layer && !oa::ui::display_layout::placed_mode(match_layout_))
             draw_accelerated_hud_strips();
 
         // The card's frame: the terrain from the pages, by the level rule at
@@ -1822,6 +1836,12 @@ bool Runtime::present_full_match_layers(bool dialogs) {
         // everything, drawn after the stages.
         const auto& fog = full.fog;
         const bool fogged = !fog.grid.tiles.empty();
+        // Fog of War's Classic draws the FOG.GAF shapes the processor draws,
+        // once their art is loaded; Smooth, the corner alphas.
+        if (!full.fog_shapes.built() && fog_tiles_.loaded())
+            full_fog::build_classic_shapes(fog_tiles_, full.fog_shapes);
+        const bool classic = fogged && fog_of_war() == oa::ui::engine_settings::FogOfWar::classic &&
+                             full.fog_shapes.built();
         // Where the fog grid lands in a view.
         const auto fog_placement = [&](const ft::TerrainView& where) {
             full_fog::FogPlacement placement;
@@ -1839,6 +1859,20 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                                        const card::Rect* scissor) {
             if (!fogged || fog.dithered)
                 return;
+            if (classic) {
+                fog_quads += full_fog::append_unseen_terrain_classic(
+                    frame,
+                    fog.grid,
+                    full.fog_shapes,
+                    full.atlas,
+                    full.greyed_pages,
+                    levels,
+                    fog_placement(where),
+                    target,
+                    scissor
+                );
+                return;
+            }
             fog_quads += full_fog::append_unseen_terrain(
                 frame,
                 fog.grid,
@@ -1851,6 +1885,51 @@ bool Runtime::present_full_match_layers(bool dialogs) {
             );
         };
 
+        // Water ripples move the map's own water art: wherever the terrain
+        // is drawn below, its passes are drawn again where the art moves,
+        // before the fog's passes over them.
+        ft::ArtMotion water_art;
+        {
+            renderer_water_classic::Inputs ripples;
+            ripples.map = &*selected_tnt_;
+            ripples.view.zoom = zoom;
+            ripples.ripples = engine_settings().water_ripples / 100.0F;
+            ripples.wind = water_wind();
+            const double reach = 2.0 * oa::present::gpu_world::tile_edge;
+            water_art = renderer_water_classic::art_motion(
+                ripples,
+                view.camera_x - reach,
+                view.camera_y - reach,
+                view.camera_x + bf_w / zoom + reach,
+                view.camera_y + bf_h / zoom + reach
+            );
+        }
+        const auto append_moved_art = [&](const ft::TerrainView& where,
+                                          std::span<const ft::TerrainPass> passes,
+                                          card::TargetHandle target,
+                                          const card::Rect* scissor) {
+            if (water_art.offsets.empty())
+                return;
+            for (const ft::TerrainPass& pass : passes) {
+                const std::size_t mosaic = pass.level - ft::first_mosaic_level;
+                if (pass.level >= ft::first_mosaic_level && mosaic < ft::mosaic_level_count &&
+                    !full.mosaic_pages[mosaic].empty())
+                    ft::append_moved_terrain_mosaic(
+                        frame,
+                        full.mosaics[mosaic],
+                        full.mosaic_pages[mosaic],
+                        where,
+                        pass,
+                        water_art,
+                        target,
+                        scissor
+                    );
+                else
+                    ft::append_moved_terrain_tiles(
+                        frame, full.atlas, full.pages, where, pass, water_art, target, scissor
+                    );
+            }
+        };
         // The glow (Enhanced graphics), where the card runs the blur: its
         // targets at half the battlefield's size, which the stages' glow
         // pass draws into.
@@ -1864,6 +1943,9 @@ bool Runtime::present_full_match_layers(bool dialogs) {
         // when the match cannot say, which draws every sprite in colour.
         auto& models = match_models();
         full::ModelFrameInputs model_inputs;
+        // Each of the frame's vertices' world height where the model stage
+        // drew it at one: what the ships' reflections mirror.
+        std::vector<float> vertex_heights;
         model_inputs.draws = &models.draws;
         model_inputs.world = &match_->world().record;
         model_inputs.library = &models.library;
@@ -1935,13 +2017,57 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                 scene.camera_y = static_cast<int32_t>(full.frame_camera_y);
                 scene.target = target;
                 sprite_inputs.view = scene;
+                renderer_water_classic::Inputs water;
+                water.map = &*selected_tnt_;
+                water.view = scene;
+                water.seconds = double(match_->simulation().tick) / 30.0;
+                const auto& water_settings = engine_settings();
+                water.ripples = water_settings.water_ripples / 100.0F;
+                water.coast = water_settings.coastal_waves / 100.0F;
+                water.shimmer = water_settings.underwater_shimmer / 100.0F;
+                water.reflections = water_settings.naval_reflections / 100.0F;
+                water.water_surface = water_surface();
+                water.disturbances = water_disturbances();
+                water.wind = water_wind();
+                water.art = &water_art;
+                vertex_heights.clear();
+                model_inputs.vertex_heights = water.reflections > 0 ? &vertex_heights : nullptr;
+                model_inputs.water_shimmer =
+                    selected_tnt_->sea_level > 0
+                        ? water.shimmer * std::clamp((zoom - 0.25F) / 0.25F, 0.0F, 1.0F)
+                        : 0;
+                model_inputs.water_sea_level = static_cast<float>(selected_tnt_->sea_level);
+                model_inputs.water_seconds = water.seconds;
+                const auto water_coverage = match_->player_coverage(match_view_player());
+                const auto& water_sight = match_->sight();
+                const auto water_bit = uint16_t(1U << (match_view_player() & 0x1fU));
+                const bool water_mapping = match_mapping_on();
+                const bool water_los = match_line_of_sight_on();
+                water.visible = [&](float x, float y) {
+                    constexpr float edge = present::world_renderer::fog_cell_pixels;
+                    const int column = int(std::floor(x / edge));
+                    const int row = int(std::floor(y / edge));
+                    if (column < 0 || row < 0 || column >= water_sight.width ||
+                        row >= water_sight.height)
+                        return false;
+                    const auto index = std::size_t(row) * water_sight.width + column;
+                    if (water_mapping && (index >= water_sight.player_bits.size() ||
+                                          (water_sight.player_bits[index] & water_bit) == 0))
+                        return false;
+                    return !water_los ||
+                           (index < water_coverage.size() &&
+                            sim::visibility_state::count_in_sight(
+                                water_coverage[index], sim::visibility_state::SightReading::player
+                            ));
+                };
                 {
                     full::SpriteFrame sprites(sprite_inputs, full.sprite_pages, hooks, frame);
                     std::size_t before = frame.vertices.size();
                     full.models.emit_shadows(model_inputs, scene, full.executor, frame);
                     full.frame_vertices.shadows += frame.vertices.size() - before;
-                    for (const WorldDraw& draw : models.draws.draws) {
+                    const auto emit_draw = [&](const WorldDraw& draw) {
                         before = frame.vertices.size();
+                        const auto first_water_index = frame.indices.size();
                         if (full::sprite_kind(draw.kind)) {
                             sprites.emit(draw);
                             full.frame_vertices.sprites += frame.vertices.size() - before;
@@ -1949,7 +2075,26 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                             full.models.emit_draw(model_inputs, scene, draw, full.executor, frame);
                             full.frame_vertices.models += frame.vertices.size() - before;
                         }
-                    }
+                        water.vertex_heights = vertex_heights;
+                        renderer_water_classic::objects(
+                            frame, water, models.draws, draw, before, first_water_index
+                        );
+                    };
+                    // What lies on the sea bed first, under the water's foam,
+                    // rings and splashes, then everything else in the list's
+                    // order over them.
+                    const bool water_surface_drawn = renderer_water_classic::surface_drawn(water);
+                    const auto lies_on_sea_bed = [&](const WorldDraw& draw) {
+                        return water_surface_drawn &&
+                               renderer_water_classic::on_sea_bed(water, models.draws, draw);
+                    };
+                    for (const WorldDraw& draw : models.draws.draws)
+                        if (lies_on_sea_bed(draw))
+                            emit_draw(draw);
+                    renderer_water_classic::surface(frame, water);
+                    for (const WorldDraw& draw : models.draws.draws)
+                        if (!lies_on_sea_bed(draw))
+                            emit_draw(draw);
                     full.sprites = sprites.finish();
                 }
                 // The glow's pass: what gives light, again, into the first
@@ -1998,6 +2143,38 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                     );
                 full.stage_ns += nanoseconds_since(stage_start);
             };
+        // The Classic dither's page, made and filled the first time it is
+        // drawn; false where the card would not make it.
+        const auto ensure_dither_page = [&]() {
+            if (full.dither_page != card::PageHandle{})
+                return true;
+            card::PageDescription description;
+            description.width = full_fog::dither_page_edge;
+            description.height = full_fog::dither_page_edge;
+            full.dither_page = full.executor.create_page(description);
+            if (full.dither_page == card::PageHandle{})
+                return false;
+            std::vector<card::Texel> texels;
+            full_fog::build_dither_texels(texels);
+            const card::Rect whole{
+                0,
+                0,
+                static_cast<int32_t>(full_fog::dither_page_edge),
+                static_cast<int32_t>(full_fog::dither_page_edge)
+            };
+            if (!full.executor.update_page(
+                    full.dither_page,
+                    0,
+                    &whole,
+                    reinterpret_cast<const uint8_t*>(texels.data()),
+                    full_fog::dither_page_edge * card::texel_bytes
+                )) {
+                full.executor.destroy_page(full.dither_page);
+                full.dither_page = {};
+                return false;
+            }
+            return true;
+        };
         // Appends the fog's passes over everything the card drew into a
         // view: the fog's dither, where the option is on, since the
         // processor dithers the objects as it does the ground and the pages
@@ -2011,6 +2188,30 @@ bool Runtime::present_full_match_layers(bool dialogs) {
             if (!fogged)
                 return;
             const full_fog::FogPlacement placement = fog_placement(where);
+            if (classic) {
+                if (fog.dithered && ensure_dither_page())
+                    fog_quads += full_fog::append_unseen_dither_classic(
+                        frame,
+                        fog.grid,
+                        full.fog_shapes,
+                        full.dither_page,
+                        fog.dither,
+                        placement,
+                        target,
+                        scissor
+                    );
+                fog_quads += full_fog::append_unmapped_classic(
+                    frame,
+                    fog.grid,
+                    full.fog_shapes,
+                    fog.unmapped,
+                    fog.palette,
+                    placement,
+                    target,
+                    scissor
+                );
+                return;
+            }
             if (fog.dithered)
                 fog_quads += full_fog::append_unseen_dither(
                     frame, fog.grid, fog.dither, placement, target, scissor
@@ -2095,8 +2296,9 @@ bool Runtime::present_full_match_layers(bool dialogs) {
         const auto append_masked_unseen = [&](const ft::TerrainView& where,
                                               std::span<const full_fog::GreyedLevel> levels,
                                               card::TargetHandle target) {
-            if (!fogged || fog.dithered || full.fog_mask_off || target == card::TargetHandle{} ||
-                target != full.moved_target || full.shifted_target == card::TargetHandle{} ||
+            if (!fogged || fog.dithered || classic || full.fog_mask_off ||
+                target == card::TargetHandle{} || target != full.moved_target ||
+                full.shifted_target == card::TargetHandle{} ||
                 levels.size() != full.plan.pass_count)
                 return false;
             for (uint32_t index = 0; index < full.plan.pass_count; ++index) {
@@ -2226,6 +2428,7 @@ bool Runtime::present_full_match_layers(bool dialogs) {
             quads += ft::append_terrain_tiles(
                 frame, full.atlas, full.pages, target_view, pass, full.world_target, nullptr
             );
+            append_moved_art(target_view, {&pass, 1}, full.world_target, nullptr);
             const std::array<full_fog::GreyedLevel, 1> levels{{{pass.level, pass.sampling, 1.0F}}};
             append_unseen(target_view, levels, full.world_target, nullptr);
             // Size pixels per layout pixel, so that the texture holds the
@@ -2269,6 +2472,7 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                 quads += ft::append_terrain_tiles(
                     frame, full.atlas, full.pages, target_view, pass, full.target, nullptr
                 );
+                append_moved_art(target_view, {&pass, 1}, full.target, nullptr);
                 const std::array<full_fog::GreyedLevel, 1> levels{
                     {{pass.level, pass.sampling, 1.0F}}
                 };
@@ -2297,6 +2501,7 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                 quads += ft::append_terrain_tiles(
                     frame, full.atlas, full.pages, over_view, pass, over_target, over_scissor
                 );
+                append_moved_art(view, {&pass, 1}, card::TargetHandle{}, &battlefield);
                 const std::array<full_fog::GreyedLevel, 1> levels{
                     {{pass.level, pass.sampling, 1.0F}}
                 };
@@ -2360,6 +2565,12 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                     );
                 levels[index] = {pass.level, pass.sampling, 1.0F};
             }
+            append_moved_art(
+                over_view,
+                {full.plan.passes.data(), full.plan.pass_count},
+                over_target,
+                over_scissor
+            );
             // The second pass is blended over the first at its alpha, so it
             // carries that share of the picture and the first the rest.
             if (full.plan.pass_count == 2) {
@@ -2436,10 +2647,94 @@ bool Runtime::present_full_match_layers(bool dialogs) {
         // card's own.
         if (render_fault_due(RenderFaultPoint::card))
             throw FullCardError(std::string(forced_card_failure));
-        if (!full.executor.execute(frame, nullptr))
+        if (!full.executor.execute(frame, full.final_target))
             throw_frame_failure(full.executor, "the frame");
         oa::base::float_precision::restore_program_float_control();
         full.execute_ns = nanoseconds_since(execute_start);
+        // Process the actual GPU world before interface and order overlays.
+        // The moved target keeps its extra border and density, so distortion
+        // and lighting follow the same fractional camera move as the scene.
+        // The failure --check-renderer-ladder forces stands in for the
+        // effects pass's own.
+        const bool effects_fault = render_fault_due(RenderFaultPoint::effects);
+        if (effects_fault || match_effects_enabled()) {
+            const auto place = match_view_place();
+            const float effect_zoom = match_zoom();
+            float left = static_cast<float>(battlefield.width);
+            float top = static_cast<float>(battlefield.height);
+            float right = 0;
+            float bottom = 0;
+            // Include the heat sampler and fractional camera resolve around each source.
+            constexpr float sampling_margin = 6;
+            for (const auto& source : match_effect_sources()) {
+                const float x = (source.x - static_cast<float>(place[0])) * effect_zoom;
+                const float y =
+                    (source.z - source.height * 0.5F - static_cast<float>(place[1])) * effect_zoom;
+                const float radius = source.radius * effect_zoom + sampling_margin;
+                if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(radius) || radius <= 0)
+                    continue;
+                if (x + radius < 0 || y + radius < 0 || x - radius >= battlefield.width ||
+                    y - radius >= battlefield.height)
+                    continue;
+                left = std::min(left, x - radius);
+                top = std::min(top, y - radius);
+                right = std::max(right, x + radius);
+                bottom = std::max(bottom, y + radius);
+            }
+            const SDL_FRect effect_bounds{
+                left, top, std::max(0.0F, right - left), std::max(0.0F, bottom - top)
+            };
+            const auto process = [&](const full_effects::Pixels& image) {
+                compose_match_effect_pixels(
+                    image.bytes,
+                    image.width,
+                    image.height,
+                    image.pitch,
+                    4,
+                    // The target is drawn at the rounded view; its resolver
+                    // adds this shift later. Sources use the exact view.
+                    image.origin_x +
+                        (moved ? static_cast<float>(accelerated_.frame_shift[0]) : 0.0F),
+                    image.origin_y +
+                        (moved ? static_cast<float>(accelerated_.frame_shift[1]) : 0.0F),
+                    image.scale_x,
+                    image.scale_y,
+                    false,
+                    static_cast<float>(image.row_offset)
+                );
+            };
+            // Light only adds to the world, which the card adds it to as it
+            // is; heat distortion moves the world's pixels, which are read
+            // back, the processor waiting for the card to finish the world.
+            const full_effects::Pass pass =
+                match_effects_distort() ? full_effects::Pass::world : full_effects::Pass::light;
+            std::string failure(forced_effects_failure);
+            if (!effects_fault)
+                failure = full_effects::compose(
+                    sdl_.renderer,
+                    full.effects_upload,
+                    {battlefield.x, battlefield.y, battlefield.width, battlefield.height},
+                    moved ? full.executor.target_texture(full.moved_target) : nullptr,
+                    moved ? full.moved_target_factor : 1U,
+                    process,
+                    &effect_bounds,
+                    // The readback or the light is a buffer the frame can do without.
+                    [this](uint64_t bytes) { return accelerated_buffer_fits(bytes); },
+                    full.final_target,
+                    pass
+                );
+            // A failed effects pass leaves the card's world as it drew it:
+            // the frame goes on without the effects, and Full stays.
+            if (!failure.empty()) {
+                ++full.effects_skipped;
+                if (!full.effects_failure_logged) {
+                    full.effects_failure_logged = true;
+                    std::cout << graphics_log_prefix << "full tier: " << failure
+                              << "; a frame whose effects pass fails is drawn without them\n"
+                              << std::flush;
+                }
+            }
+        }
         // The frame counts towards the stage of Full's first frames.
         if (render_run_)
             render_run_->paths_drawn = static_cast<PathSet>(
@@ -2476,7 +2771,7 @@ bool Runtime::present_full_match_layers(bool dialogs) {
             draw_one_to_one(
                 sdl_.renderer, full.overlay_texture, nullptr, &in_target, one_to_one_scale_mode()
             );
-            if (!SDL_SetRenderTarget(sdl_.renderer, nullptr))
+            if (!SDL_SetRenderTarget(sdl_.renderer, full.final_target))
                 throw FullCardError(
                     std::string("SDL_SetRenderTarget of the window: ") + SDL_GetError()
                 );
@@ -2519,7 +2814,7 @@ bool Runtime::present_full_match_layers(bool dialogs) {
                 onto.shift_y = 0.0F;
             }
             move.batches.push_back(onto);
-            if (!full.executor.execute(move, nullptr))
+            if (!full.executor.execute(move, full.final_target))
                 throw_frame_failure(full.executor, "the zoomed-out target's move");
             oa::base::float_precision::restore_program_float_control();
         } else {

@@ -445,7 +445,8 @@ void PadAccess::act_press(
         return;
     case pc::Action::library_search:
     case pc::Action::library_action:
-        // The Library takes these while it is the top screen. On every other
+        // The Library takes these while it is the top screen. MUTATORS… takes
+        // Y on the skirmish setup and the campaign launch. On every other
         // screen Y and X do nothing, as they did before they had an action.
         return;
     case pc::Action::wheel_up:

@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -543,9 +544,61 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
     // nothing of them afterwards.
     preallocate_full_match_textures();
     set_load_progress(0, 10);
+
+    // A start that fails after the mutators are applied, including a
+    // campaign start that does not tear the match down, drops the layer.
+    struct MutatorLayerGuard {
+        Runtime& runtime;
+        int exceptions = std::uncaught_exceptions();
+
+        ~MutatorLayerGuard() {
+            if (std::uncaught_exceptions() > exceptions)
+                runtime.release_match_mutators();
+        }
+    } mutator_layer{*this};
+
+    apply_match_mutators(bootstrap);
     if (bootstrap.place_commanders && selected_start_markers_.empty() && !campaign_mission_)
         throw std::runtime_error("selected map has no start-position schema");
     session_schema_ = session_schema();
+
+    // A start that fails after this puts the run's sides back, including a
+    // campaign start, which does not tear the match down.
+    struct SideTableRestore {
+        Runtime& runtime;
+        int depth = std::uncaught_exceptions();
+
+        ~SideTableRestore() {
+            if (std::uncaught_exceptions() > depth)
+                runtime.restore_run_side_table();
+        }
+    } side_table_restore{*this};
+
+    load_match_side_table();
+    // A new skirmish whose side was saved under other side data plays the
+    // first side the menu offers, and says so. A saved game, a replay, a
+    // campaign and a network start keep the side they were given.
+    if (bootstrap.seat_roster && bootstrap.place_commanders && !bootstrap.multiplayer &&
+        !campaign_mission_) {
+        for (std::size_t player_slot = 0; player_slot < skirmish_settings_.slots.size();
+             ++player_slot) {
+            auto& setup = skirmish_settings_.slots[player_slot];
+            if (setup.controller == entry::controller::disabled)
+                continue;
+            if (setup.side < static_cast<int32_t>(side_table_.count))
+                continue;
+            const int32_t chosen = setup.side;
+            const int32_t played = skirmish::offered_side(
+                chosen,
+                static_cast<int32_t>(side_table_.count),
+                oa::data::defs::skirmish_hidden_sides()
+            );
+            setup.side = played;
+            std::cerr << "open-annihilation: side data: player " << player_slot << " chose side "
+                      << chosen << ", which this match's side data does not have; it plays side "
+                      << played << '\n';
+        }
+    }
     // The weapons, every WEAPONS\*.TDF section into its ID's slot. A lava
     // world loads the lava explosions into the water explosion slot.
     weapon_registry_ = oa::sim::combat_state::WeaponRegistry{};
@@ -1039,6 +1092,7 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
             ? kFixedRandomSeed
             : static_cast<uint32_t>(counter) + static_cast<uint32_t>(counter >> 32U)
     );
+    brain_match_seed_ = static_cast<uint32_t>(random_seed);
     // A campaign plays under the rules block its mission loader wrote, a
     // skirmish under its own settings; the session flags apply either.
     int32_t session_record[4] = {
@@ -1067,7 +1121,28 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         prepared_map_->sight_masks,
         prepared_map_->sight_width,
         prepared_map_->sight_height,
-        bootstrap.units_per_player,
+        // A mutator's units-per-player hack is the cap this match plays.
+        // The run's bounds size the unit tables, so a value outside them
+        // is held and the match plays the bound.
+        [&]() {
+            const std::optional<uint16_t> asked = mutator_units_per_player();
+            if (!asked.has_value())
+                return bootstrap.units_per_player;
+            const auto& bounds = limits_.units_per_player;
+            uint16_t played = *asked;
+            if (played < bounds.minimum)
+                played = bounds.minimum;
+            if (played > bounds.maximum)
+                played = bounds.maximum;
+            if (played != *asked) {
+                std::cerr << "open-annihilation: mutators: limits.units-per-player.default "
+                          << static_cast<unsigned>(*asked) << " is outside this run's "
+                          << static_cast<unsigned>(bounds.minimum) << " to "
+                          << static_cast<unsigned>(bounds.maximum) << "; the match plays "
+                          << static_cast<unsigned>(played) << '\n';
+            }
+            return played;
+        }(),
         visibility_flags,
         local_player,
         30,
@@ -1099,6 +1174,7 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         );
         inputs.profile_sim_hash = profile->sim_hash;
     }
+    inputs.mutator_digest = match_mutator_digest();
     // Records for another type table than this one are not this match's.
     if (unit_type_rules_.size() == spawn_types_.size())
         inputs.unit_type_rules = unit_type_rules_;
@@ -1175,6 +1251,8 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         altitude_sight_blocked_ = true;
         status_ = std::string("Offline match setup blocked: ") + error.what();
         std::cerr << "unsupported operation: " << status_ << '\n';
+        // The match does not start, so the menus keep the sides the run read.
+        restore_run_side_table();
         return;
     }
     {
@@ -1194,9 +1272,11 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         // A skirmish starts at the configured unit limit (Game.max_units_setting); a
         // save's Summary writes it back as "maxunits". A campaign plays at
         // its mission's limit and keeps the run's limit in the setting.
+        // The pool above already holds a mutator's unit cap. A campaign keeps
+        // the run's limit in the setting, as it did before.
         world.game.max_units_setting = campaign_mission_
                                            ? EngineSettingsState::run_unit_limit(*this)
-                                           : bootstrap.units_per_player;
+                                           : world.game.units_per_player;
         bind_session_options();
         // Game.player_count, the players Start counted (two in a campaign): the
         // kills board has a row for each.
@@ -1366,6 +1446,8 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         // A mission resumed from a savegame restores it instead.
         if (!resume_saved_mission())
             spawn_campaign_units();
+        note_campaign_map_starts();
+        publish_brain_starts(true);
         started_players = 0;
         for (const auto& slot : match_->world().slots)
             if (slot.unit != nullptr && slot.unit->type_index)
@@ -1375,6 +1457,7 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
         // with fixed positions each player starts at its slot's, with
         // random ones the players' slots are shuffled among them.
         const bool fixed_positions = preferences_.skirmish_location != 0;
+        note_brain_map_starts();
         std::array<int32_t, 10> start_positions{};
         start_positions.fill(-1);
         std::array<int32_t, 10> starts{};
@@ -1405,12 +1488,16 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
             // position take the commander's place; before the commander is
             // placed the computer player moves last on a neutral map.
             if (place_map_units(static_cast<uint8_t>(player), start_index)) {
+                remember_brain_player_start(static_cast<uint8_t>(player), start_index, true, true);
                 ++started_players;
                 continue;
             }
             if (player < start_positions.size()) {
                 move_map_unit_computer_last(start_positions, start_index, fixed_positions);
                 if (place_map_units(static_cast<uint8_t>(player), start_index)) {
+                    remember_brain_player_start(
+                        static_cast<uint8_t>(player), start_index, true, true
+                    );
                     ++started_players;
                     continue;
                 }
@@ -1443,8 +1530,10 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
             }
             if (!started.position_found || started.unit == nullptr)
                 throw std::runtime_error("offline commander start failed");
+            remember_brain_player_start(static_cast<uint8_t>(player), start_index, false, true);
             ++started_players;
         }
+        publish_brain_starts(fixed_positions);
         // Mission start seeds the stores once every commander is placed.
         std::array<oa::ui::hud::SkirmishSlot, OA_PLAYER_COUNT> seeds{};
         for (std::size_t player = 0;
@@ -1479,8 +1568,12 @@ void Runtime::bootstrap_match(const MatchBootstrap& bootstrap) {
     // A new skirmish or campaign mission has finished loading here; its
     // players' pass waits for the first tick. A saved game, a network game
     // and a recorded game load more after this and end theirs when they have.
-    if (!bootstrap.multiplayer && !bootstrap.replay && !resuming_saved_game())
+    if (!bootstrap.multiplayer && !bootstrap.replay && !resuming_saved_game()) {
+        open_brain_log_files();
+        seat_chosen_brains();
+        seat_shadow_brains();
         match_->finish_load();
+    }
     status_ = "Offline match world prepared for " + selected_map_name_runtime_ + " with " +
               std::to_string(unit_definitions_.size()) + " unit runtimes, " +
               std::to_string(feature_table_.defs.size()) + " feature definitions and " +

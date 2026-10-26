@@ -110,16 +110,21 @@ fill_polygon(Surface* target, const PolygonVertex* vertices, int32_t count, uint
 
 /// Plots both end pixels of one span row, depth tested when the sprite has a depth plane.
 ///
+/// An end outside the sprite is left out.
+///
 /// @param y sprite row
 /// @param row span row: integer left and exclusive right edges, 16.16 depths
 /// @param[in,out] target sprite whose pixels (and depth plane) receive the ends
 /// @param color pixel colour
 void plot_span_ends(int32_t y, const PolygonSpanRow& row, Sprite& target, uint8_t color) noexcept;
 
-/// Plots the left and right edge pixels of every scanline of an unclipped convex polygon.
+/// Plots the left and right edge pixels of every scanline of a convex polygon.
 ///
 /// An outline without horizontal runs; depth tested when the sprite has a
-/// depth plane.
+/// depth plane. The polygon is scanned unclipped, as 3.1c scans it, and
+/// only the ends inside the sprite are plotted: a model cut to a composite
+/// smaller than itself (limits.model-composite clamp-oversize) is outlined
+/// where the cut leaves it.
 ///
 /// @param[in,out] target sprite to draw into
 /// @param vertices polygon vertices in order around the outline

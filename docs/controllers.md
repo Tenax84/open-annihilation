@@ -128,7 +128,7 @@ R4 turns it off, as two taps would.
 
 | Grip | Applies to |
 |---|---|
-| R4 QUEUE | Orders, area orders and ring picks join the queue; placing buildings stays armed until R4 goes off; the queued orders are drawn |
+| R4 QUEUE | Orders, area orders and ring picks join the queue; an armed order, or placing buildings, stays armed until R4 goes off; the queued orders are drawn |
 | R4 on a build button, x5 | A factory's +5 and −5 |
 | L4 ADD | Clicks on units add them or take them out; boxes add; group recall adds |
 | R5 FORCE | Clicks while held force fire. It is not a latch |
@@ -195,7 +195,7 @@ the order a click would give is ringed.
 
 | While R1 is held | Does |
 |---|---|
-| Release R1 on a wedge | Gives that order at the ring's point, as arming its button and clicking there does; with R4 held, queued, and the order stays armed |
+| Release R1 on a wedge | Gives that order at the ring's point, as arming its button and clicking there does; with R4 held, queued, and the order stays armed until R4 goes off |
 | A on a wedge | **Arms** the order and closes the ring; the next R2 click gives it, and an R2 drag gives an area order |
 | Release R1 at the centre, or B | Closes the ring; nothing is given |
 | Tap R1 (released before the hold delay, nothing aimed) | The ring stays open: R2 or a trackpad press gives at its point, A arms, B closes |
@@ -325,15 +325,15 @@ settings dialog, the Game files screen and the folder chooser.
 | Input | Does |
 |---|---|
 | Right trackpad (or the stick cursor), R2, L2 | The pointer, a left click and a right click |
-| D-pad, left stick | Move the focus between buttons and list rows; held, they repeat after 400 ms, then every 120 ms |
+| D-pad, left stick | Move the focus between buttons and list rows; held, they repeat after 400 ms, then every 120 ms. On NEWGAME and Any Mission, Up and Down stay with the campaign and mission lists, including while the campaign brain button has the focus |
 | L1 and R1 | The previous and next group of buttons (Shift+Tab and Tab) |
-| A | Presses the focused button. With none focused, as when the main menu opens, the 640×480 menus focus their first button and the other screens press their default. In the battle room, on another player's row, it opens that player's card as View does, and does nothing when that row has no card |
+| A | Presses the focused button. With none focused, as when the main menu opens, the 640×480 menus focus their first button and the other screens press their default. In the battle room, on another player's row, it opens that player's card as View does, and does nothing when that row has no card. On the skirmish setup, on a computer row's brain button, it opens that seat's picker. On NEWGAME and Any Mission, on the campaign computer player's brain button, it opens that seat's picker |
 | B | Back (Escape), as each screen has it |
 | Menu | Enter: the screen's default button; on the 640×480 menus, as A |
-| View | Information about the focused item, as F1. In the battle room it opens the focused player's card |
+| View | Information about the focused item, as F1. In the battle room it opens the focused player's card. On the skirmish setup, on a computer row's brain button, it shows that seat's card. On NEWGAME and Any Mission, on the campaign computer player's brain button, it shows that seat's card |
 | Right stick ↑ and ↓ | The wheel: steps the map and mission lists |
 | A twice quickly on a list row | Starts the campaign, mission or map, as a double click does |
-| Y, in the Library and the map browser | Focuses the search. On the skirmish map list and the battle room host's map list it opens the map browser, as MORE MAPS… does. On every other screen Y does nothing |
+| Y, in the Library and the map browser | Focuses the search. On the skirmish map list and the battle room host's map list it opens the map browser, as MORE MAPS… does. On the skirmish setup and the campaign launch it opens Mutators. On every other screen Y does nothing |
 | X, in the Library | The selected entry's first action, when it is GET, UPDATE, CANCEL or RETRY and can be pressed. On every other screen X does nothing |
 | L1 and R1, in the Library | The previous and next tab |
 | B, in the Library | From the details page back to the list; otherwise closes the Library |

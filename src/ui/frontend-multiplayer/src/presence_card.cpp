@@ -8,6 +8,7 @@
 #include "oa/ui/frontend_multiplayer/presence_card.hpp"
 
 #include "oa/data/content_bundles.hpp"
+#include "oa/data/languages/interface_text.hpp"
 #include "oa/present/game_text.hpp"
 #include "oa/ui/kit/theme.hpp"
 
@@ -17,6 +18,7 @@
 #include <functional>
 #include <initializer_list>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -52,6 +54,30 @@ struct Filling {
 std::string
 filled(const Lobby& lobby, const char* english, std::initializer_list<Filling> fillings) {
     std::string phrase = word(lobby, english);
+    for (const Filling& filling : fillings) {
+        const std::size_t at = phrase.find(filling.placeholder);
+        if (at != std::string::npos)
+            phrase.replace(at, filling.placeholder.size(), filling.value);
+    }
+    return phrase;
+}
+
+/// Returns a mutator word of the card from the interface catalogue.
+///
+/// @param english the word, in English
+/// @return the word
+std::string catalogue_word(const char* english) {
+    return std::string(oa::data::languages::interface_text(english));
+}
+
+/// Returns a mutator phrase of the card from the interface catalogue, with
+/// values in place of its placeholders.
+///
+/// @param english the phrase, in English, holding the placeholders
+/// @param fillings each placeholder and what takes its place
+/// @return the phrase
+std::string catalogue_filled(const char* english, std::initializer_list<Filling> fillings) {
+    std::string phrase = catalogue_word(english);
     for (const Filling& filling : fillings) {
         const std::size_t at = phrase.find(filling.placeholder);
         if (at != std::string::npos)
@@ -395,6 +421,93 @@ void append_difference(
     }
 }
 
+/// Adds one row per mutator of the host's set, after Rules.
+///
+/// The first row is labelled "Mutators". The host's card marks every mutator
+/// present. A player who has it reads "{item} ✓". One who does not reads
+/// "{item}: not installed" or "{item}: another release here", in amber. A
+/// row whose state is still unknown is left out.
+///
+/// @param[in,out] card the card
+/// @param lobby the battle room
+/// @param slot the player's slot
+/// @param mutators the host's set
+void append_mutators(
+    PresenceCard& card, Lobby& lobby, int32_t slot, std::span<const CardMutator> mutators
+) {
+    if (mutators.empty())
+        return;
+    const bool host = lobby_host_slot(lobby) == static_cast<uint8_t>(slot);
+    bool first = true;
+    for (const CardMutator& item : mutators) {
+        const CardMutatorHave have = host ? CardMutatorHave::has : item.have;
+        PresenceCardLine line;
+        if (have == CardMutatorHave::unknown)
+            continue;
+        if (first)
+            line.label = catalogue_word("Mutators");
+        first = false;
+        switch (have) {
+        case CardMutatorHave::has:
+            line.value = catalogue_filled("{item} ✓", {{"{item}", item.name}});
+            line.tone = CardTone::plain;
+            break;
+        case CardMutatorHave::other_release:
+            line.value = catalogue_filled("{item}: another release here", {{"{item}", item.name}});
+            line.tone = CardTone::amber;
+            break;
+        case CardMutatorHave::missing:
+            line.value = catalogue_filled("{item}: not installed", {{"{item}", item.name}});
+            line.tone = CardTone::amber;
+            break;
+        case CardMutatorHave::unknown:
+            break;
+        }
+        card.lines.push_back(std::move(line));
+    }
+}
+
+/// Adds the amber lines for a player who lacks a mutator of the host's set.
+///
+/// They follow the content difference lines. The host's card has none.
+///
+/// @param[in,out] card the card
+/// @param lobby the battle room
+/// @param slot the player's slot
+/// @param mutators the host's set
+void append_mutator_difference(
+    PresenceCard& card, Lobby& lobby, int32_t slot, std::span<const CardMutator> mutators
+) {
+    if (mutators.empty())
+        return;
+    const uint8_t host = lobby_host_slot(lobby);
+    if (host == kNoSlot || host == static_cast<uint8_t>(slot))
+        return;
+    bool any = false;
+    for (const CardMutator& item : mutators) {
+        if (item.have == CardMutatorHave::has || item.have == CardMutatorHave::unknown)
+            continue;
+        any = true;
+        const char* phrase = item.have == CardMutatorHave::other_release
+                                 ? "Different from the host: another release of {name}."
+                                 : "Different from the host: no {name}.";
+        card.lines.push_back(
+            {{}, catalogue_filled(phrase, {{"{name}", item.name}}), CardTone::amber}
+        );
+    }
+    if (!any)
+        return;
+    const std::string player = stored_name(slot_player(lobby, slot));
+    card.lines.push_back(
+        {{},
+         catalogue_filled(
+             "The game cannot start until {player} gets it, or the host turns it off.",
+             {{"{player}", player}}
+         ),
+         CardTone::amber}
+    );
+}
+
 /// Returns a line with its label.
 ///
 /// @param label the label, translated
@@ -426,7 +539,8 @@ kit::Colour tone_colour(CardTone tone) noexcept {
 std::optional<PresenceCard> presence_card(
     Lobby& lobby,
     int32_t slot,
-    const std::function<PackState(const netgame::PresenceMapPack&)>& pack_state
+    const std::function<PackState(const netgame::PresenceMapPack&)>& pack_state,
+    std::span<const CardMutator> mutators
 ) {
     if (slot < 0 || slot >= kSlotCount ||
         lobby_row_badge(lobby, slot).badge != RowBadge::open_annihilation)
@@ -478,6 +592,7 @@ std::optional<PresenceCard> presence_card(
     if (record->language)
         card.lines.push_back({word(lobby, "Language"), *record->language, CardTone::plain});
     card.lines.push_back(labelled(word(lobby, "Rules"), rules_line(lobby, slot, *record)));
+    append_mutators(card, lobby, slot, mutators);
     if (record->game_hacks)
         card.lines.push_back(
             {word(lobby, "Game"),
@@ -529,6 +644,7 @@ std::optional<PresenceCard> presence_card(
             );
     }
     append_difference(card, lobby, slot, *record);
+    append_mutator_difference(card, lobby, slot, mutators);
     return card;
 }
 
@@ -561,14 +677,33 @@ kit::HoverCardLook presence_card_look(
             std::max(widest_label, kit::text_width(fonts, kit::FontRole::small, line.label));
     }
     const int32_t label_column = labelled_rows ? widest_label + metrics.hover_card_padding : 0;
+    const auto measure = [&](std::string_view text) {
+        return kit::text_width(fonts, kit::FontRole::small, text);
+    };
     for (const PresenceCardLine& line : card.lines) {
         const int32_t value_room =
             std::max(room - (line.label.empty() ? 0 : label_column), int32_t{0});
-        look.rows.push_back(
-            {line.label,
-             kit::cut_to_width(fonts, kit::FontRole::small, line.value, value_room),
-             tone_colour(line.tone)}
-        );
+        const kit::Colour ink = tone_colour(line.tone);
+        // A difference line has no label. It wraps onto at most
+        // presence_card_difference_lines lines. The last is cut with "..."
+        // when the rest does not fit, and the lines before it are left whole.
+        // A labelled value stays one row, cut when it must.
+        if (!line.label.empty() || measure(line.value) <= value_room) {
+            look.rows.push_back(
+                {line.label,
+                 kit::cut_to_width(fonts, kit::FontRole::small, line.value, value_room),
+                 ink}
+            );
+            continue;
+        }
+        kit::WrapRules rules;
+        rules.most_lines = presence_card_difference_lines;
+        rules.shorten_last = [&fonts, value_room](std::string_view last) {
+            return kit::cut_to_width(fonts, kit::FontRole::small, last, value_room);
+        };
+        for (std::string& wrapped :
+             kit::wrap(line.value, std::max(value_room, int32_t{1}), measure, rules))
+            look.rows.push_back({{}, std::move(wrapped), ink});
     }
     for (const std::string& hack : card.hacks)
         look.block.push_back(kit::cut_to_width(fonts, kit::FontRole::small, hack, room));

@@ -650,6 +650,11 @@ Locks shown_locks(const Dialog& dialog) noexcept {
     if (locks.zoomed_out_after == Lock::none &&
         dialog.chosen.zoomed_out_units != ZoomedOutUnits::dots)
         locks.zoomed_out_after = Lock::needs_dots;
+    if (locks.water_effects == Lock::none &&
+        dialog.chosen.hardware_acceleration != HardwareAcceleration::full)
+        locks.water_effects = Lock::needs_full_acceleration;
+    if (locks.unlocked_camera == Lock::none && !dialog.chosen.allow_full_3d)
+        locks.unlocked_camera = Lock::needs_full_3d;
     // Only a sticky edge has a firmness: Capture never lets the pointer go,
     // and Free never holds it.
     if (locks.edge_stickiness == Lock::none && dialog.chosen.window_edge != WindowEdge::sticky)
@@ -1059,6 +1064,10 @@ std::string_view lock_text(Lock lock) noexcept {
         return "Needs Dots";
     case Lock::needs_sticky:
         return "Needs Sticky";
+    case Lock::needs_full_acceleration:
+        return "Needs Full acceleration";
+    case Lock::needs_full_3d:
+        return "Needs Allow Full 3D Mode";
     case Lock::main_menu:
         return "Choose from the main menu.";
     }
@@ -1250,7 +1259,9 @@ DialogAction scroll_key(Dialog& dialog, layout::ScrolledRows& open, DialogKey ke
 
 /// Reports a change of the chosen settings, or only a look's. Hardware
 /// acceleration passing to a higher level, from Off to Basic or Full or
-/// from Basic to Full, asks for the graphics card to be tried afresh.
+/// from Basic to Full, asks for the graphics card to be tried afresh, and
+/// leaving Full turns the four effects off and reaching it sets each to its
+/// own default there (follow_acceleration_with_effects).
 ///
 /// @param[in,out] dialog the dialog, its chosen settings after the event
 /// @param before the chosen settings before the event
@@ -1258,6 +1269,7 @@ DialogAction scroll_key(Dialog& dialog, layout::ScrolledRows& open, DialogKey ke
 DialogAction changed_or_redraw(Dialog& dialog, const EngineSettings& before) noexcept {
     if (dialog.chosen.hardware_acceleration > before.hardware_acceleration)
         ++dialog.forget_renderer_failures;
+    follow_acceleration_with_effects(dialog.chosen, before.hardware_acceleration);
     return before == dialog.chosen ? DialogAction::redraw : DialogAction::changed;
 }
 

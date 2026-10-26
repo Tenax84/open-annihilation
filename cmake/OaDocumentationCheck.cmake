@@ -10,9 +10,9 @@
 # library in the tree. Clang's documentation warnings are errors there: a
 # @param that names no parameter, @return on a function returning void, a
 # command it does not know (@quirk is declared as one) or a malformed block.
-# The target exists only when the C++ compiler is Clang or AppleClang, and
-# only a build that names it (cmake --build <dir> --target oa-doc-check)
-# compiles it; CI builds it on macOS.
+# The target exists only when the C++ compiler is Clang or AppleClang. A
+# plain build leaves it out; the test doc-check builds it, so ctest runs the
+# check with the other tests, and CI builds it on macOS.
 include_guard(GLOBAL)
 
 # Collects every library target defined in directory and the directories below it.
@@ -33,9 +33,37 @@ function(oa_collect_library_targets directory out_var)
   set(${out_var} ${targets} PARENT_SCOPE)
 endfunction()
 
-# Defines oa-doc-check from the headers and library targets of the whole tree; call it after every target exists.
+# Registers doc-check, the test that builds oa-doc-check in this build tree
+# and fails when that build fails. Its first run compiles every header's
+# source, about a minute at eight jobs; once the check has passed, a later
+# run compiles again only the sources whose headers changed. The timeout
+# leaves room for a loaded machine. The build may also build a library the
+# headers need, so no other test runs beside it. Where the compiler is not
+# Clang there is no target, and the test skips with ctest's skip return
+# code, 77.
+function(oa_add_documentation_check_test)
+  if(NOT BUILD_TESTING)
+    return()
+  endif()
+  if(TARGET oa-doc-check)
+    add_test(NAME doc-check COMMAND "${CMAKE_COMMAND}" --build "${PROJECT_BINARY_DIR}"
+      --config "$<CONFIG>" --target oa-doc-check)
+    set_tests_properties(doc-check PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
+    return()
+  endif()
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME doc-check COMMAND ${Python3_EXECUTABLE} -c "raise SystemExit(77)")
+    set_tests_properties(doc-check PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+  endif()
+endfunction()
+
+# Defines oa-doc-check from the headers and library targets of the whole
+# tree, and its test (oa_add_documentation_check_test); call it after every
+# target exists.
 function(oa_add_documentation_check)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    oa_add_documentation_check_test()
     return()
   endif()
   oa_collect_library_targets("${PROJECT_SOURCE_DIR}" libraries)
@@ -67,4 +95,5 @@ function(oa_add_documentation_check)
   target_compile_options(oa-doc-check PRIVATE
     -Wdocumentation -Wdocumentation-unknown-command -fcomment-block-commands=quirk
     -Werror=documentation -Werror=documentation-unknown-command)
+  oa_add_documentation_check_test()
 endfunction()

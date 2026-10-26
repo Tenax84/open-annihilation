@@ -12,12 +12,17 @@
 #include "oa/formats/oamod/package_keys.hpp"
 #include "oa/ui/library/library.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+namespace oa::data::mutators {
+struct VerdictRecord;
+}
 
 namespace oa::ui::library {
 
@@ -27,6 +32,8 @@ namespace words {
 inline constexpr std::string_view tab_active = "Active";
 inline constexpr std::string_view tab_mods = "Mods";
 inline constexpr std::string_view tab_maps = "Maps";
+inline constexpr std::string_view tab_mutators = "Mutators";
+inline constexpr std::string_view tab_brains = "Brains";
 inline constexpr std::string_view tab_languages = "Languages";
 inline constexpr std::string_view tab_languages_short = "Lang";
 inline constexpr std::string_view tab_updates = "Updates";
@@ -69,6 +76,60 @@ inline constexpr std::string_view action_switch_off = "SWITCH OFF";
 inline constexpr std::string_view action_unload_mod = "UNLOAD MOD";
 inline constexpr std::string_view action_open_folder = "OPEN FOLDER";
 inline constexpr std::string_view action_homepage = "HOMEPAGE";
+/// On an installed mutator whose verdict is set, or an installed brain whose
+/// verdict is set. It checks that copy against the mod being played.
+inline constexpr std::string_view action_check_with_mod = "CHECK WITH THIS MOD";
+/// On an installed brain that is not the default, and on the built-in
+/// computer player while it is not. It makes that player the default.
+inline constexpr std::string_view action_use_by_default = "USE BY DEFAULT";
+/// GET's place when one prerequisite is missing. `{name}` is that prerequisite.
+inline constexpr std::string_view action_get_with = "GET WITH {name}";
+/// GET's place when more than one package besides the mutator will download.
+inline constexpr std::string_view action_get_with_more = "GET WITH {count} MORE";
+/// The question GET WITH asks.
+inline constexpr std::string_view get_with_title = "Get {name}?";
+/// The question's paragraph when one prerequisite is missing. `{prerequisite}`
+/// is its name and range; `{short}` is the name alone.
+inline constexpr std::string_view get_with_body_one =
+    "{name} needs {prerequisite}, which you don't have. Both download now, and {short} goes above "
+    "{name} in every list.";
+/// The question's paragraph when several prerequisites are missing.
+/// `{prerequisites}` joins their names and ranges.
+inline constexpr std::string_view get_with_body_many =
+    "{name} needs {prerequisites}, which you don't have. They download first, and go above {name} "
+    "in every list.";
+/// After a package's name and version on the question: the registry it comes from.
+/// The question writes a space in front. A catalogue key cannot begin with a
+/// space: the reader trims it, and the four languages then have no translation.
+inline constexpr std::string_view get_with_from = "· from {registry}";
+/// The question's button when two packages download.
+inline constexpr std::string_view action_get_both = "GET BOTH";
+/// The question's button when three or more packages download.
+inline constexpr std::string_view action_get_all = "GET ALL";
+/// The details note when one prerequisite downloads first. `{names}` is its name.
+inline constexpr std::string_view note_downloads_first =
+    "{names} downloads first, then sits above {name} in every list.";
+/// The details note when several prerequisites download first. `{names}` joins them.
+inline constexpr std::string_view note_download_first =
+    "{names} download first, then sit above {name} in every list.";
+/// Why GET WITH is off: no listing offers the prerequisite inside its range.
+/// A prerequisite that names no range uses `blocked_prerequisite_any`, so
+/// the sentence does not keep a blank before the comma.
+inline constexpr std::string_view blocked_prerequisite =
+    "Needs {name} {range}, which no registry offers";
+/// Why GET WITH is off, and why a picker row is locked, when the
+/// prerequisite names no version range.
+inline constexpr std::string_view blocked_prerequisite_any =
+    "Needs {name}, which no registry offers";
+/// Why GET WITH is off: the mutators name each other. `{ids}` joins the ids in the loop.
+inline constexpr std::string_view blocked_cycle = "These mutators need each other: {ids}";
+/// The uninstall question, before its last paragraph, when one other installed
+/// mutator needs this one.
+inline constexpr std::string_view uninstall_needed_by_one =
+    "{name} needs it: it stays installed, and cannot be switched on until this is back.";
+/// The same paragraph when several other installed mutators need this one.
+inline constexpr std::string_view uninstall_needed_by_many =
+    "{names} need it: they stay installed, and cannot be switched on until this is back.";
 inline constexpr std::string_view action_details = "DETAILS";
 /// BACK on Compact's details page. It returns to the list, which keeps its place.
 inline constexpr std::string_view action_back = "BACK";
@@ -83,6 +144,10 @@ inline constexpr std::string_view action_uninstall = "UNINSTALL";
 
 // The Registries tab. The words are the ones Downloads' Registries part used.
 inline constexpr std::string_view registry_built_in = "Built in";
+/// The built-in computer player's name and the summary under it.
+inline constexpr std::string_view built_in_brain_name = "Built-in computer player";
+inline constexpr std::string_view built_in_brain_summary =
+    "Open Annihilation's own computer player. It plays as Total Annihilation's does.";
 inline constexpr std::string_view registry_add = "ADD REGISTRY…";
 inline constexpr std::string_view registry_add_mirror = "ADD MIRROR…";
 inline constexpr std::string_view registry_remove = "REMOVE";
@@ -204,6 +269,41 @@ inline constexpr std::string_view change_old_copy_short = "old";
 inline constexpr std::string_view change_new_copy_short = "new";
 inline constexpr std::string_view map_count_one = "{count} map";
 inline constexpr std::string_view map_count = "{count} maps";
+// What a compatible verdict changed, one collection at a time. A count of
+// one uses the singular, as the other counted words do.
+inline constexpr std::string_view changes_units_one = "changes {count} unit";
+inline constexpr std::string_view changes_units = "changes {count} units";
+inline constexpr std::string_view adds_units_one = "adds {count} unit";
+inline constexpr std::string_view adds_units = "adds {count} units";
+inline constexpr std::string_view removes_units_one = "removes {count} unit";
+inline constexpr std::string_view removes_units = "removes {count} units";
+inline constexpr std::string_view changes_weapons_one = "changes {count} weapon";
+inline constexpr std::string_view changes_weapons = "changes {count} weapons";
+inline constexpr std::string_view adds_weapons_one = "adds {count} weapon";
+inline constexpr std::string_view adds_weapons = "adds {count} weapons";
+inline constexpr std::string_view removes_weapons_one = "removes {count} weapon";
+inline constexpr std::string_view removes_weapons = "removes {count} weapons";
+inline constexpr std::string_view changes_features_one = "changes {count} feature";
+inline constexpr std::string_view changes_features = "changes {count} features";
+inline constexpr std::string_view adds_features_one = "adds {count} feature";
+inline constexpr std::string_view adds_features = "adds {count} features";
+inline constexpr std::string_view removes_features_one = "removes {count} feature";
+inline constexpr std::string_view removes_features = "removes {count} features";
+inline constexpr std::string_view changes_menus_one = "changes {count} menu entry";
+inline constexpr std::string_view changes_menus = "changes {count} menu entries";
+inline constexpr std::string_view adds_files_one = "adds {count} file";
+inline constexpr std::string_view adds_files = "adds {count} files";
+inline constexpr std::string_view hides_files_one = "hides {count} file";
+inline constexpr std::string_view hides_files = "hides {count} files";
+/// The nine layers, in the order a manifest names them. Units, Weapons,
+/// Maps and Hacks reuse words the catalogue already has.
+inline constexpr std::string_view layer_files = "Files";
+inline constexpr std::string_view layer_units = "Units";
+inline constexpr std::string_view layer_weapons = "Weapons";
+inline constexpr std::string_view layer_features = "Features";
+inline constexpr std::string_view layer_sides = "Sides";
+inline constexpr std::string_view layer_tables = "Game tables";
+inline constexpr std::string_view layer_menus = "Build menus";
 
 // Engine requirements, one comparison each, joined with list_separator.
 inline constexpr std::string_view engine_at_least = "{version} or later";
@@ -229,12 +329,40 @@ inline constexpr std::string_view fact_rules = "Rules";
 inline constexpr std::string_view fact_maps = "Maps";
 inline constexpr std::string_view fact_coverage = "Coverage";
 inline constexpr std::string_view fact_from = "From";
+inline constexpr std::string_view fact_works_with = "Works with";
+inline constexpr std::string_view fact_levels = "Levels";
+/// The built-in computer player's three levels, joined with names_and.
+inline constexpr std::string_view level_easy = "Easy";
+inline constexpr std::string_view level_medium = "Medium";
+inline constexpr std::string_view level_hard = "Hard";
+inline constexpr std::string_view fact_checked = "Checked";
+inline constexpr std::string_view fact_options = "Options";
+inline constexpr std::string_view fact_changes = "Changes";
+/// Works with, when the package names no mod or names any mod.
+inline constexpr std::string_view works_with_any = "Any mod";
+/// Full awareness, in a brain's facts. The chip uses chip_full_awareness.
+inline constexpr std::string_view full_awareness_sees =
+    "Sees every unit on the map, as Total Annihilation's own computer player does";
+/// A brain's Network fact.
+inline constexpr std::string_view fact_network = "Network";
+/// A brain that carries a learned network. `{size}` is size_text.
+inline constexpr std::string_view network_learned = "Uses a learned network ({size})";
+/// The summary a brain's compatible check keeps. The Checked fact fills it in.
+inline constexpr std::string_view fits_this_game = "it fits this game";
 inline constexpr std::string_view size_with_download = "{size} · {download} to download";
 inline constexpr std::string_view size_download_short = "{download} to download";
 inline constexpr std::string_view base_supported = "Total Annihilation 3.1c";
 inline constexpr std::string_view base_supported_short = "TA 3.1c";
 inline constexpr std::string_view needs_engine = "Open Annihilation {range}";
 inline constexpr std::string_view needs_engine_short = "OA {range}";
+/// A prerequisite no installed mutator meets. `{range}` is the version range
+/// in the engine's comparison words. A prerequisite that names no range uses
+/// `needs_mutator_missing_name` instead, so the line does not keep a blank.
+inline constexpr std::string_view needs_mutator_missing = "{name} {range}: not installed";
+/// A prerequisite an installed mutator meets, when it names a version range.
+inline constexpr std::string_view needs_mutator_met = "{name} {range} ✓";
+/// A prerequisite with no version range that no installed mutator meets.
+inline constexpr std::string_view needs_mutator_missing_name = "{name}: not installed";
 inline constexpr std::string_view hacks_counts = "{game} change the game · {view} view only";
 inline constexpr std::string_view hacks_counts_short = "{game} game · {view} view";
 inline constexpr std::string_view hacks_none = "none";
@@ -253,6 +381,36 @@ inline constexpr std::string_view coverage_percent = "{percent}%";
 inline constexpr std::string_view not_reviewed = "Not reviewed by the OA team";
 inline constexpr std::string_view from_not_reviewed = "{registry} · Not reviewed by the OA team";
 inline constexpr std::string_view from_own = "Your own copy";
+/// A mutator's Rules fact, shown whole at every size class.
+inline constexpr std::string_view rules_mutator = "Changes the game: unranked on Core Prime";
+/// Checked, when the verdict is compatible. `{summary}` is the counts in words.
+inline constexpr std::string_view checked_good = "With {mod}: {summary}";
+/// Checked, when the mutator applies and changes nothing.
+inline constexpr std::string_view checked_no_effect = "With {mod}: no effect";
+/// Checked, when the mutator cannot run with this mod.
+inline constexpr std::string_view checked_incompatible = "With {mod}: {reason}";
+/// Checked, when the check itself did not finish.
+inline constexpr std::string_view checked_failed = "With {mod}: it stopped: {reason}";
+/// Checked, while a check is running.
+inline constexpr std::string_view checked_running = "Checking with {mod}…";
+/// Checked, when the host can check and has not yet.
+inline constexpr std::string_view checked_not_yet = "Not checked with {mod}";
+/// The same six facts when no mod is played. A translator writes the base
+/// game in the sentence, so it is not "With {mod}" filled with "No Mod".
+inline constexpr std::string_view checked_good_base = "With No Mod: {summary}";
+inline constexpr std::string_view checked_no_effect_base = "With No Mod: no effect";
+inline constexpr std::string_view checked_incompatible_base = "With No Mod: {reason}";
+inline constexpr std::string_view checked_failed_base = "With No Mod: it stopped: {reason}";
+inline constexpr std::string_view checked_running_base = "Checking with No Mod…";
+inline constexpr std::string_view checked_not_yet_base = "Not checked with No Mod";
+/// A compatible verdict whose counts are all zero: sides, tables, or anything
+/// else the counts do not name.
+inline constexpr std::string_view changes_other_data = "changes other game data";
+/// A compatible verdict for a list whose last mutator declares maps and
+/// changed nothing a dry run can see. The map hook runs when a match starts.
+inline constexpr std::string_view changes_map_on_start = "changes the map when a match starts";
+/// One option's label and its value captions.
+inline constexpr std::string_view option_values = "{label}: {values}";
 
 // The line under an entry's name.
 /// An update to a revision above 0 of the version installed.
@@ -263,10 +421,17 @@ inline constexpr std::string_view status_version_available =
 /// An update that keeps the version and names no revision above 0.
 inline constexpr std::string_view status_update_available = "Update available · {size} to download";
 inline constexpr std::string_view status_installed = "Installed";
+/// An installed brain that is the default computer player.
+inline constexpr std::string_view status_installed_default = "Installed · Default";
+/// The built-in computer player while it is the default. While it is not,
+/// the status is registry_built_in.
+inline constexpr std::string_view status_built_in_default = "Built in · Default";
 inline constexpr std::string_view status_playing = "Playing";
 /// The status of a mod folder with no oamod.yaml, installed or played.
 inline constexpr std::string_view status_without_manifest = "No oamod.yaml present";
 inline constexpr std::string_view status_not_installed = "Not installed · {size}";
+/// A mutator that is not installed. `{version}` includes a revision of 1.
+inline constexpr std::string_view status_not_installed_version = "Not installed · {version}";
 inline constexpr std::string_view status_waiting = "Waiting to download";
 inline constexpr std::string_view status_downloading = "Downloading · {progress}";
 inline constexpr std::string_view status_downloading_unsized = "Downloading";
@@ -282,6 +447,33 @@ inline constexpr std::string_view note_playing_other =
     "You are playing {playing}. Updating {name} doesn't restart the game.";
 /// Why PLAY NOW and SWITCH OFF are off: --mod-dir or --base-game.
 inline constexpr std::string_view note_command_line = "The command line chose this run's mod.";
+/// A mutator that does not work with the mod being played. Information only:
+/// GET and UPDATE stay on. `{names}` is the mods it works with.
+inline constexpr std::string_view note_not_compatible =
+    "Not compatible with this mod: it works with {names}";
+/// A Large row's chip when a mutator still needs another. `{name}` is that
+/// mutator's name. Drawn in the lock colour; GET stays on.
+inline constexpr std::string_view chip_needs = "Needs {name}";
+/// A Large row's chip when a mutator does not work with the mod being played.
+/// Information only, in the lock colour. GET stays on, and the row is not dimmed.
+inline constexpr std::string_view chip_not_compatible = "Not compatible with this mod";
+/// After a Compact row's title when a mutator still needs another.
+inline constexpr std::string_view row_needs = "· needs {name}";
+/// After a Compact row's title when a mutator does not work with this mod.
+inline constexpr std::string_view row_not_compatible = "· not compatible with this mod";
+/// After a Compact row's title when a brain does not fit the game being
+/// played. `{reason}` is brain_unfit_reason. Information only.
+inline constexpr std::string_view row_brain_unfit = "· {reason}";
+/// The chip on the default computer player.
+inline constexpr std::string_view chip_default = "Default";
+/// The chip on a brain that sees every unit.
+inline constexpr std::string_view chip_full_awareness = "Full awareness";
+/// Why a brain does not work with the game being played. `{names}` is the
+/// mods it works with, joined with names_or.
+inline constexpr std::string_view made_for = "Made for {names}";
+/// UNINSTALL of the default brain, before the question's last paragraph.
+inline constexpr std::string_view uninstall_default_brain =
+    "It is your default computer player: new computer seats go back to the built-in player.";
 
 // The download queue in the footer.
 inline constexpr std::string_view queue_package = "{name} {version}";
@@ -322,6 +514,8 @@ inline constexpr std::string_view offline_mark = "offline";
 
 // The search and the filters.
 inline constexpr std::string_view search_mods = "Search mods, authors, tags";
+inline constexpr std::string_view search_mutators = "Search mutators, authors, tags";
+inline constexpr std::string_view search_brains = "Search brains, authors, tags";
 inline constexpr std::string_view search_maps = "Search maps, authors, tags";
 inline constexpr std::string_view search_languages = "Search languages";
 /// The Active tab's maps field, above the maps pane.
@@ -333,13 +527,32 @@ inline constexpr std::string_view filter_tag = "Tag: {tag} ({count})";
 inline constexpr std::string_view tag_with_count = "{tag} ({count})";
 /// The drop-down holding the tags that do not fit, and the filter pane's heading over them.
 inline constexpr std::string_view tags_menu = "TAGS";
+/// The eight catalogue tag ids, as a player reads them. Any other id is shown as written.
+inline constexpr std::string_view tag_statistics = "Statistics";
+inline constexpr std::string_view tag_economy = "Economy";
+inline constexpr std::string_view tag_commanders = "Commanders";
+inline constexpr std::string_view tag_new_units = "New Units";
+inline constexpr std::string_view tag_disable = "Disable";
+inline constexpr std::string_view tag_gameplay = "Gameplay";
+inline constexpr std::string_view tag_ai = "AI";
+/// The nine brain tag ids, as a player reads them. Economy reuses tag_economy.
+/// Any other id is shown as written.
+inline constexpr std::string_view tag_classic = "Classic";
+inline constexpr std::string_view tag_rush = "Rush";
+inline constexpr std::string_view tag_turtle = "Turtle";
+inline constexpr std::string_view tag_air = "Air";
+inline constexpr std::string_view tag_naval = "Naval";
+inline constexpr std::string_view tag_learned = "Learned";
+inline constexpr std::string_view tag_teaching = "Teaching";
+inline constexpr std::string_view tag_experimental = "Experimental";
 /// The Compact details page's drop-down holding the actions after the first three.
 inline constexpr std::string_view more_menu = "MORE";
 /// How many updates the Updates tab shows.
 inline constexpr std::string_view update_count_one = "{count} update";
 inline constexpr std::string_view update_count_many = "{count} updates";
 /// How many packages the player has added, as the main menu's Library button says.
-/// A package is a mod, a map pack, a language pack or a downloaded expansion.
+/// A package is a mod, a map pack, a language pack, a mutator or a downloaded
+/// expansion. An installed brain is not counted.
 inline constexpr std::string_view package_count_one = "{count} package";
 inline constexpr std::string_view package_count_many = "{count} packages";
 
@@ -518,6 +731,7 @@ inline constexpr std::string_view roll_back_reload =
 inline constexpr std::string_view fact_games = "Games";
 inline constexpr std::string_view names_and = "{left} and {right}";
 inline constexpr std::string_view names_comma = "{left}, {right}";
+inline constexpr std::string_view names_or = "{left} or {right}";
 inline constexpr std::string_view fact_join = "{left} · {right}";
 inline constexpr std::string_view name_met = "{name} ✓";
 inline constexpr std::string_view name_off = "{name} off";
@@ -561,6 +775,73 @@ using Place = std::pair<std::string_view, std::string_view>;
 /// @return the text to show; the English when the hooks give no lookup
 [[nodiscard]] std::string_view shown(const TextHooks& text, std::string_view english);
 
+/// Returns the label a mutator's catalogue tag id shows.
+///
+/// The eight ids give their words, looked up. Any other id, including a
+/// different case of one of those, is returned as written. The id `maps`
+/// uses the Maps tab's word. The screen uses this for a mutator's chips
+/// and detail pills, and for the Mutators tab's filter pills, pane and
+/// menu. A mod's or a map pack's tag is shown as the id was written.
+///
+/// @param tag the catalogue id
+/// @param text how texts are looked up; empty shows the English label
+/// @return the label; a view of `tag` when the id is not one of the eight
+[[nodiscard]] inline std::string_view tag_label(std::string_view tag, const TextHooks& text = {}) {
+    std::string_view english;
+    if (tag == "statistics")
+        english = words::tag_statistics;
+    else if (tag == "economy")
+        english = words::tag_economy;
+    else if (tag == "commanders")
+        english = words::tag_commanders;
+    else if (tag == "new-units")
+        english = words::tag_new_units;
+    else if (tag == "disable")
+        english = words::tag_disable;
+    else if (tag == "gameplay")
+        english = words::tag_gameplay;
+    else if (tag == "ai")
+        english = words::tag_ai;
+    else if (tag == "maps")
+        english = words::tab_maps;
+    else
+        return tag;
+    return shown(text, english);
+}
+
+/// Returns the label a brain's tag id shows.
+///
+/// The nine ids give their words, looked up. Any other id, including a
+/// different case of one of those, is returned as written. Economy uses the
+/// mutators' word. The Brains tab's chips, pills, pane and menu use this.
+/// A brain's tag is not given a mutator's icon.
+///
+/// @param tag the catalogue id
+/// @param text how texts are looked up; empty shows the English label
+/// @return the label; a view of `tag` when the id is not one of the nine
+[[nodiscard]] inline std::string_view
+brain_tag_label(std::string_view tag, const TextHooks& text = {}) {
+    if (tag == "classic")
+        return shown(text, words::tag_classic);
+    if (tag == "economy")
+        return shown(text, words::tag_economy);
+    if (tag == "rush")
+        return shown(text, words::tag_rush);
+    if (tag == "turtle")
+        return shown(text, words::tag_turtle);
+    if (tag == "air")
+        return shown(text, words::tag_air);
+    if (tag == "naval")
+        return shown(text, words::tag_naval);
+    if (tag == "learned")
+        return shown(text, words::tag_learned);
+    if (tag == "teaching")
+        return shown(text, words::tag_teaching);
+    if (tag == "experimental")
+        return shown(text, words::tag_experimental);
+    return tag;
+}
+
 /// Looks a pattern up whole and fills its places.
 ///
 /// A place no value names stays as it is written. Values are not looked up.
@@ -571,6 +852,42 @@ using Place = std::pair<std::string_view, std::string_view>;
 /// @return the text
 [[nodiscard]] std::string
 filled(const TextHooks& text, std::string_view pattern, std::initializer_list<Place> places);
+
+/// Joins names the way a sentence lists them, through names_comma and names_and.
+///
+/// @param text how texts are looked up
+/// @param names the names, in order
+/// @return the list; empty when `names` is empty
+[[nodiscard]] inline std::string
+join_names(const TextHooks& text, const std::vector<std::string>& names) {
+    if (names.empty())
+        return {};
+    if (names.size() == 1)
+        return names.front();
+    std::string joined = names.front();
+    for (std::size_t index = 1; index + 1 < names.size(); ++index) {
+        joined = filled(text, words::names_comma, {{"left", joined}, {"right", names[index]}});
+    }
+    return filled(text, words::names_and, {{"left", joined}, {"right", names.back()}});
+}
+
+/// Joins names with "or", through names_comma and names_or.
+///
+/// @param text how texts are looked up
+/// @param names the names, in order
+/// @return the list; empty when `names` is empty
+[[nodiscard]] inline std::string
+join_or(const TextHooks& text, const std::vector<std::string>& names) {
+    if (names.empty())
+        return {};
+    if (names.size() == 1)
+        return names.front();
+    std::string joined = names.front();
+    for (std::size_t index = 1; index + 1 < names.size(); ++index) {
+        joined = filled(text, words::names_comma, {{"left", joined}, {"right", names[index]}});
+    }
+    return filled(text, words::names_or, {{"left", joined}, {"right", names.back()}});
+}
 
 /// Writes a size in binary units.
 ///
@@ -662,6 +979,18 @@ change_texts(const Installed& installed, const UpdateNote& update, const TextHoo
 [[nodiscard]] std::string
 engine_text(const formats::oamod::EngineRange& range, const TextHooks& text = {});
 
+/// Writes a mutator version range in the engine's comparison words.
+///
+/// An empty range is empty. A range that does not parse is returned as
+/// written. Several comparisons are joined with the list separator. The
+/// Library's Needs fact, GET WITH and the mutator picker all use this, so
+/// one range reads the same in each place.
+///
+/// @param range_text the range as the manifest writes it
+/// @param text how texts are looked up
+/// @return the words, such as "4.0 or later"
+[[nodiscard]] std::string range_words(std::string_view range_text, const TextHooks& text = {});
+
 /// Describes an engine requirement in a few characters.
 ///
 /// @param range the requirement
@@ -698,6 +1027,38 @@ engine_short_text(const formats::oamod::EngineRange& range, const TextHooks& tex
 /// @param text how texts are looked up
 /// @return the button's words
 [[nodiscard]] std::string_view action_text(Action action, const TextHooks& text = {});
+
+/// Maps a dry-run verdict onto the Library's verdict.
+///
+/// The state follows the record. The reason is copied as given. A compatible
+/// verdict's summary is its non-zero counts, in `ChangeCounts` order, joined
+/// with `names_comma` and `names_and`. A count of one uses the singular.
+/// Every count at zero reads `changes_other_data`. A caller that knows the
+/// list's last mutator declares maps replaces that with `apply_map_fact`.
+///
+/// @param record the dry-run verdict
+/// @param text how texts are looked up
+/// @return the Library's verdict
+[[nodiscard]] Verdict
+verdict_of_record(const oa::data::mutators::VerdictRecord& record, const TextHooks& text = {});
+
+/// Replaces an empty-count compatible summary when the list's last mutator
+/// declares maps.
+///
+/// The stored verdict stays compatible with no counts. The fact says the map
+/// changes when a match starts, because a dry run has no map and the maps
+/// hook does not run. Any other verdict is left as it is.
+///
+/// @param[in,out] verdict the Library's verdict
+/// @param record the dry-run verdict
+/// @param declares_maps true when the list's last mutator declares maps
+/// @param text how texts are looked up
+void apply_map_fact(
+    Verdict& verdict,
+    const oa::data::mutators::VerdictRecord& record,
+    bool declares_maps,
+    const TextHooks& text
+);
 
 /// Returns a registry's avatar: the first letters of its first three words
 /// when its name has two or more, or the first two letters of its one word,
@@ -742,5 +1103,91 @@ registry_refresh_line(const Registry& registry, const TextHooks& text = {});
 /// @return the note
 [[nodiscard]] std::string
 registry_note(const std::vector<Registry>& registries, const TextHooks& text = {});
+
+/// The word a layer id shows. An id that is not one of the nine is empty.
+///
+/// @param id the layer id
+/// @return the English word; empty when the id is not known
+[[nodiscard]] inline std::string_view layer_word(std::string_view id) noexcept {
+    if (id == "files")
+        return words::layer_files;
+    if (id == "units")
+        return words::layer_units;
+    if (id == "weapons")
+        return words::layer_weapons;
+    if (id == "features")
+        return words::layer_features;
+    if (id == "sides")
+        return words::layer_sides;
+    if (id == "tables")
+        return words::layer_tables;
+    if (id == "menus")
+        return words::layer_menus;
+    if (id == "maps")
+        return words::tab_maps;
+    if (id == "hacks")
+        return words::fact_hacks;
+    return {};
+}
+
+/// The Checked fact's value and how it is marked.
+struct CheckedWords {
+    std::string value{};   ///< the fact's value, already looked up
+    Mark mark{Mark::none}; ///< how the value is marked
+};
+
+/// The Checked fact for a verdict against the mod being played.
+///
+/// Compatible is good, no effect is a warning, incompatible and failed are
+/// bad, and a check that is running or not started yet has no mark.
+///
+/// @param verdict the check
+/// @param mod the mod's name, as a player reads it
+/// @param text how texts are looked up
+/// @return the value and its mark
+[[nodiscard]] inline CheckedWords
+checked_text(const Verdict& verdict, std::string_view mod, const TextHooks& text) {
+    CheckedWords checked;
+    const bool base_game = mod.empty() || mod == shown(text, words::no_mod);
+    switch (verdict.state) {
+    case Verdict::State::compatible:
+        checked.value =
+            base_game
+                ? filled(text, words::checked_good_base, {{"summary", verdict.summary}})
+                : filled(text, words::checked_good, {{"mod", mod}, {"summary", verdict.summary}});
+        checked.mark = Mark::good;
+        break;
+    case Verdict::State::no_effect:
+        checked.value = base_game ? std::string(shown(text, words::checked_no_effect_base))
+                                  : filled(text, words::checked_no_effect, {{"mod", mod}});
+        checked.mark = Mark::warn;
+        break;
+    case Verdict::State::incompatible:
+        checked.value =
+            base_game
+                ? filled(text, words::checked_incompatible_base, {{"reason", verdict.reason}})
+                : filled(
+                      text, words::checked_incompatible, {{"mod", mod}, {"reason", verdict.reason}}
+                  );
+        checked.mark = Mark::bad;
+        break;
+    case Verdict::State::failed:
+        checked.value =
+            base_game
+                ? filled(text, words::checked_failed_base, {{"reason", verdict.reason}})
+                : filled(text, words::checked_failed, {{"mod", mod}, {"reason", verdict.reason}});
+        checked.mark = Mark::bad;
+        break;
+    case Verdict::State::checking:
+        checked.value = base_game ? std::string(shown(text, words::checked_running_base))
+                                  : filled(text, words::checked_running, {{"mod", mod}});
+        break;
+    case Verdict::State::unchecked:
+        checked.value = base_game ? std::string(shown(text, words::checked_not_yet_base))
+                                  : filled(text, words::checked_not_yet, {{"mod", mod}});
+        break;
+    }
+    return checked;
+}
 
 } // namespace oa::ui::library

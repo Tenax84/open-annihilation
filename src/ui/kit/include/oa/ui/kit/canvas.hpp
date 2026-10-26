@@ -5,7 +5,8 @@
 
 // The canvas the kit's components draw on, and the few primitives every one
 // of them draws through: a fill, a blend, an outline, a raised edge, a
-// rounded fill and outline, a hairline rule, a line of text in a box and its
+// rounded fill and outline (a capsule, or a rectangle with rounded
+// corners), a hairline rule, a line of text in a box and its
 // width, a picture, a one-bit mark, a coverage map at the canvas's own
 // pixels, and a clip. Places and
 // sizes are in points. A canvas has two forms.
@@ -150,6 +151,27 @@ void fill_round_rect(const Canvas& canvas, const Rect& rect, int32_t radius, Col
 /// @param radius the ends' radius, in points; 0 outlines the rectangle square
 /// @param ink the outline's colour
 void outline_round_rect(const Canvas& canvas, const Rect& rect, int32_t radius, Colour ink);
+
+/// Fills a rectangle whose four corners are quarter circles of the given
+/// radius, clamped to half its shorter side; its straight edges stay whole.
+/// It is worked out at the canvas's own pixels as fill_round_rect is: a
+/// step at scale 1, a blended edge at every other scale and on the smooth
+/// form. A rectangle too large to sample is filled square.
+///
+/// @param canvas where it is drawn
+/// @param rect the rectangle, in points
+/// @param radius the corners' radius, in points; 0 fills the rectangle square
+/// @param ink the colour
+void fill_corner_rect(const Canvas& canvas, const Rect& rect, int32_t radius, Colour ink);
+
+/// Draws a one-point outline of that rectangle with rounded corners, as
+/// outline_round_rect draws a capsule's. The inside is left as it is.
+///
+/// @param canvas where it is drawn
+/// @param rect the rectangle, in points
+/// @param radius the corners' radius, in points; 0 outlines the rectangle square
+/// @param ink the outline's colour
+void outline_corner_rect(const Canvas& canvas, const Rect& rect, int32_t radius, Colour ink);
 
 /// Draws a one-point raised edge round the inside of a rectangle: light along
 /// the top and left, dark along the bottom and right, the dark edges running

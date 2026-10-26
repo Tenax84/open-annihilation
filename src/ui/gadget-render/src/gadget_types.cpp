@@ -46,16 +46,13 @@ constexpr const char* kFallbackSkin = "Listbox";
 
 // Attribute bits as these draws read them.
 constexpr uint32_t kCheckboxArt = 0x80;    // buttons: CHECKBOX art; a grayed frame is not shaded
-constexpr uint32_t kBottomCaption = 0x20;  // buttons: caption centred at the bottom edge
 constexpr uint32_t kLabelShadow = 0x8;     // FNT labels: a dark copy one pixel right, three down
 constexpr uint32_t kValueFromOne = 0x8;    // scroll bars: the value caption counts from one
 constexpr uint32_t kScrollGrayed = 0x10;   // scroll bars: grayed like a locked bar
 constexpr int32_t kPressedFrameOffset = 2; // grayed frames sit two past the pressed state
-constexpr int32_t kCaptionInset = 3;
 // The pixels a fitted caption leaves free of its gadget's width, as
 // ui::gui_input::fit_text_to_width leaves them.
 constexpr int32_t kFittedCaptionMargin = 6;
-constexpr int32_t kBottomCaptionGap = 4;
 
 // List rows: image rows keep one texel of their frame's border unsampled;
 // a text row shows its item flag 1 as a header.
@@ -440,26 +437,35 @@ void draw_button(GadgetRenderer& renderer, GadgetPanel& panel, int32_t index) {
         }
     }
 
-    const int32_t press = status != 0 ? 1 : 0;
     const uint8_t caption_color =
         status != 0
             ? dark
             : mapped_color(panel, static_cast<uint32_t>(i32(record, field::color_foreground)));
     renderer.text_color = caption_color;
     char* text = stage_caption(record, stages != 0 ? stage : 0);
-    const int32_t y = (rect.y2 - rect.y1 - text_height(renderer, panel)) / 2 + press + rect.y1;
+    // A caption aligned across is centred down the button by the line height
+    // of the panel's first font, which the caption fitting leaves active, even
+    // when the alternate font writes it; a bottom caption's line ends by the
+    // line height of the font that writes it.
+    const int32_t fitted_line_height = text_height(renderer, panel);
     if ((attrs & attribute::alternate_font) != 0)
         panel.active_gaf_font = panel.gaf_fonts[1];
+    constexpr uint32_t aligned_across =
+        attribute::horizontal | attribute::right_aligned | attribute::centered;
+    const auto pen = layout::button_caption_pen(
+        {rect.x1, rect.y1, rect.x2, rect.y2},
+        attrs,
+        fit_width,
+        (attrs & aligned_across) != 0 ? fitted_line_height : text_height(renderer, panel),
+        status != 0
+    );
     const int32_t span = rect.x2 - rect.x1 + 1;
     const char key = static_cast<char>(record.bytes[field::button_quick_key]);
-    if ((attrs & attribute::horizontal) != 0) {
-        draw_text(renderer, panel, face, text, rect.x1 + press + kCaptionInset, y, span, 0);
-    } else if ((attrs & attribute::right_aligned) != 0) {
-        const int32_t left = rect.x1;
-        const int32_t x = std::max(rect.x2 - fit_width - kCaptionInset, left);
-        draw_text(renderer, panel, face, text, x, y, span, 0);
-    } else if ((attrs & attribute::centered) != 0) {
-        int32_t x = rect.x1 + (rect.x2 - rect.x1 - fit_width) / 2 + press + 1;
+    if (pen && (attrs & (attribute::horizontal | attribute::right_aligned)) != 0) {
+        draw_text(renderer, panel, face, text, pen->x, pen->y, span, 0);
+    } else if (pen && (attrs & attribute::centered) != 0) {
+        int32_t x = pen->x;
+        const int32_t y = pen->y;
         char copy[field::text_bytes + 1]{};
         char needle[2] = {key, '\0'};
         char* found = nullptr;
@@ -499,12 +505,12 @@ void draw_button(GadgetRenderer& renderer, GadgetPanel& panel, int32_t index) {
             renderer.text_color = caption_color;
             draw_text(renderer, panel, face, found + 1, x, y, span, 0);
         }
-    } else if ((attrs & kBottomCaption) != 0) {
+    } else if (pen) {
         // Bottom caption: the quick key is cut out of the record text itself,
         // so a later draw shows only the part before it. A caption the
         // modern fonts draw part of is drawn whole, its key unmarked.
-        int32_t x = rect.x1 + (rect.x2 - rect.x1 - fit_width) / 2 + press + 1;
-        const int32_t bottom_y = rect.y2 + press - text_height(renderer, panel) - kBottomCaptionGap;
+        int32_t x = pen->x;
+        const int32_t bottom_y = pen->y;
         const auto offset = ui::frontend_renderer::quick_key_offset(text, key);
         char* found = offset != std::string_view::npos && drawn_in_game_font(renderer, panel, text)
                           ? text + offset

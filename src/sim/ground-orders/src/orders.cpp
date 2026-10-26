@@ -152,10 +152,11 @@ void install_goal(UnitView u, Goal* goal, uint32_t tick, Host& host) {
     n.flags |= route_changed;
 }
 
-void accept_path(UnitView u, std::span<const RoutePoint> points) {
+bool accept_path(UnitView u, std::span<const RoutePoint> points) {
     auto& n = u.navigation;
+    const bool failed = points.empty() && n.goal && !goal_contains_unit(*n.goal, u.geometry);
     if (points.empty()) {
-        if (n.goal && !goal_contains_unit(*n.goal, u.geometry))
+        if (failed)
             signal(n.goal, path_failed_event);
         n.flags &= uint8_t(~route_bit);
     } else {
@@ -164,6 +165,7 @@ void accept_path(UnitView u, std::span<const RoutePoint> points) {
         n.flags |= route_bit;
     }
     n.flags = uint8_t((n.flags & ~search_pending) | route_changed);
+    return failed;
 }
 
 void advance_path(Navigation& n, uint32_t count) {
@@ -304,6 +306,105 @@ uint32_t standby(UnitView u, sim::simulation_state::Order& order, uint32_t tick,
 }
 
 namespace {
+/// The speed, 16.16 pixels a tick, above which a unit of a match that applied
+/// mutators is held to its route (hold_to_route).
+///
+/// The fastest unit of stock 3.1c, with Core Contingency and Battle Tactics,
+/// is the ARMSS and CORSS scout ship at 5.8 pixels a tick, and the fastest on
+/// land the ARMSH hovercraft at 3.7. Every stock unit steps less than a cell
+/// (16 pixels) a tick and brakes well before its goal, so the steering always
+/// lands it. Stacked speed mutators can give a commander 42 pixels a tick and
+/// acceleration and braking that change its speed by all of that in one
+/// tick: such a unit steps over the one cell its move must end in, brakes and
+/// turns, and steps back over it, every few ticks for ever. Only a unit faster
+/// than any stock unit is held, and only in a match that applied mutators
+/// (FastUnitSteering::held_to_route), which 3.1c cannot join: a mod's fast
+/// units in any other match steer exactly as in 3.1c.
+constexpr Fixed fastest_stock_step = 6 * one_world_unit;
+
+/// Returns the square root of a value, rounded down.
+///
+/// @param value the value
+/// @return the largest whole number whose square is no more than `value`
+uint64_t square_root_floor(uint64_t value) noexcept {
+    uint64_t root = 0;
+    uint64_t bit = uint64_t{1} << 62;
+    while (bit > value)
+        bit >>= 2;
+    while (bit != 0) {
+        if (value >= root + bit) {
+            value -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    return root;
+}
+
+/// What hold_to_route measures a unit's step against, all 16.16.
+struct RouteAhead {
+    Fixed distance{};           ///< to the route point steered for
+    Fixed ahead_x{}, ahead_z{}; ///< offset to the steering target
+    Fixed end_x{}, end_z{};     ///< offset to the third steering point
+    Fixed angle{};              ///< heading change to the target, before this tick's turn
+    Fixed deceleration{};       ///< the type's braking a tick
+};
+
+/// Keeps a unit faster than any stock unit from stepping past its next route
+/// point, from coming on faster than it can stop, and from turning wider than
+/// its route allows.
+///
+/// Its speed this tick is held to the distance left to the route point, so
+/// the step ends on it rather than past it; to the speed from which its
+/// braking still stops it at the third steering point (the point the steering
+/// itself brakes for); and, while it still has to turn toward the target, to
+/// the speed at which it finishes that turn within half the distance ahead
+/// (the rule by which the steering brakes for a turn). A unit no faster than
+/// fastest_stock_step, and every unit of a match that steers as 3.1c, is left
+/// as it is.
+///
+/// @param u the unit, already turned this tick
+/// @param[in,out] m its movement, already accelerated this tick; its speed and
+///     velocity are lowered when held
+/// @param ahead what the step is measured against
+/// @param fast_units whether the match holds a fast unit to its route
+void hold_to_route(
+    const sim::unit_movement::Unit& u,
+    sim::unit_movement::Movement& m,
+    const RouteAhead& ahead,
+    FastUnitSteering fast_units
+) {
+    if (fast_units != FastUnitSteering::held_to_route || u.type.maximum_speed <= fastest_stock_step)
+        return;
+    int64_t limit = std::max<int64_t>(ahead.distance, 0);
+    if (ahead.deceleration > 0) {
+        // v * v / (2 * b) is the braking distance; both sides are 16.16, so
+        // the speed that brakes to a stop in d is sqrt(2 * b * d) in 16.16.
+        // b and d are below 2^31, so the product fits.
+        const auto end = std::max<int64_t>(norm(ahead.end_x, ahead.end_z), 0);
+        limit = std::min<int64_t>(
+            limit,
+            static_cast<int64_t>(
+                square_root_floor(uint64_t(ahead.deceleration) * uint64_t(end) * 2)
+            )
+        );
+    }
+    const auto left = sub(ahead.angle, abs32(m.turn));
+    if (left > 0 && u.type.maximum_turn != 0) {
+        // Turning `left` takes left / maximum_turn ticks; at speed s it covers
+        // s * left / maximum_turn, kept within half the distance ahead.
+        const int64_t turning =
+            int64_t(norm(ahead.ahead_x, ahead.ahead_z)) * u.type.maximum_turn / (int64_t(left) * 2);
+        limit = std::min<int64_t>(limit, std::max<int64_t>(turning, 0));
+    }
+    if (m.speed <= limit)
+        return;
+    m.speed = static_cast<Fixed>(limit);
+    m.velocity = sim::unit_movement::aim_velocity(u.heading, 0, m.speed);
+}
+
 void steer_along(
     sim::unit_movement::Unit& u,
     sim::unit_movement::Movement& m,
@@ -311,7 +412,8 @@ void steer_along(
     std::array<Point, 3> points,
     Fixed acceleration,
     Fixed deceleration,
-    uint8_t sea_level
+    uint8_t sea_level,
+    FastUnitSteering fast_units
 ) {
     Fixed adjustment = sub(0, deceleration);
     if (!has_route) {
@@ -337,9 +439,19 @@ void steer_along(
     const auto requested = short_bits(uint32_t(heading) - u.heading);
     const auto angle = abs32(requested);
     sim::unit_movement::turn(u, m, requested);
+    const RouteAhead ahead{
+        distance,
+        dx,
+        dz,
+        sub(points[2][0], u.position[0]),
+        sub(points[2][2], u.position[2]),
+        angle,
+        deceleration
+    };
     const auto braking = sim::unit_movement::braking_distance(m.speed, deceleration);
     if (u.type.maximum_turn == 0 || !braking) {
         sim::unit_movement::accelerate(u, m, adjustment, sea_level);
+        hold_to_route(u, m, ahead, fast_units);
         return;
     }
     const auto turn_distance =
@@ -352,6 +464,7 @@ void steer_along(
             adjustment = acceleration;
     }
     sim::unit_movement::accelerate(u, m, adjustment, sea_level);
+    hold_to_route(u, m, ahead, fast_units);
 }
 } // namespace
 
@@ -361,7 +474,8 @@ void steer_ground(
     const Navigation& n,
     Fixed acceleration,
     Fixed deceleration,
-    uint8_t sea_level
+    uint8_t sea_level,
+    FastUnitSteering fast_units
 ) {
     const bool has_route = route_present(n) && n.count != 0 && count_fits(n);
     steer_along(
@@ -371,7 +485,8 @@ void steer_ground(
         has_route ? steering_points(n) : std::array<Point, 3>{},
         acceleration,
         deceleration,
-        sea_level
+        sea_level,
+        fast_units
     );
 }
 
@@ -381,11 +496,19 @@ void steer_ground(
     const MirroredNavigation& n,
     Fixed acceleration,
     Fixed deceleration,
-    uint8_t sea_level
+    uint8_t sea_level,
+    FastUnitSteering fast_units
 ) {
     const bool has_route = mirrored_route_present(n);
     steer_along(
-        u, m, has_route, mirrored_steering_points(n), acceleration, deceleration, sea_level
+        u,
+        m,
+        has_route,
+        mirrored_steering_points(n),
+        acceleration,
+        deceleration,
+        sea_level,
+        fast_units
     );
 }
 

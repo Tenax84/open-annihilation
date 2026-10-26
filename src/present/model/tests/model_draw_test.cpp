@@ -613,6 +613,38 @@ void test_composite_limits() {
     );
 }
 
+// A unit under construction larger than a composite that keeps its size
+// (clamp-oversize) draws its build effect where the cut leaves it: the
+// outline writes nothing past the cut's width and height. The composite's
+// planes are given room past the cut, which must keep what it held.
+void test_cut_composite_build_outline() {
+    constexpr int32_t side = 64;
+    constexpr std::size_t plane = std::size_t{side} * side;
+    constexpr std::size_t room = 4 * plane;
+    constexpr uint8_t room_fill = 0xEE;
+    auto scene = std::make_unique<Scene>(wide_turret_model(100));
+    scene->renderer.composite_limits = {side, side, true};
+    CHECK(init_composite_buffer(scene->renderer));
+    auto& composite = scene->renderer.composite;
+    composite.pixels.assign(2 * (plane + room), 0);
+    std::fill_n(composite.pixels.begin() + plane, room, room_fill);
+    composite.sprite.data = composite.pixels.data();
+    composite.sprite.aux = composite.pixels.data() + plane + room;
+    make_turret_building(*scene);
+    scene->renderer.graphics_flags = 0;
+    scene->unit->flags2 |= OA_UNIT_FLAG2_Z_BUFFER;
+    scene->unit->build_remaining = 0.5F;
+    draw_turret(*scene, 0);
+    CHECK(composite.sprite.width == side && composite.sprite.height == side);
+    const auto colour_room = composite.pixels.begin() + plane;
+    CHECK(std::all_of(colour_room, colour_room + room, [](uint8_t value) {
+        return value == room_fill;
+    }));
+    const auto depth_room = composite.pixels.begin() + 2 * plane + room;
+    CHECK(std::all_of(depth_room, depth_room + room, [](uint8_t value) { return value == 0; }));
+    CHECK(scene->pixel(140, 140) == ground);
+}
+
 void test_sparse_depth() {
     uint8_t source_depth[16];
     for (int i = 0; i < 16; ++i)
@@ -768,6 +800,7 @@ int main() {
     test_piece_changes();
     test_finished_turret_draws_as_fresh();
     test_composite_limits();
+    test_cut_composite_build_outline();
     test_sparse_depth();
     test_projectile_and_debris();
     test_shatter_fragment();

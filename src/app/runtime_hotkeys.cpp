@@ -342,8 +342,10 @@ bool Runtime::handle_match_hotkey(const SDL_KeyboardEvent& key) {
         return true;
     }
     // A button whose quick key is the typed letter in either case
-    // is clicked (ATTACK 'a', BLAST 'd', STOP 's', ...).
-    if (match_hud_ && sym < 0x80) {
+    // is clicked (ATTACK 'a', BLAST 'd', STOP 's', ...); while the unit info
+    // panel is open the side column's buttons take no key, as they take no
+    // press.
+    if (match_hud_ && sym < 0x80 && !unit_info_panel_) {
         const auto typed = std::tolower(static_cast<int>(sym));
         for (std::size_t i = 0; i < match_hud_->layout.gadgets.size(); ++i) {
             const auto* button = std::get_if<oa::ui::gui_layout::ButtonFields>(
@@ -373,7 +375,10 @@ void Runtime::clear_or_cancel_match_command() {
         status_ = "Command cancelled";
         return;
     }
+    // The unit info panel over the order panel closes with the selection,
+    // as a click that drops it closes it.
     clear_local_selection();
+    close_unit_info();
     apply_match_hud_for_selection();
     status_ = "Selection cleared";
 }
@@ -445,6 +450,59 @@ void Runtime::box_select_units(int x0, int y0, int x1, int y1, bool add) {
         return;
     auto& world = match_->state();
     world.game.local_player_index = match_local_player_;
+    if (!add)
+        selected_match_unit_ = 0;
+    bool any = false;
+    if (live_renderer_active()) {
+        // The rotated view tests a unit where it drew it: the middle of its
+        // drawn bounds in the box. The selection, its speech or sound and
+        // the select-next marks follow as a classic box's do.
+        struct Box {
+            const Runtime* runtime;
+            int left;
+            int top;
+            int right;
+            int bottom;
+        };
+
+        Box box{this, std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1)};
+        any = oa::sim::selection::select_units_where(
+            world,
+            on_screen_lists(),
+            add,
+            selection_hooks(),
+            [](void* context, const oa::Unit& unit) {
+                const auto& in = *static_cast<const Box*>(context);
+                const auto bounds = in.runtime->live_unit_bounds(unit.id);
+                if (!bounds)
+                    return false;
+                const auto centre_x = bounds->x1 + (bounds->x2 - bounds->x1) / 2;
+                const auto centre_y = bounds->y1 + (bounds->y2 - bounds->y1) / 2;
+                return centre_x >= in.left && centre_x <= in.right && centre_y >= in.top &&
+                       centre_y <= in.bottom;
+            },
+            &box
+        );
+    } else {
+        any = select_units_in_classic_box(x0, y0, x1, y1, add);
+    }
+    selection_shortcut_drag_filter();
+    adopt_selected_units();
+    int count = 0;
+    for (const auto& slot : match_->world().slots)
+        if (slot.unit != nullptr && slot.owner_index == match_local_player_ &&
+            (slot.unit->flags & OA_UNIT_FLAG_SELECTED) != 0)
+            ++count;
+    // A box that leaves nothing selected drops the selection as a click
+    // does, and the unit info panel over the order panel closes with it, as
+    // in 3.1c.
+    if (count == 0)
+        close_unit_info();
+    status_ = !any ? "No units" : std::to_string(count) + " selected";
+}
+
+bool Runtime::select_units_in_classic_box(int x0, int y0, int x1, int y1, bool add) {
+    auto& world = match_->state();
     // The corners are the drag's ends on the canvas, projected from the
     // camera the view has now; the box goes back to Game.drag_start and
     // drag_end as map points at height 0.
@@ -466,18 +524,9 @@ void Runtime::box_select_units(int x0, int y0, int x1, int y1, bool add) {
     static_assert(sizeof end == sizeof world.game.drag_end);
     std::memcpy(world.game.drag_start, start.data(), sizeof world.game.drag_start);
     std::memcpy(world.game.drag_end, end.data(), sizeof world.game.drag_end);
-    if (!add)
-        selected_match_unit_ = 0;
-    const bool any =
-        oa::sim::selection::select_units_in_box(world, on_screen_lists(), add, selection_hooks());
-    selection_shortcut_drag_filter();
-    adopt_selected_units();
-    int count = 0;
-    for (const auto& slot : match_->world().slots)
-        if (slot.unit != nullptr && slot.owner_index == match_local_player_ &&
-            (slot.unit->flags & OA_UNIT_FLAG_SELECTED) != 0)
-            ++count;
-    status_ = !any ? "No units" : std::to_string(count) + " selected";
+    return oa::sim::selection::select_units_in_box(
+        world, on_screen_lists(), add, selection_hooks()
+    );
 }
 
 void Runtime::area_order_units(int x0, int y0, int x1, int y1, std::string_view kind) {
@@ -501,22 +550,34 @@ void Runtime::area_order_units(int x0, int y0, int x1, int y1, std::string_view 
             continue;
         if (kind == "repair" && !local)
             continue;
-        // A unit of another machine's player is tested where the frame last
-        // drawn showed it, on its playout, as the pointer picks it.
-        auto screen = project_match_point(viewport, slot.unit->position);
-        if (const MatchModels* models = drawn_match_models(); models != nullptr) {
-            if (const auto pose = mirrored_pose(
-                    *models, match_->state(), slot.unit_index, models->presentation.drawn_moment
-                ))
-                screen = project_match_point(
-                    viewport,
-                    {static_cast<uint32_t>(pose->position.x),
-                     static_cast<uint32_t>(pose->position.y),
-                     static_cast<uint32_t>(pose->position.z)}
-                );
+        if (live_renderer_active()) {
+            // The rotated view tests a unit where it drew it, as its box
+            // selection does.
+            const auto bounds = live_unit_bounds(slot.unit_index);
+            if (!bounds)
+                continue;
+            const auto centre_x = bounds->x1 + (bounds->x2 - bounds->x1) / 2;
+            const auto centre_y = bounds->y1 + (bounds->y2 - bounds->y1) / 2;
+            if (centre_x < x0 || centre_x > x1 || centre_y < y0 || centre_y > y1)
+                continue;
+        } else {
+            // A unit of another machine's player is tested where the frame last
+            // drawn showed it, on its playout, as the pointer picks it.
+            auto screen = project_match_point(viewport, slot.unit->position);
+            if (const MatchModels* models = drawn_match_models(); models != nullptr) {
+                if (const auto pose = mirrored_pose(
+                        *models, match_->state(), slot.unit_index, models->presentation.drawn_moment
+                    ))
+                    screen = project_match_point(
+                        viewport,
+                        {static_cast<uint32_t>(pose->position.x),
+                         static_cast<uint32_t>(pose->position.y),
+                         static_cast<uint32_t>(pose->position.z)}
+                    );
+            }
+            if (screen.x < x0 || screen.x > x1 || screen.y < y0 || screen.y > y1)
+                continue;
         }
-        if (screen.x < x0 || screen.x > x1 || screen.y < y0 || screen.y > y1)
-            continue;
         for_each_selected([&](uint16_t source) {
             if (source == slot.unit_index)
                 return;
@@ -900,9 +961,9 @@ std::optional<oa::ui::display_layout::Rect> Runtime::unit_info_area() const {
     return oa::ui::display_layout::Rect{x, y, width, height};
 }
 
-bool Runtime::click_unit_info(float x, float y) {
+std::optional<oa::ui::display_layout::Point> Runtime::unit_info_point(float x, float y) const {
     if (!unit_info_panel_ || !unit_info_panel_->screen)
-        return false;
+        return std::nullopt;
     const auto& root = unit_info_panel_->root;
     const auto column = static_cast<int>(x);
     const auto row = static_cast<int>(y);
@@ -914,22 +975,58 @@ bool Runtime::click_unit_info(float x, float y) {
         const auto area = unit_info_area();
         if (!area || column < area->x || row < area->y || column >= area->x + area->width ||
             row >= area->y + area->height)
-            return false;
+            return std::nullopt;
         point.x = root.x + (column - area->x) * root.width / area->width;
         point.y = root.y + (row - area->y) * root.height / area->height;
     }
     if (point.x < root.x || point.y < root.y || point.x >= root.x + root.width ||
         point.y >= root.y + root.height)
+        return std::nullopt;
+    return point;
+}
+
+bool Runtime::click_unit_info(float x, float y) {
+    const auto point = unit_info_point(x, y);
+    if (!point)
         return false;
     for (const auto& gadget : unit_info_panel_->screen->layout.gadgets) {
         const auto& control = gadget.common;
-        if (control.name == kUnitInfoDone && point.x >= control.x && point.y >= control.y &&
-            point.x < control.x + control.width && point.y < control.y + control.height) {
+        if (control.name == kUnitInfoDone && point->x >= control.x && point->y >= control.y &&
+            point->x < control.x + control.width && point->y < control.y + control.height) {
             press_unit_info_done();
             break;
         }
     }
     return true;
+}
+
+bool Runtime::unit_info_pointer(const SDL_Event& event, float x, float y) {
+    const bool pressed = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+    if ((!pressed && event.type != SDL_EVENT_MOUSE_BUTTON_UP) ||
+        (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_RIGHT))
+        return false;
+    if (!pressed) {
+        // The release of a press the panel took is the panel's wherever it
+        // comes up: over the panel it clicks it, so OK closes it.
+        if (unit_info_pressed_button_ != event.button.button)
+            return false;
+        unit_info_pressed_button_ = 0;
+        std::ignore = click_unit_info(x, y);
+        return true;
+    }
+    unit_info_pressed_button_ = 0;
+    if (!unit_info_panel_ || screen_ != Screen::match || match_paused_ || match_finished_)
+        return false;
+    // A press on the panel is the panel's alone: it starts no box and gives
+    // no order.
+    if (unit_info_point(x, y)) {
+        unit_info_pressed_button_ = event.button.button;
+        return true;
+    }
+    // The panel over the order panel takes the pointer from it, as in 3.1c:
+    // the side column's buttons take no press until it closes, while the
+    // battlefield and the radar take theirs.
+    return hovered_.has_value();
 }
 
 void Runtime::draw_unit_info_panel() {
@@ -1246,6 +1343,12 @@ constexpr uint8_t kDragBoxInnerColor = 0;
 } // namespace
 
 std::optional<std::array<int32_t, 3>> Runtime::match_pointer_ground(float x, float y) {
+    if (live_renderer_active()) {
+        const auto point = live_ground_point(x, y);
+        if (!point)
+            return std::nullopt;
+        return std::array<int32_t, 3>{(*point)[0] >> 16, (*point)[1] >> 16, (*point)[2] >> 16};
+    }
     if (!match_ || !selected_tnt_)
         return std::nullopt;
     const auto viewport = live_viewport(match_camera_x_, match_camera_z_);
@@ -1289,6 +1392,19 @@ void Runtime::track_match_drag() {
 std::array<oa::present::world_renderer::ScreenPoint, 2> Runtime::match_drag_corners(
     const oa::present::world_renderer::BattlefieldViewport& viewport
 ) const {
+    if (live_renderer_active() && match_drag_)
+        return {
+            live_project_world(
+                static_cast<float>(match_drag_->start[0]),
+                static_cast<float>(match_drag_->start[1]),
+                static_cast<float>(match_drag_->start[2])
+            ),
+            live_project_world(
+                static_cast<float>(match_drag_->end[0]),
+                static_cast<float>(match_drag_->end[1]),
+                static_cast<float>(match_drag_->end[2])
+            )
+        };
     const double scale = viewport.scale == 0.0F ? 1.0 : static_cast<double>(viewport.scale);
     const auto project = [&](const std::array<int32_t, 3>& point) {
         return oa::present::world_renderer::ScreenPoint{
@@ -1310,6 +1426,11 @@ std::array<oa::present::world_renderer::ScreenPoint, 2> Runtime::match_drag_corn
 bool Runtime::match_drag_is_click() const {
     if (!match_drag_)
         return true;
+    if (live_renderer_active()) {
+        const auto corners = match_drag_corners(live_viewport(match_camera_x_, match_camera_z_));
+        return std::abs(corners[0].x - corners[1].x) < kDragClickPixels &&
+               std::abs(corners[0].y - corners[1].y) < kDragClickPixels;
+    }
     const auto released = static_cast<int32_t>(frontend_tick());
     return released < static_cast<int32_t>(match_drag_->pressed_tick + kDragClickTicks) &&
            std::abs(match_drag_->start[0] - match_drag_->end[0]) < kDragClickPixels &&

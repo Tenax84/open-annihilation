@@ -1,8 +1,11 @@
 # The Library
 
 The Library is where Open Annihilation finds, installs, updates, rolls
-back and uninstalls mods, map packs and language packs without leaving the
-game, and where you choose the mod you play. It lists
+back and uninstalls mods, map packs, mutators and language packs without
+leaving the game, and where you choose the mod you play. It also lists
+brains: you get one here, update it and uninstall it, and you choose
+which computer player new seats start with. A brain has no roll back.
+It lists
 every package that Core Prime's registry, built into the game, and any
 registry you added offer, together with what you have installed, and it
 says for each whether you have it, whether an update waits, and what it
@@ -12,12 +15,17 @@ would change.
 settings and exactly what a download sends and records.
 [Mod support](mods/README.md) covers mods themselves, and
 [map packs](maps/README.md) and [languages](languages.md) theirs.
+Switching a mutator on is
+[Playing with mutators](playing-with-mutators.md).
+Choosing a brain is [Playing with brains](playing-with-brains.md).
 
 ## Contents
 
 - [Opening the Library](#opening-the-library)
 - [The Active tab](#the-active-tab)
 - [Tabs and states](#tabs-and-states)
+- [The Mutators tab](#the-mutators-tab)
+- [The Brains tab](#the-brains-tab)
 - [Search and filters](#search-and-filters)
 - [The details](#the-details)
 - [Choosing a mod](#choosing-a-mod)
@@ -43,8 +51,9 @@ The Library opens on the main menu, from:
   the main menu, a 48-pixel square left of the **Settings** button and its
   gears (the same size, a quarter of a side apart, 12 pixels in from the
   frame). It opens on the [Active](#the-active-tab) tab. Its bottom-right
-  corner shows how many packages you have added: mods, map packs, language
-  packs and downloaded expansions. The base game and a language the game
+  corner shows how many packages you have added: mods, map packs, mutators,
+  language packs and downloaded expansions. An installed brain is left out
+  of that count. The base game and a language the game
   holds itself are left out, and a map pack counts once: `7`, `123`, or
   `999+` above 999. While the catalogues are still being read and that
   number is not final, a small spinner turns there instead, and stops once
@@ -244,19 +253,24 @@ each other. The other tabs are where packages are got, updated and played.
 
 ## Tabs and states
 
-The tabs are **Active**, **Mods**, **Maps**, **Languages**, **Updates**
-and **Registries**. Each tab after Active shows how many it lists under
-All, before a search or a tag, in brackets after its title and in that
-title's own font and colour: "Mods (11)", "Maps (2)", "Languages (2)",
-"Updates (2)", "Registries (2)". The names are always the full ones.
+The tabs are **Active**, **Mods**, **Maps**, **Mutators**, **Brains**,
+**Languages**, **Updates** and **Registries**. **Brains** has no short
+name. Each tab after Active shows how many it
+lists under All, before a search or a tag, in brackets after its title
+and in that title's own font and colour: "Mods (11)", "Maps (2)",
+"Mutators (4)", "Brains (3)", "Languages (2)", "Updates (2)", "Registries (2)". The
+names are always the full ones.
 At Regular and Large the search sits beside the tabs; when the tabs do
 not all fit beside it, as a wordier language's names may not, the tabs
 take the whole row and the search a row of its own under them. When they
-do not fit the strip even so, the strip scrolls sideways. The open tab
-stays wholly in view. A small arrow at an end shows when more tabs lie
-that way, and pressing it moves the strip by one tab. The wheel over the
-strip scrolls it the same way. Where every tab fits, there are no arrows
-and the strip does not scroll. Active
+do not fit the strip even so, the strip scrolls sideways, and the open
+tab is in view when it opens. A small arrow at an end shows when more tabs
+lie that way, and pressing it moves the strip by one tab. The wheel over
+the strip scrolls it the same way, and dragging the tabs sideways with the
+mouse or a finger moves them with the pointer. Either way the strip
+reaches its first tab and its last whichever tab is open, and stays where
+you leave it. Where every tab fits, there are no arrows and the strip does
+not scroll. Active
 has no count.
 Updates counts the updates you can install, as the OA button's dot does.
 Registries counts the registries listed. Registries is last, and it is
@@ -358,6 +372,133 @@ An empty list says "Nothing matches "*search*".", "No updates.", "Nothing
 to show.", or, with no registry at all, "Nothing here yet. Turn a registry
 on in Settings › Downloads."
 
+## The Mutators tab
+
+**Mutators** lists mutators the same way Mods lists mods: a row for each,
+with its picture, its name, "by {author}", its summary, its version, its
+size beside the version, and its state icon. A mutator with no picture
+shows its first tag's icon. Letters show only when it has no tag, or the
+tag is not one of the eight. One that is not installed reads "Not
+installed · {version}". There is no Size fact, and no **ROLL BACK**.
+**GET** and **UPDATE** are the state icon, as on the other tabs. The
+filters are **All**, **New**, **Installed** and **Updates**, and **TAGS**
+for the tags a mutator carries: Statistics, Economy, Commanders, New
+Units, Disable, Gameplay, AI and Maps. The search reads "Search mutators,
+authors, tags".
+
+The details add the facts a mutator has, in this order. **Installed** and
+**Latest** are the versions. **Author** is who made it. **Works with** is
+"Any mod", or the mods it names. **Checked**, on an installed mutator, is
+the game's check of it against the mod you are playing: "With {mod}:
+{summary}", "With {mod}: no effect", "With {mod}: {reason}" when it does
+not work with that mod, "With {mod}: it stopped: {reason}" when the check
+itself stopped, "Not checked with {mod}", or "Checking with {mod}…" while
+a check runs. With no mod each reads "With No Mod: {summary}", "With No
+Mod: no effect", "With No Mod: {reason}", "With No Mod: it stopped:
+{reason}", "Not checked with No Mod", or "Checking with No Mod…". The
+summary is the counts, or "changes other game data" when it changed
+nothing the counts name, or "changes the map when a match starts" for a
+mutator that changes maps. **Needs** names another mutator: "{name}
+{range} ✓" when you have one in range, "{name} ✓" when it names no range
+and you have it, "{name} {range}: not installed" when the range is not
+met, or "{name}: not installed" when you do not have it. A second Needs
+line reads "Open Annihilation {range}" when the mutator names an engine.
+**Options** lists each option's label and its values. **Changes** names
+the parts of the game the mutator says it changes: Files, Units, Weapons,
+Features, Sides, Game tables, Build menus, Maps or Hacks. **Rules** reads
+"Changes the game: unranked on Core Prime". **From** names the registry.
+
+The actions are **GET**, **UPDATE**, **CHECK WITH THIS MOD** (it checks
+the installed copy, with its default options, against the mod being
+played), **UNINSTALL**, **OPEN FOLDER** and **HOMEPAGE**. A missing
+prerequisite makes **GET** read **GET WITH {name}** or **GET WITH {count}
+MORE**, and asks "Get {name}?" before it downloads. When it can act, the
+note is "{names} downloads first, then sits above {name} in every list."
+or, for several, "{names} download first, then sit above {name} in every
+list." **GET WITH** is shown but off when no registry offers a
+prerequisite, or when mutators need each other. The details then say
+"Needs {name} {range}, which no registry offers", "Needs {name}, which no
+registry offers", or "These mutators need each other: {ids}".
+
+"Needs {name}" and "Not compatible with this mod" are chips on a Large
+row only, in the lock colour. At Compact the row ends "· needs {name}" or
+"· not compatible with this mod", in the lock colour. Regular shows
+neither. The details of one that does not work with the mod say "Not
+compatible with this mod: it works with {names}". That note is
+information. The row is not dimmed, and **GET** and **UPDATE** stay on.
+Only the picker locks an incompatible mutator, and
+[Playing with mutators](playing-with-mutators.md) says what that lock
+reads.
+
+The Library never switches a mutator on. There is no control here that
+plays one, and the Active tab has no Mutators tile. Switching one on is
+the **Mutators** button on a skirmish, a campaign launch or the host's
+battle room.
+
+## The Brains tab
+
+**Brains** lists brains the same way Mutators lists mutators: a row for
+each, with its picture, its name, "by {author}", its summary, its
+version, its size beside the version, and its state icon. The built-in
+computer player leads the list under **All** and **Installed**. It is
+absent under **New**: it is not a package a registry published. Its name
+is **Built-in computer player**. The summary under it reads "Open
+Annihilation's own computer player. It plays as Total Annihilation's
+does." While it is the default, the status is **Built in · Default** and
+the chip **Default** marks the row. While it is not, the status is
+**Built in**. It cannot be removed.
+
+The search reads "Search brains, authors, tags". The filters are
+**All**, **New**, **Installed** and **Updates**, and **TAGS** for the
+tags a brain carries: Economy, Classic, Rush, Turtle, Air, Naval,
+Learned, Teaching and Experimental. Any other tag id is shown as written.
+
+The details of an installed or listed brain, after **Installed**,
+**Latest** and **Author**, follow this order. **Levels** joins the level
+names. **Works with** is **Any mod** when the manifest says so, or the
+mods it names; a package that does not fit the game being played marks
+that fact. **Needs** names an engine range, or an expansion, when the
+manifest asks for one. **Full awareness**, only when the manifest sets
+it, reads "Sees every unit on the map, as Total Annihilation's own
+computer player does", and the chip **Full awareness** marks the row.
+**Network**, when the package carries one, reads "Uses a learned network
+({size})". **Checked**, on an installed brain whose verdict is set, uses
+the same sentences as a mutator's check. A brain that fits fills
+`{summary}` with "it fits this game", so the fact is "With {mod}:
+{summary}", or "With No Mod: {summary}" when no mod is playing.
+**Size** and **From** follow. The details do not
+list the brain's options. Those are on the seat's picker.
+
+The built-in computer player's details are **Levels** (Easy, Medium and
+Hard) and **Works with** **Any mod**, and nothing else.
+
+A brain that does not fit the game being played keeps **GET** and
+**UPDATE** on. That is information. At Compact the row ends "· {reason}".
+The reason is "Made for {names}", the engine requirement, or
+"Needs {name}".
+
+The actions are **GET** or **UPDATE** (still on when the brain does not
+fit), then **USE BY DEFAULT** when it is installed and is not the
+default, then **CHECK WITH THIS MOD** for an installed copy whose
+verdict is set, then **UNINSTALL** and **OPEN FOLDER** when installed,
+then **HOMEPAGE** when the listing has one. **CHECK WITH THIS MOD**
+loads the installed copy and runs its fit. It does not seat the brain.
+It is off during a game and while that check is running. There is no
+**ROLL BACK**. **GET** stays **GET**: it does not become **GET WITH
+{name}** or **GET WITH {count} MORE**. **USE BY DEFAULT** makes that brain
+the one new computer seats start with. On the built-in computer player
+it is offered while the built-in player is not the default, and it
+clears the preference. While the built-in player is the default, its
+details offer nothing.
+
+**UNINSTALL** on the default brain adds, before the question's last
+paragraph, "It is your default computer player: new computer seats go
+back to the built-in player."
+
+The Library never seats a brain. Choosing one for a computer seat is the
+control on a skirmish, a campaign launch or the battle room, described in
+[Playing with brains](playing-with-brains.md).
+
 ## The details
 
 Choosing a row shows its details: beside the list in the Regular and Large
@@ -422,7 +563,9 @@ back button follow whichever of those is showing.
     registry's icon is already held, it is drawn beside that name.
 
   A fact with nothing to say is left out. These hold alike for mods, map
-  packs and language packs.
+  packs, mutators and language packs. A mutator's own facts, and the
+  order they take, are [the Mutators tab](#the-mutators-tab). A mutator
+  has no Size fact.
 - **The buttons**: **TURN ON Battle Tactics** first, when turning on the
   expansions the package needs, through the same rules as the Active tab's
   pills, would let it run. The choice waits until the Library closes.
@@ -488,8 +631,10 @@ description in its details. The one you play is marked **PLAYING**. With
 no mod, **No Mod** is the one marked **PLAYING**.
 
 - **PLAY NOW**, on any other mod, plays it: the game reloads its data for
-  that mod and returns to the main menu, without closing the window, and
-  plays it at every later start too. It is greyed when the mod names a
+  that mod, saying "Switching on Ridge…" meanwhile, without closing the
+  window, and comes back to the main menu with the Library open again as
+  you left it ([after a switch](#after-a-switch)). It plays the mod at
+  every later start too. It is greyed when the mod names a
   base game this choice is not playing ("For the Total Annihilation demo
   only", or "For Total Annihilation only") or an expansion that is off
   ("Needs Battle Tactics, which is off"). That sentence replaces the
@@ -504,12 +649,31 @@ no mod, **No Mod** is the one marked **PLAYING**.
   it. It asks first, **SWITCH MOD**: "Switch to No Mod now? The game
   reloads its data for the new mod and returns to the main menu. Your
   other settings are kept.", with **CANCEL**, marked, and **SWITCH**.
-  **SWITCH** (Y) reloads the game with no mod; **CANCEL** (Escape)
-  leaves everything as it was.
+  **SWITCH** (Y) reloads the game with no mod, saying "Switching off
+  Ridge…" meanwhile, and the Library opens again as PLAY NOW's does;
+  **CANCEL** (Escape) leaves everything as it was.
 
 **UNLOAD MOD**, on the Active tab while a mod is played, asks that same
 question and follows that same path back to the base game. It is greyed in
 the same places, and resting on it shows the same note.
+
+### After a switch
+
+A switch made in the Library, by PLAY NOW, SWITCH OFF or UNLOAD MOD,
+opens the Library again over the main menu once the game has reloaded: on
+the tab you left, with each tab's filter, the tag, the search and the
+details as they were, and the entry you had chosen selected. The list is
+scrolled as it was, or, when that entry is no longer where it was, so that
+its row is in view. The Library waits until the game has found your
+installed packages, so that no row moves as they arrive, and the switch's
+dialog stays over the main menu meanwhile. A message or notice on the main
+menu comes first, and neither the dialog nor the Library opens over it.
+The wait lasts at most five seconds from the main menu's first frame: the
+Library then opens with what has been found, and if the main menu is still
+not free, as when a notice is still open, it stays closed and does not
+open later. An entry the Library does not list yet is selected once it
+does, unless you have chosen another. Any other reload, such as ROLL BACK
+on the mod you play, comes back to the main menu with the Library closed.
 
 ## Choosing a language
 
@@ -558,8 +722,8 @@ With a controller, Y focuses the search (the maps search on the Active tab),
 X presses the chosen entry's GET,
 UPDATE, CANCEL or RETRY, L1 and R1 change tab, B goes back as Escape does,
 and the right stick scrolls ([gamepad controls](controllers.md#menus)).
-The wheel over the tab strip scrolls the tabs when they do not fit;
-elsewhere it scrolls the page under the pointer. Every scroll bar can be
+The wheel over the tab strip, or a drag along it, scrolls the tabs when
+they do not fit; elsewhere the wheel scrolls the page under the pointer. Every scroll bar can be
 dragged by its thumb, and a press above or below the thumb moves it
 there.
 A finger or the mouse presses any control. A press, double click or tap on
@@ -589,6 +753,10 @@ installed before. Then:
   catalogue has no row for is decided by the map's files. One that does
   not fit is left out of those two lists
   ([map packs](maps/README.md));
+- **a mutator** goes into your Mutators folder. It is not switched on.
+  A prerequisite it still needs is named, and **GET WITH** brings that
+  prerequisite with it
+  ([the Mutators tab](#the-mutators-tab));
 - **a language pack** goes into your Languages folder. Its row offers
   **USE NOW** at once, and Settings › Language offers it at once
   ([languages](languages.md));
@@ -870,7 +1038,9 @@ nothing there.
 ## Uninstalling
 
 **UNINSTALL**, in an installed package's details after ROLL BACK, removes a
-mod, map pack or language pack you no longer play. It asks first:
+mod, map pack, mutator or language pack you no longer play. A mutator has
+no ROLL BACK, so **UNINSTALL** is the action after the others. It asks
+first:
 
 > **Uninstall Ridge**
 >
@@ -882,9 +1052,12 @@ mod, map pack or language pack you no longer play. It asks first:
 > **CANCEL** · **UNINSTALL**
 
 The question names the package's folder in your own Open Annihilation
-folder, `Mods/<id>`, `Maps/<id>` or `Languages/<tag>`, and says when the
-copy ROLL BACK keeps goes with it. For a package you installed yourself
-that no registry lists, it says "No registry lists it, so the Library
+folder, `Mods/<id>`, `Maps/<id>`, `Mutators/<id>` or `Languages/<tag>`,
+and says when the copy ROLL BACK keeps goes with it. A mutator another
+installed mutator needs adds "{name} needs it: it stays installed, and
+cannot be switched on until this is back." Several add "{names} need it:
+they stay installed, and cannot be switched on until this is back." For a package you installed
+yourself that no registry lists, it says "No registry lists it, so the Library
 cannot get it again." **CANCEL**, or Escape, removes nothing. **UNINSTALL**
 removes the folder and everything in it; the Library then shows the
 package as not installed, with GET, or drops it when no registry lists it.
@@ -902,12 +1075,12 @@ Some packages cannot go yet, and nothing is removed:
   installed, or waits for you to leave the mod being played: UNINSTALL is
   off until you press CANCEL.
 
-Uninstalling stays inside your Mods, Maps and Languages folders. The
-package's folder is moved aside in one step, under a hidden name the game
-never reads as a package, and then deleted a little at a time; a folder
-that is a link to somewhere else is refused, and a link inside the folder
-is removed without touching what it leads to. If OA stops while it is
-deleting, the next start finishes the job. When it cannot remove the
+Uninstalling stays inside your Mods, Maps, Mutators and Languages folders.
+The package's folder is moved aside in one step, under a hidden name the
+game never reads as a package, and then deleted a little at a time; a
+folder that is a link to somewhere else is refused, and a link inside the
+folder is removed without touching what it leads to. If OA stops while it
+is deleting, the next start finishes the job. When it cannot remove the
 folder, because another program is using it, or the folder changed since
 the Library listed it, a notice says so and the package stays as it was.
 
@@ -981,10 +1154,10 @@ during a game waits for the main menu. What a check keeps is under
 
 ## Where packages go
 
-Packages install into your own Open Annihilation folder
-([the installation guides](installation/macos.md#where-it-keeps-its-files)
-say where it is), each in a folder named by its key: `Mods/<id>`,
-`Maps/<id>` and `Languages/<tag>`. Beside a package's files OA keeps
+Packages install into your own Open Annihilation folder ([the installation
+guides](installation/macos.md#where-it-keeps-its-files) say where it is),
+each in a folder named by its key: `Mods/<id>`, `Maps/<id>`,
+`Mutators/<id>`, `Brains/<id>` and `Languages/<tag>`. Beside a package's files OA keeps
 `.oa-origin.yaml`, the record of where it came from, and `.backup`, the
 copy an update replaced. **UNINSTALL** removes a package's folder with
 both ([uninstalling](#uninstalling)), and **OPEN FOLDER** shows it.

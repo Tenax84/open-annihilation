@@ -70,9 +70,11 @@ prompt_layout(const Prompt& prompt, const DialogFonts* fonts = nullptr);
 /// @param x the pointer's column, in source pixels from the prompt's left edge
 /// @param y the pointer's row, in source pixels from the prompt's top edge
 /// @param height the prompt's height (prompt_height)
+/// @param fonts the fonts it is drawn in, which place its buttons; null to estimate widths
 /// @return a redraw when the look changed
-[[nodiscard]] PromptAnswer
-prompt_pointer_move(Prompt& prompt, int32_t x, int32_t y, int32_t height);
+[[nodiscard]] PromptAnswer prompt_pointer_move(
+    Prompt& prompt, int32_t x, int32_t y, int32_t height, const DialogFonts* fonts = nullptr
+);
 
 /// Presses the pointer's button: a press on a button holds it.
 ///
@@ -80,9 +82,11 @@ prompt_pointer_move(Prompt& prompt, int32_t x, int32_t y, int32_t height);
 /// @param x the pointer's column
 /// @param y the pointer's row
 /// @param height the prompt's height
+/// @param fonts the fonts it is drawn in; null to estimate widths
 /// @return a redraw when a button is held
-[[nodiscard]] PromptAnswer
-prompt_pointer_down(Prompt& prompt, int32_t x, int32_t y, int32_t height);
+[[nodiscard]] PromptAnswer prompt_pointer_down(
+    Prompt& prompt, int32_t x, int32_t y, int32_t height, const DialogFonts* fonts = nullptr
+);
 
 /// Presses with a finger: as prompt_pointer_down, but a press on no button
 /// takes the nearest one within `reach`, pressed at its point nearest the
@@ -93,9 +97,16 @@ prompt_pointer_down(Prompt& prompt, int32_t x, int32_t y, int32_t height);
 /// @param y the finger's row
 /// @param height the prompt's height
 /// @param reach how far a button may lie from the finger, in source pixels
+/// @param fonts the fonts it is drawn in; null to estimate widths
 /// @return a redraw when a button is held
-[[nodiscard]] PromptAnswer
-prompt_finger_down(Prompt& prompt, int32_t x, int32_t y, int32_t height, int32_t reach);
+[[nodiscard]] PromptAnswer prompt_finger_down(
+    Prompt& prompt,
+    int32_t x,
+    int32_t y,
+    int32_t height,
+    int32_t reach,
+    const DialogFonts* fonts = nullptr
+);
 
 /// Releases the pointer's button: a release over the button the press held
 /// answers it.
@@ -104,8 +115,11 @@ prompt_finger_down(Prompt& prompt, int32_t x, int32_t y, int32_t height, int32_t
 /// @param x the pointer's column
 /// @param y the pointer's row
 /// @param height the prompt's height
+/// @param fonts the fonts it is drawn in; null to estimate widths
 /// @return the answer, or a redraw
-[[nodiscard]] PromptAnswer prompt_pointer_up(Prompt& prompt, int32_t x, int32_t y, int32_t height);
+[[nodiscard]] PromptAnswer prompt_pointer_up(
+    Prompt& prompt, int32_t x, int32_t y, int32_t height, const DialogFonts* fonts = nullptr
+);
 
 /// Takes a key: Enter and Space answer the marked button, Escape and N the
 /// cancel button, Y the primary button; Left, Up and Shift+Tab mark the

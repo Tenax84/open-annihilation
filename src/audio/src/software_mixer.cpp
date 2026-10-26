@@ -53,24 +53,23 @@ class Hold {
 
 /// Reads one sample as a 16-bit one.
 ///
+/// @tparam Sample the sample's format
 /// @param bytes the sample, little-endian
-/// @param sample its format
 /// @return the sample, -32768..32767
-int32_t read_sample(const uint8_t* bytes, SampleFormat sample) {
-    switch (sample) {
-    case SampleFormat::u8:
+template <SampleFormat Sample>
+int32_t read_sample(const uint8_t* bytes) noexcept {
+    if constexpr (Sample == SampleFormat::u8) {
         return (static_cast<int32_t>(bytes[0]) - unsigned_8_zero) * (int32_t{1} << widen_8_bits);
-    case SampleFormat::s16:
+    } else if constexpr (Sample == SampleFormat::s16) {
         return static_cast<int16_t>(static_cast<uint16_t>(bytes[0] | (bytes[1] << 8)));
-    case SampleFormat::s32: {
+    } else if constexpr (Sample == SampleFormat::s32) {
         const auto value = static_cast<int32_t>(
             static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
             (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24)
         );
         // An arithmetic shift rounds toward negative infinity.
         return value >> narrow_32_bits;
-    }
-    case SampleFormat::f32: {
+    } else {
         float value = 0.0F;
         std::memcpy(&value, bytes, sizeof(value));
         const float scaled = value * float_full_scale;
@@ -83,8 +82,6 @@ int32_t read_sample(const uint8_t* bytes, SampleFormat sample) {
         // Truncation toward zero after half is added away from zero rounds to nearest.
         return static_cast<int32_t>(scaled < 0.0F ? scaled - 0.5F : scaled + 0.5F);
     }
-    }
-    return 0;
 }
 
 /// Returns a gain at mixer_gain_bits fraction bits.
@@ -95,6 +92,29 @@ int32_t fixed_gain(float gain) {
     if (!(gain > 0.0F))
         return 0;
     return static_cast<int32_t>(std::min(gain, mixer_max_gain) * unity_gain + 0.5F);
+}
+
+/// Converts whole frames of one sample format to 16-bit samples of at most two channels.
+///
+/// @tparam Sample the frames' sample format
+/// @param bytes the frames
+/// @param frames how many to convert
+/// @param bytes_per_frame bytes of one frame
+/// @param bytes_per_sample bytes of one sample
+/// @param kept channels converted of each frame: its first one or two
+/// @param[out] out receives frames * kept samples
+template <SampleFormat Sample>
+void decode_frames_of(
+    const uint8_t* bytes,
+    std::size_t frames,
+    uint32_t bytes_per_frame,
+    uint32_t bytes_per_sample,
+    uint32_t kept,
+    int16_t* out
+) noexcept {
+    for (std::size_t i = 0; i < frames; ++i, bytes += bytes_per_frame)
+        for (uint32_t channel = 0; channel < kept; ++channel)
+            *out++ = static_cast<int16_t>(read_sample<Sample>(bytes + channel * bytes_per_sample));
 }
 
 /// Converts whole frames to 16-bit samples of at most two channels.
@@ -113,12 +133,32 @@ void decode_frames(
     const uint32_t bytes_per_frame = frame_bytes(format);
     const uint32_t kept = std::min<uint32_t>(format.channels, mixed_channels_max);
     samples.resize(frames * kept);
-    int16_t* out = samples.data();
-    for (std::size_t i = 0; i < frames; ++i, bytes += bytes_per_frame)
-        for (uint32_t channel = 0; channel < kept; ++channel)
-            *out++ = static_cast<int16_t>(
-                read_sample(bytes + channel * bytes_per_sample, format.sample)
-            );
+    int16_t* const out = samples.data();
+    // The sample format is chosen once for all the frames.
+    switch (format.sample) {
+    case SampleFormat::u8:
+        decode_frames_of<SampleFormat::u8>(
+            bytes, frames, bytes_per_frame, bytes_per_sample, kept, out
+        );
+        return;
+    case SampleFormat::s16:
+        decode_frames_of<SampleFormat::s16>(
+            bytes, frames, bytes_per_frame, bytes_per_sample, kept, out
+        );
+        return;
+    case SampleFormat::s32:
+        decode_frames_of<SampleFormat::s32>(
+            bytes, frames, bytes_per_frame, bytes_per_sample, kept, out
+        );
+        return;
+    case SampleFormat::f32:
+        decode_frames_of<SampleFormat::f32>(
+            bytes, frames, bytes_per_frame, bytes_per_sample, kept, out
+        );
+        return;
+    }
+    // A format the mixer does not know reads as silence.
+    std::fill(out, out + frames * kept, int16_t{0});
 }
 
 /// Tells whether a stream format is one the mixer takes.

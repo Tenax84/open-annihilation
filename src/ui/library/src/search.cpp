@@ -6,6 +6,7 @@
 // list.
 #include "oa/data/content_bundles.hpp"
 #include "oa/data/languages.hpp"
+#include "oa/ui/library/text.hpp"
 #include "visible.hpp"
 
 #include <algorithm>
@@ -78,13 +79,18 @@ bool holds(std::string_view text, std::string_view word) {
     return text.find(word) != std::string_view::npos;
 }
 
-/// An entry's fields as the search reads them, folded.
+/// An entry's fields as the search reads them.
+///
+/// The name, author, publisher and summary are folded. The tags are the ids
+/// as written, so a label can be looked up from the catalogue id.
 struct Fields {
     std::string name{};
     std::vector<std::string> tags{};
     std::string author{};
     std::string publisher{};
     std::string summary{};
+    /// True for a brain, so a tag's label is a brain tag's.
+    bool brain{};
 };
 
 /// Folds an entry's fields.
@@ -104,7 +110,7 @@ Fields fields_of(const Entry& entry) {
         fields.name = folded(name);
         const std::string_view tag = built_in_language_tag(entry.id);
         if (!tag.empty())
-            fields.tags.push_back(folded(tag));
+            fields.tags.emplace_back(tag);
         return fields;
     }
     fields.name = folded(entry_name(entry));
@@ -115,10 +121,27 @@ Fields fields_of(const Entry& entry) {
         fields.summary = folded(entry_summary(entry));
         return fields;
     }
-    if (entry.listing == nullptr)
+    if (is_built_in_brain(entry.id)) {
+        fields.summary = folded(entry_summary(entry));
+        fields.brain = true;
         return fields;
-    for (const std::string& tag : entry.listing->tags)
-        fields.tags.push_back(folded(tag));
+    }
+    if (entry.id.kind == Kind::mutator) {
+        if (const std::vector<std::string>* tags = mutator_tag_list(entry))
+            fields.tags = *tags;
+        if (entry.listing == nullptr)
+            return fields;
+    } else if (entry.id.kind == Kind::brain) {
+        fields.brain = true;
+        if (const BrainFacts* facts = brain_facts(entry))
+            fields.tags = facts->tags;
+        if (entry.listing == nullptr)
+            return fields;
+    } else if (entry.listing == nullptr) {
+        return fields;
+    } else {
+        fields.tags = entry.listing->tags;
+    }
     fields.author = folded(entry.listing->author);
     fields.publisher = folded(entry.listing->publisher);
     fields.summary = folded(entry.listing->summary);
@@ -127,15 +150,24 @@ Fields fields_of(const Entry& entry) {
 
 /// Finds the best field a word is in.
 ///
-/// @param fields the entry's folded fields
+/// @param fields the entry's fields; the name, author and summary are folded,
+///     and the tags are the ids as written
 /// @param word the folded word
+/// @param text how a tag's label is looked up
 /// @return its class, or nothing when no field holds it
-std::optional<MatchClass> class_of(const Fields& fields, std::string_view word) {
+std::optional<MatchClass>
+class_of(const Fields& fields, std::string_view word, const TextHooks& text) {
     if (holds(fields.name, word))
         return MatchClass::name;
-    for (const std::string& tag : fields.tags)
-        if (std::string_view(tag).substr(0, word.size()) == word)
+    for (const std::string& tag : fields.tags) {
+        const std::string id = folded(tag);
+        if (std::string_view(id).substr(0, word.size()) == word)
             return MatchClass::tag;
+        const std::string label =
+            folded(fields.brain ? brain_tag_label(tag, text) : tag_label(tag, text));
+        if (label != id && std::string_view(label).substr(0, word.size()) == word)
+            return MatchClass::tag;
+    }
     if (holds(fields.author, word) || holds(fields.publisher, word))
         return MatchClass::author;
     if (holds(fields.summary, word))
@@ -235,8 +267,8 @@ bool before_with_search(const Library& library, const Candidate& left, const Can
 ///
 /// @param tab the tab
 /// @param kind the kind
-/// @return true for its own kind on Mods, Maps and Languages, every kind on
-///     Updates, and none on Active or Registries
+/// @return true for its own kind on Mods, Maps, Mutators, Brains and
+///     Languages, every kind on Updates, and none on Active or Registries
 bool tab_holds(Tab tab, Kind kind) {
     switch (tab) {
     case Tab::active:
@@ -245,6 +277,10 @@ bool tab_holds(Tab tab, Kind kind) {
         return kind == Kind::mod;
     case Tab::maps:
         return kind == Kind::map_pack;
+    case Tab::mutators:
+        return kind == Kind::mutator;
+    case Tab::brains:
+        return kind == Kind::brain;
     case Tab::languages:
         return kind == Kind::language;
     case Tab::updates:
@@ -297,6 +333,18 @@ bool shows_built_in_language(const Library& library, Filter filter) {
     return library.tab == Tab::languages && (filter == Filter::all || filter == Filter::installed);
 }
 
+/// Tells whether the built-in computer player shows under a filter.
+///
+/// It shows on Brains, under All and Installed, and under no other tab or
+/// filter. New never holds it: it is not a package a registry published.
+///
+/// @param library the Library
+/// @param filter the filter
+/// @return true when the list keeps it
+bool shows_built_in_brain(const Library& library, Filter filter) {
+    return library.tab == Tab::brains && (filter == Filter::all || filter == Filter::installed);
+}
+
 /// Tells whether the tab's filter offers the tag that is stored.
 ///
 /// Counts never apply the tag, and the chip row lists only the tags of this
@@ -335,15 +383,21 @@ std::string_view capped_query(std::string_view query) {
     return query.substr(0, cut);
 }
 
-std::optional<Rank> rank(const Entry& entry, std::string_view query) {
+std::optional<Rank> rank(const Entry& entry, std::string_view query, const TextHooks& text) {
     const std::string search = folded(capped_query(query));
     const std::vector<std::string_view> terms = split_words(search);
     if (terms.empty())
         return Rank{};
-    const Fields fields = fields_of(entry);
+    Fields fields = fields_of(entry);
+    // "default" finds the built-in player, and the installed brain that is
+    // the default, including under a translation. It is not a chip.
+    if (is_built_in_brain(entry.id) || entry.is_default) {
+        fields.tags.emplace_back("default");
+        fields.tags.emplace_back(shown(text, words::chip_default));
+    }
     Rank result;
     for (const std::string_view word : terms) {
-        const std::optional<MatchClass> found = class_of(fields, word);
+        const std::optional<MatchClass> found = class_of(fields, word, text);
         if (!found)
             return std::nullopt;
         result.worst = std::max(result.worst, *found);
@@ -363,6 +417,8 @@ std::vector<bool> kept_by_filter(const Library& library, Filter filter) {
                 kept[index] = shows_base_game(library, filter);
             else if (is_built_in_language(entry.id))
                 kept[index] = shows_built_in_language(library, filter);
+            else if (is_built_in_brain(entry.id))
+                kept[index] = shows_built_in_brain(library, filter);
             else
                 kept[index] = tab_holds(library.tab, entry.id.kind) && state_kept(filter, entry);
         }
@@ -373,7 +429,7 @@ std::vector<bool> kept_by_filter(const Library& library, Filter filter) {
     std::vector<Candidate> dated;
     for (std::size_t index = 0; index < library.entries.size(); ++index) {
         const Entry& entry = library.entries[index];
-        if (is_base_game(entry.id) || is_built_in_language(entry.id))
+        if (is_base_game(entry.id) || is_built_in_language(entry.id) || is_built_in_brain(entry.id))
             continue;
         if (tab_holds(library.tab, entry.id.kind) && !published_day(entry).empty())
             dated.push_back({index, {}, Group::get, folded(entry_name(entry))});
@@ -389,10 +445,17 @@ std::vector<bool> kept_by_filter(const Library& library, Filter filter) {
 bool has_shown_tag(const Library& library, const Entry& entry) {
     if (library.tag.empty())
         return true;
-    if (entry.listing == nullptr)
+    const std::vector<std::string>* tags = nullptr;
+    if (entry.id.kind == Kind::mutator)
+        tags = mutator_tag_list(entry);
+    else if (entry.id.kind == Kind::brain) {
+        if (const BrainFacts* facts = brain_facts(entry))
+            tags = &facts->tags;
+    } else if (entry.listing != nullptr)
+        tags = &entry.listing->tags;
+    if (tags == nullptr)
         return false;
-    const std::vector<std::string>& tags = entry.listing->tags;
-    return std::find(tags.begin(), tags.end(), library.tag) != tags.end();
+    return std::find(tags->begin(), tags->end(), library.tag) != tags->end();
 }
 
 void update_visible(Library& library) {
@@ -405,7 +468,7 @@ void update_visible(Library& library) {
             continue;
         if (offered && !has_shown_tag(library, entry))
             continue;
-        const std::optional<Rank> ranked = rank(entry, library.query);
+        const std::optional<Rank> ranked = rank(entry, library.query, library.text);
         if (!ranked)
             continue;
         kept.push_back({index, *ranked, group_of(entry), folded(entry_name(entry))});
@@ -454,6 +517,16 @@ void update_visible(Library& library) {
             kept = std::move(leading);
         }
     }
+    // The built-in computer player leads the Brains list whenever the filter
+    // and the search keep it, ahead of the order the packages take.
+    if (library.tab == Tab::brains) {
+        const auto built_in =
+            std::find_if(kept.begin(), kept.end(), [&](const Candidate& candidate) {
+                return is_built_in_brain(library.entries[candidate.index].id);
+            });
+        if (built_in != kept.end() && built_in != kept.begin())
+            std::rotate(kept.begin(), built_in, built_in + 1);
+    }
     library.visible.clear();
     for (const Candidate& candidate : kept)
         library.visible.push_back(candidate.index);
@@ -471,7 +544,7 @@ std::size_t tab_count(const Library& library, Tab tab) {
     std::size_t count = 0;
     for (const Entry& entry : library.entries)
         if (tab_holds(tab, entry.id.kind) && !is_base_game(entry.id) &&
-            !is_built_in_language(entry.id))
+            !is_built_in_language(entry.id) && !is_built_in_brain(entry.id))
             ++count;
     return count;
 }
@@ -519,7 +592,8 @@ bool map_pack_already_installed(const Inputs& inputs, const InstalledMaps& pack)
 std::size_t added_package_count(const Inputs& inputs) {
     std::size_t total = 0;
     for (const Installed& item : inputs.installed) {
-        if (item.kind != Kind::mod && item.kind != Kind::map_pack && item.kind != Kind::language)
+        if (item.kind != Kind::mod && item.kind != Kind::map_pack && item.kind != Kind::language &&
+            item.kind != Kind::mutator)
             continue;
         if (installed_base_game(item) || installed_built_in_language(item))
             continue;

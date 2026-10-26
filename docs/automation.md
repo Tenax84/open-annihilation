@@ -202,7 +202,7 @@ centre would land on the line between Off and On.
 | A row's own button (MANAGE…) | `oa.settings.<row>.<button>`, as `oa.settings.game-files-summary.manage` | button |
 | Game Content's buttons | `oa.settings.content-check.check-again`, `oa.settings.content-copy.copy-again`, `oa.settings.content-open.open-folder` | button. The section's entry is `oa.settings.nav.game-content`. While a bundle is being copied, that bundle's row offers Cancel as `oa.settings.<id>.cancel-copy` |
 | Your files' buttons, on System | `oa.settings.user-folder.saves`, `.screenshots`, `.mods` | button |
-| File Type Registration, on System on Windows, Linux and macOS | `oa.settings.file-type-registration` (the heading); `oa.settings.file-type-oamod`, `oa.settings.file-type-oamap`, `oa.settings.file-type-oalang`, `oa.settings.file-type-oareg` | the heading a label; each switch as a switch |
+| File Type Registration, on System on Windows, Linux and macOS | `oa.settings.file-type-registration` (the heading); `oa.settings.file-type-oamod`, `oa.settings.file-type-oamap`, `oa.settings.file-type-oalang`, `oa.settings.file-type-oareg`, `oa.settings.file-type-oamut`, `oa.settings.file-type-oabrain`, `oa.settings.file-type-oalaunch` | the heading a label; each switch as a switch |
 | File types, on System on iOS | `oa.settings.file-types` | label |
 | Downloads' REGISTRIES IN THE LIBRARY… (main menu only) | `oa.settings.registries-in-library` | button; opens the Library on its Registries tab |
 | Developer's own controls | `oa.settings.developer-mode.off`/`.on`, `oa.settings.frame-stats.off`/`.on`, `oa.settings.kit-gallery.show` (SHOW, which opens the UI kit gallery), `oa.settings.active-only.off`/`.on`, `oa.settings.restore-profile-values` | as above |
@@ -314,6 +314,13 @@ key, lower-cased, every other run of characters one `-`. The base game
 entry is not a package. Its key is `@base-game`, and the row is
 `oa.library.row.base-game`: the `@` is not a letter or a digit, so the
 row's name does not keep it.
+
+PLAY NOW and the Switch Mod question's `oa.prompt.switch` end the run
+with a soft restart, and the next run opens the Library again as it
+showed ([after a switch](library.md#after-a-switch)). Until it does, for
+at most five seconds, the switch's work dialog, `oa.work`, may show over
+the main menu, its one part the label `oa.progress.body` with its words,
+such as "Switching on Ridge…": a journey waits for `oa.library` there.
 
 ## Input
 
@@ -454,10 +461,20 @@ starts the game with `--fark`, or attaches to one started so, and offers
 the endpoint's requests to an MCP client as tools: the screen and its
 controls, a click on a control by its name, a list's row by its text, keys,
 typed text, the pointer and the wheel, a picture of the frame, the
-preferences, the match, the battle room and the events. Claude Code finds
-it through `.mcp.json` at the repository's root. It drives the game only
-through the endpoint's requests, so what the endpoint
-[never does](#what-it-never-does) it never does either.
+preferences, the match, the battle room and the events. It is registered
+with the client by hand; the repository holds no project file that starts
+it.
+
+Unlike the endpoint, the server starts a program: Open Annihilation's own
+executable alone, with the command-line options it allows and a new
+preferences file in a scratch folder of its own unless told otherwise. It
+reads the endpoint file and the game's log, writes only that scratch
+folder, and connects only to the loopback address. The game it drives does
+what its input does, as a player's would: it can change and save the
+settings, install and fetch packages, write to the player's folders, and
+in a battle room send chat that the other players see.
+[tools/mcp](../tools/mcp/README.md#what-it-reads-writes-and-starts) says
+it all.
 
 ## Checks
 

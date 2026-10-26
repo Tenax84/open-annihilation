@@ -10,6 +10,14 @@
 
 
 
+[· from {registry}]
+	{
+	de=· von {registry};
+	fr=· depuis {registry};
+	es=· de {registry};
+	it=· da {registry};
+	}
+
 ["{title}" was saved with {name}, which is off.]
 	{
 	de="{title}" wurde mit {name} gespeichert, und das ist aus.;
@@ -200,6 +208,102 @@
 	fr=5–10;
 	es=5–10;
 	it=5–10;
+	}
+
+[*** This game is Open Annihilation only, and unranked.]
+	{
+	de=*** Dieses Spiel ist nur Open Annihilation und ungewertet.;
+	fr=*** Cette partie est seulement Open Annihilation, et non classée.;
+	es=*** Esta partida es solo Open Annihilation, y sin clasificación.;
+	it=*** Questa partita è solo Open Annihilation, e non classificata.;
+	}
+
+[*** You do not have {names}.]
+	{
+	de=*** Du hast {names} nicht.;
+	fr=*** Tu n'as pas {names}.;
+	es=*** No tienes {names}.;
+	it=*** Non hai {names}.;
+	}
+
+[*** You do not have {names}. GET MUTATORS downloads them from {registry}.]
+	{
+	de=*** Du hast {names} nicht. MUTATOREN HOLEN lädt sie von {registry}.;
+	fr=*** Tu n'as pas {names}. OBTENIR LES MUTATEURS les télécharge depuis {registry}.;
+	es=*** No tienes {names}. OBTENER MUTADORES los descarga de {registry}.;
+	it=*** Non hai {names}. OTTIENI MUTATORI li scarica da {registry}.;
+	}
+
+[*** You do not have {name}.]
+	{
+	de=*** Du hast {name} nicht.;
+	fr=*** Tu n'as pas {name}.;
+	es=*** No tienes {name}.;
+	it=*** Non hai {name}.;
+	}
+
+[*** You do not have {name}. GET MUTATORS downloads it from {registry}.]
+	{
+	de=*** Du hast {name} nicht. MUTATOREN HOLEN lädt es von {registry}.;
+	fr=*** Tu n'as pas {name}. OBTENIR LES MUTATEURS le télécharge depuis {registry}.;
+	es=*** No tienes {name}. OBTENER MUTADORES lo descarga de {registry}.;
+	it=*** Non hai {name}. OTTIENI MUTATORI lo scarica da {registry}.;
+	}
+
+[*** {host} turned mutators off.]
+	{
+	de=*** {host} hat die Mutatoren ausgeschaltet.;
+	fr=*** {host} a désactivé les mutateurs.;
+	es=*** {host} desactivó los mutadores.;
+	it=*** {host} ha disattivato i mutatori.;
+	}
+
+[*** {host} turned on mutators: {list}]
+	{
+	de=*** {host} hat Mutatoren eingeschaltet: {list};
+	fr=*** {host} a activé des mutateurs : {list};
+	es=*** {host} activó mutadores: {list};
+	it=*** {host} ha attivato i mutatori: {list};
+	}
+
+[*** {list}]
+	{
+	de=*** {list};
+	fr=*** {list};
+	es=*** {list};
+	it=*** {list};
+	}
+
+[*** {player} chose a side this game does not have.]
+	{
+	de=*** {player} hat eine Seite gewählt, die dieses Spiel nicht hat.;
+	fr=*** {player} a choisi un camp que cette partie n'a pas.;
+	es=*** {player} ha elegido un bando que esta partida no tiene.;
+	it=*** {player} ha scelto una fazione che questa partita non ha.;
+	}
+
+[*** {player} does not have {name}.]
+	{
+	de=*** {player} hat {name} nicht.;
+	fr=*** {player} n'a pas {name}.;
+	es=*** {player} no tiene {name}.;
+	it=*** {player} non ha {name}.;
+	}
+
+[*** {player} plays Total Annihilation 3.1c and cannot join a game with mutators.]
+	{
+	de=*** {player} spielt Total Annihilation 3.1c und kann einem Spiel mit Mutatoren nicht beitreten.;
+	fr=*** {player} joue à Total Annihilation 3.1c et ne peut pas rejoindre une partie avec des mutateurs.;
+	es=*** {player} juega a Total Annihilation 3.1c y no puede unirse a una partida con mutadores.;
+	it=*** {player} gioca a Total Annihilation 3.1c e non può unirsi a una partita con mutatori.;
+	}
+
+[*** {player} plays Total Annihilation 3.1c, which cannot play with mutators.]
+	{
+	de=*** {player} spielt Total Annihilation 3.1c, das nicht mit Mutatoren gespielt werden kann.;
+	fr=*** {player} joue à Total Annihilation 3.1c, qui ne peut pas jouer avec des mutateurs.;
+	es=*** {player} juega a Total Annihilation 3.1c, que no puede jugar con mutadores.;
+	it=*** {player} gioca a Total Annihilation 3.1c, che non può giocare con i mutatori.;
 	}
 
 [A]
@@ -610,6 +714,14 @@
 	it=Attivo;
 	}
 
+[Add]
+	{
+	de=Hinzufügen;
+	fr=Ajouter;
+	es=Añadir;
+	it=Aggiungi;
+	}
+
 [Add files]
 	{
 	de=Dateien hinzufügen;
@@ -648,6 +760,14 @@
 	fr=Après le zoom;
 	es=Tras el zoom;
 	it=Dopo lo zoom;
+	}
+
+[Air]
+	{
+	de=Luft;
+	fr=Air;
+	es=Aire;
+	it=Aria;
 	}
 
 [Aircraft]
@@ -698,6 +818,22 @@
 	it=Visualizzazione delle unità alleate;
 	}
 
+[Allow angles outside the ideal range for TA art.]
+	{
+	de=Erlaubt Winkel außerhalb des idealen Bereichs für TA-Grafiken.;
+	fr=Autorise des angles hors de la plage idéale pour les graphismes de TA.;
+	es=Permite ángulos fuera del rango ideal para los gráficos de TA.;
+	it=Consente angoli fuori dall'intervallo ideale per la grafica di TA.;
+	}
+
+[Allow Full 3D Mode]
+	{
+	de=Vollen 3D-Modus erlauben;
+	fr=Autoriser le mode 3D complet;
+	es=Permitir el modo 3D completo;
+	it=Consenti la modalità 3D completa;
+	}
+
 [Alongside, {incoming} goes in a folder of its own:]
 	{
 	de=Daneben kommt {incoming} in einen eigenen Ordner:;
@@ -738,6 +874,14 @@
 	it=E altri {n}. Il registro li ha tutti.;
 	}
 
+[Another copy of Open Annihilation is changing your Brains folder. Try again once it has finished.]
+	{
+	de=Eine andere Kopie von Open Annihilation ändert deinen Gehirneordner. Versuche es erneut, wenn sie fertig ist.;
+	fr=Une autre copie d'Open Annihilation modifie ton dossier de cerveaux. Réessaie une fois qu'elle a fini.;
+	es=Otra copia de Open Annihilation está cambiando tu carpeta de cerebros. Inténtalo de nuevo cuando termine.;
+	it=Un'altra copia di Open Annihilation sta modificando la tua cartella dei cervelli. Riprova quando ha finito.;
+	}
+
 [Another copy of Open Annihilation is changing your Maps folder. Try again once it has finished.]
 	{
 	de=Eine andere Kopie von Open Annihilation ändert deinen Kartenordner. Versuche es erneut, wenn sie fertig ist.;
@@ -754,12 +898,28 @@
 	it=Un'altra copia di Open Annihilation sta modificando la tua cartella dei mod. Riprova quando ha finito.;
 	}
 
+[Another copy of Open Annihilation is changing your Mutators folder. Try again once it has finished.]
+	{
+	de=Eine andere Kopie von Open Annihilation ändert deinen Mutatorenordner. Versuche es erneut, wenn sie fertig ist.;
+	fr=Une autre copie d'Open Annihilation modifie ton dossier de mutateurs. Réessaie une fois qu'elle a fini.;
+	es=Otra copia de Open Annihilation está cambiando tu carpeta de mutadores. Inténtalo de nuevo cuando termine.;
+	it=Un'altra copia di Open Annihilation sta modificando la tua cartella dei mutatori. Riprova quando ha finito.;
+	}
+
 [Any]
 	{
 	de=Egal;
 	fr=N'importe;
 	es=Cualquiera;
 	it=Qualsiasi;
+	}
+
+[Any mod]
+	{
+	de=Jeder Mod;
+	fr=N'importe quel mod;
+	es=Cualquier mod;
+	it=Qualsiasi mod;
 	}
 
 [Applications]
@@ -808,6 +968,14 @@
 	fr=Aide seule;
 	es=Solo asistir;
 	it=Solo assistenza;
+	}
+
+[At most {count} mutators can be on]
+	{
+	de=Höchstens {count} Mutatoren können an sein;
+	fr=Au plus {count} mutateurs peuvent être actifs;
+	es=Como mucho {count} mutadores pueden estar activos;
+	it=Al massimo {count} mutatori possono essere attivi;
 	}
 
 [Attack Wave Size]
@@ -920,6 +1088,30 @@
 	fr=EXPLOSER;
 	es=DETONAR;
 	it=ESPLODI;
+	}
+
+[BRAIN INSTALLED]
+	{
+	de=GEHIRN INSTALLIERT;
+	fr=CERVEAU INSTALLÉ;
+	es=CEREBRO INSTALADO;
+	it=CERVELLO INSTALLATO;
+	}
+
+[BRAIN NOT INSTALLED]
+	{
+	de=GEHIRN NICHT INSTALLIERT;
+	fr=CERVEAU NON INSTALLÉ;
+	es=CEREBRO NO INSTALADO;
+	it=CERVELLO NON INSTALLATO;
+	}
+
+[BRAIN UPDATED]
+	{
+	de=GEHIRN AKTUALISIERT;
+	fr=CERVEAU MIS À JOUR;
+	es=CEREBRO ACTUALIZADO;
+	it=CERVELLO AGGIORNATO;
 	}
 
 [BUILD]
@@ -1090,6 +1282,14 @@
 	it=Base lascia che la scheda grafica lo scali in modo uniforme.;
 	}
 
+[Battle room]
+	{
+	de=Gefechtsraum;
+	fr=Salle de bataille;
+	es=Sala de batalla;
+	it=Sala di battaglia;
+	}
+
 [Battle Tactics]
 	{
 	de=Battle Tactics;
@@ -1130,6 +1330,14 @@
 	it=Entrambi;
 	}
 
+[Both stay installed. Turn {dependant} on again and {name} comes back with it.]
+	{
+	de=Beide bleiben installiert. Schalte {dependant} wieder ein, und {name} kommt damit zurück.;
+	fr=Les deux restent installés. Rallume {dependant} et {name} revient avec.;
+	es=Los dos siguen instalados. Vuelve a activar {dependant} y {name} vuelve con él.;
+	it=Entrambi restano installati. Riaccendi {dependant} e {name} torna con lui.;
+	}
+
 [Bottles]
 	{
 	de=Bottles;
@@ -1144,6 +1352,22 @@
 	fr=Cadre;
 	es=Marco;
 	it=Riquadro;
+	}
+
+[Brain packages (.oabrain)]
+	{
+	de=Gehirn-Pakete (.oabrain);
+	fr=Paquets de cerveau (.oabrain);
+	es=Paquetes de cerebro (.oabrain);
+	it=Pacchetti di cervello (.oabrain);
+	}
+
+[Brains]
+	{
+	de=Gehirne;
+	fr=Cerveaux;
+	es=Cerebros;
+	it=Cervelli;
 	}
 
 [Build Preview]
@@ -1178,6 +1402,14 @@
 	it=Strumenti di costruzione;
 	}
 
+[Build menus]
+	{
+	de=Baumenüs;
+	fr=Menus de construction;
+	es=Menús de construcción;
+	it=Menu di costruzione;
+	}
+
 [Build ring: presses its build button or toggle, or turns the build page.]
 	{
 	de=Baurad: drückt seine Bautaste oder den Schalter oder blättert die Bauseite.;
@@ -1208,6 +1440,46 @@
 	fr=Intégré;
 	es=Integrado;
 	it=Integrato;
+	}
+
+[Built in · Default]
+	{
+	de=Integriert · Standard;
+	fr=Intégré · Par défaut;
+	es=Integrado · Predeterminado;
+	it=Integrato · Predefinito;
+	}
+
+[Built-in]
+	{
+	de=Eingebaut;
+	fr=Intégré;
+	es=Integrado;
+	it=Integrato;
+	}
+
+[Built-in computer player]
+	{
+	de=Eingebauter Computerspieler;
+	fr=Joueur ordinateur intégré;
+	es=Jugador de ordenador integrado;
+	it=Giocatore computer integrato;
+	}
+
+[Open Annihilation's own computer player. It plays as Total Annihilation's does.]
+	{
+	de=Open Annihilations eigener Computerspieler. Er spielt wie der von Total Annihilation.;
+	fr=Le joueur ordinateur d'Open Annihilation. Il joue comme celui de Total Annihilation.;
+	es=El jugador de ordenador de Open Annihilation. Juega como el de Total Annihilation.;
+	it=Il giocatore computer di Open Annihilation. Gioca come quello di Total Annihilation.;
+	}
+
+[Built into Open Annihilation]
+	{
+	de=In Open Annihilation eingebaut;
+	fr=Intégré à Open Annihilation;
+	es=Integrado en Open Annihilation;
+	it=Integrato in Open Annihilation;
 	}
 
 [Built into the game]
@@ -1336,6 +1608,14 @@
 	fr=LE VÉRIFIER;
 	es=COMPROBARLO;
 	it=CONTROLLALO;
+	}
+
+[CHECK WITH THIS MOD]
+	{
+	de=MIT DIESEM MOD PRÜFEN;
+	fr=VÉRIFIER AVEC CE MOD;
+	es=COMPROBAR CON ESTE MOD;
+	it=CONTROLLA CON QUESTO MOD;
 	}
 
 [CHOOSE A FOLDER]
@@ -1522,6 +1802,14 @@
 	it=Annulla il download;
 	}
 
+[Cannot run beside {name}]
+	{
+	de=Kann nicht neben {name} laufen;
+	fr=Ne peut pas fonctionner à côté de {name};
+	es=No puede funcionar junto a {name};
+	it=Non può funzionare accanto a {name};
+	}
+
 [Cavedog tilesets]
 	{
 	de=Cavedog-Tilesets;
@@ -1552,6 +1840,22 @@
 	fr=Cellules auxquelles un clic de récupération s'aligne sur une épave.;
 	es=Celdas a las que un clic de recuperar se ajusta a un resto.;
 	it=Celle a cui un clic di recupero si aggancia a un relitto.;
+	}
+
+[Changes]
+	{
+	de=Ändert;
+	fr=Modifie;
+	es=Cambia;
+	it=Cambia;
+	}
+
+[Changes the game: unranked on Core Prime]
+	{
+	de=Ändert das Spiel: ohne Wertung auf Core Prime;
+	fr=Change la partie : non classé sur Core Prime;
+	es=Cambia la partida: sin clasificación en Core Prime;
+	it=Cambia la partita: non classificata su Core Prime;
 	}
 
 [Chat Extension Channel]
@@ -1594,6 +1898,14 @@
 	it=La ricerca di aggiornamenti dei contenuti resta su Automaticamente, e l'ID di installazione di Core Prime resta attivo.;
 	}
 
+[Checked]
+	{
+	de=Geprüft;
+	fr=Vérifié;
+	es=Comprobado;
+	it=Controllato;
+	}
+
 [Checked against the keys you trust for {name}]
 	{
 	de=Geprüft gegen die Schlüssel, denen du für {name} vertraust;
@@ -1608,6 +1920,22 @@
 	fr=Vérifié entièrement une fois copié.;
 	es=Comprobado por completo una vez copiado.;
 	it=Controllato per intero una volta copiato.;
+	}
+
+[Checked with No Mod ✓]
+	{
+	de=Ohne Mod geprüft ✓;
+	fr=Vérifié sans mod ✓;
+	es=Comprobado sin mod ✓;
+	it=Controllato senza mod ✓;
+	}
+
+[Checked with {mod} ✓]
+	{
+	de=Geprüft mit {mod} ✓;
+	fr=Vérifié avec {mod} ✓;
+	es=Comprobado con {mod} ✓;
+	it=Controllato con {mod} ✓;
 	}
 
 [Checked: the game can start from these files.]
@@ -1632,6 +1960,22 @@
 	fr=Vérification des fichiers copiés avec la vérification du jeu…;
 	es=Comprobando los archivos copiados con la comprobación del juego…;
 	it=Controllo dei file copiati con il controllo del gioco…;
+	}
+
+[Checking with No Mod…]
+	{
+	de=Prüfung ohne Mod…;
+	fr=Vérification sans mod…;
+	es=Comprobando sin mod…;
+	it=Controllo senza mod…;
+	}
+
+[Checking with {mod}…]
+	{
+	de=Prüfung mit {mod}…;
+	fr=Vérification avec {mod}…;
+	es=Comprobando con {mod}…;
+	it=Controllo con {mod}…;
 	}
 
 [Checking your copy of Total Annihilation]
@@ -1890,6 +2234,22 @@
 	it=Chiude il menu aperto.;
 	}
 
+[Coastal waves]
+	{
+	de=Küstenwellen;
+	fr=Vagues côtières;
+	es=Olas costeras;
+	it=Onde costiere;
+	}
+
+[Coloured weapon lighting]
+	{
+	de=Farbige Waffenbeleuchtung;
+	fr=Éclairage coloré des armes;
+	es=Iluminación coloreada de las armas;
+	it=Illuminazione colorata delle armi;
+	}
+
 [Commander Builder Limit]
 	{
 	de=Bauergrenze des Kommandanten;
@@ -1928,6 +2288,22 @@
 	fr=Téléportation du commandant;
 	es=Salto del comandante;
 	it=Salto del comandante;
+	}
+
+[Commanders]
+	{
+	de=Kommandanten;
+	fr=Commandants;
+	es=Comandantes;
+	it=Comandanti;
+	}
+
+[Computer player]
+	{
+	de=Computerspieler;
+	fr=Joueur ordinateur;
+	es=Jugador de ordenador;
+	it=Giocatore computer;
 	}
 
 [Console]
@@ -2282,6 +2658,14 @@
 	it=TRASCINA PER MUOVERE · DOPPIO TOCCO O TIENI PREMUTO PER POSIZIONARE;
 	}
 
+[Default]
+	{
+	de=Standard;
+	fr=Par défaut;
+	es=Predeterminado;
+	it=Predefinito;
+	}
+
 [Demo]
 	{
 	de=Demo;
@@ -2330,6 +2714,14 @@
 	it=Diverso dall'host: un altro gioco di base ({name}).;
 	}
 
+[Different from the host: another release of {name}.]
+	{
+	de=Anders als beim Gastgeber: eine andere Fassung von {name}.;
+	fr=Pas comme chez l'hôte : une autre version de {name}.;
+	es=Distinto del anfitrión: otra versión de {name}.;
+	it=Diverso dall'host: un'altra versione di {name}.;
+	}
+
 [Different from the host: no {name}.]
 	{
 	de=Anders als beim Gastgeber: kein {name}.;
@@ -2360,6 +2752,14 @@
 	fr=Noms de difficulté;
 	es=Nombres de dificultad;
 	it=Nomi di difficoltà;
+	}
+
+[Disable]
+	{
+	de=Verbote;
+	fr=Interdictions;
+	es=Prohibiciones;
+	it=Divieti;
 	}
 
 [Display Modes]
@@ -2514,6 +2914,14 @@
 	it=Download di {file} da {cloud}…;
 	}
 
+[Downloading {name} · {index} of {total}]
+	{
+	de={name} wird geholt · {index} von {total};
+	fr=Téléchargement de {name} · {index} sur {total};
+	es=Bajando {name} · {index} de {total};
+	it=Scarico di {name} · {index} di {total};
+	}
+
 [Downloading {package}]
 	{
 	de=Lade {package} herunter;
@@ -2568,6 +2976,14 @@
 	fr=Les téléchargements sont coupés, donc les packs de langue restent hors ligne.;
 	es=Las descargas están apagadas, así que los paquetes de idioma siguen sin conexión.;
 	it=I download sono spenti, quindi i pacchetti di lingua restano non in linea.;
+	}
+
+[Downloads are off.]
+	{
+	de=Downloads sind aus.;
+	fr=Téléchargements coupés.;
+	es=Descargas apagadas.;
+	it=Download spenti.;
 	}
 
 [Downloads from {registry} are off (Settings › Downloads)]
@@ -2770,6 +3186,14 @@
 	it=Ogni parte delle schermate proprie di OA, in ciascuno dei suoi stati, a questa dimensione.;
 	}
 
+[Experimental]
+	{
+	de=Experimentell;
+	fr=Expérimental;
+	es=Experimental;
+	it=Sperimentale;
+	}
+
 [Expansions]
 	{
 	de=Erweiterungen;
@@ -2906,6 +3330,14 @@
 	it=FORZA: Ctrl per ordini e selezione finché è tenuto, così un clic forza il fuoco sul terreno o su un alleato.;
 	}
 
+[FORGET IT]
+	{
+	de=VERGESSEN;
+	fr=OUBLIER;
+	es=OLVIDAR;
+	it=DIMENTICA;
+	}
+
 [FOUND]
 	{
 	de=GEFUNDEN;
@@ -2930,6 +3362,14 @@
 	it=Non riuscito;
 	}
 
+[Features]
+	{
+	de=Geländeobjekte;
+	fr=Éléments;
+	es=Elementos;
+	it=Elementi;
+	}
+
 [File Type Registration]
 	{
 	de=Dateitypregistrierung;
@@ -2944,6 +3384,14 @@
 	fr=Types de fichiers;
 	es=Tipos de archivo;
 	it=Tipi di file;
+	}
+
+[Files]
+	{
+	de=Dateien;
+	fr=Fichiers;
+	es=Archivos;
+	it=File;
 	}
 
 [Files added to its folder, or changed, since it was installed are replaced or removed.]
@@ -3026,6 +3474,14 @@
 	it=Adatto a {game} ✓;
 	}
 
+[Fog of War]
+	{
+	de=Kriegsnebel;
+	fr=Brouillard de guerre;
+	es=Niebla de guerra;
+	it=Nebbia di guerra;
+	}
+
 [Font outline]
 	{
 	de=Schriftumriss;
@@ -3064,6 +3520,14 @@
 	fr=Uniquement pour {name};
 	es=Solo para {name};
 	it=Solo per {name};
+	}
+
+[Forget the last set?]
+	{
+	de=Das letzte Set vergessen?;
+	fr=Oublier le dernier ensemble ?;
+	es=¿Olvidar el último conjunto?;
+	it=Dimenticare l'ultimo set?;
 	}
 
 [Found game archives]
@@ -3154,6 +3618,14 @@
 	it=Da {pack};
 	}
 
+[Full awareness]
+	{
+	de=Volle Sicht;
+	fr=Vue complète;
+	es=Visión total;
+	it=Vista completa;
+	}
+
 [Full]
 	{
 	de=Voll;
@@ -3242,12 +3714,52 @@
 	it=OTTIENI;
 	}
 
+[GET ALL]
+	{
+	de=ALLE HOLEN;
+	fr=LES OBTENIR TOUS;
+	es=OBTENER TODOS;
+	it=OTTIENI TUTTI;
+	}
+
+[GET BOTH]
+	{
+	de=BEIDE HOLEN;
+	fr=TOUT OBTENIR;
+	es=OBTENER AMBOS;
+	it=OTTIENI ENTRAMBI;
+	}
+
 [GET MAP]
 	{
 	de=KARTE HOLEN;
 	fr=OBTENIR LA CARTE;
 	es=OBTENER MAPA;
 	it=OTTIENI MAPPA;
+	}
+
+[GET MUTATORS]
+	{
+	de=MUTATOREN HOLEN;
+	fr=OBTENIR LES MUTATEURS;
+	es=OBTENER MUTADORES;
+	it=OTTIENI MUTATORI;
+	}
+
+[GET WITH {count} MORE]
+	{
+	de=MIT {count} WEITEREN HOLEN;
+	fr=OBTENIR AVEC {count} DE PLUS;
+	es=OBTENER CON {count} MÁS;
+	it=OTTIENI CON ALTRI {count};
+	}
+
+[GET WITH {name}]
+	{
+	de=MIT {name} HOLEN;
+	fr=OBTENIR AVEC {name};
+	es=OBTENER CON {name};
+	it=OTTIENI CON {name};
 	}
 
 [GET installs it again.]
@@ -3410,6 +3922,14 @@
 	it=File di gioco;
 	}
 
+[Game tables]
+	{
+	de=Spieltabellen;
+	fr=Tables de jeu;
+	es=Tablas de juego;
+	it=Tabelle di gioco;
+	}
+
 [Game text background]
 	{
 	de=Hintergrund des Spieltexts;
@@ -3424,6 +3944,13 @@
 	fr=Durée de jeu;
 	es=Tiempo de juego;
 	it=Tempo di gioco;
+	}
+[Gameplay]
+	{
+	de=Spielweise;
+	fr=Jouabilité;
+	es=Jugabilidad;
+	it=Giocabilità;
 	}
 
 [Games]
@@ -3456,6 +3983,38 @@
 	fr=Obtiens, mets à jour et change les mods, les packs de cartes et les langues. Le nombre compte chaque paquet que tu as ajouté : mods, packs de cartes, packs de langue et extensions.;
 	es=Obtén, actualiza y cambia mods, paquetes de mapas e idiomas. El número cuenta cada paquete que has añadido: mods, paquetes de mapas, paquetes de idioma y expansiones.;
 	it=Ottieni, aggiorna e cambia mod, pacchetti di mappe e lingue. Il numero conta ogni pacchetto che hai aggiunto: mod, pacchetti di mappe, pacchetti di lingua ed espansioni.;
+	}
+
+[Get mutators]
+	{
+	de=Mutatoren holen;
+	fr=Obtenir les mutateurs;
+	es=Conseguir mutadores;
+	it=Prendi i mutatori;
+	}
+
+[Get {name}?]
+	{
+	de={name} holen?;
+	fr=Obtenir {name} ?;
+	es=¿Obtener {name}?;
+	it=Ottenere {name}?;
+	}
+
+[Getting {name} · {percent}%]
+	{
+	de={name} wird geholt · {percent}%;
+	fr=Téléchargement de {name} · {percent} %;
+	es=Bajando {name} · {percent}%;
+	it=Scarico di {name} · {percent}%;
+	}
+
+[Getting {name}: {percent}%]
+	{
+	de=Hole {name}: {percent}%;
+	fr=Téléch. {name} : {percent} %;
+	es=Bajando {name}: {percent}%;
+	it=Scarico {name}: {percent}%;
 	}
 
 [Gives this order at the held point.]
@@ -3570,12 +4129,28 @@
 	it=Difficile;
 	}
 
+[Hard edges that step from cell to cell, as the game drew the fog.]
+	{
+	de=Harte Kanten, die von Feld zu Feld springen, wie das Spiel den Nebel gezeichnet hat.;
+	fr=Bords nets qui avancent de case en case, comme le jeu a dessiné le brouillard.;
+	es=Bordes nítidos que avanzan de celda en celda, como el juego dibujó la niebla.;
+	it=Bordi netti che avanzano di cella in cella, come il gioco ha disegnato la nebbia.;
+	}
+
 [Hardware acceleration]
 	{
 	de=Hardwarebeschleunigung;
 	fr=Accélération matérielle;
 	es=Aceleración por hardware;
 	it=Accelerazione hardware;
+	}
+
+[Heat distortion]
+	{
+	de=Hitzeflimmern;
+	fr=Distorsion thermique;
+	es=Distorsión térmica;
+	it=Distorsione termica;
 	}
 
 [Held, a build click lays a line or a ring.]
@@ -3762,6 +4337,14 @@
 	it=INSTALLA A FIANCO;
 	}
 
+[INSTALL BRAIN]
+	{
+	de=GEHIRN INSTALLIEREN;
+	fr=INSTALLER LE CERVEAU;
+	es=INSTALAR CEREBRO;
+	it=INSTALLA CERVELLO;
+	}
+
 [INSTALL LANGUAGE]
 	{
 	de=SPRACHE INSTALLIEREN;
@@ -3778,12 +4361,28 @@
 	it=INSTALLA PACCHETTO DI MAPPE;
 	}
 
+[INSTALL MUTATOR]
+	{
+	de=MUTATOR INSTALLIEREN;
+	fr=INSTALLER LE MUTATEUR;
+	es=INSTALAR MUTADOR;
+	it=INSTALLA MUTATORE;
+	}
+
 [INSTALLED]
 	{
 	de=INSTALLIERT;
 	fr=INSTALLÉ;
 	es=INSTALADO;
 	it=INSTALLATO;
+	}
+
+[INSTALLING BRAIN]
+	{
+	de=GEHIRN WIRD INSTALLIERT;
+	fr=INSTALLATION DU CERVEAU;
+	es=INSTALANDO CEREBRO;
+	it=INSTALLAZIONE CERVELLO;
 	}
 
 [INSTALLING EXPANSION]
@@ -3816,6 +4415,14 @@
 	fr=INSTALLATION DU MOD;
 	es=INSTALANDO MOD;
 	it=INSTALLAZIONE MOD;
+	}
+
+[INSTALLING MUTATOR]
+	{
+	de=MUTATOR WIRD INSTALLIERT;
+	fr=INSTALLATION DU MUTATEUR;
+	es=INSTALANDO MUTADOR;
+	it=INSTALLAZIONE MUTATORE;
 	}
 
 [Icons]
@@ -3986,6 +4593,14 @@
 	it=ID di installazione;
 	}
 
+[Install the brain {name} {version}?]
+	{
+	de=Das Gehirn {name} {version} installieren?;
+	fr=Installer le cerveau {name} {version} ?;
+	es=¿Instalar el cerebro {name} {version}?;
+	it=Installare il cervello {name} {version}?;
+	}
+
 [Install the expansion {name}?]
 	{
 	de=Die Expansion {name} installieren?;
@@ -4010,6 +4625,14 @@
 	it=Installare il pacchetto di mappe {name} {version} ({n} mappe)?;
 	}
 
+[Install the mutator {name} {version}?]
+	{
+	de=Den Mutator {name} {version} installieren?;
+	fr=Installer le mutateur {name} {version} ?;
+	es=¿Instalar el mutador {name} {version}?;
+	it=Installare il mutatore {name} {version}?;
+	}
+
 [Install {title} {version} alongside it, in a folder of its own?]
 	{
 	de={title} {version} daneben installieren, in einem eigenen Ordner?;
@@ -4032,6 +4655,14 @@
 	fr={name} installé;
 	es={name} instalado;
 	it={name} installato;
+	}
+
+[Installed · Default]
+	{
+	de=Installiert · Standard;
+	fr=Installé · Par défaut;
+	es=Instalado · Predeterminado;
+	it=Installato · Predefinito;
 	}
 
 [Installing]
@@ -4138,6 +4769,14 @@
 	it=Contiene un file cifrato: {name}.;
 	}
 
+[It holds more than {limit} folders, more than a brain may take.]
+	{
+	de=Es enthält mehr als {limit} Ordner, mehr als ein Gehirn haben darf.;
+	fr=Il contient plus de {limit} dossiers, plus qu'un cerveau ne peut en avoir.;
+	es=Contiene más de {limit} carpetas, más de las que puede tener un cerebro.;
+	it=Contiene più di {limit} cartelle, più di quante ne possa avere un cervello.;
+	}
+
 [It holds more than {limit} folders, more than a map pack may take.]
 	{
 	de=Es enthält mehr als {limit} Ordner, mehr als ein Kartenpaket haben darf.;
@@ -4154,6 +4793,14 @@
 	it=Contiene più di {limit} cartelle, più di quante ne possa avere un mod.;
 	}
 
+[It holds more than {limit} folders, more than a mutator may take.]
+	{
+	de=Es enthält mehr als {limit} Ordner, mehr als ein Mutator haben darf.;
+	fr=Il contient plus de {limit} dossiers, plus qu'un mutateur ne peut en avoir.;
+	es=Contiene más de {limit} carpetas, más de las que puede tener un mutador.;
+	it=Contiene più di {limit} cartelle, più di quante ne possa avere un mutatore.;
+	}
+
 [It holds no Total Annihilation archives (.hpi, .ufo, .ccx or rev31.gp3 files) and no installer of the Total Annihilation demo (1997).]
 	{
 	de=Es enthält keine Archive von Total Annihilation (Dateien .hpi, .ufo, .ccx oder rev31.gp3) und kein Installationsprogramm der Demo von Total Annihilation (1997).;
@@ -4168,6 +4815,14 @@
 	fr=Il ne contient pas de language.yaml.;
 	es=No contiene language.yaml.;
 	it=Non contiene language.yaml.;
+	}
+
+[It holds no oabrain.yaml at its top, or in a single folder at its top.]
+	{
+	de=Es enthält kein oabrain.yaml ganz oben oder in einem einzelnen Ordner ganz oben.;
+	fr=Il ne contient pas d'oabrain.yaml à sa racine, ni dans un seul dossier à sa racine.;
+	es=No contiene oabrain.yaml en su nivel superior, ni en una sola carpeta en su nivel superior.;
+	it=Non contiene oabrain.yaml in cima, né in una sola cartella in cima.;
 	}
 
 [It holds no oaexp.yaml at its top, or in a single folder at its top.]
@@ -4192,6 +4847,14 @@
 	fr=Il ne contient pas d'oamod.yaml à sa racine, ni dans un seul dossier à sa racine.;
 	es=No contiene oamod.yaml en su nivel superior, ni en una sola carpeta en su nivel superior.;
 	it=Non contiene oamod.yaml in cima, né in una sola cartella in cima.;
+	}
+
+[It holds no oamut.yaml at its top, or in a single folder at its top.]
+	{
+	de=Es enthält kein oamut.yaml ganz oben oder in einem einzelnen Ordner ganz oben.;
+	fr=Il ne contient pas d'oamut.yaml à sa racine, ni dans un seul dossier à sa racine.;
+	es=No contiene oamut.yaml en su nivel superior, ni en una sola carpeta en su nivel superior.;
+	it=Non contiene oamut.yaml in cima, né in una sola cartella in cima.;
 	}
 
 [It holds two names that differ only in case: {name}.]
@@ -4266,6 +4929,14 @@
 	it=Resta copiato, così puoi ripararlo nel gestore di file. La scheda mod della Biblioteca avvia solo i mod che funzionano.;
 	}
 
+[It is your default computer player: new computer seats go back to the built-in player.]
+	{
+	de=Das ist dein Standard-Computergegner: neue Computerplätze nehmen wieder den integrierten Spieler.;
+	fr=C'est ton joueur ordinateur par défaut : les nouvelles places ordinateur reviennent au joueur intégré.;
+	es=Es tu jugador de ordenador predeterminado: las plazas de ordenador nuevas vuelven al jugador integrado.;
+	it=È il tuo giocatore computer predefinito: i nuovi posti computer tornano al giocatore integrato.;
+	}
+
 [It lists a font it does not hold: {name}.]
 	{
 	de=Es nennt eine Schrift, die es nicht enthält: {name}.;
@@ -4282,6 +4953,14 @@
 	it=Gli serve un altro Open Annihilation.;
 	}
 
+[It needs {size} free, and the disk holding your Brains folder has {free}.]
+	{
+	de=Es braucht {size} frei, und der Datenträger mit deinem Ordner Brains hat {free}.;
+	fr=Il lui faut {size} de libre, et le disque de ton dossier Brains a {free}.;
+	es=Necesita {size} libres, y el disco de tu carpeta Brains tiene {free}.;
+	it=Servono {size} liberi, e il disco della tua cartella Brains ha {free}.;
+	}
+
 [It needs {size} free, and the disk holding your Maps folder has {free}.]
 	{
 	de=Es braucht {size} frei, und der Datenträger mit deinem Ordner Maps hat {free}.;
@@ -4296,6 +4975,14 @@
 	fr=Il lui faut {size} de libre, et le disque de ton dossier Mods a {free}.;
 	es=Necesita {size} libres, y el disco de tu carpeta Mods tiene {free}.;
 	it=Servono {size} liberi, e il disco della tua cartella Mods ha {free}.;
+	}
+
+[It needs {size} free, and the disk holding your Mutators folder has {free}.]
+	{
+	de=Es braucht {size} frei, und der Datenträger mit deinem Ordner Mutators hat {free}.;
+	fr=Il lui faut {size} de libre, et le disque de ton dossier Mutators a {free}.;
+	es=Necesita {size} libres, y el disco de tu carpeta Mutators tiene {free}.;
+	it=Servono {size} liberi, e il disco della tua cartella Mutators ha {free}.;
 	}
 
 [It scales evenly and smooths the zoomed-out view.]
@@ -4330,6 +5017,14 @@
 	it=Smussa la vista allontanata.;
 	}
 
+[It unpacks to {size} from {packed}, far more than a brain's files take.]
+	{
+	de=Es entpackt sich auf {size} aus {packed}, weit mehr, als die Dateien eines Gehirns brauchen.;
+	fr=Il se décompresse en {size} depuis {packed}, bien plus que les fichiers d'un cerveau.;
+	es=Se descomprime a {size} desde {packed}, mucho más de lo que ocupan los archivos de un cerebro.;
+	it=Si estrae in {size} da {packed}, molto più di quanto occupino i file di un cervello.;
+	}
+
 [It unpacks to {size} from {packed}, far more than a map pack's files take.]
 	{
 	de=Es entpackt sich auf {size} aus {packed}, weit mehr, als die Dateien eines Kartenpakets brauchen.;
@@ -4346,6 +5041,22 @@
 	it=Si estrae in {size} da {packed}, molto più di quanto occupino i file di un mod.;
 	}
 
+[It unpacks to {size} from {packed}, far more than a mutator's files take.]
+	{
+	de=Es entpackt sich auf {size} aus {packed}, weit mehr, als die Dateien eines Mutators brauchen.;
+	fr=Il se décompresse en {size} depuis {packed}, bien plus que les fichiers d'un mutateur.;
+	es=Se descomprime a {size} desde {packed}, mucho más de lo que ocupan los archivos de un mutador.;
+	it=Si estrae in {size} da {packed}, molto più di quanto occupino i file di un mutatore.;
+	}
+
+[It unpacks to {size}, more than the {limit} a brain may take.]
+	{
+	de=Es entpackt sich auf {size}, mehr als die {limit}, die ein Gehirn haben darf.;
+	fr=Il se décompresse en {size}, plus que les {limit} qu'un cerveau peut prendre.;
+	es=Se descomprime a {size}, más del {limit} que puede ocupar un cerebro.;
+	it=Si estrae in {size}, più del {limit} che un cervello può occupare.;
+	}
+
 [It unpacks to {size}, more than the {limit} a map pack may take.]
 	{
 	de=Es entpackt sich auf {size}, mehr als die {limit}, die ein Kartenpaket haben darf.;
@@ -4360,6 +5071,14 @@
 	fr=Il se décompresse en {size}, plus que les {limit} qu'un mod peut prendre.;
 	es=Se descomprime a {size}, más del {limit} que puede ocupar un mod.;
 	it=Si estrae in {size}, più del {limit} che un mod può occupare.;
+	}
+
+[It unpacks to {size}, more than the {limit} a mutator may take.]
+	{
+	de=Es entpackt sich auf {size}, mehr als die {limit}, die ein Mutator haben darf.;
+	fr=Il se décompresse en {size}, plus que les {limit} qu'un mutateur peut prendre.;
+	es=Se descomprime a {size}, más del {limit} que puede ocupar un mutador.;
+	it=Si estrae in {size}, più del {limit} che un mutatore può occupare.;
 	}
 
 [Item {n}]
@@ -4450,6 +5169,14 @@
 	it=Le sue partite partono comunque. Aggiungi i file mancanti alla sua cartella per mostrarli:;
 	}
 
+[Its icon {name} is not a square PNG of at most 256 pixels and 256 KiB.]
+	{
+	de=Sein Symbol {name} ist kein quadratisches PNG von höchstens 256 Pixeln und 256 KiB.;
+	fr=Son icône {name} n'est pas un PNG carré d'au plus 256 pixels et 256 KiB.;
+	es=Su icono {name} no es un PNG cuadrado de como máximo 256 píxeles y 256 KiB.;
+	it=La sua icona {name} non è un PNG quadrato di al massimo 256 pixel e 256 KiB.;
+	}
+
 [Its id, {id}, cannot name a folder on Windows.]
 	{
 	de=Seine Kennung, {id}, kann auf Windows keinen Ordner benennen.;
@@ -4472,6 +5199,46 @@
 	fr=Son profil de mod ne peut pas être utilisé :;
 	es=Su perfil de mod no se puede usar:;
 	it=Il suo profilo di mod non si può usare:;
+	}
+
+[Its network {name} does not match the SHA-256 its oabrain.yaml gives.]
+	{
+	de=Sein Netzwerk {name} entspricht nicht dem SHA-256, den sein oabrain.yaml angibt.;
+	fr=Son réseau {name} ne correspond pas au SHA-256 que son oabrain.yaml donne.;
+	es=Su red {name} no coincide con el SHA-256 que da su oabrain.yaml.;
+	it=La sua rete {name} non corrisponde allo SHA-256 che dà il suo oabrain.yaml.;
+	}
+
+[Its network {name} is missing.]
+	{
+	de=Sein Netzwerk {name} fehlt.;
+	fr=Son réseau {name} est absent.;
+	es=Falta su red {name}.;
+	it=Manca la sua rete {name}.;
+	}
+
+[Its networks take {size}, more than the {limit} a brain may hold.]
+	{
+	de=Seine Netzwerke brauchen {size}, mehr als die {limit}, die ein Gehirn haben darf.;
+	fr=Ses réseaux prennent {size}, plus que les {limit} qu'un cerveau peut contenir.;
+	es=Sus redes ocupan {size}, más del {limit} que puede tener un cerebro.;
+	it=Le sue reti occupano {size}, più del {limit} che un cervello può avere.;
+	}
+
+[Its oabrain.yaml has errors:]
+	{
+	de=Sein oabrain.yaml hat Fehler:;
+	fr=Son oabrain.yaml a des erreurs :;
+	es=Su oabrain.yaml tiene errores:;
+	it=Il suo oabrain.yaml ha errori:;
+	}
+
+[Its oabrain.yaml is larger than 256 KiB.]
+	{
+	de=Sein oabrain.yaml ist größer als 256 KiB.;
+	fr=Son oabrain.yaml dépasse 256 KiB.;
+	es=Su oabrain.yaml supera los 256 KiB.;
+	it=Il suo oabrain.yaml supera i 256 KiB.;
 	}
 
 [Its oaexp.yaml has errors.]
@@ -4530,6 +5297,46 @@
 	it=Il suo oamod.yaml supera i 256 KiB.;
 	}
 
+[Its oamut.yaml has errors:]
+	{
+	de=Sein oamut.yaml hat Fehler:;
+	fr=Son oamut.yaml a des erreurs :;
+	es=Su oamut.yaml tiene errores:;
+	it=Il suo oamut.yaml ha errori:;
+	}
+
+[Its oamut.yaml is larger than 256 KiB.]
+	{
+	de=Sein oamut.yaml ist größer als 256 KiB.;
+	fr=Son oamut.yaml dépasse 256 KiB.;
+	es=Su oamut.yaml supera los 256 KiB.;
+	it=Il suo oamut.yaml supera i 256 KiB.;
+	}
+
+[Its script {name} is larger than 1 MiB.]
+	{
+	de=Sein Skript {name} ist größer als 1 MiB.;
+	fr=Son script {name} dépasse 1 MiB.;
+	es=Su script {name} supera 1 MiB.;
+	it=Il suo script {name} supera 1 MiB.;
+	}
+
+[Its script {name} is missing.]
+	{
+	de=Sein Skript {name} fehlt.;
+	fr=Son script {name} est absent.;
+	es=Falta su script {name}.;
+	it=Manca il suo script {name}.;
+	}
+
+[Its table {name} is larger than 4 MiB.]
+	{
+	de=Seine Tabelle {name} ist größer als 4 MiB.;
+	fr=Sa table {name} dépasse 4 MiB.;
+	es=Su tabla {name} supera los 4 MiB.;
+	it=La sua tabella {name} supera i 4 MiB.;
+	}
+
 [Its warm-up text cannot be read.]
 	{
 	de=Sein Aufwärmtext lässt sich nicht lesen.;
@@ -4552,6 +5359,14 @@
 	fr=CONTINUER LA COPIE;
 	es=SEGUIR COPIANDO;
 	it=CONTINUA A COPIARE;
+	}
+
+[KEEP IT]
+	{
+	de=BEHALTEN;
+	fr=GARDER;
+	es=CONSERVAR;
+	it=TIENILO;
 	}
 
 [KEEP WHAT WAS COPIED]
@@ -4674,6 +5489,14 @@
 	it=CARICA;
 	}
 
+[LOAD WITH THE BUILT-IN PLAYER]
+	{
+	de=MIT DEM EINGEBAUTEN SPIELER LADEN;
+	fr=CHARGER AVEC LE JOUEUR INTÉGRÉ;
+	es=CARGAR CON EL JUGADOR INTEGRADO;
+	it=CARICA CON IL GIOCATORE INTEGRATO;
+	}
+
 [LOAD: tap to arm it, then tap the unit to load.]
 	{
 	de=VERLADEN: tippe, um ihn zu wählen, dann tippe die Einheit zum Verladen.;
@@ -4786,12 +5609,28 @@
 	it=File di avvio (.oalaunch);
 	}
 
+[Learned]
+	{
+	de=Gelernt;
+	fr=Appris;
+	es=Aprendido;
+	it=Appreso;
+	}
+
 [Left out]
 	{
 	de=Ausgelassen;
 	fr=Laissé de côté;
 	es=Dejado fuera;
 	it=Lasciato fuori;
+	}
+
+[Left out of your last set: {names}]
+	{
+	de=Nicht in deinem letzten Set: {names};
+	fr=Laissés de côté dans ta dernière sélection : {names};
+	es=Fuera de tu última selección: {names};
+	it=Fuori dalla tua ultima selezione: {names};
 	}
 
 [Left-handed]
@@ -4808,6 +5647,22 @@
 	fr=Disposition pour gaucher;
 	es=Disposición zurda;
 	it=Disposizione per mancini;
+	}
+
+[Level]
+	{
+	de=Stufe;
+	fr=Niveau;
+	es=Nivel;
+	it=Livello;
+	}
+
+[Levels]
+	{
+	de=Stufen;
+	fr=Niveaux;
+	es=Niveles;
+	it=Livelli;
 	}
 
 [Library]
@@ -4840,6 +5695,14 @@
 	fr=Les listes des nouveautés sont vérifiées au démarrage du jeu et à l'ouverture de la Bibliothèque.;
 	es=Las listas de lo nuevo se comprueban al iniciar el juego y al abrir la Biblioteca.;
 	it=Gli elenchi delle novità si controllano all'avvio del gioco e all'apertura della Biblioteca.;
+	}
+
+[Load with the built-in player?]
+	{
+	de=Mit dem eingebauten Spieler laden?;
+	fr=Charger avec le joueur intégré ?;
+	es=¿Cargar con el jugador integrado?;
+	it=Caricare con il giocatore integrato?;
 	}
 
 [Loading preview]
@@ -5114,6 +5977,38 @@
 	it=MUOVI: la selezione si muove verso il punto tenuto.;
 	}
 
+[MUTATOR INSTALLED]
+	{
+	de=MUTATOR INSTALLIERT;
+	fr=MUTATEUR INSTALLÉ;
+	es=MUTADOR INSTALADO;
+	it=MUTATORE INSTALLATO;
+	}
+
+[MUTATOR NOT INSTALLED]
+	{
+	de=MUTATOR NICHT INSTALLIERT;
+	fr=MUTATEUR NON INSTALLÉ;
+	es=MUTADOR NO INSTALADO;
+	it=MUTATORE NON INSTALLATO;
+	}
+
+[MUTATOR UPDATED]
+	{
+	de=MUTATOR AKTUALISIERT;
+	fr=MUTATEUR MIS À JOUR;
+	es=MUTADOR ACTUALIZADO;
+	it=MUTATORE AGGIORNATO;
+	}
+
+[Made for {names}]
+	{
+	de=Für {names} gemacht;
+	fr=Fait pour {names};
+	es=Hecho para {names};
+	it=Fatto per {names};
+	}
+
 [Made at your first download]
 	{
 	de=Bei deinem ersten Download erzeugt;
@@ -5378,6 +6273,38 @@
 	it=Musica;
 	}
 
+[Mutator packages (.oamut)]
+	{
+	de=Mutator-Pakete (.oamut);
+	fr=Paquets de mutateur (.oamut);
+	es=Paquetes de mutador (.oamut);
+	it=Pacchetti di mutatore (.oamut);
+	}
+
+[Mutators]
+	{
+	de=Mutatoren;
+	fr=Mutateurs;
+	es=Mutadores;
+	it=Mutatori;
+	}
+
+[Mutators ({count})]
+	{
+	de=Mutatoren ({count});
+	fr=Mutateurs ({count});
+	es=Mutadores ({count});
+	it=Mutatori ({count});
+	}
+
+[Mutators:]
+	{
+	de=Mutatoren:;
+	fr=Mutateurs :;
+	es=Mutadores:;
+	it=Mutatori:;
+	}
+
 [N/A]
 	{
 	de=k. A.;
@@ -5450,12 +6377,44 @@
 	it=ORA;
 	}
 
+[Nanolathe glow]
+	{
+	de=Nanolathe-Leuchten;
+	fr=Lueur du nanolathe;
+	es=Brillo del nanoconstructor;
+	it=Bagliore del nanocostruttore;
+	}
+
+[Naval]
+	{
+	de=See;
+	fr=Naval;
+	es=Naval;
+	it=Navale;
+	}
+
+[Naval reflections]
+	{
+	de=Schiffsspiegelungen;
+	fr=Reflets des navires;
+	es=Reflejos de los barcos;
+	it=Riflessi delle navi;
+	}
+
 [Native pixel density]
 	{
 	de=Native Pixeldichte;
 	fr=Densité de pixels native;
 	es=Densidad de píxeles nativa;
 	it=Densità di pixel nativa;
+	}
+
+[Needed by {name}]
+	{
+	de=Benötigt von {name};
+	fr=Requis par {name};
+	es=Requerido por {name};
+	it=Richiesto da {name};
 	}
 
 [Needs]
@@ -5466,12 +6425,28 @@
 	it=Richiede;
 	}
 
+[Needs Allow Full 3D Mode]
+	{
+	de=Braucht vollen 3D-Modus;
+	fr=Requiert le mode 3D complet;
+	es=Necesita el modo 3D completo;
+	it=Richiede la modalità 3D completa;
+	}
+
 [Needs Dots]
 	{
 	de=Braucht Punkte;
 	fr=Requiert les points;
 	es=Necesita puntos;
 	it=Richiede i punti;
+	}
+
+[Needs Full acceleration]
+	{
+	de=Braucht volle Beschleunigung;
+	fr=Requiert l'accélération complète;
+	es=Necesita aceleración completa;
+	it=Richiede l'accelerazione completa;
 	}
 
 [Needs Open Annihilation {range}]
@@ -5522,6 +6497,22 @@
 	it=Richiede {names}, che sono spenti;
 	}
 
+[Needs {name}]
+	{
+	de=Benötigt {name};
+	fr=Nécessite {name};
+	es=Requiere {name};
+	it=Richiede {name};
+	}
+
+[Needs {name} {range}, which no registry offers]
+	{
+	de=Braucht {name} {range}, das keine Registrierung anbietet;
+	fr=Requiert {name} {range}, qu'aucun registre n'offre;
+	es=Necesita {name} {range}, que ningún registro ofrece;
+	it=Richiede {name} {range}, che nessun registro offre;
+	}
+
 [Needs {name} · on]
 	{
 	de=Braucht {name} · an;
@@ -5544,6 +6535,14 @@
 	fr=Il faut {name}, et c'est désactivé.;
 	es=Necesita {name}, y está desactivada.;
 	it=Serve {name}, ed è disattivata.;
+	}
+
+[Needs {name}, which no registry offers]
+	{
+	de=Braucht {name}, das keine Registrierung anbietet;
+	fr=Requiert {name}, qu'aucun registre n'offre;
+	es=Necesita {name}, que ningún registro ofrece;
+	it=Richiede {name}, che nessun registro offre;
 	}
 
 [Network]
@@ -5578,6 +6577,14 @@
 	it=Nuovo;
 	}
 
+[New Units]
+	{
+	de=Neue Einheiten;
+	fr=Nouvelles unités;
+	es=Unidades nuevas;
+	it=Nuove unità;
+	}
+
 [New saved games go in:]
 	{
 	de=Neue Speicherstände kommen nach:;
@@ -5608,6 +6615,30 @@
 	fr=Pas de repli pour réparation;
 	es=Sin retirada para reparar;
 	it=Nessun ripiegamento per riparare;
+	}
+
+[No effect with this mod]
+	{
+	de=Keine Wirkung mit diesem Mod;
+	fr=Aucun effet avec ce mod;
+	es=Sin efecto con este mod;
+	it=Nessun effetto con questo mod;
+	}
+
+[No effect with No Mod: {name}]
+	{
+	de=Keine Wirkung ohne Mod: {name};
+	fr=Aucun effet sans mod : {name};
+	es=Sin efecto sin mod: {name};
+	it=Nessun effetto senza mod: {name};
+	}
+
+[No effect with {mod}: {name}]
+	{
+	de=Keine Wirkung mit {mod}: {name};
+	fr=Aucun effet avec {mod} : {name};
+	es=Sin efecto con {mod}: {name};
+	it=Nessun effetto con {mod}: {name};
 	}
 
 [No file manager is there to open it.]
@@ -5664,6 +6695,30 @@
 	fr=Aucun pack de cartes n'est installé.;
 	es=No hay paquetes de mapas instalados.;
 	it=Non ci sono pacchetti di mappe installati.;
+	}
+
+[No mutator matches these filters]
+	{
+	de=Kein Mutator passt zu diesen Filtern;
+	fr=Aucun mutateur ne correspond à ces filtres;
+	es=Ningún mutador coincide con estos filtros;
+	it=Nessun mutatore corrisponde a questi filtri;
+	}
+
+[No brains here yet. The Library on the main menu gets them.]
+	{
+	de=Hier sind noch keine Gehirne. Die Bibliothek im Hauptmenü holt sie.;
+	fr=Pas encore de cerveaux ici. La Bibliothèque du menu principal les récupère.;
+	es=Aquí todavía no hay cerebros. La Biblioteca del menú principal los trae.;
+	it=Qui non ci sono ancora cervelli. La Biblioteca del menu principale li scarica.;
+	}
+
+[No mutators here yet. The Library on the main menu gets them.]
+	{
+	de=Hier sind noch keine Mutatoren. Die Bibliothek im Hauptmenü holt sie.;
+	fr=Pas encore de mutateurs ici. La Bibliothèque du menu principal les récupère.;
+	es=Aquí todavía no hay mutadores. La Biblioteca del menú principal los trae.;
+	it=Qui non ci sono ancora mutatori. La Biblioteca del menu principale li scarica.;
 	}
 
 [No names match.]
@@ -5738,6 +6793,14 @@
 	it=Non è stata trovata nessuna unità di questo mod.;
 	}
 
+[None on]
+	{
+	de=Keiner an;
+	fr=Aucun actif;
+	es=Ninguno activo;
+	it=Nessuno attivo;
+	}
+
 [Normal]
 	{
 	de=Normal;
@@ -5760,6 +6823,62 @@
 	fr=Pas disponible ici;
 	es=No disponible aquí;
 	it=Non disponibile qui;
+	}
+
+[Not checked with No Mod]
+	{
+	de=Nicht ohne Mod geprüft;
+	fr=Pas vérifié sans mod;
+	es=No comprobado sin mod;
+	it=Non controllato senza mod;
+	}
+
+[Not checked with {mod}]
+	{
+	de=Nicht mit {mod} geprüft;
+	fr=Pas vérifié avec {mod};
+	es=No comprobado con {mod};
+	it=Non controllato con {mod};
+	}
+
+[Not compatible with this mod]
+	{
+	de=Passt nicht zu diesem Mod;
+	fr=Pas compatible avec ce mod;
+	es=No es compatible con este mod;
+	it=Non è compatibile con questo mod;
+	}
+
+[Not compatible with this mod: it works with {names}]
+	{
+	de=Passt nicht zu diesem Mod: er funktioniert mit {names};
+	fr=Pas compatible avec ce mod : il marche avec {names};
+	es=No es compatible con este mod: funciona con {names};
+	it=Non è compatibile con questo mod: funziona con {names};
+	}
+
+[Not compatible with this mod: {reason}]
+	{
+	de=Passt nicht zu diesem Mod: {reason};
+	fr=Pas compatible avec ce mod : {reason};
+	es=No es compatible con este mod: {reason};
+	it=Non è compatibile con questo mod: {reason};
+	}
+
+[Not compatible with No Mod: {name}]
+	{
+	de=Passt nicht ohne Mod: {name};
+	fr=Pas compatible sans mod : {name};
+	es=No es compatible sin mod: {name};
+	it=Non è compatibile senza mod: {name};
+	}
+
+[Not compatible with {mod}: {name}]
+	{
+	de=Passt nicht zu {mod}: {name};
+	fr=Pas compatible avec {mod} : {name};
+	es=No es compatible con {mod}: {name};
+	it=Non è compatibile con {mod}: {name};
 	}
 
 [Not during a game]
@@ -5874,6 +6993,22 @@
 	it=Non installato · {size};
 	}
 
+[Not installed · {version}]
+	{
+	de=Nicht installiert · {version};
+	fr=Non installé · {version};
+	es=No instalado · {version};
+	it=Non installato · {version};
+	}
+
+[Not installed: switching it on downloads it]
+	{
+	de=Nicht installiert: Einschalten lädt es herunter;
+	fr=Pas installé : l'activer le télécharge;
+	es=No instalado: activarlo lo descarga;
+	it=Non installato: accenderlo lo scarica;
+	}
+
 [Not now]
 	{
 	de=Nicht jetzt;
@@ -5986,6 +7121,14 @@
 	it=SPENTO;
 	}
 
+[OFF · NOT APPLIED]
+	{
+	de=AUS · NICHT ANGEWANDT;
+	fr=INACTIFS · NON APPLIQUÉS;
+	es=INACTIVOS · NO SE APLICAN;
+	it=INATTIVI · NON APPLICATI;
+	}
+
 [OK]
 	{
 	de=OK;
@@ -6008,6 +7151,14 @@
 	fr=À L'ÉCRAN;
 	es=EN PANTALLA;
 	it=SULLO SCHERMO;
+	}
+
+[ON · APPLIED TOP TO BOTTOM]
+	{
+	de=AKTIV · VON OBEN NACH UNTEN ANGEWANDT;
+	fr=ACTIFS · APPLIQUÉS DE HAUT EN BAS;
+	es=ACTIVOS · SE APLICAN DE ARRIBA ABAJO;
+	it=ATTIVI · APPLICATI DALL'ALTO IN BASSO;
 	}
 
 [ON/OFF]
@@ -6144,6 +7295,14 @@
 	fr=Hors ligne;
 	es=Sin conexión;
 	it=Non in linea;
+	}
+
+[On]
+	{
+	de=An;
+	fr=Marche;
+	es=Encendido;
+	it=Acceso;
 	}
 
 [On/Off: tap to switch the selected units on or off.]
@@ -6322,12 +7481,28 @@
 	it=Ottimizza le righe DT;
 	}
 
+[Options]
+	{
+	de=Optionen;
+	fr=Options;
+	es=Opciones;
+	it=Opzioni;
+	}
+
 [Options Dialog]
 	{
 	de=Optionsdialog;
 	fr=Dialogue d'options;
 	es=Diálogo de opciones;
 	it=Finestra delle opzioni;
+	}
+
+[Order]
+	{
+	de=Reihenfolge;
+	fr=Ordre;
+	es=Orden;
+	it=Ordine;
 	}
 
 [Order: tap to arm it, then tap where it goes; tap again to take it back.]
@@ -6746,6 +7921,14 @@
 	it=REINSTALLA;
 	}
 
+[REINSTALL BRAIN]
+	{
+	de=GEHIRN NEU INSTALLIEREN;
+	fr=RÉINSTALLER LE CERVEAU;
+	es=REINSTALAR CEREBRO;
+	it=REINSTALLA CERVELLO;
+	}
+
 [REINSTALL LANGUAGE]
 	{
 	de=SPRACHE NEU INSTALLIEREN;
@@ -6760,6 +7943,14 @@
 	fr=RÉINSTALLER LE PACK DE CARTES;
 	es=REINSTALAR PAQUETE DE MAPAS;
 	it=REINSTALLA PACCHETTO DI MAPPE;
+	}
+
+[REINSTALL MUTATOR]
+	{
+	de=MUTATOR NEU INSTALLIEREN;
+	fr=RÉINSTALLER LE MUTATEUR;
+	es=REINSTALAR MUTADOR;
+	it=REINSTALLA MUTATORE;
 	}
 
 [RELEASE]
@@ -6834,6 +8025,14 @@
 	it=SOSTITUISCI;
 	}
 
+[REPLACE BRAIN]
+	{
+	de=GEHIRN ERSETZEN;
+	fr=REMPLACER LE CERVEAU;
+	es=REEMPLAZAR CEREBRO;
+	it=SOSTITUISCI CERVELLO;
+	}
+
 [REPLACE GAME FILES]
 	{
 	de=SPIELDATEIEN ERSETZEN;
@@ -6864,6 +8063,14 @@
 	fr=REMPLACER LE MOD;
 	es=REEMPLAZAR MOD;
 	it=SOSTITUISCI MOD;
+	}
+
+[REPLACE MUTATOR]
+	{
+	de=MUTATOR ERSETZEN;
+	fr=REMPLACER LE MUTATEUR;
+	es=REEMPLAZAR MUTADOR;
+	it=SOSTITUISCI MUTATORE;
 	}
 
 [REPLACE THE GAME FILES…]
@@ -6928,6 +8135,14 @@
 	fr=Lecture des noms et des tailles seulement : rien n'est encore copié ni téléchargé.;
 	es=Solo se leen nombres y tamaños: todavía no se copia ni se descarga nada.;
 	it=Si leggono solo nomi e dimensioni: non si copia né si scarica ancora nulla.;
+	}
+
+[Ready once {name} is here]
+	{
+	de=Bereit, sobald {name} da ist;
+	fr=Prêt quand {name} est là;
+	es=Listo cuando {name} esté aquí;
+	it=Pronto quando {name} è qui;
 	}
 
 [Ready to copy]
@@ -7138,6 +8353,14 @@
 	it=Tasso di riparazione;
 	}
 
+[Replace]
+	{
+	de=Ersetzen;
+	fr=Remplacer;
+	es=Reemplazar;
+	it=Sostituisci;
+	}
+
 [Replace the game files?]
 	{
 	de=Die Spieldateien ersetzen?;
@@ -7160,6 +8383,14 @@
 	fr=Le remplacement garde {installed}, et RESTAURER dans la Bibliothèque le ramène.;
 	es=El reemplazo conserva {installed}, y REVERTIR en la Biblioteca lo trae de vuelta.;
 	it=La sostituzione tiene {installed}, e RIPRISTINA nella Biblioteca lo riporta.;
+	}
+
+[Requires Full hardware acceleration.]
+	{
+	de=Erfordert volle Hardwarebeschleunigung.;
+	fr=Nécessite l'accélération matérielle complète.;
+	es=Requiere aceleración por hardware completa.;
+	it=Richiede l'accelerazione hardware completa.;
 	}
 
 [Resource Panel]
@@ -7272,6 +8503,14 @@
 	fr=Touche de rotation de construction;
 	es=Tecla de rotación de construcción;
 	it=Tasto di rotazione della costruzione;
+	}
+
+[Rush]
+	{
+	de=Ansturm;
+	fr=Ruée;
+	es=Ataque;
+	it=Assalto;
 	}
 
 [Rules]
@@ -7458,6 +8697,22 @@
 	it=RICOMINCIA;
 	}
 
+[START WITHOUT THEM]
+	{
+	de=OHNE SIE STARTEN;
+	fr=DÉMARRER SANS EUX;
+	es=EMPEZAR SIN ELLOS;
+	it=INIZIA SENZA DI LORO;
+	}
+
+[START WITHOUT IT]
+	{
+	de=OHNE IHN STARTEN;
+	fr=DÉMARRER SANS;
+	es=EMPEZAR SIN ÉL;
+	it=INIZIA SENZA;
+	}
+
 [STOP]
 	{
 	de=HALT;
@@ -7602,6 +8857,14 @@
 	it=Cerca lingue;
 	}
 
+[Search brains, authors, tags]
+	{
+	de=Gehirne, Autoren, Stichworte suchen;
+	fr=Chercher des cerveaux, des auteurs, des mots-clés;
+	es=Buscar cerebros, autores, etiquetas;
+	it=Cerca cervelli, autori, etichette;
+	}
+
 [Search maps]
 	{
 	de=Karten suchen;
@@ -7626,12 +8889,52 @@
 	it=Cerca mod, autori, etichette;
 	}
 
+[Search mutators]
+	{
+	de=Mutatoren suchen;
+	fr=Rechercher des mutateurs;
+	es=Buscar mutadores;
+	it=Cerca mutatori;
+	}
+
+[Search mutators, authors, tags]
+	{
+	de=Mutatoren, Autoren, Stichworte suchen;
+	fr=Chercher des mutateurs, des auteurs, des mots-clés;
+	es=Buscar mutadores, autores, etiquetas;
+	it=Cerca mutatori, autori, etichette;
+	}
+
 [Search updates]
 	{
 	de=Updates suchen;
 	fr=Chercher des mises à jour;
 	es=Buscar actualizaciones;
 	it=Cerca aggiornamenti;
+	}
+
+[Seat {n}]
+	{
+	de=Platz {n};
+	fr=Place {n};
+	es=Puesto {n};
+	it=Posto {n};
+	}
+
+[Sees every unit on the map]
+	{
+	de=Sieht jede Einheit auf der Karte;
+	fr=Voit chaque unité sur la carte;
+	es=Ve todas las unidades del mapa;
+	it=Vede ogni unità sulla mappa;
+	}
+
+[Sees every unit on the map, as Total Annihilation's own computer player does]
+	{
+	de=Sieht jede Einheit auf der Karte, so wie der Computerspieler von Total Annihilation.;
+	fr=Voit chaque unité sur la carte, comme le joueur ordinateur de Total Annihilation.;
+	es=Ve todas las unidades del mapa, como el jugador de ordenador de Total Annihilation.;
+	it=Vede ogni unità sulla mappa, come il giocatore computer di Total Annihilation.;
 	}
 
 [Select]
@@ -7688,6 +8991,14 @@
 	fr=Autoréparation selon le temps de soin;
 	es=Autorreparación según el tiempo de cura;
 	it=Autoriparazione secondo il tempo di cura;
+	}
+
+[Set by the Difficulty button: {level}]
+	{
+	de=Vom Schwierigkeitsknopf gesetzt: {level};
+	fr=Fixé par le bouton Difficulté : {level};
+	es=Fijado por el botón Dificultad: {level};
+	it=Impostato dal pulsante Difficoltà: {level};
 	}
 
 [Set by the host]
@@ -7849,6 +9160,13 @@
 	es=Bando;
 	it=Fazione;
 	}
+[Sides]
+	{
+	de=Seiten;
+	fr=Camps;
+	es=Bandos;
+	it=Fazioni;
+	}
 
 [Signing key]
 	{
@@ -7906,6 +9224,14 @@
 	it=Salta;
 	}
 
+[Skirmish]
+	{
+	de=Gefecht;
+	fr=Escarmouche;
+	es=Escaramuza;
+	it=Schermaglia;
+	}
+
 [Skirmish players]
 	{
 	de=Gefechtsspieler;
@@ -7936,6 +9262,14 @@
 	fr=Petites secousses et bosses ressenties par la manette.;
 	es=Pequeños golpes y vibraciones que se sienten en el mando.;
 	it=Piccoli colpi e scosse avvertiti dal controller.;
+	}
+
+[Smooth]
+	{
+	de=Weich;
+	fr=Doux;
+	es=Suave;
+	it=Morbido;
 	}
 
 [Smooth motion]
@@ -8002,6 +9336,14 @@
 	it=Tasto per ignorare l'aggancio;
 	}
 
+[Soft edges where the graphics card draws the battlefield (Full).]
+	{
+	de=Weiche Kanten, wo die Grafikkarte das Schlachtfeld zeichnet (Voll).;
+	fr=Bords doux là où la carte graphique dessine le champ de bataille (Complet).;
+	es=Bordes suaves donde la tarjeta gráfica dibuja el campo de batalla (Completo).;
+	it=Bordi morbidi dove la scheda grafica disegna il campo di battaglia (Completo).;
+	}
+
 [Solid]
 	{
 	de=Flächig;
@@ -8064,6 +9406,30 @@
 	fr=Commencer avec un humain;
 	es=Empezar con un humano;
 	it=Inizia con un umano;
+	}
+
+[Start without {name}?]
+	{
+	de=Ohne {name} starten?;
+	fr=Démarrer sans {name} ?;
+	es=¿Empezar sin {name}?;
+	it=Iniziare senza {name}?;
+	}
+
+[Start without them?]
+	{
+	de=Ohne sie starten?;
+	fr=Démarrer sans eux ?;
+	es=¿Empezar sin ellos?;
+	it=Iniziare senza di loro?;
+	}
+
+[Statistics]
+	{
+	de=Werte;
+	fr=Statistiques;
+	es=Estadísticas;
+	it=Statistiche;
 	}
 
 [Statistics Exclude Shared Income]
@@ -8146,6 +9512,14 @@
 	it=Fermare la copia?;
 	}
 
+[Stopped with this mod: {reason}]
+	{
+	de=Mit diesem Mod abgebrochen: {reason};
+	fr=Arrêté avec ce mod : {reason};
+	es=Se detuvo con este mod: {reason};
+	it=Interrotto con questo mod: {reason};
+	}
+
 [Strong]
 	{
 	de=Stark;
@@ -8168,6 +9542,22 @@
 	fr=Passer à {title} maintenant ? Le jeu recharge ses données pour le nouveau mod et revient au menu principal. Tes autres réglages sont gardés.;
 	es=¿Cambiar a {title} ahora? El juego recarga sus datos para el mod nuevo y vuelve al menú principal. Tus otros ajustes se conservan.;
 	it=Passare a {title} ora? Il gioco ricarica i dati per il nuovo mod e torna al menu principale. Le altre impostazioni restano.;
+	}
+
+[Switching off {name}…]
+	{
+	de={name} wird ausgeschaltet…;
+	fr=Désactivation de {name}…;
+	es=Desactivando {name}…;
+	it=Disattivazione di {name}…;
+	}
+
+[Switching on {name}…]
+	{
+	de={name} wird eingeschaltet…;
+	fr=Activation de {name}…;
+	es=Activando {name}…;
+	it=Attivazione di {name}…;
 	}
 
 [Switching to {name} restarts the game's files, then loads this save.]
@@ -8353,6 +9743,13 @@
 	es=Surte efecto en el menú principal.;
 	it=Ha effetto nel menu principale.;
 	}
+[Teaching]
+	{
+	de=Lehrt;
+	fr=Enseigne;
+	es=Enseña;
+	it=Insegna;
+	}
 
 [Team Number Alliances]
 	{
@@ -8474,6 +9871,14 @@
 	it=La cartella di Total Annihilation su questo {device} non si può giocare: {problem};
 	}
 
+[The built-in player takes those seats from the units as they stand. GET the brain in the Library to load the game as it was saved.]
+	{
+	de=Der eingebaute Spieler übernimmt diese Plätze so, wie die Einheiten stehen. HOL das Gehirn in der Bibliothek, um das Spiel so zu laden, wie es gespeichert wurde.;
+	fr=Le joueur intégré prend ces sièges avec les unités telles qu'elles sont. PRENDS le cerveau dans la Bibliothèque pour charger la partie comme elle a été sauvegardée.;
+	es=El jugador integrado toma esos asientos con las unidades como están. CONSIGUE el cerebro en la Biblioteca para cargar la partida como se guardó.;
+	it=Il giocatore integrato prende quei posti con le unità come stanno. PRENDI il cervello nella Biblioteca per caricare la partita come è stata salvata.;
+	}
+
 [The button pictures the controls and rings show.]
 	{
 	de=Die Taste zeigt, was Steuerung und Ringe anzeigen.;
@@ -8512,6 +9917,14 @@
 	fr=La ligne de commande a choisi le mod de cette exécution.;
 	es=La línea de órdenes eligió el mod de esta ejecución.;
 	it=La riga di comando ha scelto il mod di questa esecuzione.;
+	}
+
+[The computer players this game was saved with cannot be read.]
+	{
+	de=Die Computerspieler, mit denen dieses Spiel gespeichert wurde, lassen sich nicht lesen.;
+	fr=Les joueurs ordinateur avec lesquels cette partie a été sauvegardée ne se lisent pas.;
+	es=Los jugadores del ordenador con los que se guardó esta partida no se pueden leer.;
+	it=I giocatori del computer con cui è stata salvata questa partita non si leggono.;
 	}
 
 [The copy could not start]
@@ -8714,12 +10127,28 @@
 	it=La cartella che c'era prima resta come Total Annihilation (vecchia), {size}.;
 	}
 
+[The folder {name} does not hold this brain. It is left as it is.]
+	{
+	de=Der Ordner {name} enthält dieses Gehirn nicht. Er bleibt, wie er ist.;
+	fr=Le dossier {name} ne contient pas ce cerveau. Il est laissé tel quel.;
+	es=La carpeta {name} no contiene este cerebro. Se deja como está.;
+	it=La cartella {name} non contiene questo cervello. Resta com'è.;
+	}
+
 [The folder {name} does not hold this map pack. It is left as it is.]
 	{
 	de=Der Ordner {name} enthält dieses Kartenpaket nicht. Er bleibt, wie er ist.;
 	fr=Le dossier {name} ne contient pas ce pack de cartes. Il est laissé tel quel.;
 	es=La carpeta {name} no contiene este paquete de mapas. Se deja como está.;
 	it=La cartella {name} non contiene questo pacchetto di mappe. Resta com'è.;
+	}
+
+[The folder {name} does not hold this mutator. It is left as it is.]
+	{
+	de=Der Ordner {name} enthält diesen Mutator nicht. Er bleibt, wie er ist.;
+	fr=Le dossier {name} ne contient pas ce mutateur. Il est laissé tel quel.;
+	es=La carpeta {name} no contiene este mutador. Se deja como está.;
+	it=La cartella {name} non contiene questo mutatore. Resta com'è.;
 	}
 
 [The folder {tag} does not hold this language. Replace it with {endonym} ({english}) from {file}? It is kept, and can be brought back.]
@@ -8762,6 +10191,14 @@
 	it=La partita non può iniziare finché l'host non lo attiva, o {player} non lo disattiva.;
 	}
 
+[The game cannot start until {player} gets it, or the host turns it off.]
+	{
+	de=Das Spiel kann erst starten, wenn {player} es hat oder der Gastgeber es ausschaltet.;
+	fr=La partie ne peut pas commencer tant que {player} ne l'a pas, ou que l'hôte ne le désactive pas.;
+	es=La partida no puede empezar hasta que {player} lo tenga, o el anfitrión lo desactive.;
+	it=La partita non può iniziare finché {player} non lo ha, o l'host non lo disattiva.;
+	}
+
 [The game cannot start until {player} turns it on, or the host turns it off.]
 	{
 	de=Das Spiel kann erst starten, wenn {player} es einschaltet oder der Gastgeber es ausschaltet.;
@@ -8776,6 +10213,14 @@
 	fr=Le jeu n'a pas pu être copié.;
 	es=No se pudo copiar el juego.;
 	it=Non è stato possibile copiare il gioco.;
+	}
+
+[The game did not start]
+	{
+	de=Das Spiel wurde nicht gestartet;
+	fr=La partie n'a pas démarré;
+	es=El juego no empezó;
+	it=La partita non è partita;
 	}
 
 [The game is shown in {name}. Choose another language in Settings › Language first, then uninstall it.]
@@ -8810,6 +10255,13 @@
 	it=Il gioco funziona comunque con questi file, ma le partite in rete con altri giocatori possono non iniziare, e le registrazioni possono non ripetersi allo stesso modo. Copia di nuovo i contenuti da un'altra fonte per sistemarli.;
 	}
 
+[The game's log names them, so their authors can be told.]
+	{
+	de=Das Protokoll des Spiels nennt sie, damit ihre Autoren es erfahren können.;
+	fr=Le journal du jeu les nomme, pour qu'on puisse le dire à leurs auteurs.;
+	es=El registro del juego los nombra, para que sus autores puedan saberlo.;
+	it=Il registro del gioco li nomina, così si può dirlo a chi li ha fatti.;
+	}
 [The game's own menus, as it always drew them.]
 	{
 	de=Die eigenen Menüs des Spiels, wie es sie immer gezeichnet hat.;
@@ -8850,6 +10302,14 @@
 	it=La scheda grafica non ha potuto disegnare il campo di battaglia, quindi ora lo scala soltanto. Puoi riprovare Completo in Grafica, nelle impostazioni di OA.;
 	}
 
+[The host's mutators. Only the host can change them.]
+	{
+	de=Die Mutatoren des Gastgebers. Nur der Gastgeber kann sie ändern.;
+	fr=Les mutateurs de l'hôte. Seul l'hôte peut les changer.;
+	es=Los mutadores del anfitrión. Solo el anfitrión puede cambiarlos.;
+	it=I mutatori dell'host. Solo l'host può cambiarli.;
+	}
+
 [The host's release of {pack} is no longer offered by {registry}.]
 	{
 	de=Die Version des Gastgebers von {pack} wird von {registry} nicht mehr angeboten.;
@@ -8872,6 +10332,14 @@
 	fr=La plus grande échelle entière qui tient : menus plus petits, chaque pixel carré.;
 	es=La mayor escala entera que cabe: menús más pequeños, cada píxel cuadrado.;
 	it=La scala intera più grande che entra: menu più piccoli, ogni pixel quadrato.;
+	}
+
+[The last game ended in a crash with {names} on. Forget the set and the Mutators button opens empty next time; nothing is uninstalled.]
+	{
+	de=Das letzte Spiel ist mit {names} abgestürzt. Vergiss das Set, dann öffnet sich die Schaltfläche Mutatoren das nächste Mal leer. Es wird nichts deinstalliert.;
+	fr=La dernière partie a planté avec {names}. Oublie l'ensemble et le bouton Mutateurs s'ouvrira vide la prochaine fois. Rien n'est désinstallé.;
+	es=La última partida se cerró de golpe con {names}. Olvida el conjunto y el botón Mutadores se abrirá vacío la próxima vez. No se desinstala nada.;
+	it=L'ultima partita si è chiusa di colpo con {names}. Dimentica il set e il pulsante Mutatori si aprirà vuoto la prossima volta. Non si disinstalla niente.;
 	}
 
 [The map list does not hold this map.]
@@ -8914,6 +10382,14 @@
 	it=Il mod è stato tolto perché un'espansione che gli serve è spenta. Il gioco va con No Mod.;
 	}
 
+[The mutators this was made with cannot be read.]
+	{
+	de=Die Mutatoren, mit denen das gemacht wurde, lassen sich nicht lesen.;
+	fr=Les mutateurs avec lesquels ça a été fait sont illisibles.;
+	es=Los mutadores con los que se hizo esto no se pueden leer.;
+	it=I mutatori con cui è stato fatto questo non si possono leggere.;
+	}
+
 [The new game files are used from the next start of Open Annihilation. Adding or removing files waits until then.]
 	{
 	de=Die neuen Spieldateien gelten ab dem nächsten Start von Open Annihilation. Dateien hinzufügen oder entfernen wartet bis dahin.;
@@ -8952,6 +10428,22 @@
 	fr=Le pack n'a pas été installé : {reason};
 	es=El paquete no se instaló: {reason};
 	it=Il pacchetto non è stato installato: {reason};
+	}
+
+[The package holds {name}, outside the files a brain may hold.]
+	{
+	de=Das Paket enthält {name}, außerhalb der Dateien, die ein Gehirn haben darf.;
+	fr=Le paquet contient {name}, en dehors des fichiers qu'un cerveau peut contenir.;
+	es=El paquete contiene {name}, fuera de los archivos que puede tener un cerebro.;
+	it=Il pacchetto contiene {name}, fuori dai file che un cervello può avere.;
+	}
+
+[The package holds {name}, outside the folders a mutator may hold.]
+	{
+	de=Das Paket enthält {name}, außerhalb der Ordner, die ein Mutator haben darf.;
+	fr=Le paquet contient {name}, en dehors des dossiers qu'un mutateur peut contenir.;
+	es=El paquete contiene {name}, fuera de las carpetas que puede tener un mutador.;
+	it=Il pacchetto contiene {name}, fuori dalle cartelle che un mutatore può avere.;
 	}
 
 [The pointer keeps moving after a quick flick.]
@@ -9048,6 +10540,14 @@
 	fr=Le pavé droit pointe et le gauche déplace la carte. Un pad sans pavés joue Sticks.;
 	es=El trackpad derecho apunta y el izquierdo mueve el mapa. Un pad sin trackpads juega Sticks.;
 	it=Il trackpad destro punta e il sinistro muove la mappa. Un pad senza trackpad gioca Sticks.;
+	}
+
+[The set holds for every mission of this campaign, and is saved with it.]
+	{
+	de=Das Set gilt für jede Mission dieser Kampagne und wird mit ihr gespeichert.;
+	fr=La sélection vaut pour chaque mission de cette campagne, et elle est sauvegardée avec elle.;
+	es=La selección vale para cada misión de esta campaña y se guarda con ella.;
+	it=La selezione vale per ogni missione di questa campagna, ed è salvata con essa.;
 	}
 
 [The side panel and bars grow with the window, up to twice the original game's size.]
@@ -9234,6 +10734,22 @@
 	it=Questi file richiedono {need} e questo {device} ha {free} liberi. {advice}, o spegni una parte sopra, poi tocca Controlla di nuovo.;
 	}
 
+[These mutators need each other: {ids}]
+	{
+	de=Diese Mutatoren brauchen einander: {ids};
+	fr=Ces mutateurs ont besoin les uns des autres : {ids};
+	es=Estos mutadores se necesitan entre sí: {ids};
+	it=Questi mutatori hanno bisogno l'uno dell'altro: {ids};
+	}
+
+[They all stay installed. Turn one on again and {name} comes back with it.]
+	{
+	de=Alle bleiben installiert. Schalte einen wieder ein, und {name} kommt damit zurück.;
+	fr=Ils restent tous installés. Rallumes-en un et {name} revient avec.;
+	es=Todos siguen instalados. Vuelve a activar uno y {name} vuelve con él.;
+	it=Restano tutti installati. Riaccendine uno e {name} torna con lui.;
+	}
+
 [This base game is used when the Library closes.]
 	{
 	de=Dieses Grundspiel wird verwendet, wenn die Bibliothek schließt.;
@@ -9306,6 +10822,14 @@
 	it=Questo gioco non include mappe di schermaglia, quindi la schermaglia non è disponibile.;
 	}
 
+[This game was saved with {name} {version} playing seat {n}, which is not installed here.]
+	{
+	de=Dieses Spiel wurde mit {name} {version} auf Platz {n} gespeichert, und der ist hier nicht installiert.;
+	fr=Cette partie a été sauvegardée avec {name} {version} au siège {n}, qui n'est pas installé ici.;
+	es=Esta partida se guardó con {name} {version} en el asiento {n}, que no está instalado aquí.;
+	it=Questa partita è stata salvata con {name} {version} al posto {n}, che non è installato qui.;
+	}
+
 [This is already the game folder.]
 	{
 	de=Das ist schon der Spielordner.;
@@ -9354,6 +10878,14 @@
 	it=Questo mod non si può usare;
 	}
 
+[This needs a mutator you do not have: {detail}]
+	{
+	de=Dafür brauchst du einen Mutator, den du nicht hast: {detail};
+	fr=Il te faut un mutateur que tu n'as pas : {detail};
+	es=Te hace falta un mutador que no tienes: {detail};
+	it=Ti serve un mutatore che non hai: {detail};
+	}
+
 [This replaces the game files on this {device} ({size}) with the folder you chose. The current folder is kept as Total Annihilation (old) until you remove it. Saved games and settings stay.]
 	{
 	de=Das ersetzt die Spieldateien auf diesem {device} ({size}) durch den Ordner, den du gewählt hast. Der aktuelle Ordner bleibt als Total Annihilation (alt), bis du ihn entfernst. Speicherstände und Einstellungen bleiben.;
@@ -9378,12 +10910,28 @@
 	it=Questo salvataggio ha bisogno di altri contenuti;
 	}
 
+[This saved game needs {name} {version}, which is not installed.]
+	{
+	de=Dieses gespeicherte Spiel braucht {name} {version}, und der ist nicht installiert.;
+	fr=Cette sauvegarde a besoin de {name} {version}, qui n'est pas installé.;
+	es=Esta partida guardada necesita {name} {version}, que no está instalado.;
+	it=Questa partita salvata ha bisogno di {name} {version}, che non è installato.;
+	}
+
 [This system reads HTTPS registries over HTTP.]
 	{
 	de=Dieses System liest HTTPS-Quellen über HTTP.;
 	fr=Ce système lit les sources HTTPS par HTTP.;
 	es=Este sistema lee fuentes HTTPS por HTTP.;
 	it=Questo sistema legge le fonti HTTPS tramite HTTP.;
+	}
+
+[This was made with mutators, and this run plays none.]
+	{
+	de=Das wurde mit Mutatoren gemacht, und dieser Lauf spielt keine.;
+	fr=Ça a été fait avec des mutateurs, et cette session n'en utilise aucun.;
+	es=Esto se hizo con mutadores, y esta sesión no usa ninguno.;
+	it=Questo è stato fatto con dei mutatori, e questa sessione non ne usa nessuno.;
 	}
 
 [This {device} ran out of space]
@@ -9496,6 +11044,14 @@
 	fr=Réessayer;
 	es=Reintentar;
 	it=Riprova;
+	}
+
+[Turtle]
+	{
+	de=Bunker;
+	fr=Tortue;
+	es=Tortuga;
+	it=Tartaruga;
 	}
 
 [Turn it on in the Library.]
@@ -9690,6 +11246,14 @@
 	it=AGGIORNA TUTTO;
 	}
 
+[UPDATE BRAIN]
+	{
+	de=GEHIRN AKTUALISIEREN;
+	fr=METTRE À JOUR LE CERVEAU;
+	es=ACTUALIZAR CEREBRO;
+	it=AGGIORNA CERVELLO;
+	}
+
 [UPDATE LANGUAGE]
 	{
 	de=SPRACHE AKTUALISIEREN;
@@ -9712,6 +11276,22 @@
 	fr=METTRE À JOUR LE MOD;
 	es=ACTUALIZAR MOD;
 	it=AGGIORNA MOD;
+	}
+
+[UPDATE MUTATOR]
+	{
+	de=MUTATOR AKTUALISIEREN;
+	fr=METTRE À JOUR LE MUTATEUR;
+	es=ACTUALIZAR MUTADOR;
+	it=AGGIORNA MUTATORE;
+	}
+
+[USE BY DEFAULT]
+	{
+	de=ALS STANDARD NUTZEN;
+	fr=UTILISER PAR DÉFAUT;
+	es=USAR POR DEFECTO;
+	it=USA COME PREDEFINITO;
 	}
 
 [USE IT]
@@ -9738,6 +11318,22 @@
 	it=USA QUELLA CARTELLA;
 	}
 
+[USE THESE]
+	{
+	de=ÜBERNEHMEN;
+	fr=VALIDER;
+	es=USAR ESTOS;
+	it=USA QUESTI;
+	}
+
+[USE THIS]
+	{
+	de=DIESES ÜBERNEHMEN;
+	fr=UTILISER CELUI-CI;
+	es=USAR ESTE;
+	it=USA QUESTO;
+	}
+
 [USE THIS GAME]
 	{
 	de=DIESES SPIEL VERWENDEN;
@@ -9752,6 +11348,14 @@
 	fr=INTERFACE UTILISATEUR;
 	es=INTERFAZ DE USUARIO;
 	it=INTERFACCIA UTENTE;
+	}
+
+[Underwater shimmer]
+	{
+	de=Unterwasserflimmern;
+	fr=Scintillement sous-marin;
+	es=Destellos submarinos;
+	it=Scintillio subacqueo;
 	}
 
 [Unfiltered]
@@ -9826,6 +11430,14 @@
 	it=Unità e colpi si muovono 30 volte al secondo, come il gioco li ha disegnati. Le rotazioni veloci possono sfarfallare.;
 	}
 
+[Units and weapons]
+	{
+	de=Einheiten und Waffen;
+	fr=Unités et armes;
+	es=Unidades y armas;
+	it=Unità e armi;
+	}
+
 [Units are drawn as models at every zoom. Far out on a large map, needs a fast CPU.]
 	{
 	de=Einheiten werden bei jedem Zoom als Modelle gezeichnet. Weit draußen auf einer großen Karte, braucht eine schnelle CPU.;
@@ -9872,6 +11484,14 @@
 	fr=Les unités, les tirs et les pièces qui tournent bougent de façon fluide entre les ticks du jeu.;
 	es=Las unidades, los disparos y las piezas que giran se mueven con fluidez entre los ticks del juego.;
 	it=Unità, colpi e parti rotanti si muovono in modo fluido tra i tick del gioco.;
+	}
+
+[Unlocked Camera]
+	{
+	de=Freie Kamera;
+	fr=Caméra déverrouillée;
+	es=Cámara desbloqueada;
+	it=Camera sbloccata;
 	}
 
 [Unpacking the demo's game data ({size})…]
@@ -9986,6 +11606,14 @@
 	it=Usa l'inglese;
 	}
 
+[Use for every computer seat]
+	{
+	de=Für jeden Computersitz verwenden;
+	fr=Utiliser pour chaque siège ordinateur;
+	es=Usar para cada asiento de ordenador;
+	it=Usa per ogni posto computer;
+	}
+
 [Use modern fonts for game text]
 	{
 	de=Moderne Schriften für den Spieltext;
@@ -10026,6 +11654,14 @@
 	it=Interfaccia utente;
 	}
 
+[Uses a learned network ({size})]
+	{
+	de=Nutzt ein gelerntes Netz ({size});
+	fr=Utilise un réseau appris ({size});
+	es=Usa una red aprendida ({size});
+	it=Usa una rete appresa ({size});
+	}
+
 [Uses {size} on this {device} · {free} free.]
 	{
 	de=Nutzt {size} auf diesem {device} · {free} frei.;
@@ -10040,6 +11676,14 @@
 	fr=Utilise {size} sur ce {device}.;
 	es=Usa {size} en este {device}.;
 	it=Usa {size} su questo {device}.;
+	}
+
+[VIEW…]
+	{
+	de=ANSEHEN…;
+	fr=VOIR…;
+	es=VER…;
+	it=VEDI…;
 	}
 
 [VOLUMES]
@@ -10064,6 +11708,14 @@
 	fr=Vérification de {name};
 	es=Comprobando {name};
 	it=Verifica di {name};
+	}
+
+[Version]
+	{
+	de=Version;
+	fr=Version;
+	es=Versión;
+	it=Versione;
 	}
 
 [Version Check]
@@ -10186,6 +11838,22 @@
 	it=PERCHÉ;
 	}
 
+[Downloading the game's files from iCloud…]
+	{
+	de=Die Spieldateien werden aus iCloud geladen…;
+	fr=Téléchargement des fichiers du jeu depuis iCloud…;
+	es=Descargando los archivos del juego desde iCloud…;
+	it=Scaricamento dei file del gioco da iCloud…;
+	}
+
+[Waiting for {player}: {name}]
+	{
+	de=Wartet auf {player}: {name};
+	fr=Attend {player} : {name};
+	es=Esperando a {player}: {name};
+	it=In attesa di {player}: {name};
+	}
+
 [Waiting to download]
 	{
 	de=Wartet auf den Download;
@@ -10216,6 +11884,14 @@
 	fr=Revois la langue, les fonctions en ligne et les boutons OA.;
 	es=Repasa el idioma, las funciones en línea y los botones de OA.;
 	it=Rivedi la lingua, le funzioni in linea e i pulsanti di OA.;
+	}
+
+[Water ripples]
+	{
+	de=Wasserkräuselung;
+	fr=Ondulations de l'eau;
+	es=Ondulaciones del agua;
+	it=Increspature dell'acqua;
 	}
 
 [Water State Rules]
@@ -10402,6 +12078,86 @@
 	it=Programmi Windows, collegamenti, icone, manuali e file di aiuto;
 	}
 
+[With No Mod: it stopped: {reason}]
+	{
+	de=Ohne Mod: es ist stehen geblieben: {reason};
+	fr=Sans mod : ça s'est arrêté : {reason};
+	es=Sin mod: se detuvo: {reason};
+	it=Senza mod: si è fermato: {reason};
+	}
+
+[With No Mod: no effect]
+	{
+	de=Ohne Mod: keine Wirkung;
+	fr=Sans mod : aucun effet;
+	es=Sin mod: sin efecto;
+	it=Senza mod: nessun effetto;
+	}
+
+[With No Mod: {reason}]
+	{
+	de=Ohne Mod: {reason};
+	fr=Sans mod : {reason};
+	es=Sin mod: {reason};
+	it=Senza mod: {reason};
+	}
+
+[With No Mod: {summary}]
+	{
+	de=Ohne Mod: {summary};
+	fr=Sans mod : {summary};
+	es=Sin mod: {summary};
+	it=Senza mod: {summary};
+	}
+
+[With {mod}: it stopped: {reason}]
+	{
+	de=Mit {mod}: es ist stehen geblieben: {reason};
+	fr=Avec {mod} : ça s'est arrêté : {reason};
+	es=Con {mod}: se detuvo: {reason};
+	it=Con {mod}: si è fermato: {reason};
+	}
+
+[With {mod}: no effect]
+	{
+	de=Mit {mod}: keine Wirkung;
+	fr=Avec {mod} : aucun effet;
+	es=Con {mod}: sin efecto;
+	it=Con {mod}: nessun effetto;
+	}
+
+[With {mod}: {reason}]
+	{
+	de=Mit {mod}: {reason};
+	fr=Avec {mod} : {reason};
+	es=Con {mod}: {reason};
+	it=Con {mod}: {reason};
+	}
+
+[With {mod}: {summary}]
+	{
+	de=Mit {mod}: {summary};
+	fr=Avec {mod} : {summary};
+	es=Con {mod}: {summary};
+	it=Con {mod}: {summary};
+	}
+
+[Works with]
+	{
+	de=Funktioniert mit;
+	fr=Fonctionne avec;
+	es=Funciona con;
+	it=Funziona con;
+	}
+
+[Wreck glow]
+	{
+	de=Wrackglühen;
+	fr=Lueur des épaves;
+	es=Resplandor de los restos;
+	it=Bagliore dei relitti;
+	}
+
 [Wreck snap radius]
 	{
 	de=Einrastradius für Wracks;
@@ -10466,6 +12222,22 @@
 	it=Ti serve la cartella di una copia installata di Total Annihilation, quella che contiene totala1.hpi: circa 1.1 GB con entrambe le espansioni e la musica. Gli installer del gioco completo sono programmi Windows e non si possono usare qui. Installa il gioco su un computer e porta la sua cartella.;
 	}
 
+[Your Brains folder changed while this brain was being installed; nothing was changed. Open the file again.]
+	{
+	de=Dein Ordner Brains hat sich geändert, während dieses Gehirn installiert wurde. Es wurde nichts geändert. Öffne die Datei erneut.;
+	fr=Ton dossier Brains a changé pendant l'installation de ce cerveau. Rien n'a été changé. Ouvre le fichier à nouveau.;
+	es=Tu carpeta Brains cambió mientras se instalaba este cerebro. No se cambió nada. Abre el archivo de nuevo.;
+	it=La tua cartella Brains è cambiata mentre questo cervello veniva installato. Non è stato cambiato nulla. Apri di nuovo il file.;
+	}
+
+[Your Brains folder has no free folder name for it.]
+	{
+	de=Dein Ordner Brains hat keinen freien Ordnernamen dafür.;
+	fr=Ton dossier Brains n'a aucun nom de dossier libre pour lui.;
+	es=Tu carpeta Brains no tiene un nombre de carpeta libre para él.;
+	it=La tua cartella Brains non ha un nome di cartella libero per esso.;
+	}
+
 [Your Maps folder changed while this map pack was being installed; nothing was changed. Open the file again.]
 	{
 	de=Dein Ordner Maps hat sich geändert, während dieses Kartenpaket installiert wurde. Es wurde nichts geändert. Öffne die Datei erneut.;
@@ -10506,6 +12278,22 @@
 	it=La tua cartella Mods non ha un nome di cartella libero per esso.;
 	}
 
+[Your Mutators folder changed while this mutator was being installed; nothing was changed. Open the file again.]
+	{
+	de=Dein Ordner Mutators hat sich geändert, während dieser Mutator installiert wurde. Es wurde nichts geändert. Öffne die Datei erneut.;
+	fr=Ton dossier Mutators a changé pendant l'installation de ce mutateur. Rien n'a été changé. Ouvre le fichier à nouveau.;
+	es=Tu carpeta Mutators cambió mientras se instalaba este mutador. No se cambió nada. Abre el archivo de nuevo.;
+	it=La tua cartella Mutators è cambiata mentre questo mutatore veniva installato. Non è stato cambiato nulla. Apri di nuovo il file.;
+	}
+
+[Your Mutators folder has no free folder name for it.]
+	{
+	de=Dein Ordner Mutators hat keinen freien Ordnernamen dafür.;
+	fr=Ton dossier Mutators n'a aucun nom de dossier libre pour lui.;
+	es=Tu carpeta Mutators no tiene un nombre de carpeta libre para él.;
+	it=La tua cartella Mutators non ha un nome di cartella libero per esso.;
+	}
+
 [Your Total Annihilation has been changed]
 	{
 	de=Dein Total Annihilation wurde verändert;
@@ -10536,6 +12324,30 @@
 	fr=Ton identifiant d'installation;
 	es=Tu ID de instalación;
 	it=Il tuo ID di installazione;
+	}
+
+[Your last campaign set, ready to use. CANCEL plays without mutators.]
+	{
+	de=Dein letztes Kampagnen-Set, bereit zum Spielen. ABBRECHEN spielt ohne Mutatoren.;
+	fr=Ta dernière sélection de campagne, prête à jouer. ANNULER joue sans mutateurs.;
+	es=Tu última selección de campaña, lista para jugar. CANCELAR juega sin mutadores.;
+	it=La tua ultima selezione di campagna, pronta da giocare. ANNULLA gioca senza mutatori.;
+	}
+
+[Your last multiplayer set, ready to use. CANCEL plays without mutators.]
+	{
+	de=Dein letztes Mehrspieler-Set, bereit zum Spielen. ABBRECHEN spielt ohne Mutatoren.;
+	fr=Ta dernière sélection multijoueur, prête à jouer. ANNULER joue sans mutateurs.;
+	es=Tu última selección multijugador, lista para jugar. CANCELAR juega sin mutadores.;
+	it=La tua ultima selezione multigiocatore, pronta da giocare. ANNULLA gioca senza mutatori.;
+	}
+
+[Your last skirmish set, ready to use. CANCEL plays without mutators.]
+	{
+	de=Dein letztes Gefecht-Set, bereit zum Spielen. ABBRECHEN spielt ohne Mutatoren.;
+	fr=Ta dernière sélection d'escarmouche, prête à jouer. ANNULER joue sans mutateurs.;
+	es=Tu última selección de escaramuza, lista para jugar. CANCELAR juega sin mutadores.;
+	it=La tua ultima selezione di schermaglia, pronta da giocare. ANNULLA gioca senza mutatori.;
 	}
 
 [Your own copy]
@@ -10650,6 +12462,70 @@
 	it=aggiunto da te;
 	}
 
+[adds {count} feature]
+	{
+	de=fügt {count} Geländeobjekt hinzu;
+	fr=ajoute {count} élément;
+	es=añade {count} elemento;
+	it=aggiunge {count} elemento;
+	}
+
+[adds {count} features]
+	{
+	de=fügt {count} Geländeobjekte hinzu;
+	fr=ajoute {count} éléments;
+	es=añade {count} elementos;
+	it=aggiunge {count} elementi;
+	}
+
+[adds {count} file]
+	{
+	de=fügt {count} Datei hinzu;
+	fr=ajoute {count} fichier;
+	es=añade {count} archivo;
+	it=aggiunge {count} file;
+	}
+
+[adds {count} files]
+	{
+	de=fügt {count} Dateien hinzu;
+	fr=ajoute {count} fichiers;
+	es=añade {count} archivos;
+	it=aggiunge {count} file;
+	}
+
+[adds {count} unit]
+	{
+	de=fügt {count} Einheit hinzu;
+	fr=ajoute {count} unité;
+	es=añade {count} unidad;
+	it=aggiunge {count} unità;
+	}
+
+[adds {count} units]
+	{
+	de=fügt {count} Einheiten hinzu;
+	fr=ajoute {count} unités;
+	es=añade {count} unidades;
+	it=aggiunge {count} unità;
+	}
+
+[adds {count} weapon]
+	{
+	de=fügt {count} Waffe hinzu;
+	fr=ajoute {count} arme;
+	es=añade {count} arma;
+	it=aggiunge {count} arma;
+	}
+
+[adds {count} weapons]
+	{
+	de=fügt {count} Waffen hinzu;
+	fr=ajoute {count} armes;
+	es=añade {count} armas;
+	it=aggiunge {count} armi;
+	}
+
 [after you leave it]
 	{
 	de=nachdem du es verlässt;
@@ -10706,6 +12582,14 @@
 	it=prima di {version};
 	}
 
+[brains]
+	{
+	de=Gehirne;
+	fr=cerveaux;
+	es=cerebros;
+	it=cervelli;
+	}
+
 [built in]
 	{
 	de=integriert;
@@ -10722,6 +12606,14 @@
 	it=di {author};
 	}
 
+[cannot check]
+	{
+	de=keine Prüfung;
+	fr=vérif. impossible;
+	es=sin comprobación;
+	it=niente controllo;
+	}
+
 [cells]
 	{
 	de=Zellen;
@@ -10730,12 +12622,100 @@
 	it=celle;
 	}
 
+[changes other game data]
+	{
+	de=ändert andere Spieldaten;
+	fr=modifie d'autres données du jeu;
+	es=cambia otros datos del juego;
+	it=cambia altri dati di gioco;
+	}
+
+[changes the map when a match starts]
+	{
+	de=ändert die Karte, wenn ein Gefecht beginnt;
+	fr=modifie la carte au début d'une partie;
+	es=cambia el mapa cuando empieza una partida;
+	it=cambia la mappa quando inizia una partita;
+	}
+
+[changes {count} feature]
+	{
+	de=ändert {count} Geländeobjekt;
+	fr=modifie {count} élément;
+	es=cambia {count} elemento;
+	it=cambia {count} elemento;
+	}
+
+[changes {count} features]
+	{
+	de=ändert {count} Geländeobjekte;
+	fr=modifie {count} éléments;
+	es=cambia {count} elementos;
+	it=cambia {count} elementi;
+	}
+
+[changes {count} menu entries]
+	{
+	de=ändert {count} Menüeinträge;
+	fr=modifie {count} entrées de menu;
+	es=cambia {count} entradas de menú;
+	it=cambia {count} voci di menu;
+	}
+
+[changes {count} menu entry]
+	{
+	de=ändert {count} Menüeintrag;
+	fr=modifie {count} entrée de menu;
+	es=cambia {count} entrada de menú;
+	it=cambia {count} voce di menu;
+	}
+
+[changes {count} unit]
+	{
+	de=ändert {count} Einheit;
+	fr=modifie {count} unité;
+	es=cambia {count} unidad;
+	it=cambia {count} unità;
+	}
+
+[changes {count} units]
+	{
+	de=ändert {count} Einheiten;
+	fr=modifie {count} unités;
+	es=cambia {count} unidades;
+	it=cambia {count} unità;
+	}
+
+[changes {count} weapon]
+	{
+	de=ändert {count} Waffe;
+	fr=modifie {count} arme;
+	es=cambia {count} arma;
+	it=cambia {count} arma;
+	}
+
+[changes {count} weapons]
+	{
+	de=ändert {count} Waffen;
+	fr=modifie {count} armes;
+	es=cambia {count} armas;
+	it=cambia {count} armi;
+	}
+
 [changes · {old} saves won't load]
 	{
 	de=ändert sich · Speicherstände von {old} laden nicht;
 	fr=change · les sauvegardes de {old} ne se chargeront pas;
 	es=cambia · las partidas de {old} no cargarán;
 	it=cambia · i salvataggi di {old} non si caricano;
+	}
+
+[check expired]
+	{
+	de=abgelaufen;
+	fr=expirée;
+	es=caducó;
+	it=scaduto;
 	}
 
 [checked {age}]
@@ -10890,12 +12870,36 @@
 	it=fps;
 	}
 
+[hides {count} file]
+	{
+	de=blendet {count} Datei aus;
+	fr=masque {count} fichier;
+	es=oculta {count} archivo;
+	it=nasconde {count} file;
+	}
+
+[hides {count} files]
+	{
+	de=blendet {count} Dateien aus;
+	fr=masque {count} fichiers;
+	es=oculta {count} archivos;
+	it=nasconde {count} file;
+	}
+
 [icon, manual or help file]
 	{
 	de=Symbol, Handbuch oder Hilfedatei;
 	fr=icône, manuel ou fichier d'aide;
 	es=icono, manual o archivo de ayuda;
 	it=icona, manuale o file di aiuto;
+	}
+
+[install failed]
+	{
+	de=gescheitert;
+	fr=ratée;
+	es=fallida;
+	it=fallita;
 	}
 
 [installed]
@@ -10936,6 +12940,22 @@
 	fr=intro et fins · facultatif;
 	es=introducción y finales · opcional;
 	it=intro e finali · facoltativo;
+	}
+
+[it fits this game]
+	{
+	de=es passt zu diesem Spiel;
+	fr=il convient à cette partie;
+	es=encaja en esta partida;
+	it=va bene per questa partita;
+	}
+
+[it works with {names}]
+	{
+	de=er funktioniert mit {names};
+	fr=il marche avec {names};
+	es=funciona con {names};
+	it=funziona con {names};
 	}
 
 [its mod profile cannot be used]
@@ -11066,6 +13086,14 @@
 	it=musica;
 	}
 
+[mutators]
+	{
+	de=Mutatoren;
+	fr=mutateurs;
+	es=mutadores;
+	it=mutatori;
+	}
+
 [needs {name}]
 	{
 	de=braucht {name};
@@ -11090,12 +13118,28 @@
 	it=nuovo;
 	}
 
+[no downloads]
+	{
+	de=keine Downloads;
+	fr=téléch. coupés;
+	es=sin descargas;
+	it=niente download;
+	}
+
 [no longer used now that the full game is here]
 	{
 	de=nicht mehr genutzt, jetzt da das vollständige Spiel da ist;
 	fr=plus utilisé maintenant que le jeu complet est là;
 	es=ya no se usa ahora que el juego completo está aquí;
 	it=non più usato ora che il gioco completo è qui;
+	}
+
+[no space]
+	{
+	de=kein Platz;
+	fr=plus de place;
+	es=sin espacio;
+	it=niente spazio;
 	}
 
 [none]
@@ -11122,12 +13166,28 @@
 	it=non trovato;
 	}
 
+[not offered]
+	{
+	de=nicht angeboten;
+	fr=pas offert;
+	es=no ofrecido;
+	it=non offerto;
+	}
+
 [not reviewed]
 	{
 	de=nicht geprüft;
 	fr=non revu;
 	es=no revisado;
 	it=non revisionato;
+	}
+
+[not written]
+	{
+	de=nicht geschrieben;
+	fr=pas écrit;
+	es=no escrito;
+	it=non scritto;
 	}
 
 [of]
@@ -11184,6 +13244,62 @@
 	fr=rafraîchi {age};
 	es=recargado {age};
 	it=ricaricato {age};
+	}
+
+[refused]
+	{
+	de=abgelehnt;
+	fr=refusé;
+	es=rechazado;
+	it=rifiutato;
+	}
+
+[removes {count} feature]
+	{
+	de=entfernt {count} Geländeobjekt;
+	fr=retire {count} élément;
+	es=quita {count} elemento;
+	it=toglie {count} elemento;
+	}
+
+[removes {count} features]
+	{
+	de=entfernt {count} Geländeobjekte;
+	fr=retire {count} éléments;
+	es=quita {count} elementos;
+	it=toglie {count} elementi;
+	}
+
+[removes {count} unit]
+	{
+	de=entfernt {count} Einheit;
+	fr=retire {count} unité;
+	es=quita {count} unidad;
+	it=toglie {count} unità;
+	}
+
+[removes {count} units]
+	{
+	de=entfernt {count} Einheiten;
+	fr=retire {count} unités;
+	es=quita {count} unidades;
+	it=toglie {count} unità;
+	}
+
+[removes {count} weapon]
+	{
+	de=entfernt {count} Waffe;
+	fr=retire {count} arme;
+	es=quita {count} arma;
+	it=toglie {count} arma;
+	}
+
+[removes {count} weapons]
+	{
+	de=entfernt {count} Waffen;
+	fr=retire {count} armes;
+	es=quita {count} armas;
+	it=toglie {count} armi;
 	}
 
 [rev {revision}]
@@ -11434,6 +13550,14 @@
 	it=sconosciuto · i salvataggi possono non caricarsi;
 	}
 
+[unreachable]
+	{
+	de=unerreichbar;
+	fr=injoignable;
+	es=inalcanzable;
+	it=irraggiungibile;
+	}
+
 [up to {version}]
 	{
 	de=bis zu {version};
@@ -11464,6 +13588,22 @@
 	fr=calcul du temps restant;
 	es=calculando el tiempo restante;
 	it=calcolo del tempo rimasto;
+	}
+
+[wrong file]
+	{
+	de=falsche Datei;
+	fr=mauvais fichier;
+	es=mal archivo;
+	it=file errato;
+	}
+
+[wrong size]
+	{
+	de=falsche Größe;
+	fr=mauvaise taille;
+	es=mal tamaño;
+	it=misura errata;
 	}
 
 [x5]
@@ -11552,6 +13692,46 @@
 	fr={a}, {b};
 	es={a}, {b};
 	it={a}, {b};
+	}
+
+[{brain} {version} · {level}]
+	{
+	de={brain} {version} · {level};
+	fr={brain} {version} · {level};
+	es={brain} {version} · {level};
+	it={brain} {version} · {level};
+	}
+
+[{brain} · {level}]
+	{
+	de={brain} · {level};
+	fr={brain} · {level};
+	es={brain} · {level};
+	it={brain} · {level};
+	}
+
+[{brain} could not start ({reason}); the engine plays this seat]
+	{
+	de={brain} konnte nicht starten ({reason}). Die Engine spielt diesen Platz.;
+	fr={brain} n'a pas pu démarrer ({reason}). Le jeu joue cette place.;
+	es={brain} no pudo empezar ({reason}). El juego juega este puesto.;
+	it={brain} non è riuscito a partire ({reason}). Il gioco gioca questo posto.;
+	}
+
+[{brain} does not fit this game ({reason}); the engine plays this seat]
+	{
+	de={brain} passt nicht zu diesem Spiel ({reason}). Die Engine spielt diesen Platz.;
+	fr={brain} ne convient pas à cette partie ({reason}). Le jeu joue cette place.;
+	es={brain} no encaja en esta partida ({reason}). El juego juega este puesto.;
+	it={brain} non è adatto a questa partita ({reason}). Il gioco gioca questo posto.;
+	}
+
+[{brain} stopped ({reason}); the engine plays this seat on]
+	{
+	de={brain} hat aufgehört ({reason}). Die Engine spielt diesen Platz weiter.;
+	fr={brain} s'est arrêté ({reason}). Le jeu joue cette place.;
+	es={brain} se ha parado ({reason}). El juego juega este puesto.;
+	it={brain} si è fermato ({reason}). Il gioco gioca questo posto.;
 	}
 
 [{changes} Waiting to be removed: {names}.]
@@ -11648,6 +13828,14 @@
 	fr={count} fichiers sur {total} diffèrent;
 	es={count} de {total} archivos difieren;
 	it={count} di {total} file sono diversi;
+	}
+
+[{count} on]
+	{
+	de={count} an;
+	fr={count} actifs;
+	es={count} activos;
+	it={count} attivi;
 	}
 
 [{count} package]
@@ -11906,6 +14094,30 @@
 	it={held} di {total} tracce;
 	}
 
+[{item} ✓]
+	{
+	de={item} ✓;
+	fr={item} ✓;
+	es={item} ✓;
+	it={item} ✓;
+	}
+
+[{item}: another release here]
+	{
+	de={item}: eine andere Fassung ist hier;
+	fr={item} : une autre version est ici;
+	es={item}: otra versión está aquí;
+	it={item}: un'altra versione è qui;
+	}
+
+[{item}: not installed]
+	{
+	de={item}: nicht installiert;
+	fr={item} : pas installé;
+	es={item}: no instalado;
+	it={item}: non installato;
+	}
+
 [{kinds} ({size})]
 	{
 	de={kinds} ({size});
@@ -11930,6 +14142,22 @@
 	it={kinds} · {n} file;
 	}
 
+[{label} · every computer seat]
+	{
+	de={label} · jeder Computersitz;
+	fr={label} · chaque siège ordinateur;
+	es={label} · cada asiento de ordenador;
+	it={label} · ogni posto computer;
+	}
+
+[{label}: {values}]
+	{
+	de={label}: {values};
+	fr={label} : {values};
+	es={label}: {values};
+	it={label}: {values};
+	}
+
 [{label}: {value}]
 	{
 	de={label}: {value};
@@ -11952,6 +14180,14 @@
 	fr={left} et {right};
 	es={left} y {right};
 	it={left} e {right};
+	}
+
+[{left} or {right}]
+	{
+	de={left} oder {right};
+	fr={left} ou {right};
+	es={left} o {right};
+	it={left} o {right};
 	}
 
 [{left} · {right}]
@@ -12018,12 +14254,84 @@
 	it={names} e {count} in più;
 	}
 
+[{names} download first, then sit above {name} in every list.]
+	{
+	de={names} werden zuerst heruntergeladen und stehen dann in jeder Liste über {name}.;
+	fr={names} se téléchargent d'abord, puis passent au-dessus de {name} dans chaque liste.;
+	es={names} se descargan primero y luego quedan por encima de {name} en todas las listas.;
+	it={names} si scaricano prima e poi stanno sopra {name} in ogni elenco.;
+	}
+
+[{names} downloads first, then sits above {name} in every list.]
+	{
+	de={names} wird zuerst heruntergeladen und steht dann in jeder Liste über {name}.;
+	fr={names} se télécharge d'abord, puis passe au-dessus de {name} dans chaque liste.;
+	es={names} se descarga primero y luego queda por encima de {name} en todas las listas.;
+	it={names} si scarica prima e poi sta sopra {name} in ogni elenco.;
+	}
+
+[{names} need it: they stay installed, and cannot be switched on until this is back.]
+	{
+	de={names} brauchen es: sie bleiben installiert und lassen sich nicht einschalten, bis dies wieder da ist.;
+	fr={names} en ont besoin : ils restent installés et ne peuvent pas être activés tant que ceci n'est pas de retour.;
+	es={names} lo necesitan: siguen instalados y no se pueden activar hasta que esto vuelva.;
+	it={names} ne hanno bisogno: restano installati e non si possono attivare finché questo non torna.;
+	}
+
+[{names} stopped before the game could start. Nothing they changed is kept, and the other mutators are unaffected.]
+	{
+	de={names} haben angehalten, bevor das Spiel starten konnte. Nichts, was sie geändert haben, bleibt, und die anderen Mutatoren sind unberührt.;
+	fr={names} se sont arrêtés avant que la partie puisse démarrer. Rien de ce qu'ils ont changé n'est gardé, et les autres mutateurs ne sont pas touchés.;
+	es={names} se detuvieron antes de que el juego pudiera empezar. No se guarda nada de lo que cambiaron, y los demás mutadores no se ven afectados.;
+	it={names} si sono fermati prima che la partita potesse iniziare. Non resta niente di ciò che hanno cambiato, e gli altri mutatori non ne risentono.;
+	}
+
+[{names} turn off too: they need {name}.]
+	{
+	de={names} schalten sich auch aus: sie brauchen {name}.;
+	fr={names} s'éteignent aussi : ils ont besoin de {name}.;
+	es={names} también se apagan: necesitan {name}.;
+	it={names} si spengono anche: hanno bisogno di {name}.;
+	}
+
+[{names} turns off too: it needs {name}.]
+	{
+	de={names} schaltet sich auch aus: er braucht {name}.;
+	fr={names} s'éteint aussi : il a besoin de {name}.;
+	es={names} también se apaga: necesita {name}.;
+	it={names} si spegne anche: ha bisogno di {name}.;
+	}
+
+[{name} came with {dependant}]
+	{
+	de={name} kam mit {dependant};
+	fr={name} ajouté pour {dependant};
+	es={name} se añadió para {dependant};
+	it={name} aggiunto per {dependant};
+	}
+
+[{name} cannot play this seat now, so it starts on the built-in player.]
+	{
+	de={name} kann diesen Sitz jetzt nicht spielen, also startet er mit dem eingebauten Spieler.;
+	fr={name} ne peut pas jouer ce siège maintenant, donc il commence avec le joueur intégré.;
+	es={name} no puede jugar este asiento ahora, así que empieza con el jugador integrado.;
+	it={name} non può giocare questo posto adesso, quindi parte con il giocatore integrato.;
+	}
+
 [{name} from {installed} is installed. Replace it with {name} from {new}? The one from {installed} is kept, and ROLL BACK brings it back.]
 	{
 	de={name} von {installed} ist installiert. Durch {name} von {new} ersetzen? Das von {installed} bleibt erhalten, und ZURÜCKROLLEN holt es zurück.;
 	fr={name} de {installed} est installé. Le remplacer par {name} de {new} ? Celui de {installed} est gardé, et RESTAURER le ramène.;
 	es={name} de {installed} está instalado. ¿Reemplazarlo por {name} de {new}? El de {installed} se conserva, y REVERTIR lo trae de vuelta.;
 	it={name} da {installed} è installato. Sostituirlo con {name} da {new}? Quello da {installed} viene tenuto, e RIPRISTINA lo riporta.;
+	}
+
+[{name} is installed. Choose it for a computer player when you set up a game.]
+	{
+	de={name} ist installiert. Wähle es für einen Computerspieler, wenn du ein Spiel einrichtest.;
+	fr={name} est installé. Choisis-le pour un joueur ordinateur quand tu prépares une partie.;
+	es={name} está instalado. Elígelo para un jugador de ordenador cuando prepares una partida.;
+	it={name} è installato. Sceglilo per un giocatore del computer quando prepari una partita.;
 	}
 
 [{name} is installed. Turn it on in the Library.]
@@ -12034,6 +14342,14 @@
 	it={name} è installata. Attivala nella Biblioteca.;
 	}
 
+[{name} is installed. Turn it on with the Mutators button when you set up a game.]
+	{
+	de={name} ist installiert. Schalte ihn über die Schaltfläche Mutatoren ein, wenn du ein Spiel einrichtest.;
+	fr={name} est installé. Active-le avec le bouton Mutateurs quand tu prépares une partie.;
+	es={name} está instalado. Actívalo con el botón Mutadores cuando prepares una partida.;
+	it={name} è installato. Attivalo con il pulsante Mutatori quando prepari una partita.;
+	}
+
 [{name} is not copied, so this save cannot be loaded with it.]
 	{
 	de={name} ist nicht kopiert, darum lässt sich dieser Spielstand damit nicht laden.;
@@ -12042,12 +14358,52 @@
 	it={name} non è stato copiato, quindi questo salvataggio non si può caricare con quello.;
 	}
 
+[{name} is precompiled Lua. A brain holds Lua source only.]
+	{
+	de={name} ist vorkompiliertes Lua. Ein Gehirn enthält nur Lua-Quelltext.;
+	fr={name} est du Lua précompilé. Un cerveau ne contient que du source Lua.;
+	es={name} es Lua precompilado. Un cerebro solo contiene código fuente Lua.;
+	it={name} è Lua precompilato. Un cervello contiene solo sorgente Lua.;
+	}
+
+[{name} is precompiled Lua. A mutator holds Lua source only.]
+	{
+	de={name} ist vorkompiliertes Lua. Ein Mutator enthält nur Lua-Quelltext.;
+	fr={name} est du Lua précompilé. Un mutateur ne contient que du source Lua.;
+	es={name} es Lua precompilado. Un mutador solo contiene código fuente Lua.;
+	it={name} è Lua precompilato. Un mutatore contiene solo sorgente Lua.;
+	}
+
+[{name} needs it: it stays installed, and cannot be switched on until this is back.]
+	{
+	de={name} braucht es: es bleibt installiert und lässt sich nicht einschalten, bis dies wieder da ist.;
+	fr={name} en a besoin : il reste installé et ne peut pas être activé tant que ceci n'est pas de retour.;
+	es={name} lo necesita: sigue instalado y no se puede activar hasta que esto vuelva.;
+	it={name} ne ha bisogno: resta installato e non si può attivare finché questo non torna.;
+	}
+
 [{name} needs {need}.]
 	{
 	de={name} braucht {need}.;
 	fr={name} a besoin de {need}.;
 	es={name} necesita {need}.;
 	it={name} ha bisogno di {need}.;
+	}
+
+[{name} needs {prerequisites}, which you don't have. They download first, and go above {name} in every list.]
+	{
+	de={name} braucht {prerequisites}, die du nicht hast. Sie werden zuerst heruntergeladen und stehen in jeder Liste über {name}.;
+	fr={name} a besoin de {prerequisites}, que tu n'as pas. Ils se téléchargent d'abord et passent au-dessus de {name} dans chaque liste.;
+	es={name} necesita {prerequisites}, que no tienes. Se descargan primero y quedan por encima de {name} en todas las listas.;
+	it={name} ha bisogno di {prerequisites}, che non hai. Si scaricano prima e stanno sopra {name} in ogni elenco.;
+	}
+
+[{name} needs {prerequisite}, which you don't have. Both download now, and {short} goes above {name} in every list.]
+	{
+	de={name} braucht {prerequisite}, das du nicht hast. Beide werden jetzt heruntergeladen, und {short} steht in jeder Liste über {name}.;
+	fr={name} a besoin de {prerequisite}, que tu n'as pas. Les deux se téléchargent maintenant, et {short} passe au-dessus de {name} dans chaque liste.;
+	es={name} necesita {prerequisite}, que no tienes. Ambos se descargan ahora, y {short} queda por encima de {name} en todas las listas.;
+	it={name} ha bisogno di {prerequisite}, che non hai. Entrambi si scaricano ora, e {short} sta sopra {name} in ogni elenco.;
 	}
 
 [{name} off]
@@ -12064,6 +14420,30 @@
 	fr={name} seulement;
 	es=solo {name};
 	it=solo {name};
+	}
+
+[{name} stopped before the game could start. Nothing it changed is kept, and the other mutators are unaffected.]
+	{
+	de={name} hat angehalten, bevor das Spiel starten konnte. Nichts, was er geändert hat, bleibt, und die anderen Mutatoren sind unberührt.;
+	fr={name} s'est arrêté avant que la partie puisse démarrer. Rien de ce qu'il a changé n'est gardé, et les autres mutateurs ne sont pas touchés.;
+	es={name} se detuvo antes de que el juego pudiera empezar. No se guarda nada de lo que cambió, y los demás mutadores no se ven afectados.;
+	it={name} si è fermato prima che la partita potesse iniziare. Non resta niente di ciò che ha cambiato, e gli altri mutatori non ne risentono.;
+	}
+
+[{name} stopped with No Mod]
+	{
+	de={name} wurde ohne Mod abgebrochen;
+	fr={name} s'est arrêté sans mod;
+	es={name} se detuvo sin mod;
+	it={name} si è fermato senza mod;
+	}
+
+[{name} stopped with {mod}]
+	{
+	de={name} wurde mit {mod} abgebrochen;
+	fr={name} s'est arrêté avec {mod};
+	es={name} se detuvo con {mod};
+	it={name} si è fermato con {mod};
 	}
 
 [{name} turns off too: it needs {need}.]
@@ -12112,6 +14492,22 @@
 	fr={name} {percent}%;
 	es={name} {percent}%;
 	it={name} {percent}%;
+	}
+
+[{name} {range} ✓]
+	{
+	de={name} {range} ✓;
+	fr={name} {range} ✓;
+	es={name} {range} ✓;
+	it={name} {range} ✓;
+	}
+
+[{name} {range}: not installed]
+	{
+	de={name} {range}: nicht installiert;
+	fr={name} {range} : pas installé;
+	es={name} {range}: no instalado;
+	it={name} {range}: non installato;
 	}
 
 [{name} {version}]
@@ -12168,6 +14564,54 @@
 	fr=Les cartes et les campagnes de {name} quittent les listes jusqu'à ce que tu le rallumes. Rien n'est effacé.;
 	es=Los mapas y las campañas de {name} salen de las listas hasta que lo enciendas de nuevo. No se borra nada.;
 	it=Le mappe e le campagne di {name} escono dalle liste finché non lo riaccendi. Non viene cancellato nulla.;
+	}
+
+[{name}: not installed]
+	{
+	de={name}: nicht installiert;
+	fr={name} : pas installé;
+	es={name}: no instalado;
+	it={name}: non installato;
+	}
+
+[{name}: not offered.]
+	{
+	de={name}: nicht angeboten.;
+	fr={name} : pas offert.;
+	es={name}: no ofrecido.;
+	it={name}: non offerto.;
+	}
+
+[{name}: {player} does not have it.]
+	{
+	de={name}: {player} hat es nicht.;
+	fr={name} : {player} ne l'a pas.;
+	es={name}: {player} no lo tiene.;
+	it={name}: {player} non ce l'ha.;
+	}
+
+[{name}: release {here} here, release {there} on {player}'s machine.]
+	{
+	de={name}: Version {here} hier, Version {there} auf dem Rechner von {player}.;
+	fr={name} : version {here} ici, version {there} sur la machine de {player}.;
+	es={name}: versión {here} aquí, versión {there} en el equipo de {player}.;
+	it={name}: versione {here} qui, versione {there} sul computer di {player}.;
+	}
+
+[{name}: {problem}]
+	{
+	de={name}: {problem};
+	fr={name} : {problem};
+	es={name}: {problem};
+	it={name}: {problem};
+	}
+
+[{name}: {reason}]
+	{
+	de={name}: {reason};
+	fr={name} : {reason};
+	es={name}: {reason};
+	it={name}: {reason};
 	}
 
 [{n} GB]
@@ -12498,6 +14942,30 @@
 	it={player} ha provato a riprendere.;
 	}
 
+[{problem} RETRY tries again.]
+	{
+	de={problem} ERNEUT versucht es noch einmal.;
+	fr={problem} RÉESSAYER réessaie.;
+	es={problem} REINTENTAR vuelve a intentarlo.;
+	it={problem} RIPROVA riprova.;
+	}
+
+[{player}'s mutators gave a different result from yours, so the game would play differently on each machine.]
+	{
+	de=Die Mutatoren von {player} haben ein anderes Ergebnis geliefert als deine, deshalb würde das Spiel auf jedem Rechner anders laufen.;
+	fr=Les mutateurs de {player} ont donné un résultat différent des tiens, donc la partie se jouerait autrement sur chaque machine.;
+	es=Los mutadores de {player} dieron un resultado distinto del tuyo, así que el juego iría distinto en cada equipo.;
+	it=I mutatori di {player} hanno dato un risultato diverso dal tuo, quindi la partita andrebbe in modo diverso su ogni computer.;
+	}
+
+[{player}'s GET MUTATORS button fetches release {release}.]
+	{
+	de=Der Knopf MUTATOREN HOLEN von {player} holt Version {release}.;
+	fr=Le bouton OBTENIR LES MUTATEURS de {player} récupère la version {release}.;
+	es=El botón OBTENER MUTADORES de {player} baja la versión {release}.;
+	it=Il pulsante OTTIENI MUTATORI di {player} scarica la versione {release}.;
+	}
+
 [{problem} The folder may be missing totala1.hpi.]
 	{
 	de={problem} Dem Ordner fehlt vielleicht totala1.hpi.;
@@ -12530,6 +14998,14 @@
 	it={registry} · Non revisionato dal team OA;
 	}
 
+[{registry}: downloads off.]
+	{
+	de={registry}: Downloads aus.;
+	fr={registry} : téléch. coupés.;
+	es={registry}: sin descargas.;
+	it={registry}: niente download.;
+	}
+
 [{row}: {saved} / {now}]
 	{
 	de={row}: {saved} / {now};
@@ -12544,6 +15020,22 @@
 	fr={save_heading} / {now_heading};
 	es={save_heading} / {now_heading};
 	it={save_heading} / {now_heading};
+	}
+
+[{seat} · {mod}]
+	{
+	de={seat} · {mod};
+	fr={seat} · {mod};
+	es={seat} · {mod};
+	it={seat} · {mod};
+	}
+
+[{setup} · {mod}]
+	{
+	de={setup} · {mod};
+	fr={setup} · {mod};
+	es={setup} · {mod};
+	it={setup} · {mod};
 	}
 
 [{shown} of {all}]
@@ -12794,6 +15286,14 @@
 	it={tracks} · facoltativo;
 	}
 
+[{unit}: {field} {value} held at {max}]
+	{
+	de={unit}: {field} {value} bei {max} gehalten;
+	fr={unit} : {field} {value} retenu à {max};
+	es={unit}: {field} {value} se queda en {max};
+	it={unit}: {field} {value} tenuto a {max};
+	}
+
 [{used} on this {device}]
 	{
 	de={used} auf diesem {device};
@@ -12866,6 +15366,14 @@
 	it={version} · rev. {revision};
 	}
 
+[{version} · {author}]
+	{
+	de={version} · {author};
+	fr={version} · {author};
+	es={version} · {author};
+	it={version} · {author};
+	}
+
 [{version} · {maps}]
 	{
 	de={version} · {maps};
@@ -12922,12 +15430,52 @@
 	it=·;
 	}
 
+[· needs {name}]
+	{
+	de=· benötigt {name};
+	fr=· nécessite {name};
+	es=· requiere {name};
+	it=· richiede {name};
+	}
+
+[· {reason}]
+	{
+	de=· {reason};
+	fr=· {reason};
+	es=· {reason};
+	it=· {reason};
+	}
+
+[· not compatible with this mod]
+	{
+	de=· passt nicht zu diesem Mod;
+	fr=· pas compatible avec ce mod;
+	es=· no es compatible con este mod;
+	it=· non è compatibile con questo mod;
+	}
+
 [‹ DOWNLOADS]
 	{
 	de=‹ DOWNLOADS;
 	fr=‹ TÉLÉCHARGEMENTS;
 	es=‹ DESCARGAS;
 	it=‹ DOWNLOAD;
+	}
+
+[▲ UP]
+	{
+	de=▲ NACH OBEN;
+	fr=▲ HAUT;
+	es=▲ ARRIBA;
+	it=▲ SU;
+	}
+
+[▼ DOWN]
+	{
+	de=▼ NACH UNTEN;
+	fr=▼ BAS;
+	es=▼ ABAJO;
+	it=▼ GIÙ;
 	}
 
 [✓]
@@ -13602,14 +16150,6 @@
 	it=Tutti i tag;
 	}
 
-[Files]
-	{
-	de=Dateien;
-	fr=Fichiers;
-	es=Archivos;
-	it=File;
-	}
-
 [Installed: {count}]
 	{
 	de=Installiert: {count};
@@ -13792,14 +16332,6 @@
 	fr=Prend effet à la prochaine partie;
 	es=Se aplica desde la próxima partida;
 	it=Ha effetto dalla prossima partita;
-	}
-
-[On]
-	{
-	de=An;
-	fr=Activé;
-	es=Sí;
-	it=Sì;
 	}
 
 [OPEN]

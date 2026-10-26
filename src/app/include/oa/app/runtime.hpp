@@ -24,12 +24,15 @@
 #include "oa/ui/display_layout.hpp"
 #include "oa/audio/sdl_audio.hpp"
 #include "oa/base/game_loop.hpp"
+#include "oa/base/sha256.hpp"
 #include "oa/data/defs/locale.hpp"
 #include "oa/data/defs/rule_keys.hpp"
 #include "oa/data/defs/sides.hpp"
 #include "oa/data/defs/unit_catalog.hpp"
 #include "oa/data/languages.hpp"
 #include "oa/data/languages/language_pack.hpp"
+#include "oa/data/brain_facts.hpp"
+#include "oa/data/brain_library/seats.hpp"
 #include "oa/data/limits.hpp"
 #include "oa/sim/gameplay_input/input.hpp"
 #include "oa/sim/gameplay_input/order_cursor.hpp"
@@ -66,7 +69,11 @@
 #include "oa/ui/frontend/resource_palette.hpp"
 #include "oa/ui/engine_settings.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
+#include "oa/ui/mutator_picker/model.hpp"
+#include "oa/ui/brain_picker/model.hpp"
 #include "oa/data/content_bundles/content_choice.hpp"
+#include "oa/data/mutators/choice.hpp"
+#include "oa/data/mutators/dry_run.hpp"
 #include "oa/ui/pad_controls.hpp"
 #include "oa/app/acceleration_status.hpp"
 #include "oa/app/content_copy.hpp"
@@ -74,6 +81,9 @@
 #include "oa/app/content/downloads.hpp"
 #include "oa/app/content/settings.hpp"
 #include "oa/app/renderer_records.hpp"
+#include "oa/app/brain_seats.hpp"
+#include "oa/app/seat_chat.hpp"
+#include "oa/ui/frontend_multiplayer/host_mutators.hpp"
 #include "oa/app/window_icon.hpp"
 #include "oa/ui/frontend_renderer/scroll_bars.hpp"
 #include "oa/present/world_renderer/world_radar.hpp"
@@ -89,6 +99,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -99,6 +110,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace oa::ui::console {
@@ -106,6 +118,20 @@ struct Console;
 struct ConsoleHost;
 enum class CrashTest : uint8_t;
 } // namespace oa::ui::console
+
+namespace oa::app::renderer_effect_sources {
+struct Source;
+} // namespace oa::app::renderer_effect_sources
+
+namespace oa::app::renderer_water {
+struct Wind;
+class SurfaceCache;
+struct Disturbance;
+} // namespace oa::app::renderer_water
+
+namespace oa::app::renderer_effect_events {
+class Capture;
+} // namespace oa::app::renderer_effect_events
 
 namespace oa::present::model {
 struct RgbBridge;
@@ -159,15 +185,51 @@ namespace oa::data::map_fit {
 struct Fit;
 } // namespace oa::data::map_fit
 
+namespace oa::data::mutator_library {
+struct Listing;
+} // namespace oa::data::mutator_library
+
+namespace oa::data::brain_library {
+struct Listing;
+} // namespace oa::data::brain_library
+
+namespace oa::data::mutators {
+struct ChosenMap;
+struct Loadout;
+struct PipelineInput;
+struct PipelineResult;
+struct ResolvedMutator;
+} // namespace oa::data::mutators
+
+namespace oa::netgame {
+struct PresenceLoadoutAssembly;
+struct PresenceMutators;
+} // namespace oa::netgame
+
+namespace oa::data::saves {
+struct ContentBrain;
+struct ContentMutator;
+} // namespace oa::data::saves
+
+namespace oa::app::mutators_memory {
+enum class Setup : uint8_t;
+struct Crash;
+} // namespace oa::app::mutators_memory
+
 namespace oa::platform::text_font {
 class FontStack;
 } // namespace oa::platform::text_font
 
 namespace oa::ui::frontend_multiplayer {
+struct Lobby;
 struct LobbyMapSource;
 struct LobbyPackMap;
 struct LocalPack;
 } // namespace oa::ui::frontend_multiplayer
+
+namespace oa::sim::brains {
+struct RecordSample;
+}
 
 namespace oa::app {
 
@@ -310,6 +372,157 @@ namespace content {
 class Service;
 } // namespace content
 
+/// Resolves one mutator named for this run.
+///
+/// `version` empty is not checked against the installed package. On failure
+/// `*error` is the reason, without a file or an option in front of it, and
+/// `*resolved` is left untouched.
+///
+/// @param text the choice, as `--mutator` writes it
+/// @param version the version a launch required; empty when it named none
+/// @param folder the player's Mutators folder
+/// @param[out] resolved the package, when it can be used
+/// @param[out] error the reason, when it cannot; may be null
+/// @return true when the mutator can be used
+[[nodiscard]] bool resolve_run_mutator(
+    std::string_view text,
+    std::string_view version,
+    const std::filesystem::path& folder,
+    oa::data::mutators::ResolvedMutator* resolved,
+    std::string* error
+);
+
+/// Resolves one mutator named for this run from a listing already made, for
+/// a caller that resolves several from one listing of the Mutators folder.
+///
+/// @param text the choice, as `--mutator` writes it
+/// @param version the version a launch required; empty when it named none
+/// @param listing the player's Mutators folder, listed
+/// @param[out] resolved the package, when it can be used
+/// @param[out] error the reason, when it cannot; may be null
+/// @return true when the mutator can be used
+[[nodiscard]] bool resolve_run_mutator(
+    std::string_view text,
+    std::string_view version,
+    const oa::data::mutator_library::Listing& listing,
+    oa::data::mutators::ResolvedMutator* resolved,
+    std::string* error
+);
+
+/// What a caller hands the mutator picker, and what the picker hands back.
+struct MutatorPickerRequest {
+    /// Which setup opened the picker.
+    oa::ui::mutator_picker::Setup setup{oa::ui::mutator_picker::Setup::skirmish};
+    /// The set the picker opens with, in order, each with its options.
+    std::vector<oa::ui::mutator_picker::Chosen> set{};
+    /// True when a guest is looking: only the host can change the set.
+    bool read_only{false};
+    /// Called with the set, in order with its options, when USE THESE closes
+    /// the picker and every mutator in the set is installed.
+    std::function<void(std::vector<oa::ui::mutator_picker::Chosen>)> used{};
+    /// Called when the picker closes without handing a set.
+    std::function<void()> cancelled{};
+    /// True when `set` is the setup's remembered last set, not a set already
+    /// chosen. The picker then says so. Callers that leave it false open on
+    /// a chosen set, or on none.
+    bool remembered{false};
+};
+
+/// One computer player a match will seat with a brain.
+///
+/// `saved` is the state a saved game hands back to `start`. Empty is no
+/// state. An empty `version` and `package_sha256` are a brain installed by
+/// hand, whose folder has no origin record.
+struct BrainSeat {
+    uint8_t player{};                                 ///< the player, 0 to 9
+    std::filesystem::path folder{};                   ///< the brain's folder
+    std::string id{};                                 ///< the brain's id
+    std::string version{};                            ///< the manifest's version
+    std::string package_sha256{};                     ///< the package file's SHA-256, or empty
+    std::string level{};                              ///< the level's id
+    oa::data::brain_library::Difficulty difficulty{}; ///< the level's income
+    /// Option id and canonical value, in the brain's option order.
+    std::vector<std::pair<std::string, std::string>> options{};
+    /// Saved state `start` receives. Empty when the brain saved none, or when
+    /// the installed brain is not the version and package the save recorded.
+    std::optional<std::vector<uint8_t>> saved{};
+};
+
+/// Where the mutator picker reads what it lists, and where it queues a download.
+///
+/// The runtime's own feed is installed until a check replaces it.
+struct MutatorPickerFeed {
+    void* context{nullptr};
+    /// The mutators the picker can show. The screen fills the setup, the set,
+    /// the mod's name and the clash default itself.
+    oa::ui::mutator_picker::Inputs (*inputs)(void* context, oa::ui::mutator_picker::Setup setup){
+        nullptr
+    };
+    /// A count that moves on when `inputs` would give something else.
+    uint64_t (*generation)(void* context){nullptr};
+    /// Queues one package. Nothing is fetched on this thread.
+    std::optional<uint64_t> (*enqueue)(
+        void* context, std::string_view registry, std::string_view key, std::string* why
+    ){nullptr};
+    /// Cancels a download that is still waiting.
+    void (*cancel)(void* context, std::string_view registry, std::string_view key){nullptr};
+    /// Asks for a check of one mutator with these options, never doing the
+    /// work on the main thread. True when a check was started. False when
+    /// the list cannot be resolved, and the caller then does not say the
+    /// mutator is being checked. The verdict arrives in a later `inputs`,
+    /// the generation moving on. Null checks nothing.
+    bool (*check)(void* context, std::string_view id, const oa::ui::mutator_picker::Chosen& chosen){
+        nullptr
+    };
+    /// Retries a download that stopped. Null leaves it stopped.
+    void (*retry)(void* context, std::string_view registry, std::string_view key){nullptr};
+};
+
+/// What a caller hands the brain picker, and what the picker hands back.
+struct BrainPickerRequest {
+    /// Which setup opened the picker.
+    oa::data::brain_library::Setup setup{};
+    /// The seat, as a player reads it.
+    std::string seat_name{};
+    /// The seat's choice as the setup remembered it.
+    oa::ui::brain_picker::Choice current{};
+    /// The setup's difficulty. A new brain starts at the level of this
+    /// difficulty, and the built-in player uses it while the level is fixed.
+    oa::data::brain_library::Difficulty setup_difficulty{};
+    /// True in a skirmish or a campaign, where the Difficulty button sets
+    /// every built-in seat's level.
+    bool built_in_level_fixed{};
+    /// True when the picker offers to put the choice on every computer seat.
+    bool offer_every_seat{};
+    /// Called with the choice and whether it is for every computer seat,
+    /// when USE THIS closes the picker.
+    std::function<void(oa::ui::brain_picker::Choice, bool every_seat)> used{};
+    /// Called when the picker closes without handing a choice.
+    std::function<void()> cancelled{};
+};
+
+/// Where the brain picker reads the brains it lists.
+///
+/// The brains are in the order the picker lists them, the built-in player
+/// first. The generation moves on when that list would differ. The runtime's
+/// own feed is installed until a check replaces it.
+struct BrainPickerFeed {
+    void* context{nullptr};
+    /// The brains the picker can show. Null gives no list.
+    std::vector<oa::ui::brain_picker::Brain> (*brains)(void* context){nullptr};
+    /// A count that moves on when `brains` would give something else.
+    uint64_t (*generation)(void* context){nullptr};
+};
+
+/// One mutator that stopped a skirmish or a campaign mission from starting.
+///
+/// The start question reads it. An empty id is a refusal of the whole list.
+struct MutatorStartStop {
+    std::string id{};     ///< the mutator's id; empty when the list was refused
+    std::string name{};   ///< the name a player sees; empty when the list was refused
+    std::string reason{}; ///< why it stopped, as the player reads it
+};
+
 /// The selections the Ctrl+letter keys and the selection bar's buttons make.
 enum class SelectionCommand : uint8_t {
     all,       ///< every unit of the local player's (Ctrl+A)
@@ -406,17 +619,19 @@ class Runtime final : public menu::Host,
     }
 
     /// What the Library showed when a switch of the mod from it ended the
-    /// run: its tab, filters, tag, search, selection and details.
+    /// run: its tab, filters, tag, search, selection, scroll and details.
     struct LibraryReturn;
 
     /// Returns what the Library showed when a switch of the mod from it
     /// ended the run, which a runtime built after the soft restart takes
-    /// over (take_library_return).
+    /// over (take_library_return). What the run before left is not handed
+    /// on: this run opened it again, or dropped it.
     ///
     /// @return the Library's tab, search and selection; null when the switch
-    ///     was not made from the Library, or the run did not end for one
+    ///     was not made from the Library in this run, or the run did not end
+    ///     for one
     [[nodiscard]] std::shared_ptr<const LibraryReturn> library_return() const {
-        return library_return_;
+        return library_kept_;
     }
 
     /// Returns what the progress dialog says while the switch of the mod in
@@ -490,6 +705,39 @@ class Runtime final : public menu::Host,
     void move_map_unit_computer_last(
         std::array<int32_t, 10>& positions, int32_t& placing, bool fixed_positions
     );
+
+    // Brains read where the match placed its players (runtime_campaign.cpp).
+    // Network play notes its own placement through the same three calls.
+
+    /// Copies the selected schema's kind-1 start markers, in stored order.
+    void note_brain_map_starts();
+
+    /// Records the start index this match gave one player.
+    ///
+    /// `start_index` is the index passed to the placement, after a neutral
+    /// map has moved the computer player. `map_placed` is true when the map's
+    /// own units took the commander's place. `placed_here` is true when this
+    /// machine placed that player. A later note of a player this machine did
+    /// not place does not replace an index already recorded here.
+    ///
+    /// @param player player index, 0 to 9
+    /// @param start_index zero-based start, or negative when none
+    /// @param map_placed true when the map's units were placed
+    /// @param placed_here true when this machine placed the player
+    void remember_brain_player_start(
+        uint8_t player, int32_t start_index, bool map_placed, bool placed_here
+    );
+
+    /// Publishes the start rule into the note, and into brains state when a
+    /// brain is already seated.
+    ///
+    /// A campaign mission is fixed. So is a match in which every player this
+    /// machine had to place was placed by the map's own units and none took a
+    /// commander. Otherwise `fixed_by_setup` is the skirmish StartLocation or
+    /// the battle room's fixed-starts option. Does not create brains state.
+    ///
+    /// @param fixed_by_setup true when the setup itself asked for fixed starts
+    void publish_brain_starts(bool fixed_by_setup);
 
     /// Tells whether the match's map places units for the neutral player,
     /// which the team start positions read.
@@ -846,7 +1094,8 @@ class Runtime final : public menu::Host,
 
     /// Hands the runtime the Library a switch of the mod from it left in the
     /// run before: once the main menu shows, the Library opens again on the
-    /// same tab, filter, tag and search, with the same entry selected.
+    /// same tab, filter, tag and search, with the same entry selected, within
+    /// kept_library_wait_ms (reopen_kept_library).
     ///
     /// @param shown what the Library showed; null opens nothing
     void take_library_return(std::shared_ptr<const LibraryReturn> shown) noexcept;
@@ -1077,7 +1326,8 @@ class Runtime final : public menu::Host,
     /// calls it for the recording it writes.
     ///
     /// The save or the recording itself is unchanged, so an older build still
-    /// reads it. The note names the base game and the rule-changing expansions.
+    /// reads it. The note names the base game, the rule-changing expansions
+    /// and the mutators the match is playing.
     ///
     /// @param path the save or the recording
     void note_content_beside(const fs::path& path) const;
@@ -1377,6 +1627,17 @@ class Runtime final : public menu::Host,
     /// Closes the map selection modal, when open, and sets the skirmish screen up again.
     void close_map_modal();
 
+    /// Points at a gadget and keeps the press until the release, without activating it.
+    ///
+    /// exercise_click activates from here. A start that must not hand the
+    /// setup's mutators presses START this way and starts the match itself.
+    ///
+    /// Throws std::runtime_error when the screen lacks the gadget or the press
+    /// is not kept to the release.
+    ///
+    /// @param gadget_name gadget to press
+    void stage_exercise_click(std::string_view gadget_name);
+
     /// Clicks a gadget of the current screen as the navigation check does: pointer, press, redraw,
     /// release and activation at its centre.
     ///
@@ -1597,6 +1858,15 @@ class Runtime final : public menu::Host,
     /// does not enter a match.
     void start_benchmark_skirmish();
 
+    /// Starts a two-player skirmish that plays the list chosen for the match.
+    ///
+    /// The same walk as start_benchmark_skirmish. START is pressed, and the
+    /// match starts through start_skirmish_as_chosen, so the setup's set is
+    /// skipped, as a replay's or a network start skips it. Throws
+    /// std::runtime_error when the map lacks two start positions or Start
+    /// does not enter a match.
+    void start_benchmark_skirmish_as_chosen();
+
     /// Places two lines of light infantry facing each other beside the local commander, close
     /// enough to engage at once.
     ///
@@ -1716,6 +1986,17 @@ class Runtime final : public menu::Host,
     /// @param ticks ticks to run
     void run_headless_match(std::size_t ticks);
 
+    /// Plays a two-seat headless skirmish between the brains `--brain-match` names.
+    ///
+    /// The match stops when one seat or neither has units left, or after
+    /// `ticks` ticks, and prints the brain match report. It returns 0 when
+    /// the match played to that end, and 1 when the map cannot be played or
+    /// a seat's brain could not be seated.
+    ///
+    /// @param ticks ticks to run at most
+    /// @return 0 when the match played, 1 when it did not
+    int run_headless_brain_match(std::size_t ticks);
+
     /// Runs the --campaign mission headless with the computer player active.
     ///
     /// Every distinct tick error is logged with the run's tick it first
@@ -1800,10 +2081,44 @@ class Runtime final : public menu::Host,
     /// EngineView::margin pixels larger and cut at the view's offset, with
     /// the default gamma; the player's saved gamma never applies. No
     /// overlay, label, panel, message or cursor is drawn. The Game block's
-    /// camera is left bound to the drawn view.
+    /// camera is left bound to the drawn view. The processor draws it,
+    /// unless director_draws_on_card (draw_director_card_frame).
     ///
     /// @param[out] rgb the frame, width * height * 3 bytes, row by row
     void draw_director_frame(std::span<uint8_t> rgb);
+
+    /// Tells whether director mode's frames are drawn by the graphics card's
+    /// Full tier (DirectorPresentation::full), on the renderer with no window
+    /// open_director_card made.
+    ///
+    /// @return true in director mode once that renderer is open
+    [[nodiscard]] bool director_draws_on_card() const noexcept;
+
+    /// Opens the renderer the Full tier draws director frames on: starts
+    /// SDL's video, makes SDL's GPU renderer with no window, makes it the
+    /// runtime's renderer, switches the accelerated presentation on at a
+    /// Full rung and runs the Full function test on its card executor.
+    /// Called by enter_director_mode when the presentation asks for the
+    /// graphics card.
+    ///
+    /// Throws DirectorCardUnavailable when SDL's video or the renderer does
+    /// not start, and std::runtime_error when the function test fails.
+    void open_director_card();
+
+    /// Closes what open_director_card opened, as much of it as was opened,
+    /// and puts the runtime's renderer back.
+    ///
+    /// @param[in,out] state director mode's state, whose card is closed
+    void close_director_card(DirectorState& state) noexcept;
+
+    /// Draws the running match's current tick from the director's camera on
+    /// the graphics card's Full tier and reads it back into a frame:
+    /// draw_director_frame's frame, the card's picture in place of the
+    /// processor's. Throws std::runtime_error when the Full tier does not
+    /// draw it.
+    ///
+    /// @param[out] rgb the frame, width * height * 3 bytes, row by row
+    void draw_director_card_frame(std::span<uint8_t> rgb);
 
     /// Runs --check-director-view: a headless skirmish drawn in director
     /// mode, checked against the same skirmish replayed in director mode
@@ -1867,8 +2182,13 @@ class Runtime final : public menu::Host,
     /// Runs --check-director-render: a small director script rendered over
     /// the headless skirmish with encoding off, in full and its second chunk
     /// alone, checked for its files, its sound and the world it reaches.
-    /// Throws std::runtime_error when a check fails.
-    void check_director_render();
+    /// With --hardware-acceleration=full the frames are drawn by the
+    /// graphics card's Full tier, and the run manifest must say so. Throws
+    /// std::runtime_error when a check fails.
+    ///
+    /// @return 0 when it ran; 77, which ctest reports as skipped, when the
+    ///     Full tier was asked for and no graphics card renderer could be made
+    [[nodiscard]] int check_director_render();
 
     /// Starts the --campaign mission --mission names through the Any Mission list, its briefing and
     /// Start.
@@ -2078,6 +2398,24 @@ class Runtime final : public menu::Host,
     /// @param runtime the running app
     /// @return the hash, 64 lower-case hexadecimal digits
     friend std::string simulation_hash(const Runtime& runtime);
+    /// Returns the simulation hash the run plays under, as a digest
+    /// (simulation_hash in extension.hpp).
+    ///
+    /// The digest is the one `simulation_hash` used to report as text, folded
+    /// with `match_mutator_digest` when a match has applied mutators. With no
+    /// mutator digest it is that hash unchanged.
+    ///
+    /// @param runtime the running app
+    /// @return the hash
+    friend oa::base::sha256::Digest played_sim_hash(const Runtime& runtime);
+    /// The profile hash played_sim_hash folds the mutator digest into.
+    ///
+    /// run_mutators reports this digest as text in simulation_hash_without.
+    /// With no mutator digest it is the hash simulation_hash reports.
+    ///
+    /// @param runtime the running app
+    /// @return the profile hash, before mutators
+    friend oa::base::sha256::Digest profile_sim_hash(const Runtime& runtime);
     /// Reads what this machine is playing (presence_facts in
     /// presence_facts.hpp): Developer Mode, the simulation hash, whether the
     /// rules differ from 3.1c, the mod and which standard hacks are on.
@@ -2095,6 +2433,17 @@ class Runtime final : public menu::Host,
     /// @param runtime the running app
     /// @return the source the multiplayer screens bind
     friend oa::ui::frontend_multiplayer::LobbyMapSource pack_map_source(Runtime& runtime);
+    /// Hands a chat line from another machine to the computer seats it
+    /// reached (hear_remote_seat_chat in extension.hpp).
+    ///
+    /// @param runtime the running app
+    /// @param from slot of the sender
+    /// @param addressee slot the record was addressed to
+    /// @param broadcast the record went to every player
+    /// @param line the line as this machine shows it; null is ignored
+    friend void hear_remote_seat_chat(
+        Runtime& runtime, uint8_t from, uint8_t addressee, bool broadcast, const char* line
+    );
 
     // ---- Touch controls (docs/touch-controls.md) --------------------------------------
 
@@ -2140,10 +2489,11 @@ class Runtime final : public menu::Host,
     /// @param mods SDL_Keymod bits held with it
     void press_match_key(SDL_Keycode key, SDL_Keymod mods);
 
-    /// Rewrites a hardware key event with Cmd held into the key it stands for while touch
-    /// controls are active: Cmd+. → Escape, Cmd+1..4 → F1..F4, Cmd+P → Pause (Cmd removed).
+    /// Rewrites a hardware key event with Cmd held into its alternate, removing Cmd.
     ///
-    /// Leaves every other event unchanged. [runtime_input_modifiers.cpp]
+    /// With touch controls active: Cmd+. → Escape, Cmd+1..4 → F1..F4, Cmd+P → Pause.
+    /// On desktop Macs, Cmd+P also supplies Pause during a match. Leaves every other
+    /// event unchanged. [runtime_input_modifiers.cpp]
     ///
     /// @param[in,out] event the event dispatch_event is given
     void remap_command_key(SDL_Event& event) const;
@@ -2277,7 +2627,8 @@ class Runtime final : public menu::Host,
     void zoom_match_about(float factor, float x, float y);
 
     /// Takes back an armed order or a pending building (reloading the panel's page), else clears
-    /// the selection: the Escape key's first two steps, never the in-game menu.
+    /// the selection and closes an open unit info panel: the Escape key's first two steps, never
+    /// the in-game menu.
     /// [runtime_hotkeys.cpp, extracted by the Interfaces stage]
     void clear_or_cancel_match_command();
 
@@ -2933,8 +3284,25 @@ class Runtime final : public menu::Host,
     /// the ground point into the Game block first, and stores the cursor cell.
     ///
     /// @return a cursor table index: the normal cursor over a gadget or without a
-    ///     match, the build cursor when the resolution fails
+    ///     match, the build cursor while build placement owns the pointer
     uint8_t pick_match_cursor();
+
+    /// Picks the cursor the match pointer shows, as pick_match_cursor does,
+    /// writing the same into the Game block.
+    ///
+    /// With ui.click-snap, RECLAIM over open ground where a click would snap
+    /// onto a feature (snapped_reclaim_point) shows the cursor the click
+    /// gets there when that is Reclaim, in place of the arrow.
+    ///
+    /// @return a cursor table index, or none while build placement owns the
+    ///     pointer over the battlefield, where the cursor shown stays as it is
+    /// @quirk Over the battlefield build placement keeps the cursor the pointer
+    ///        brought, normally the arrow from the build button, whose point is
+    ///        the footprint's middle. The build cursor, whose point lies left
+    ///        of and above its picture, shows over the radar, and stays when
+    ///        the pointer crosses from the radar onto the battlefield, as in
+    ///        3.1c.
+    std::optional<uint8_t> shown_match_cursor();
 
     /// Picks the cursor a point and a unit given apart from the pointer, as
     /// the megamap's are, show through the order-cursor resolution.
@@ -2966,9 +3334,10 @@ class Runtime final : public menu::Host,
     /// Steps and draws the software cursor, the cursor half of the GUI update.
     ///
     /// The elapsed ticks, the cursor step and pointer read, the match's order
-    /// cursor, then the cursor for the pointer over or off the top panel; the
-    /// cursor is drawn into the frame unless the match presents in layers, or
-    /// the system's pointer shows instead (pointer_shows_cursor).
+    /// cursor (shown_match_cursor), then the cursor for the pointer over or
+    /// off the top panel; the cursor is drawn into the frame unless the match
+    /// presents in layers, or the system's pointer shows instead
+    /// (pointer_shows_cursor).
     void tick_and_draw_cursor();
 
     /// The panel a match dialog opened over, as 3.1c keeps it drawn under the
@@ -2980,10 +3349,38 @@ class Runtime final : public menu::Host,
         renderer::Surface darkened{};        ///< `pixels` darkened, made when first needed
     };
 
+    /// The art every page of the match's side column is drawn with, read
+    /// once a match (match_hud_art).
+    struct MatchHudArt {
+        std::string tile;       ///< the side tile it was read for
+        std::string panel;      ///< the side's interface GAF it was read for
+        std::string font;       ///< the side's SIDEDATA font it was read for
+        std::string read_panel; ///< the interface GAF read; empty when it could not be
+        /// load_screen_art's resources, with no layout, captioned in the
+        /// shown language.
+        renderer::ScreenResources screen;
+        /// The side's font; none when the side names none or it cannot be read.
+        std::optional<oa::formats::fnt::Font> side_font;
+    };
+
+    /// Returns the art the side column's pages are drawn with: the side tile,
+    /// the GUI palettes and tables, commongui.gaf's icons and the side's
+    /// interface GAF in the shown language's captions, and the side's font.
+    ///
+    /// The art is read from the game's files as the match's first page
+    /// loads, and again only when the side's files are others, so that a
+    /// page reads only its own GUI file and GAF (load_match_hud_layout).
+    ///
+    /// @param layout the page it is wanted for, named in a report of art that
+    ///        cannot be read
+    /// @return the art; null when it cannot be read even without the side's
+    ///         interface GAF, which is reported on stderr
+    const MatchHudArt* match_hud_art(const std::string& layout);
     /// Loads an in-match panel layout as the match HUD with the viewed side's chrome.
     ///
     /// The panel's buttons keep their states and their GUI file's quick keys;
-    /// the side's interface GAF, side tile and commongui.gaf supply the art.
+    /// the side's interface GAF, side tile and commongui.gaf supply the art,
+    /// read once a match (match_hud_art).
     /// The panel takes the keyboard focus its loader gives it
     /// (match_hud_focus_), and is placed at its own position with no panel
     /// kept under it until open_match_dialog() says otherwise. A unit's page
@@ -4193,10 +4590,33 @@ class Runtime final : public menu::Host,
     /// for it.
     void tell_incomplete_mod();
 
-    /// Starts the skirmish the setup's Start asks for. A start that fails
-    /// leaves no match and returns to the skirmish setup, with the mod's
-    /// warning when the mod cannot start a game, else the failure in a
-    /// message box.
+    /// Puts a failed skirmish start back on the setup.
+    ///
+    /// Leaves no match. Shows the mod's warning when the mod cannot start a
+    /// game, else the failure in a message box.
+    ///
+    /// @param failure what the start threw
+    /// @return false
+    bool note_failed_skirmish_start(const std::exception& failure);
+
+    /// Starts the skirmish the list chosen for the match asks for.
+    ///
+    /// Plays that list, as a replay's or a network start does, and skips the
+    /// setup's set. A start that fails leaves no match and returns to the
+    /// skirmish setup, with the mod's warning when the mod cannot start a
+    /// game, else the failure in a message box.
+    ///
+    /// @param event the Start event
+    /// @return true when the match started
+    bool start_skirmish_as_chosen(const entry::Event& event);
+
+    /// Starts the skirmish the setup's Start asks for.
+    ///
+    /// Hands the setup's chosen set on first, then starts through
+    /// start_skirmish_as_chosen. A start that fails leaves no match and
+    /// returns to the skirmish setup, with the mod's warning when the mod
+    /// cannot start a game, else the failure in a message box. The setup
+    /// keeps its set.
     ///
     /// @param event the Start event
     /// @return true when the match started
@@ -4271,6 +4691,1090 @@ class Runtime final : public menu::Host,
     /// @return the index
     [[nodiscard]] MapPacks& map_packs() const;
 
+    /// The installed mutators, read from the player's Mutators folder.
+    struct MutatorLibraryState;
+
+    /// Frees the mutator listing.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_mutator_library_state(MutatorLibraryState* state) noexcept;
+
+    /// Returns the installed mutators, read on first use from
+    /// `<user folder>/Mutators` and read again after every change of a
+    /// mutator package.
+    ///
+    /// @return the listing
+    [[nodiscard]] const oa::data::mutator_library::Listing& installed_mutators() const;
+
+    /// Reads the Mutators folder again when a listing is already held.
+    ///
+    /// A package change before the first read leaves the listing unmade.
+    void reload_installed_mutators() const;
+
+    /// The installed brains, read from the player's Brains folder.
+    struct BrainLibraryState;
+
+    /// Frees the brain listing.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_brain_library_state(BrainLibraryState* state) noexcept;
+
+    /// Returns the installed brains, read on first use from
+    /// `<user folder>/Brains` and read again after every change of a
+    /// brain package.
+    ///
+    /// @return the listing
+    [[nodiscard]] const oa::data::brain_library::Listing& installed_brains() const;
+
+    /// Reads the Brains folder again when a listing is already held.
+    ///
+    /// The generation the brain picker watches moves either way. A package
+    /// change before the first read still leaves the listing unmade.
+    void reload_installed_brains() const;
+
+    /// Returns the default brain's id.
+    ///
+    /// The value of open-annihilation.brain.default when a brain of that id
+    /// is installed, and empty when the key is absent, empty, or names a
+    /// brain that is not installed. Once the Library's worker has searched,
+    /// this reads that listing and does not open the Brains folder. Before
+    /// that search, the folder is read.
+    ///
+    /// @return the id, or empty for the built-in computer player
+    [[nodiscard]] std::string default_brain() const;
+
+    /// Stores the default computer player.
+    ///
+    /// An installed brain's id writes open-annihilation.brain.default. An
+    /// empty id erases the key, so the built-in player is the default. A
+    /// failure to store it is logged once.
+    ///
+    /// @param id the brain's id, or empty for the built-in player
+    void set_default_brain(std::string_view id);
+
+  public:
+
+    /// Replaces the mutators the next matches apply.
+    ///
+    /// The list is top first. An empty list applies nothing. A match already
+    /// running keeps the result it applied.
+    ///
+    /// @param chosen the mutators, top first
+    void choose_match_mutators(std::vector<oa::data::mutators::ResolvedMutator> chosen);
+
+    /// Names the brain one seat plays, or clears that seat.
+    ///
+    /// A player outside 0 to 9 does nothing. An empty choice clears the seat.
+    /// A skirmish or a campaign mission seats the choices before its first tick.
+    ///
+    /// @param player player index, 0 to 9
+    /// @param choice the brain, the level and the options; empty clears the seat
+    void set_brain_seat(uint8_t player, std::optional<BrainSeatChoice> choice);
+
+    /// Returns the mutators the next matches apply.
+    ///
+    /// @return the list, top first; empty when none were chosen
+    [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator>
+    chosen_match_mutators() const noexcept;
+
+    /// Replaces the mutators the battle room builds.
+    ///
+    /// The list is top first. An empty list builds nothing. The next follow
+    /// builds it, including a list that failed before. A match already
+    /// running keeps the layer it mounted.
+    ///
+    /// @param chosen the mutators, top first
+    void set_room_mutators(std::vector<oa::data::mutators::ResolvedMutator> chosen);
+
+    /// Replaces the battle room's mutators with the set USE THESE handed over.
+    ///
+    /// An empty set builds nothing. Any other set is read from the player's
+    /// Mutators folder and then stored. A mutator that cannot be read leaves
+    /// the room's list as it was, with one line in the log. This does not
+    /// start a match, and it does not put a one-match list back.
+    ///
+    /// @param set the picker's set, top first
+    void apply_room_mutators(std::vector<oa::ui::mutator_picker::Chosen> set);
+
+    /// Posts the battle room's mutator lines, once a frame.
+    ///
+    /// While the battle room shows, a change of the room's list is posted in
+    /// the chat: the host's own list, and on a guest the host's list as its
+    /// records carry it, including mutators this machine lacks (named by id
+    /// until installed). A guest says nothing while that list is still
+    /// arriving. On the host, a seated player who newly lacks one is named
+    /// once. Leaving the room forgets what was posted. A dialog over the
+    /// room posts nothing and forgets nothing. A guest also posts, once per
+    /// change of what it lacks, that GET MUTATORS downloads it, and that
+    /// line is not sent. The call keeps the guest's GET MUTATORS screen.
+    void follow_mutator_room_chat();
+
+    /// Returns the room the battle room's chat list has for one line: the
+    /// list's width less its two margins, in hattfont12's units. Loads
+    /// hattfont12 once, which a battle room has not loaded before its first
+    /// match.
+    ///
+    /// @return the room; 0 while the list or the font is not there
+    [[nodiscard]] int32_t chat_list_room();
+
+    /// Measures a line as the battle room's chat list draws it once posted:
+    /// in hattfont12 and, with Unicode chat off, in the 3.1c font's code
+    /// page, so an accented letter is one glyph.
+    ///
+    /// @param line the line, in UTF-8
+    /// @return its width, in the units of chat_list_room
+    [[nodiscard]] int32_t chat_list_width(std::string_view line);
+
+    /// Returns the mutators the battle room is building.
+    ///
+    /// On the host this starts as chosen_match_mutators and then follows
+    /// set_room_mutators. On a guest it is the host's list once that list
+    /// resolved here. Empty when this room plays none.
+    ///
+    /// @return the list, top first
+    [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator>
+    room_mutators() const noexcept;
+
+    /// Returns the list a network start applies.
+    ///
+    /// On the host, the chosen list while it is built for that list and for
+    /// this machine's sim hash. On a guest, the host's list while it is
+    /// built for the digest the host's current record names, and empty when
+    /// that record names none or another. Empty when a named list is not
+    /// built yet. The battle room stops counting as showing before the
+    /// start asks, and this still answers.
+    ///
+    /// @return the list, top first
+    [[nodiscard]] std::span<const oa::data::mutators::ResolvedMutator> room_match_mutators() const;
+
+    /// Tells whether a mutator list is named and not built for the start.
+    ///
+    /// A network start refuses that list instead of playing another one.
+    ///
+    /// @return true when the room has named a list this machine has not built
+    [[nodiscard]] bool room_match_unbuilt() const;
+
+    /// Tells whether this run has followed a battle room's mutators.
+    ///
+    /// A network start that never showed the battle room, such as the
+    /// loopback check, has no room list and plays the run's own choice.
+    ///
+    /// @return true once the battle room has followed its list
+    [[nodiscard]] bool room_followed() const noexcept;
+
+    /// Builds the battle room's mutator layer when its list changes.
+    ///
+    /// The host's list is its own, and its loadout digest includes each
+    /// mutator's clash mode. A guest's is the host's once every mutator of
+    /// that list has arrived, resolved from this machine's Mutators folder
+    /// and built with the modes the host sent. The build runs on the calling
+    /// thread, once per change of the wanted digest, with no map. Leaving
+    /// the multiplayer screens while no match runs releases the layer.
+    void follow_room_mutators();
+
+    /// One mutator of the host's list, and whether this machine can fetch that release.
+    struct HostMutatorFetch {
+        oa::ui::frontend_multiplayer::HostMutator mutator;  ///< the host's id, version and prefix
+        oa::ui::frontend_multiplayer::MutatorFetch state{}; ///< what a guest can do about it
+        oa::ui::frontend_multiplayer::MutatorOffer offer;   ///< the registry the decision used
+        uint64_t done{}; ///< bytes of a download still running; 0 when none is
+        /// Why the last try failed, in English as the queue says it. Empty when
+        /// the last try did not fail. The battle room translates it.
+        std::string failure;
+    };
+
+    /// Forgets the host-mutator rows kept for this tick, and begins the next.
+    ///
+    /// Placement, the screen's tick, the draw and the room chat all ask for
+    /// those rows. The layer's tick forgets them first, so the first ask of
+    /// the tick does the work and the rest reuse it. fetch_host_mutators
+    /// forgets them too: it clears a failure before it reads. While the
+    /// rows are read, a line a second counts the reads, the ticks and the
+    /// most reads of one tick without a press: "host mutators: read {reads}
+    /// times in {ticks} ticks, at most {most} in a tick".
+    void drop_host_mutator_fetch_cache();
+
+    /// Returns what this machine can fetch of the host's mutator list.
+    ///
+    /// Empty on the host, and empty while the host's list has not all
+    /// arrived. The first call of a tick reads that list, the installed
+    /// mutators, the catalogues and the download queue; a later call of the
+    /// same tick returns those rows again. A download is never started here.
+    /// A failure stays until fetch_host_mutators is called again.
+    ///
+    /// @return one row per mutator, in the host's order
+    [[nodiscard]] std::vector<HostMutatorFetch> host_mutators_fetch();
+
+    /// Queues every mutator of the host's list whose release this machine can fetch.
+    ///
+    /// A row is queued only when a catalogue entry's SHA-256 starts with the
+    /// host's prefix. The queue checks the file against that entry's
+    /// SHA-256. A failure, a refusal or a cancelled download is not tried
+    /// again until this is called. Prerequisites are the host's own list
+    /// entries, each at the release the host named.
+    void fetch_host_mutators();
+
+    /// Returns what this machine's registries offer for one release of a mutator.
+    ///
+    /// The offer host_mutators_fetch reads for each row, for any release:
+    /// where a usable registry with downloads on lists a release whose
+    /// SHA-256 starts with the prefix, that one; otherwise what the
+    /// catalogues say instead. The host reads it for its own list, to tell
+    /// whether a guest's GET MUTATORS button can fetch the host's release.
+    ///
+    /// @param mutator the release: its id and SHA-256 prefix
+    /// @return the offer; nothing known when no registry is in effect
+    [[nodiscard]] oa::ui::frontend_multiplayer::MutatorOffer
+    mutator_offer(const oa::ui::frontend_multiplayer::HostMutator& mutator);
+
+    /// Returns the mutators field this machine sends, or null when it plays none.
+    ///
+    /// The host's names every mutator. A guest's carries the host's digest
+    /// and no mutators. The pointer stays valid until the next follow or release.
+    ///
+    /// @return the field, or null when the room plays no mutators
+    [[nodiscard]] const oa::netgame::PresenceMutators* room_mutators_presence() const noexcept;
+
+    /// The clash modes the host sends with its mutator field.
+    ///
+    /// One bit per mutator: set means Add, clear means Replace. Nothing when
+    /// this machine sends no mutator field, or sends one as a guest.
+    ///
+    /// @return the mask, or nothing when no mask is sent
+    [[nodiscard]] std::optional<uint32_t> room_mutator_modes() const noexcept;
+
+    /// How many times the mutators field this machine sends has changed.
+    ///
+    /// @return the generation, starting at 0
+    [[nodiscard]] uint32_t room_mutators_generation() const noexcept;
+
+    /// Unmounts the battle room's mutator layer.
+    ///
+    /// The match's layer is left where it is. The chosen list is kept, so
+    /// the next follow can build it again. A guest's copy of the host's
+    /// list and its resolve are dropped, so the next follow copies the
+    /// lobby's list again. A mounted layer that cannot be dropped stays
+    /// mounted.
+    void release_room_mutators() noexcept;
+
+    /// Mounts the layer the battle room would build for the run's chosen list.
+    ///
+    /// For a check that runs the battle room's unit sync without showing
+    /// the battle room, such as the loopback check. The build is the battle
+    /// room's: the options refusal, the shared unit-sync limit, the first
+    /// mutator that would stop a match, and a second run from the mutators
+    /// that applied. No battle-room state is made, so room_followed stays
+    /// false and a network start plays the run's own list. The unit headers
+    /// are not read again here. Nothing is mounted when the run plays no
+    /// mutators, and a layer already mounted is refused and left as it is.
+    ///
+    /// @param[out] failure why the layer is not mounted; left as it is when
+    ///        it is mounted or there is nothing to mount
+    /// @return true when the layer is mounted
+    [[nodiscard]] bool mount_chosen_mutator_layer(std::string& failure);
+
+    /// Unmounts the layer mount_chosen_mutator_layer mounted.
+    ///
+    /// A layer the battle room or a running match holds is left where it
+    /// is. The unit headers are not read again here.
+    ///
+    /// @return false when a layer is still mounted
+    [[nodiscard]] bool release_chosen_mutator_layer() noexcept;
+
+    /// Returns the running match's mutator result.
+    ///
+    /// @return the result, or null when this match applied none
+    [[nodiscard]] const oa::data::mutators::PipelineResult* match_mutators() const noexcept;
+
+    /// Returns the loadout the running match applied.
+    ///
+    /// The pointer is into the match's mutator state. It is null when this
+    /// match applied no mutator, and it is cleared when the match releases
+    /// its mutators.
+    ///
+    /// @return the loadout, or null when this match applied none
+    [[nodiscard]] const oa::data::mutators::Loadout* match_loadout() const noexcept;
+
+    /// Returns the mutator digest of the running match.
+    ///
+    /// The digest covers the applied loadout and every path the layer adds,
+    /// hides or rewrites, with the bytes the layer serves. It is set only
+    /// after a playable build that applied at least one mutator, and it is
+    /// cleared when the match releases its mutators. A list that is chosen
+    /// and not yet built has none.
+    ///
+    /// @return the digest, or nothing when this match applied none
+    [[nodiscard]] std::optional<oa::base::sha256::Digest> match_mutator_digest() const noexcept;
+
+    /// The refusal a launch's mutator list would get, or empty when it can play.
+    ///
+    /// The run's list is left as it is. The line names `source` and the field.
+    ///
+    /// @param source the file's name
+    /// @param texts the choices, as `--mutator` writes them
+    /// @param versions the version each entry required; empty when unnamed
+    /// @param fields the field of each entry, such as content.mutators[1]
+    /// @return the refusal, or empty when every entry can be used
+    [[nodiscard]] std::string launch_mutator_refusal(
+        std::string_view source,
+        const std::vector<std::string>& texts,
+        const std::vector<std::string>& versions,
+        const std::vector<std::string>& fields
+    ) const;
+
+    /// Replaces the mutators the next matches apply with a launch file's list.
+    ///
+    /// Each text is one `--mutator` value, and `versions` and `fields` line
+    /// up with it. Returns the refusal, naming `source` and the field, when
+    /// one cannot be used, and leaves the run's list as it was. An empty
+    /// list clears it. A launch that names no mutators does not call this.
+    ///
+    /// @param source the file's name
+    /// @param texts the choices, as `--mutator` writes them
+    /// @param versions the version each entry required; empty when unnamed
+    /// @param fields the field of each entry, such as content.mutators[1]
+    /// @return the refusal, or empty when the list was taken
+    [[nodiscard]] std::string take_launch_mutators(
+        std::string_view source,
+        std::vector<std::string> texts,
+        std::vector<std::string> versions,
+        std::vector<std::string> fields
+    );
+
+    /// The loadout the running match applied, as its canonical text.
+    ///
+    /// Empty when this match applied no mutator. The text is the one
+    /// canonical form, so a recording can store it and read it back.
+    ///
+    /// @return the canonical text, or empty when this match applied none
+    [[nodiscard]] std::string played_loadout_text() const;
+
+    /// The mutators the running match applied, for the content note.
+    ///
+    /// One entry per mutator of the applied loadout, in that order. The name
+    /// is the package's name, the one the player saw. Empty when this match
+    /// applied no mutator.
+    ///
+    /// @return the mutators, or an empty list when this match applied none
+    [[nodiscard]] std::vector<oa::data::saves::ContentMutator> played_mutators() const;
+
+    /// The brains that played this match's computer players, as seats text.
+    ///
+    /// This machine's seated brains are named with their package SHA-256.
+    /// Other machines' computers are named from the room's labels kept at the
+    /// start, without a package. Empty when no brain played.
+    ///
+    /// @return the seats text, or empty when no brain played
+    [[nodiscard]] std::string played_brains_text() const;
+
+    /// The brains that played this match's computer players, for the content note.
+    ///
+    /// One entry per brain, in player order. The level is the level's name and
+    /// the name is the brain's name. Empty when no brain played.
+    ///
+    /// @return those brains, or an empty list when none played
+    [[nodiscard]] std::vector<oa::data::saves::ContentBrain> played_brains() const;
+
+    /// Why a recording's loadout cannot be played on this machine.
+    ///
+    /// Empty when the text is the canonical loadout and every mutator is
+    /// installed at that version and package SHA-256. `resolved` then holds
+    /// those mutators, in the loadout's order. Text that is not that form
+    /// is refused as unreadable. A mutator that is missing or at another
+    /// release is refused by name. A run that plays no mutators refuses a
+    /// loadout that names any, before those packages are looked up.
+    ///
+    /// @param loadout_text the recording's loadout text
+    /// @param[out] resolved the mutators, when the text can be played; may be null
+    /// @return the sentence, or empty when the loadout can be played
+    [[nodiscard]] std::string recorded_mutators_refusal(
+        std::string_view loadout_text, std::vector<oa::data::mutators::ResolvedMutator>* resolved
+    ) const;
+
+    /// Plays one list for the next match, then puts the player's list back.
+    ///
+    /// The list the player had chosen is kept. `playback` is chosen for the
+    /// next match start, and an empty list chooses none. When that match ends,
+    /// the kept list is chosen again. A match already running is left as it is
+    /// until it ends and the next one starts. A caller whose start does not
+    /// happen, by an exception or an early return, calls `cancel_loadout_once`.
+    ///
+    /// @param playback the mutators the next match plays, top first
+    void play_loadout_once(std::vector<oa::data::mutators::ResolvedMutator> playback);
+
+    /// Puts the player's list back and forgets a list held for one match.
+    ///
+    /// A quiet no-op when no list is held. A caller calls this when the match
+    /// start that `play_loadout_once` armed does not happen.
+    void cancel_loadout_once() noexcept;
+
+    /// The last set a setup started a game with.
+    ///
+    /// The mutator picker reads it. None when the key is absent or its
+    /// text is not a loadout, and none for the whole run under
+    /// `--no-mutators`, which leaves the key as it is.
+    ///
+    /// @param setup the setup
+    /// @return the set, or none
+    [[nodiscard]] std::optional<oa::data::mutators::Loadout>
+    remembered_mutators(mutators_memory::Setup setup) const;
+
+    /// Stores the set a setup started a game with and saves the preferences.
+    ///
+    /// A setup's START calls it, and a campaign's saved games will. An
+    /// empty loadout writes nothing. `--no-mutators` writes nothing. A
+    /// failure to save is logged once and is not thrown.
+    ///
+    /// @param setup the setup
+    /// @param loadout the set
+    void
+    remember_mutators(mutators_memory::Setup setup, const oa::data::mutators::Loadout& loadout);
+
+    /// Erases the set a setup remembered and saves the preferences.
+    ///
+    /// The crash question's FORGET IT calls it. A failure to save is logged
+    /// once and is not thrown.
+    ///
+    /// @param setup the setup
+    void forget_mutators(mutators_memory::Setup setup);
+
+    /// Begins a game with the mutators a setup's START already resolved.
+    ///
+    /// A setup's START calls it once each mutator has been read. The set is
+    /// remembered for that setup, the setup is kept for the next match
+    /// start, and these mutators are the next match's. An empty list
+    /// remembers nothing; the next matches play the run's own list
+    /// (`--mutator`'s or a launch file's), normally none. An empty list can
+    /// also throw when the run's own list no longer resolves.
+    /// `--no-mutators` remembers nothing and applies nothing. The list is not
+    /// read again.
+    ///
+    /// @param setup the setup
+    /// @param chosen the mutators, in play order, already resolved
+    void start_with_mutators(
+        mutators_memory::Setup setup, std::vector<oa::data::mutators::ResolvedMutator> chosen
+    );
+
+    /// Hands a setup's chosen set to the next match and puts a one-match list back first.
+    ///
+    /// START calls it. Each mutator is read from the installed copy once,
+    /// which supplies the version and the SHA-256, and that resolved list is
+    /// what the match starts with. An empty set starts the game with the
+    /// run's own list, normally none. Throws std::runtime_error when a
+    /// chosen mutator cannot be read.
+    ///
+    /// @param setup the setup
+    void hand_chosen_mutators(mutators_memory::Setup setup);
+
+    /// Replaces the set a setup will start with.
+    ///
+    /// USE THESE calls it. CANCEL does not. A setup this ticket does not
+    /// keep a set for is left as it was.
+    ///
+    /// @param setup the setup
+    /// @param set the set, in order
+    void replace_setup_mutators(
+        mutators_memory::Setup setup, std::vector<oa::ui::mutator_picker::Chosen> set
+    );
+
+    /// Returns the crash record the start found, once.
+    ///
+    /// The crash question asks with it. The next call returns nothing.
+    ///
+    /// @return the record, or nothing
+    [[nodiscard]] std::optional<mutators_memory::Crash> take_mutator_crash();
+
+    /// Tells whether `--no-mutators` refuses every mutator for this run.
+    ///
+    /// Every caller can ask. The crash record is still read and taken.
+    ///
+    /// @return true when the flag is set
+    [[nodiscard]] bool mutators_refused_for_run() const noexcept;
+
+    /// The seats stored for one setup.
+    ///
+    /// None when the key is absent or its text is not seats.
+    ///
+    /// @param setup the setup
+    /// @return the seats, or none
+    [[nodiscard]] std::optional<oa::data::brain_library::Seats>
+    remembered_brain_seats(oa::data::brain_library::Setup setup) const;
+
+    /// Stores the seats a setup started with and saves the preferences.
+    ///
+    /// Writes only when a seat names a brain, or the setup's key is already
+    /// there. A failure to save is logged once and is not thrown.
+    ///
+    /// @param setup the setup
+    /// @param seats the seats
+    void remember_brain_seats(
+        oa::data::brain_library::Setup setup, const oa::data::brain_library::Seats& seats
+    );
+
+    /// The seats a setup keeps for this run.
+    ///
+    /// Skirmish and campaign fill theirs when the setup is entered. The
+    /// battle room writes its seats, in the order this machine seated its
+    /// computers, when START seats them. The room's buttons read each
+    /// computer's own choice, not this record.
+    ///
+    /// @param setup the setup
+    /// @return the seats
+    [[nodiscard]] oa::data::brain_library::Seats&
+    setup_brain_seats(oa::data::brain_library::Setup setup);
+
+    /// Notes the computer players this machine runs and fills a choice each
+    /// one lacks.
+    ///
+    /// A computer with no choice takes the next remembered multiplayer seat,
+    /// in the order this machine seated them, else the default brain at the
+    /// level for hard, else the built-in player at hard. A remembered brain
+    /// that is not installed or does not fit falls back the same way, and
+    /// that is logged. The choice is published onto the lobby once the
+    /// computer is seated. No computer left on this machine clears the
+    /// choices. A launch calls it with the lobby it is starting, which is
+    /// not the battle room's lobby.
+    ///
+    /// @param lobby the battle room, this machine's or a launch's
+    void note_room_computers(oa::ui::frontend_multiplayer::Lobby& lobby);
+
+    /// Remembers the brains other machines' computers play, as the room shows them.
+    ///
+    /// Called when a network match has started, from the room as it stands
+    /// then. This machine's own computers are not among them: those come from
+    /// the brains the match seated. A later match drops what this one remembered.
+    ///
+    /// @param lobby the battle room the match started from
+    void keep_remote_played_brains(const oa::ui::frontend_multiplayer::Lobby& lobby);
+
+    /// The choices of the computer players this machine runs.
+    ///
+    /// `place` is the slot. The seats are in the order this machine seated
+    /// them. A seat with an empty brain is the built-in player. Empty when
+    /// this machine runs no computer.
+    ///
+    /// @return those seats
+    [[nodiscard]] oa::data::brain_library::Seats room_brain_seats() const;
+
+    /// The brains the computer players of one start will play.
+    ///
+    /// A seat that names no brain is left out: the built-in player was
+    /// chosen and stays chosen. A player with no seat takes the default
+    /// brain, at `default_level` for `setup_difficulty`. A brain that is not
+    /// installed, or that does not fit the game being played, is left out
+    /// and logged. A level the brain lacks takes `default_level`. An option
+    /// the brain lacks is dropped. A value it does not allow takes the
+    /// option's default.
+    ///
+    /// @param seats the setup's seats
+    /// @param computer_players the computer players, each a slot 0 to 9
+    /// @param setup_difficulty the setup's difficulty
+    /// @return one seat for each computer player that plays a brain
+    [[nodiscard]] std::vector<BrainSeat> resolve_brain_seats(
+        const oa::data::brain_library::Seats& seats,
+        std::span<const uint8_t> computer_players,
+        oa::data::brain_library::Difficulty setup_difficulty
+    );
+
+    /// Holds the brains the next match seats.
+    ///
+    /// An empty list seats nobody. The list stays until that match takes it
+    /// or `cancel_brain_seats_once` drops it. A match already running is
+    /// left as it is.
+    ///
+    /// @param seats the brains, one for each computer player that plays one
+    void seat_brains_once(std::vector<BrainSeat> seats);
+
+    /// Drops the brains held for the next match.
+    ///
+    /// A quiet no-op when none are held. A caller calls this when the match
+    /// start that `seat_brains_once` armed does not seat them.
+    void cancel_brain_seats_once() noexcept;
+
+    /// Tells whether brains are held for the next match.
+    ///
+    /// True from `seat_brains_once` until the next match takes the list or
+    /// `cancel_brain_seats_once` drops it, including a list that seats nobody.
+    ///
+    /// @return true while a list is held
+    [[nodiscard]] bool brain_seats_held_for_next_match() const noexcept;
+
+    /// The brains the running match seated.
+    ///
+    /// Empty when no match is running, and when the match seated none.
+    ///
+    /// @return the brains, in the order they were seated
+    [[nodiscard]] const std::vector<BrainSeat>& seated_brains() const noexcept;
+
+    /// The seats the last successful load of a saved game handed to the match.
+    ///
+    /// Empty when that load seated no brain, and after a load that stopped
+    /// before its match. Each seat is the brain that was seated: its place,
+    /// id, the installed version and package, the level and options it plays
+    /// at, and the name players see.
+    ///
+    /// @return those seats
+    [[nodiscard]] const oa::data::brain_library::Seats& loaded_brain_seats() const noexcept;
+
+  private:
+
+    /// Remembers the mutators that stopped a start, for "Start without X?".
+    ///
+    /// @param setup the setup that started, when one did
+    /// @param stops the mutators that did not apply, or the refusal
+    void remember_mutator_start_stops(
+        std::optional<mutators_memory::Setup> setup, std::vector<MutatorStartStop> stops
+    );
+
+    /// Pushes "Start without X?" over the setup when a start stopped and no match runs.
+    ///
+    /// @return true when the question was pushed
+    bool offer_mutator_start_question();
+
+    /// Drops the mutators that stopped, and those that need them, and starts again.
+    void start_without_stopped_mutators();
+
+    /// Queues "Forget the last set?" once, when the sentinel named a set.
+    void offer_mutator_crash_question();
+
+    /// Pushes "The game did not start" when a network start was refused for a differing result.
+    void offer_differing_results_question();
+
+    /// The mutators chosen for the next matches, and the running match's result.
+    struct MutatorState;
+
+    /// The crash record's file and a leftover read at the start.
+    struct MutatorMemory;
+
+    /// Frees the crash record.
+    ///
+    /// @param memory record to free; null is allowed
+    static void destroy_mutator_memory(MutatorMemory* memory) noexcept;
+
+    /// Frees the mutator state.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_mutator_state(MutatorState* state) noexcept;
+
+    /// Runs the chosen mutators for one match, after the pack map is mounted
+    /// and before the match reads its game data.
+    ///
+    /// An empty choice does nothing: no pipeline, no layer and no log line.
+    /// A list the pipeline refuses, or a mutator that does not apply for a
+    /// reason other than its hacks, releases the layer and throws
+    /// std::runtime_error naming it. A hack the registry or the profile
+    /// refuses fails that mutator in the plan phase, and a mutator excluded
+    /// only because it requires one is dropped with it. The match still starts.
+    /// When the layer serves the chosen map, the cached scenario is read again
+    /// and a campaign mission is bound again. Under `--no-mutators` a chosen
+    /// list is refused and nothing is applied.
+    ///
+    /// @param bootstrap the match being started
+    void apply_match_mutators(const MatchBootstrap& bootstrap);
+
+    /// Seats each chosen brain on a computer player of this machine.
+    ///
+    /// A seat with no choice is left alone. A choice on a seat that is not a
+    /// computer is left alone. A brain that cannot be read writes one line to
+    /// standard error and that seat plays as the built-in computer player. A
+    /// brain that does not fit or fails to start does the same, and also posts
+    /// one notice and writes the seat's log. Nothing is seated when no match
+    /// is running.
+    void seat_chosen_brains();
+
+    /// Seats `--brain-shadow` beside every computer seat this machine plays.
+    ///
+    /// A seat a brain already plays is left alone. A network game, a shared
+    /// match and a replay seat nothing. A brain that cannot be read writes
+    /// one line to standard error and that seat keeps the built-in player.
+    /// Nothing is seated when no match is running or the option is empty.
+    void seat_shadow_brains();
+
+    /// Prints one line for each shadowed seat, and writes the logs when asked.
+    ///
+    /// The first call prints. A later call in the same match prints nothing,
+    /// so a headless run and the leave that follows it do not both print.
+    void print_shadow_reports();
+
+    /// Opens the seat's log and installs the report hooks.
+    ///
+    /// Called before the brain is seated, so lines from fits and start are
+    /// kept. A log that cannot be written is reported once; seating goes on.
+    ///
+    /// @param player player index, 0 to 9
+    /// @param name the manifest's name
+    /// @param version the brain's version
+    /// @param id the brain's id
+    /// @param level the chosen level's id
+    void prepare_brain_report(
+        uint8_t player,
+        std::string_view name,
+        std::string_view version,
+        std::string_view id,
+        std::string_view level
+    );
+
+    /// Writes a seating failure to the log and posts one notice.
+    ///
+    /// A brain that does not fit uses that sentence. A refusal or a failed
+    /// start uses the could-not-start sentence.
+    ///
+    /// @param player player index, 0 to 9
+    /// @param name the manifest's name
+    /// @param outcome what seating returned
+    void report_unseated_brain(
+        uint8_t player, std::string_view name, const oa::sim::brains::SeatOutcome& outcome
+    );
+
+    /// Writes one printed line to that seat's log.
+    ///
+    /// @param context the runtime
+    /// @param player player index, 0 to 9
+    /// @param tick the match tick
+    /// @param line the printed line
+    static void brain_printed(void* context, uint8_t player, uint32_t tick, std::string_view line);
+
+    /// Writes the stop to the log and posts the stopped notice.
+    ///
+    /// @param context the runtime
+    /// @param player player index, 0 to 9
+    /// @param tick the match tick
+    /// @param error the script error
+    static void brain_stopped(
+        void* context,
+        uint8_t player,
+        uint32_t tick,
+        const oa::data::script_host::ScriptError& error
+    );
+
+    /// Queues a line a seated brain asked to say.
+    ///
+    /// @param context this runtime
+    /// @param seat the brain's player
+    /// @param text the words
+    /// @param mode everyone, allies, enemies or chosen
+    /// @param target the chosen player
+    /// @return the seat-chat answer as a number
+    static uint8_t brain_chat_say(
+        void* context, uint8_t seat, std::string_view text, uint8_t mode, uint8_t target
+    );
+
+    /// Queues a line a computer seat heard, for that seat's next turn.
+    ///
+    /// @param context this runtime
+    /// @param seat the seat that heard the line
+    /// @param from the sender
+    /// @param mode everyone, allies, enemies or chosen
+    /// @param words the words, without a name head
+    static void brain_chat_heard(
+        void* context, uint8_t seat, uint8_t from, uint8_t mode, std::string_view words
+    );
+
+    /// Connects seated brains to the match's chat.
+    ///
+    /// Does nothing when no brain is seated, so a match without brains keeps
+    /// the listener the seat chat already has.
+    void attach_brain_chat();
+
+    /// Returns the facts a brain reads as `game`.
+    ///
+    /// The base game and the expansions are the mounted content choice, or
+    /// `totala` with no expansion when the managed copy is not mounted. The
+    /// engine is this build's. The mode is campaign during a campaign
+    /// mission, network during a multiplayer session, and skirmish otherwise.
+    /// The difficulty is the match's when a match is running, otherwise the
+    /// preferences'. The mod is the profile the match plays, or the base
+    /// game's name when the game plays 3.1c, with this match's sides. The
+    /// mutators are the running match's loadout in apply order, or none.
+    /// The map name is the selected map, and the map path is that map's
+    /// mission path, or empty when the match has no map context.
+    /// The AI profile is the file `computer_profile_file` reads, and the
+    /// report path is the map's profile slot, empty when that slot is null.
+    /// `ai_profiles` is every readable profile under the AI directory, at
+    /// most 256, in the order they are listed. The start rule, the map's
+    /// starts and each player's start index are the note
+    /// `publish_brain_starts` last wrote, or unknown with no starts when
+    /// this match has not placed its players.
+    ///
+    /// @return the facts, owned outright
+    [[nodiscard]] oa::data::brain_facts::GameFacts brain_game_facts() const;
+
+    /// Fills the pipeline's hack check from this run's profile.
+    ///
+    /// Developer Mode's overrides are the baseline. A hack that does not
+    /// resolve fails its mutator before any file, rule or hook is applied.
+    ///
+    /// @param input the pipeline input for this match
+    /// The profile source and the overrides are copied into the check, so a
+    /// dry run does not read this runtime while it runs.
+    void bind_planned_hack_check(oa::data::mutators::PipelineInput& input) const;
+
+    /// Lays the applied mutators' hacks over the profile this match plays.
+    ///
+    /// The pipeline has already accepted these hacks. This copies that
+    /// resolution into the one profile the match plays, logs the values and
+    /// records the notes. With no records it does nothing. The same values
+    /// refused again refuse the start. Release puts the player's profile back.
+    void play_mutator_hacks();
+
+    /// The unit limit a mutator's hack set for this match.
+    ///
+    /// Set when limits.units-per-player.default came from a match choice.
+    /// Empty when this match's hacks did not set it.
+    ///
+    /// @return that limit, in units per player
+    [[nodiscard]] std::optional<uint16_t> mutator_units_per_player() const noexcept;
+
+    /// The map the match will play, read after the pack map is mounted.
+    ///
+    /// None when no map is selected. A selected name whose scenario file is
+    /// missing is still returned, with no bytes, so a maps hook refuses it.
+    ///
+    /// @return the chosen map, or none
+    [[nodiscard]] std::optional<oa::data::mutators::ChosenMap> chosen_map_for_mutators();
+
+    /// Reads the chosen map again from the store.
+    ///
+    /// Reparses the cached metadata and scenario document. Does not touch the
+    /// terrain or the start markers. Clears the skirmish map cache so the
+    /// next match reads the store. When `rebind_campaign` is set and a
+    /// campaign mission is running, binds that mission again.
+    ///
+    /// @param rebind_campaign true after a served rewrite, false after release
+    void reread_chosen_map(bool rebind_campaign);
+
+    /// Clears the skirmish map's cached mission name so the next read reloads.
+    void clear_campaign_map_cache();
+
+    /// Binds the running campaign mission again from the store.
+    ///
+    /// Throws std::runtime_error when the mission does not bind.
+    void rebind_campaign_mission();
+
+    /// Resolves the command line's `--mutator` values and chooses them.
+    ///
+    /// An empty list chooses nothing and logs nothing. A value that does not
+    /// resolve throws std::runtime_error naming it, which ends the run with
+    /// status 1 only at startup.
+    void take_command_line_mutators();
+
+    /// Unmounts the match's mutator layer and forgets its result, its loadout
+    /// and its mutator digest.
+    ///
+    /// When this match copied hacks into the played profile, the player's
+    /// profile is put back first. Logs one line when a layer was unmounted
+    /// or a result was held, or when the match had served a rewritten map.
+    /// A quiet no-op when none is true and no hacks were played. When a
+    /// mounted layer cannot be dropped, the result, the loadout and the
+    /// digest are kept so a later call can try again. When the match had
+    /// served a rewritten map, the cached scenario is read again from the
+    /// installed files. A campaign mission is not bound again here.
+    void release_match_mutators() noexcept;
+
+    /// The battle room's mutator list and the layer it mounted.
+    struct RoomMutatorState;
+
+    /// Frees the battle room's mutator state.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_room_mutator_state(RoomMutatorState* state) noexcept;
+
+    /// The clash mode a list uses when neither the player nor the manifest
+    /// names one: the `mutators.clash-default` preference.
+    ///
+    /// @return the mode
+    [[nodiscard]] oa::formats::oamut::ClashMode mutator_clash_default() const;
+
+    /// The pipeline input a match start uses, without the map.
+    ///
+    /// The clash default is the `mutators.clash-default` preference, read as
+    /// the match start reads it.
+    ///
+    /// @param chosen the mutators, top first
+    /// @return the input
+    [[nodiscard]] oa::data::mutators::PipelineInput
+    mutator_pipeline_input(const std::vector<oa::data::mutators::ResolvedMutator>& chosen) const;
+
+    /// Why a pipeline result cannot be played, as the match start says it.
+    ///
+    /// @param chosen the mutators, in the order they were run
+    /// @param result the pipeline's result
+    /// @return the reason
+    [[nodiscard]] static std::string mutator_failure_text(
+        const std::vector<oa::data::mutators::ResolvedMutator>& chosen,
+        const oa::data::mutators::PipelineResult& result
+    );
+
+    /// The battle room's mutator state, made on first use.
+    ///
+    /// @return the state
+    RoomMutatorState& ensure_room_mutators();
+
+    /// Downloads this machine started for the host's mutators, and why one failed.
+    struct HostMutatorFetchState;
+
+    /// Frees the host-mutator downloads.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_host_mutator_fetch_state(HostMutatorFetchState* state) noexcept;
+
+    /// The host-mutator downloads, made on first use.
+    ///
+    /// @return the state
+    HostMutatorFetchState& ensure_host_mutator_fetches();
+
+    /// Unmounts the battle room's layer. A layer it did not mount stays.
+    ///
+    /// @return false when that layer is still mounted
+    bool drop_room_layer() noexcept;
+
+    /// Releases an empty room's layer and reloads the unit headers, once.
+    void release_empty_room();
+
+    /// One shared mutator layer.
+    ///
+    /// build_room_layer and mount_chosen_mutator_layer build through this. It
+    /// creates no battle-room state. The layer stays mounted only when it
+    /// applied.
+    struct SharedMutatorLayer {
+        /// True when the layer applied and is the one left mounted.
+        bool applied = false;
+        /// Why it did not apply. Empty when it did.
+        std::string failure;
+        /// The mutator a failure names, or 255 when it names none.
+        uint8_t position = 0xff;
+        /// The first mutator the first run left out, or 255 when it left none out.
+        uint8_t dropped = 0xff;
+        /// Digest of the mounted layer.
+        oa::base::sha256::Digest layer{};
+        /// Mutator digest of the applied loadout and its layer.
+        oa::base::sha256::Digest folded{};
+    };
+
+    /// Builds the shared mutator layer and leaves it mounted when it applied.
+    ///
+    /// Refuses options that do not fit the wire, runs the pipeline with the
+    /// shared unit-sync limit, and stops at the first mutator that would stop
+    /// a match. When a mutator is left out, it runs again from the mutators
+    /// that applied, and the digests are that second run. The dropped position
+    /// stays the first run's. A list that applied in full is built once. A
+    /// failure leaves no layer mounted, unless that layer could not be released.
+    ///
+    /// @param resolved the mutators, top first
+    /// @return whether it applied, and the failure, positions and digests
+    [[nodiscard]] SharedMutatorLayer
+    build_shared_mutator_layer(const std::vector<oa::data::mutators::ResolvedMutator>& resolved);
+
+    /// Builds one wanted list, or records the failure so it is not tried again.
+    ///
+    /// @param resolved the mutators, top first
+    /// @param wanted the loadout digest
+    /// @return false when the room's layer could not be unmounted
+    bool build_room_layer(
+        const std::vector<oa::data::mutators::ResolvedMutator>& resolved,
+        const oa::base::sha256::Digest& wanted
+    );
+
+    /// Resolves a guest's whole copy of the host's list.
+    ///
+    /// Each mutator's mode is the bit in `modes`: set means Add, clear means
+    /// Replace. When `modes` is nothing, an older record, every mode is
+    /// Replace. The guest's own default is not used.
+    ///
+    /// @param assembly the host's list
+    /// @param modes the host's clash-mode mask, or nothing when the record has none
+    /// @param[out] resolved the packages that resolved
+    /// @param[out] codes one have-code per position
+    /// @param[out] wanted the digest, when every position has and it matches
+    /// @return true when every position has and the digest is the host's
+    bool resolve_guest_loadout(
+        const oa::netgame::PresenceLoadoutAssembly& assembly,
+        std::optional<uint32_t> modes,
+        std::vector<oa::data::mutators::ResolvedMutator>& resolved,
+        std::vector<uint8_t>& codes,
+        oa::base::sha256::Digest& wanted
+    );
+
+    /// Publishes the field the room's phase describes.
+    ///
+    /// @param include_items true on the host, so the field names each mutator
+    void publish_current(bool include_items);
+
+    /// Greets an OA peer again when the list it was greeted for has changed.
+    void greet_room_peers();
+
+    /// Caches the host list's loadout digest until the list or the sim hash changes.
+    void remember_wanted();
+
+    /// Copies the guest's assembly when its generation changes.
+    void refresh_room_assembly();
+
+    /// Logs once when the host's unit sync has finished for this build.
+    void note_unit_sync();
+
+    /// The player's chosen mutators, held aside while a replay or a saved game
+    /// plays another list once.
+    struct LoadoutOnceHold;
+
+    /// Frees the held list.
+    ///
+    /// @param hold state to free; null is allowed
+    static void destroy_loadout_once_hold(LoadoutOnceHold* hold) noexcept;
+
+    /// Marks the held list as the one this match start plays.
+    ///
+    /// A quiet no-op when no list is held. Called when a match start reads the
+    /// chosen list, before an empty list returns. A teardown before this leaves
+    /// the hold as it is.
+    void start_loadout_once() noexcept;
+
+    /// Tells whether a save or a replay has chosen the next match's mutators
+    /// and that match has not started.
+    ///
+    /// @return true while that choice is waiting for its match
+    [[nodiscard]] bool mutators_held_for_next_match() const noexcept;
+
+    /// Puts the player's mutators back when a replay's or a saved game's match ends.
+    ///
+    /// Restores only after `start_loadout_once` has marked that match. A teardown
+    /// before the start leaves the hold as it is. A quiet no-op when no list is held.
+    void finish_loadout_once();
+
+    /// Reads the crash record beside the preferences file into memory and
+    /// deletes the file, so the next start does not ask again.
+    void open_mutator_sentinel();
+
+    /// Rewrites the crash record with the loadout in play and the setup that
+    /// started it. An empty loadout writes nothing.
+    ///
+    /// @param setup the setup, or nothing when no setup started the match
+    /// @param loadout the mutators in play
+    void arm_mutator_sentinel(
+        std::optional<mutators_memory::Setup> setup, const oa::data::mutators::Loadout& loadout
+    );
+
+    /// Deletes the crash record's file. A fatal unwind must not call this:
+    /// Runtime's destructor does not.
+    void clear_mutator_sentinel();
+
+    /// Logs once that `--no-mutators` refused a named list. An empty list
+    /// logs nothing.
+    ///
+    /// @param named the list, as it was named
+    void note_mutators_refused(std::string_view named);
+
+    /// The mutators of a loadout, as a log line names them.
+    ///
+    /// @param loadout the loadout
+    /// @return `<id> <version>`, joined by commas
+    [[nodiscard]] static std::string mutator_names(const oa::data::mutators::Loadout& loadout);
+
+    /// Joins mutators as a command line or a launch file named them.
+    ///
+    /// @param names `--mutator` values, or a launch file's items
+    /// @return the names, joined by commas
+    [[nodiscard]] static std::string mutator_list_text(const std::vector<std::string>& names);
+
     /// The name an installed pack gives a map, for a campaign load.
     friend const char* pack_index_title(void* context, const char* map_name);
 
@@ -4278,6 +5782,14 @@ class Runtime final : public menu::Host,
     /// pack map's fit and the reasons maps were refused
     /// (runtime_pack_maps.cpp).
     struct PackMapState;
+
+    /// The open brain log and record file (runtime_brain_logs.cpp).
+    struct BrainTraceFiles;
+
+    /// Frees the brain log and the record file.
+    ///
+    /// @param state state to free; null is allowed
+    static void destroy_brain_trace_files(BrainTraceFiles* state) noexcept;
 
     /// Frees the pack maps' state.
     ///
@@ -4609,6 +6121,51 @@ class Runtime final : public menu::Host,
         std::string* why
     );
 
+    /// Opens the mutator picker on the OA layer, over the screen that asked.
+    ///
+    /// The list comes from the installed mutators, the catalogues' mutator
+    /// entries, the download queue and the verdicts the feed gives for the
+    /// mod being played. The picker's own feed is installed the first time,
+    /// unless a check has replaced it. Refused during a match, while a
+    /// front-end dialog is up, while a modal OA screen is up, without the
+    /// layer's fonts, or while the picker is already open.
+    ///
+    /// @param request the setup, the set it opens on, and what it hands back
+    /// @return false when the picker cannot open
+    bool open_mutator_picker(MutatorPickerRequest request);
+
+    /// Opens the brain picker on the OA layer, over the screen that asked.
+    ///
+    /// The list comes from the feed: the runtime's own feed lists the brains
+    /// installed in the player's Brains folder. That feed is installed the
+    /// first time, unless a check has replaced it. Refused during a match,
+    /// while a front-end dialog is up, while a modal OA screen is up, without
+    /// the layer's fonts, or while the picker is already open.
+    ///
+    /// @param request the setup, the seat, the choice it opens on, and what it hands back
+    /// @return false when the picker cannot open
+    bool open_brain_picker(BrainPickerRequest request);
+
+    /// Replaces the brain picker's feed.
+    ///
+    /// A check uses this. Restoring the runtime's own feed puts that feed
+    /// back. Badge pictures the own feed was holding are dropped.
+    ///
+    /// @param feed the feed
+    void set_brain_picker_feed(BrainPickerFeed feed);
+
+    /// Puts the runtime's own brain-picker feed back.
+    void restore_brain_picker_feed();
+
+    /// Replaces the mutator picker's feed.
+    ///
+    /// A check uses this. Restoring the runtime's own feed puts that feed
+    /// back. The catalogue and the badge pictures the own feed was holding
+    /// are dropped.
+    ///
+    /// @param feed the feed
+    void set_mutator_picker_feed(MutatorPickerFeed feed);
+
     /// Returns the download queue, starting the content service on first use.
     ///
     /// @return the queue
@@ -4647,17 +6204,18 @@ class Runtime final : public menu::Host,
     /// reads the next package, asks what its plan asks, unpacks it, a budget
     /// at a time each frame with its progress shown, puts it in place and
     /// tells what came of it; a change to the mod played waits for the run to
-    /// end (request_soft_restart). A map pack from a catalogue is the
-    /// exception: it installs on any screen but a match, with no prompt, and
-    /// a plan that asks waits for the settled main menu. Also tells what a
-    /// change that waited did, takes the packages a second start handed over,
-    /// and deletes the folders a change dropped, a step a frame. A mod the
-    /// player chose in the Library also starts while the Library shows
-    /// (catalogue_mod_may_start), asks only what its registry must, and its
-    /// update to the mod played waits until the player leaves the mod. A run
-    /// nobody watches, unless its check asks, leaves the packages waiting but
-    /// a catalogue language pack, a chosen mod while the Library is on top,
-    /// and a catalogue map pack while the map browser is on top or GET MAP shows.
+    /// end (request_soft_restart). A map pack or a mutator from a catalogue
+    /// is the exception: it installs on any screen but a match, with no
+    /// prompt, and a plan that asks waits for the settled main menu. Also
+    /// tells what a change that waited did, takes the packages a second start
+    /// handed over, and deletes the folders a change dropped, a step a frame.
+    /// A mod the player chose in the Library also starts while the Library
+    /// shows (catalogue_mod_may_start), asks only what its registry must, and
+    /// its update to the mod played waits until the player leaves the mod. A
+    /// run nobody watches, unless its check asks, leaves the packages waiting
+    /// but a catalogue language pack, a chosen mod while the Library is on
+    /// top, and a catalogue map pack or mutator while the map browser is on
+    /// top or GET MAP shows.
     void tell_mod_installs();
 
     /// Tells whether a mod the player chose in the Library may start
@@ -4952,7 +6510,7 @@ class Runtime final : public menu::Host,
     /// allows, outside unattended runs.
     /// Refused, as the settings are, off the main menu, while a package owns
     /// the frame, over a message box, while the saves notice shows, or
-    /// without the dialog's fonts.
+    /// without the dialog's fonts (library_can_open).
     ///
     /// @param tab the tab; nothing opens it on Active
     void open_library(std::optional<oa::ui::library::Tab> tab);
@@ -5078,11 +6636,30 @@ class Runtime final : public menu::Host,
     void keep_library_for_restart();
 
     /// Opens the Library again as the run before left it
-    /// (take_library_return), once the main menu lets it open and its
-    /// worker has found the installed packages, so that no entry moves as
-    /// they arrive; at most kept_library_wait_ms after the first try. Until
-    /// then the switch's work dialog shows over the main menu.
+    /// (take_library_return), once the main menu lets it open
+    /// (kept_library_may_show) and its feed lists the installed packages
+    /// (LibraryFeed::installed_listed), so that no entry moves as they
+    /// arrive; the chosen entry's row is in view. Until then the switch's
+    /// work dialog (WorkScreen) shows over the main menu where the Library
+    /// could. The wait is kept_library_wait_ms from the first frame on the
+    /// main menu: then the Library opens unlisted if it can, and is dropped
+    /// if it cannot, on whichever screen shows.
     void reopen_kept_library();
+
+    /// Tells whether open_library opens the Library now.
+    ///
+    /// @return false off the main menu, while a package owns the frame,
+    ///     over a message box, while the saves notice shows, or without the
+    ///     dialog's fonts
+    [[nodiscard]] bool library_can_open();
+
+    /// Tells whether the Library kept over a soft restart, or the switch's
+    /// work dialog while it waits, may show now: where the player could open
+    /// the Library (library_can_open), with no screen of the OA layer but
+    /// that work dialog.
+    ///
+    /// @return true when it may
+    [[nodiscard]] bool kept_library_may_show();
 
     /// Runs --check-library: the main menu's OA button, its dot and the
     /// Library over a feed of fixtures, its actions, Settings over it and it
@@ -5123,6 +6700,15 @@ class Runtime final : public menu::Host,
     /// first step that failed. With no installer, the demo half is not run.
     void check_library_content();
 
+    /// Runs --check-library-update-question. Installs made-up Ridge from an
+    /// added registry, offers an update whose rules change, and at 640x480
+    /// opens that row's details page. NOT NOW leaves the page. UPDATE, fifty
+    /// times, leaves the Library on top with its tabs on the next frames,
+    /// and the Library stays there after the update is no longer offered.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_library_update_question();
+
     // The map browser on the OA layer (runtime_map_browser.cpp): MORE MAPS…
     // over the skirmish map list and over the host's map list in the battle
     // room opens it.
@@ -5133,6 +6719,102 @@ class Runtime final : public menu::Host,
 
     /// The map browser, a screen of the OA layer named map-browser.
     struct MapBrowserScreen;
+
+    /// The mutator picker, a screen of the OA layer named mutator-picker.
+    struct MutatorPickerScreen;
+
+    /// The brain picker, a screen of the OA layer named brain-picker.
+    struct BrainPickerScreen;
+
+    /// MUTATORS… on the skirmish setup and the campaign launch, a screen of
+    /// the OA layer named mutators-button.
+    struct MutatorButtonScreen;
+
+    /// Keeps MUTATORS… on the OA layer while the skirmish setup, NEWGAME,
+    /// Any Mission or the host's battle room shows: pushes it when the layer
+    /// has none. OaLayer::tick calls it once a frame.
+    void keep_mutator_button_screen();
+
+    /// Runs --check-mutator-button: the button on SKIRMISH and NEWGAME at
+    /// 640x480 and 1280x720, the focus hand-over, the remembered set, and
+    /// the set a start hands on. Writes mutator-button-skirmish-<w>x<h>.png
+    /// and mutator-button-newgame-<w>x<h>.png in the working folder.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_mutator_button();
+
+    /// A computer seat's brain on SKIRMISH, a screen of the OA layer named
+    /// brain-seats. One button sits to the right of each computer row's
+    /// Energy button while a brain is installed.
+    struct BrainSeatsScreen;
+
+    /// Keeps the computer-seat buttons on the OA layer while SKIRMISH, NEWGAME
+    /// or Any Mission shows and a brain is installed: pushes the screen when
+    /// the layer has none. OaLayer::tick calls it once a frame, after
+    /// MUTATORS…. A Library that has just closed reloads the installed brains
+    /// first.
+    void keep_brain_seats_screen();
+
+    /// Runs --check-brain-seat-buttons: each computer row's brain button on
+    /// SKIRMISH at 640x480 and 1280x720, the focus hand-over, the picker,
+    /// the hover card and the brains a start seats. Writes
+    /// brain-seats-skirmish-<w>x<h>.png in the working folder.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_brain_seat_buttons();
+
+    /// A computer seat's brain in the battle room, a screen of the OA layer
+    /// named brain-room. A button sits on each computer row this machine
+    /// runs, over that row's empty screen-size column, while a brain is
+    /// installed or the seat runs one. Another machine's brain is a label.
+    struct BrainRoomScreen;
+
+    /// Keeps the battle room's brain seats on the OA layer while the battle
+    /// room is in front and a row needs one: pushes the screen when the
+    /// layer has none. OaLayer::tick calls it once a frame, after the
+    /// skirmish seat buttons.
+    void keep_brain_room_screen();
+
+    /// Runs --check-brain-room: a battle room hosted alone, at 640x480 and
+    /// 1280x720, the seat button, the picker, the card and the presence
+    /// record. Writes brain-room-host-<w>x<h>.png in the working folder.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_brain_room();
+
+    /// Runs --check-brain-campaign: the campaign's brain button on NEWGAME
+    /// and Any Mission at 640x480 and 1280x720, Tab, the picker, the brain
+    /// the first mission seats and the seat a loaded campaign save leaves.
+    /// Writes brain-campaign-<screen>-<w>x<h>.png in the working folder.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_brain_campaign();
+
+    /// Runs --check-mutator-room: the host's MUTATORS… in a battle room
+    /// hosted alone, at 640x480 and 1280x720, the remembered multiplayer
+    /// set, the chat lines, and the button while the room's options are
+    /// locked. Writes mutator-room-host-<w>x<h>.png in the working folder.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_mutator_room();
+
+    /// The mutator picker's catalogue, pictures and downloads, while it is
+    /// open. Defined in runtime_mutator_picker.cpp.
+    struct MutatorPickerState;
+
+    /// Frees the mutator picker's state.
+    ///
+    /// @param state the state; null is allowed
+    static void destroy_mutator_picker_state(MutatorPickerState* state) noexcept;
+
+    /// The brain picker's badge pictures, while it is open. Defined in
+    /// runtime_brain_picker.cpp.
+    struct BrainPickerState;
+
+    /// Frees the brain picker's state.
+    ///
+    /// @param state the state; null is allowed
+    static void destroy_brain_picker_state(BrainPickerState* state) noexcept;
 
     /// Keeps MORE MAPS… on the OA layer while the skirmish map list (SELMAP)
     /// shows, or the host's map dialog in the battle room: pushes it when the
@@ -5193,6 +6875,74 @@ class Runtime final : public menu::Host,
     ///
     /// Throws std::runtime_error naming the first step that failed.
     void check_map_browser();
+
+    /// Writes --check-mutator-picker's and --check-brain-picker's registry
+    /// list into the player's folder, every built-in registry turned off,
+    /// before the content service reads it, so that the check fetches nothing.
+    void prepare_mutator_picker_check();
+
+    /// Runs --check-mutator-picker: the picker over the main menu at
+    /// 640x480, 1280x720, 1920x1080 and 2560x1440, over a feed of made-up
+    /// mutators. Writes each size's opening frame as
+    /// mutator-picker-<w>x<h>.png in the working folder.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_mutator_picker();
+
+    /// Runs --check-brain-picker: the picker over the main menu at
+    /// 640x480, 1280x720, 1920x1080 and 2560x1440, over a feed of made-up
+    /// brains, then on the runtime's own feed. Writes each size's opening
+    /// frame as brain-picker-<w>x<h>.png in the working folder.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_brain_picker();
+
+    /// Installs the check's brain feed. The text-fit check opens the picker on it too.
+    void install_brain_picker_check_feed();
+
+    /// Installs the check's feed. The text-fit check opens the picker on it too.
+    void install_mutator_picker_check_feed();
+
+    /// Puts the runtime's own mutator-picker feed back.
+    void restore_mutator_picker_feed();
+
+    /// Publishes the check's canned verdicts and moves its generation on.
+    void publish_mutator_picker_check_verdicts();
+
+    /// Marks one of the check's mutators installed and moves its generation on.
+    ///
+    /// @param id the mutator's id
+    void mark_mutator_picker_check_installed(std::string_view id);
+
+    /// Marks one of the check's downloads stopped, so "Get mutators" asks RETRY.
+    ///
+    /// @param id the mutator's id
+    /// @param problem why it stopped, as the player reads it
+    void fail_mutator_picker_check_download(std::string_view id, std::string_view problem);
+
+    /// Tells whether the check's feed was asked to retry a package.
+    ///
+    /// @param key the package key
+    /// @return true when RETRY named it
+    [[nodiscard]] bool mutator_picker_check_retried(std::string_view key) const;
+
+    /// Runs --check-mutator-prompts: a skirmish one made-up mutator stops,
+    /// START WITHOUT IT and BACK, the crash question, and "Get mutators".
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_mutator_prompts();
+
+    /// Runs --check-saved-brains: a skirmish Steady Commander plays is saved
+    /// and loaded with its state, a save with no brain has no account, a
+    /// newer brain leaves the state out, and a missing brain asks to load
+    /// with the built-in player.
+    ///
+    /// Throws std::runtime_error naming the first step that failed.
+    void check_saved_brains();
+
+    /// Stops the check's feed from asking for verdicts, clears the ones it
+    /// published, and moves its generation on.
+    void silence_mutator_picker_check();
 
     /// Opens the Game files screen over the main menu (Settings › Game files › Manage…),
     /// which does not respond until it is closed, then refreshes the section's rows
@@ -5268,7 +7018,7 @@ class Runtime final : public menu::Host,
     /// window at 640x480 and the language as it found it.
     void check_window_edge_rows_fit();
 
-    /// Checks that System's File Type Registration and its five file-type
+    /// Checks that System's File Type Registration and its seven file-type
     /// switches fit the settings dialog on a 640x480 window in English and
     /// German, at the section's top and its end, as part of
     /// --check-engine-settings. Leaves the window at 640x480 and the
@@ -5296,6 +7046,162 @@ class Runtime final : public menu::Host,
     /// what the painters painted, and what the last Full frame drew. Made
     /// at the first switch-on of the run.
     struct FullPresentation;
+
+    /// Persistent resources and camera for the live 3D match view.
+    struct LiveRenderer;
+    /// Releases the 3D device before SDL shuts down.
+    static void destroy_live_renderer(LiveRenderer* renderer) noexcept;
+    /// Reports whether the camera has left the classic orientation.
+    [[nodiscard]] bool live_renderer_active() const noexcept;
+    /// Reports whether the wider camera range is enabled.
+    [[nodiscard]] bool live_renderer_unlocked() const noexcept;
+    /// Reports a scene or GPU failure from the last attempted frame.
+    [[nodiscard]] bool live_renderer_failed() const noexcept;
+    /// Distinguishes an unsupported GPU backend from a rendering error.
+    [[nodiscard]] bool live_renderer_unavailable() const noexcept;
+    /// Returns the geometry count of the last built live frame.
+    [[nodiscard]] std::size_t live_renderer_vertex_count() const noexcept;
+    /// Returns how many vertices in the last live frame carry emitted light.
+    [[nodiscard]] std::size_t live_renderer_emissive_vertex_count() const noexcept;
+    /// Returns the number of sight-gated construction particles in the last live frame.
+    [[nodiscard]] std::size_t live_renderer_nano_particle_count() const noexcept;
+    /// Marks terrain pixels visible through the live geometry for debug painting.
+    /// @return one byte per battlefield pixel, nonzero where terrain is frontmost
+    [[nodiscard]] std::vector<uint8_t> live_terrain_visibility_mask() const;
+    /// Scrolls the rotated view in screen directions through its ground projection.
+    /// @param screen_dx horizontal screen pixels to move the camera
+    /// @param screen_dy vertical screen pixels to move the camera
+    /// @return true when the live camera handled the scroll, including an active drag
+    bool scroll_live_match_view(double screen_dx, double screen_dy);
+    /// Applies camera permission and angle limits without moving the view centre.
+    /// @param allowed whether camera rotation is enabled
+    /// @param unlocked whether angles outside the art-friendly range are allowed
+    void apply_live_camera_settings(bool allowed, bool unlocked);
+    /// Restores classic orientation while retaining reusable GPU resources.
+    void reset_live_renderer();
+    /// Turns the live camera for a director's frame, with the wider angles of
+    /// Unlocked camera: the yaw taken modulo a turn and the pitch held within
+    /// the unlocked range. Clears a failure, so that the frame is tried.
+    /// @param yaw_degrees turn about the vertical from the classic view
+    /// @param pitch_degrees elevation change from the classic view
+    /// @return true when the camera is turned from the classic view
+    bool turn_live_camera(float yaw_degrees, float pitch_degrees);
+    /// Picks the drawn terrain beneath a frame point in the rotated view:
+    /// where the pointer's ray meets the terrain's mesh, between map pixels
+    /// and at the mesh's height, as the camera anchors on it.
+    /// @param x frame column in pixels
+    /// @param y frame row in pixels
+    /// @return fixed-point world position, or no terrain intersection
+    std::optional<oa::sim::ground_orders::Point> live_ground_hit(float x, float y) const;
+    /// Picks the ground beneath a frame point in the rotated view as orders
+    /// and placement take it, as a classic pick gives it: the whole map
+    /// pixel the drawn terrain is hit in (live_ground_hit), at the
+    /// simulation's terrain height there, never below the sea.
+    /// @param x frame column in pixels
+    /// @param y frame row in pixels
+    /// @return fixed-point world position, or no terrain intersection
+    std::optional<oa::sim::ground_orders::Point> live_ground_point(float x, float y) const;
+    /// Picks the frontmost visible animated unit beneath a frame point.
+    /// @param x frame column in pixels
+    /// @param y frame row in pixels
+    /// @return unit slot, or zero when terrain or another object covers it
+    uint16_t live_unit_under(float x, float y) const;
+    /// Measures a visible unit's projected bounds in frame pixels.
+    /// @param id unit slot
+    /// @return frame bounds, or no visible geometry
+    std::optional<oa::Rect32> live_unit_bounds(uint16_t id) const;
+    /// Projects a world point through the current live camera into frame pixels.
+    /// @param x world horizontal position in pixels
+    /// @param height world altitude in pixels
+    /// @param z world map depth in pixels
+    /// @return projected frame point
+    oa::present::world_renderer::ScreenPoint
+    live_project_world(float x, float height, float z) const;
+    /// Builds picking geometry and visible unit bounds from the rendered frame.
+    void rebuild_live_picking();
+    /// Draws selection and build feedback on the live battlefield.
+    void draw_live_selection();
+    /// Draws projected order queues and terrain debug overlays on the live battlefield.
+    void draw_live_overlays();
+    /// Draws health, squad and countdown overlays at interpolated live unit positions.
+    void draw_live_unit_overlays();
+    /// Handles camera gestures while ordinary input follows gameplay paths.
+    /// @param event the SDL event in window coordinates
+    /// @return whether the 3D view consumed the event
+    bool live_renderer_take_event(SDL_Event& event);
+    /// Replaces the battlefield with the current match's 3D frame.
+    /// @return false when the card could not draw the rotated frame, whose
+    ///         battlefield the classic raster left out; the view is then
+    ///         classic again, and the frame must be drawn again
+    [[nodiscard]] bool render_live_match_surface();
+    /// Presentation-only effect history, independent of the active renderer.
+    struct MatchEffects;
+    /// Observes transient events after a simulation tick without changing the match.
+    void observe_match_effect_tick() noexcept;
+    /// Captures visual shot events while preserving existing read-only observers.
+    renderer_effect_events::Capture capture_match_effect_events() noexcept;
+    /// Collects visible light and heat sources from the current match and draw plan.
+    std::span<const renderer_effect_sources::Source> collect_match_effect_sources();
+    /// Returns the current frame's collected sources.
+    std::span<const renderer_effect_sources::Source> match_effect_sources() const noexcept;
+    /// Stable map-derived surface flow and absolute-tick texture drift.
+    renderer_water::Wind water_wind() const noexcept;
+    /// Cached water-body fetch for the current match; no per-frame map traversal.
+    const renderer_water::SurfaceCache* water_surface() const noexcept;
+    /// Recent visible naval firing and water impacts; recheck sight when drawing.
+    std::span<const renderer_water::Disturbance> water_disturbances() const noexcept;
+    /// Match a visible impact sprite to a recent EMG hit, independent of merged light centres.
+    /// @param point canonical world location in fixed-point units
+    /// @return true within six world pixels of an EMG hit in the last game second
+    bool emg_impact_at(const oa::FixedVec3& point) const noexcept;
+    /// True for smoke in the short column immediately above a recent EMG hit.
+    bool emg_smoke_at(const oa::FixedVec3& point) const noexcept;
+    /// Clears transient presentation history when changing or seeking a match.
+    void reset_match_effect_sources();
+    /// Reports whether a collected source has an enabled visual contribution.
+    bool match_effects_enabled();
+    /// Reports whether a collected source's heat distortion may reach the
+    /// view: the one effect that moves the battlefield's own pixels, where
+    /// the others only add light to them. A source counts at its strength
+    /// before the water over it lessens it, so one the water calms still
+    /// counts.
+    bool match_effects_distort();
+    /// Reports whether a collected source's enabled contribution reaches
+    /// the view.
+    ///
+    /// @param distortion_only true to count heat distortion alone
+    /// @return true when one does
+    bool match_effects_in_view(bool distortion_only);
+    /// Applies effects before battlefield overlays and HUD are drawn.
+    void compose_match_effects(renderer::Surface& surface, bool live);
+    /// Composes an RGB or RGBA battlefield at its output scale and local origin.
+    void compose_match_effect_pixels(
+        std::span<uint8_t> pixels,
+        uint32_t width,
+        uint32_t height,
+        uint32_t pitch,
+        uint32_t channels,
+        float origin_x,
+        float origin_y,
+        float scale_x,
+        float scale_y,
+        bool live = false,
+        float effect_row_offset = 0
+    );
+    /// Rasterizes visible scene surfaces and their camera depth for local effects.
+    void live_scene_visibility(
+        std::vector<uint8_t>& visibility,
+        std::vector<float>& depth,
+        bool terrain_only = false,
+        std::span<const uint32_t> row_left = {},
+        std::span<const uint32_t> row_right = {},
+        std::span<const uint8_t> requested_pixels = {}
+    ) const;
+    /// Projects a world position onto the live camera's depth axis.
+    float live_project_depth(float x, float height, float z) const;
+    /// Exercises live Skirmish rendering without opening a window.
+    /// @return zero on success, 77 for an unavailable GPU backend
+    int check_live_renderer();
 
     /// Frees the Full tier's presentation.
     ///
@@ -5597,6 +7503,33 @@ class Runtime final : public menu::Host,
     /// multiplayer screens show: pushes it when the layer has none.
     /// OaLayer::tick calls it once a frame.
     void keep_get_map_screen();
+
+    /// The rectangle GET MAP is showing, in the layer's points.
+    ///
+    /// Width and height are 0 while GET MAP shows nothing.
+    struct ShownBox {
+        int32_t x{};      ///< the left edge
+        int32_t y{};      ///< the top edge
+        int32_t width{};  ///< the width
+        int32_t height{}; ///< the height
+    };
+
+    /// Returns the rectangle GET MAP is showing, in the layer's points.
+    ///
+    /// Width is 0 while GET MAP shows nothing. The guest's GET MUTATORS
+    /// block treats a shown rectangle as a place it must miss.
+    ///
+    /// @return the rectangle
+    [[nodiscard]] ShownBox get_map_box() const noexcept;
+
+    /// GET MUTATORS over a guest's battle room, as a screen of the OA layer
+    /// (runtime_get_mutators.cpp).
+    struct GetMutatorsScreen;
+
+    /// Keeps GET MUTATORS's screen (runtime_get_mutators.cpp) on the OA layer
+    /// while the multiplayer screens show: pushes it when the layer has none.
+    /// follow_mutator_room_chat calls it once a frame, before the room's chat.
+    void keep_get_mutators_screen();
 
     /// Returns what this machine has of a map pack (runtime_get_map.cpp):
     /// from the installed packs, whose SHA-256, registry and release come
@@ -6033,20 +7966,97 @@ class Runtime final : public menu::Host,
     ///     empty without a campaign mission or map
     std::string session_ai_profile_path();
 
+    /// The profile file the computer players read, and the path it came from.
+    struct ComputerProfileFile {
+        std::string path{}; ///< the path whose bytes were read, or empty
+        std::string text{}; ///< those bytes; empty when neither file exists
+    };
+
     /// Reads the computer players' profile: the session's, else ai/default.txt.
     ///
-    /// @return the profile text; empty when neither exists, and the computer
-    ///     players then take only their types' own directives
+    /// The path is the one whose bytes were kept. A session path that is
+    /// missing, empty or too large falls through to ai/default.txt, as
+    /// `read_computer_profile` always has.
+    ///
+    /// @return the path and the bytes; both empty when neither file exists
+    ComputerProfileFile computer_profile_file();
+
+    /// Reads the computer players' profile text.
+    ///
+    /// @return `computer_profile_file()`'s text; empty when neither file
+    ///     exists, and the computer players then take only their types' own
+    ///     directives
     std::string read_computer_profile();
 
     /// Configures the computer players before the mission's units exist, as mission state set-up
     /// does.
     ///
-    /// They take the profile and the side build lists read from
+    /// When this start may seat a brain (brains held for it, a seat chosen
+    /// for one, or a shadow asked for), the facts a brain reads are stored
+    /// first, before any brain is seated; a match that seats none builds no
+    /// facts. The players take the profile and the side build lists read from
     /// gamedata/sidedata.tdf; the match applies both before its first tick's
-    /// orders run. Throws std::runtime_error when either cannot be loaded or
+    /// orders run. Brains held for this start are seated after those players
+    /// are configured. Throws std::runtime_error when either cannot be loaded or
     /// stored.
     void configure_computer_players();
+
+    /// Stores this match's facts (`brain_game_facts`) for the brains seated in
+    /// it, once per match. Does nothing when they are already stored or no
+    /// match is running.
+    void store_brain_game_facts();
+
+    /// Forgets the start rule, the map's starts and each player's start.
+    ///
+    /// Called as a match configures its computer players, before anyone is
+    /// placed, so a previous match cannot leak into this one.
+    void clear_brain_start_notes();
+
+    /// Copies the playing campaign schema's start-position rules, in rule order.
+    void note_campaign_map_starts();
+
+    /// Installs the brain log and record hooks when the command asked for a file.
+    ///
+    /// Lines and samples that arrive before the files exist are kept until
+    /// `open_brain_log_files`. Neither hook is installed when no file was
+    /// asked for, so a match with no file plays as before.
+    void install_brain_log_hooks();
+
+    /// Creates the brain log and the record file, when the command named them.
+    ///
+    /// The record file's first line is its header. Samples kept before the
+    /// file existed follow that line. Throws std::runtime_error when a named
+    /// file cannot be created.
+    void open_brain_log_files();
+
+    /// Writes one result line for each seat of a brain match that played.
+    ///
+    /// @param winner the winning player, or 255 when there is none
+    /// @param live live units of player 0 and player 1
+    void write_brain_record_results(uint8_t winner, const uint32_t* live);
+
+    /// Keeps one tick of the brain log. A null runtime does nothing.
+    static void brain_log_lines(void* context, std::string_view text) noexcept;
+
+    /// Keeps one training sample. A null runtime does nothing.
+    static void
+    brain_log_sample(void* context, const oa::sim::brains::RecordSample& sample) noexcept;
+
+    /// Remembers the computer seats a setup starts with and holds the brains
+    /// the next match seats.
+    ///
+    /// A computer slot keeps its own seat, including one that names no brain.
+    /// A slot with none takes the default brain, at `default_level`, with no
+    /// options. The match is handed what `resolve_brain_seats` keeps.
+    ///
+    /// @param setup the setup
+    void hand_setup_brain_seats(oa::data::brain_library::Setup setup);
+
+    /// Seats the brains held for this match, after the C++ players are configured.
+    ///
+    /// Each one goes through `seat_brain`. One that cannot be seated stays
+    /// with the built-in player. With nothing held, this does nothing.
+    void take_pending_brain_seats();
 
     /// Reloads the computer players' profile (ReloadAIProfiles): it is read again and reapplied
     /// over reset tables. A profile that cannot be stored is reported on the status line and
@@ -7121,7 +9131,28 @@ class Runtime final : public menu::Host,
     /// the match reads back from the draw (the view in Game, the on-screen
     /// list, the piece transforms, the radar's picture and blips) follows the
     /// zoom and the camera alone, whatever the draw scale.
+    ///
+    /// A rotated frame the card cannot draw leaves the battlefield undrawn;
+    /// that frame ends there, before anything is drawn over the battlefield
+    /// or the extension's HUD is asked for, and the frame is drawn once more,
+    /// classically (draw_match_surface).
     void render_match_surface();
+
+    /// Draws the match frame as render_match_surface describes.
+    ///
+    /// @return false when the rotated view's frame failed, leaving the frame
+    ///         undrawn past the battlefield, with the view put back classic
+    [[nodiscard]] bool draw_match_surface();
+
+    /// Draws the HUD layer of the match frame (match_hud_cpu_) as
+    /// draw_match_surface draws it, without the battlefield or what the
+    /// frame paints over the HUD after it: the loaded panel with its
+    /// buttons, scroll bars, the panels below a dialog and the dialog, on
+    /// the bars widened to the window (extend_match_bars), or the side
+    /// chrome alone. A panel just loaded is so measured and hit where the
+    /// next frame draws it (match_hud_strips) before that frame draws the
+    /// whole match.
+    void compose_match_hud();
 
     /// Returns the 3DO renderer state of the current match, built on first use.
     ///
@@ -7304,6 +9335,14 @@ class Runtime final : public menu::Host,
     ///
     /// @return the state
     EndgameState& endgame_state();
+
+    /// The canonical loadout kept with a finished campaign mission.
+    ///
+    /// Empty once the end screen has released that mission, when the kept
+    /// match is not a campaign mission, and when the mission played none.
+    ///
+    /// @return that text, or empty when none is kept
+    [[nodiscard]] std::string finished_campaign_loadout_text() const;
 
     /// Returns the engine ticks the end screen's timers run on (the 30 Hz clock).
     ///
@@ -7909,10 +9948,23 @@ class Runtime final : public menu::Host,
     // Side table, player records and respawn view of the offline match
     // (runtime_sides.cpp).
 
-    /// Loads the side table once, as engine start-up does; every match copies it into Game.sides.
+    /// Loads the run's side table, which every match uses unless its side data differs.
     ///
-    /// Throws std::runtime_error when SIDEDATA.TDF fails or defines no side.
+    /// Records the bytes of gamedata/sidedata.tdf this run read. Throws
+    /// std::runtime_error when that file fails or defines no side.
     void load_side_table();
+
+    /// Reads gamedata/sidedata.tdf again for the match about to start, in the language the run
+    /// started with.
+    ///
+    /// When those bytes equal the run's, the match uses the run's table. When they differ, the
+    /// match plays the sides, commanders and HUD art names parsed from them, and the run's table
+    /// is kept until the match ends. Side data that cannot be played throws std::runtime_error
+    /// and leaves the table in place.
+    void load_match_side_table();
+
+    /// Puts the run's side table back when a match has been playing another.
+    void restore_run_side_table() noexcept;
 
     /// Loads the two fonts the engine keeps for its whole run: COMIX, which the message log draws
     /// in, and smlfont, from the language folder of the game's language when it has them
@@ -7938,10 +9990,12 @@ class Runtime final : public menu::Host,
 
     /// Shows the progress dialog while `job` runs, when this run has a window
     /// and is not a headless check. The title is Open Annihilation. `line`
-    /// is an English key of the interface catalogue. With no window, or while
-    /// a dialog is already up, `job` runs on this thread and nothing is drawn.
+    /// is an English key of the interface catalogue, or a line already in the
+    /// language shown, such as a switch's (Options::restart_line), which
+    /// shows as it is (run_long_work). With no window, or while a dialog is
+    /// already up, `job` runs on this thread and nothing is drawn.
     ///
-    /// @param line the line's English key
+    /// @param line the line's English key, or the line as shown
     /// @param job the work; it may store how far it has come
     void run_progress(std::string_view line, const std::function<void(LongWork&)>& job);
 
@@ -8790,6 +10844,12 @@ class Runtime final : public menu::Host,
     ///
     /// @return the setting; Full before the settings are read
     [[nodiscard]] oa::ui::engine_settings::ExplosionFlash explosion_flash() const noexcept;
+
+    /// Returns the Fog of War setting: how the graphics card draws the
+    /// fog's edges. The processor always draws them as the game did.
+    ///
+    /// @return the setting; Smooth before the settings are read
+    [[nodiscard]] oa::ui::engine_settings::FogOfWar fog_of_war() const noexcept;
 
     /// Returns whether Smooth motion is On: frames between the game's ticks
     /// show units, their pieces, shots, debris and effects part of the way
@@ -9786,6 +11846,15 @@ class Runtime final : public menu::Host,
     /// @param direction where the focus goes
     void move_frontend_focus(oa::ui::gui_input::FocusDirection direction);
 
+    /// Puts the frontend screen's keyboard focus on a record, or on none.
+    ///
+    /// NEWGAME and Any Mission remember the record by name, and a negative
+    /// index clears that name so no record is focused. The surface is
+    /// rebuilt, so the GUI's ring follows.
+    ///
+    /// @param index the record, or a negative index for none
+    void set_frontend_focus(int32_t index);
+
     /// Activates the selected gadget of the current screen through its menu handler, then runs the
     /// frontend dispatcher when the menu asked for a new state.
     ///
@@ -10190,9 +12259,11 @@ class Runtime final : public menu::Host,
     ///
     /// @param font GUI font
     /// @param text the game text
+    /// @param scale paint pixels a source pixel spans each way, which the
+    ///        modern fonts are measured at; 0 for hud_text_scale()
     /// @return the width in source pixels, a modern run's rounded up
     [[nodiscard]] int
-    gui_text_width(const oa::present::GafSprites& font, std::string_view text) const;
+    gui_text_width(const oa::present::GafSprites& font, std::string_view text, int scale = 0) const;
 
     /// Installs the game-text hooks the text loops draw the modern fonts and
     /// read the settings through.
@@ -10318,10 +12389,16 @@ class Runtime final : public menu::Host,
     [[nodiscard]] std::optional<std::size_t>
     greyed_picture_frame(const oa::ui::gui_layout::Gadget& gadget) const;
 
-    /// Draws the unit and weapon buttons' captions (their queued counts) at each button's corner.
+    /// Draws the unit and weapon buttons' captions: their queued counts and stockpiles.
     ///
-    /// A hidden button, such as a LOAD where the unit has BLAST in its
-    /// place, shows no caption.
+    /// Each is written in hattfont12 where the button's attributes place a
+    /// caption (oa::ui::gui_layout::button_caption_pen), as a pressed
+    /// button's while the button shows pressed: on the game's build pages,
+    /// centred along the button's bottom. While the settings choose the
+    /// modern fonts, they write it, with the outline, shadow and background
+    /// the settings ask for. A hidden button, such as a LOAD where the unit
+    /// has BLAST in its place, shows no caption, and nothing is written
+    /// without hattfont12.
     void draw_build_captions();
 
     /// Clicks the loaded build or order page through the build panel click.
@@ -10351,19 +12428,23 @@ class Runtime final : public menu::Host,
     [[nodiscard]] bool match_command_lit(std::size_t index) const;
 
     /// Returns to the default order; the buttons sharing the STOP button's group, the command
-    /// buttons, go out as the game clears them.
+    /// buttons, go out as the game clears them, and an order queued with Shift is forgotten
+    /// (end_command_on_shift_release).
     void reset_match_command();
 
     /// Tests whether the pointer's orders queue: the shift bit of the last pointer event (bit 2
     /// of Game.pointer_state word 2).
     ///
     /// While it is held the orders the pointer gives are queued and the armed
-    /// command then stays.
+    /// command then stays until Shift is let go.
     ///
     /// @return true while shift was held
     bool queueing() const;
 
     /// Drops the armed command after an order unless shift keeps it for queueing.
+    ///
+    /// An order given with Shift held keeps the command only until Shift is
+    /// let go (end_command_on_shift_release).
     void finish_issued_command();
 
     /// Plays a named interface sound unless muted, and records it for a check that listens.
@@ -10391,19 +12472,21 @@ class Runtime final : public menu::Host,
     /// Sends every selected mobile builder to build the pending building at a
     /// site, plays oktobuild and ends build mode unless the order is queued.
     /// A building queued with Shift held ends build mode once Shift is let go
-    /// (end_build_on_shift_release).
+    /// (end_command_on_shift_release).
     ///
     /// @param site 16.16 world point of the site, snapped to the footprint
     /// @param queue the order goes behind the builders' others
     void issue_pending_build(const oa::sim::ground_orders::Point& site, bool queue);
 
-    /// Ends build mode once Shift is let go after a building was queued with
-    /// it held, as in 3.1c, so that the next click on the ground gives the
-    /// default order rather than another building. With none queued, the
-    /// building stays chosen when Shift is let go. Shift is the orders' own
+    /// Returns to the default order once Shift is let go after an order of
+    /// the armed command, or a building, was queued with it held, as in 3.1c:
+    /// the next click gives the default order rather than the armed command
+    /// or another building, and in the left-click interface a right press
+    /// drops the selection. A command armed or a building chosen with none
+    /// given stays when Shift is let go. Shift is the orders' own
     /// (input_modifiers(ModifierUse::order)): the keyboard's, or QUEUE's on
     /// the touch controls and the pad.
-    void end_build_on_shift_release();
+    void end_command_on_shift_release();
 
     /// Places the pending building under a canvas point: on the radar as 3.1c
     /// places it there (place_pending_build_on_radar), else at the
@@ -10568,8 +12651,9 @@ class Runtime final : public menu::Host,
     /// command, starts mouse look, drops the selection, moves the view to the
     /// point under it on the radar (starting a radar scroll in the left-click
     /// interface) or gives the default order to the unit and ground under the
-    /// pointer. Dropping the selection also closes an open in-game menu, which
-    /// resumes a match it held, as F2 does.
+    /// pointer. Dropping the selection also closes the unit info panel and an
+    /// open in-game menu, which resumes a match it held, as F2 does. A press on
+    /// the unit info panel is the panel's (click_unit_info).
     ///
     /// @param x canvas column
     /// @param y canvas row
@@ -10624,7 +12708,7 @@ class Runtime final : public menu::Host,
     ///
     /// An order cursor gives each selected unit its default order at the ground
     /// under the pointer, a highlight cursor (the right-click interface) drops the
-    /// selection, any other does nothing.
+    /// selection and closes the unit info panel, any other does nothing.
     ///
     /// @param x canvas column
     /// @param y canvas row
@@ -10868,9 +12952,9 @@ class Runtime final : public menu::Host,
 
     /// Handles a left click over a unit, dispatched through the cursor as the game does.
     ///
-    /// The select cursor picks the unit, a highlight cursor is left to the
-    /// caller, and an order cursor issues each selected unit's resolved order
-    /// with the pointer unit as its target.
+    /// The select cursor picks the unit, a highlight cursor drops the selection
+    /// and closes the unit info panel, and an order cursor issues each selected
+    /// unit's resolved order with the pointer unit as its target.
     ///
     /// @param x canvas column
     /// @param y canvas row
@@ -11093,13 +13177,47 @@ class Runtime final : public menu::Host,
     /// outlined in the refused colour and the click must leave build mode armed
     /// and the builder without an order; over the clear site the outline must be
     /// the clear colour and the click must give the builder MobileBuild there.
-    /// Then checks the outline over the map's edges (check_build_site_edges),
-    /// for ARMSOLAR when the game has it. Throws std::runtime_error on a
-    /// failure.
+    /// Then checks the cursor shown in build mode (check_build_cursor), the
+    /// site under the pointer zoomed out (check_build_site_zooms), and the
+    /// outline over the map's edges (check_build_site_edges), for ARMSOLAR
+    /// when the game has it. Throws std::runtime_error on a failure.
     ///
     /// @param builder local mobile builder
     /// @param type building type to place
     void check_build_site_pointer(uint16_t builder, uint16_t type);
+
+    /// Checks the cursor the frame shows in build mode as the pointer moves.
+    ///
+    /// Off the battlefield and the radar the cursor must be the normal one,
+    /// and it must stay so on the battlefield, where the site is centred on
+    /// the pointer and a click still places the building; over the radar it
+    /// must be the build cursor, which stays when the pointer goes on to the
+    /// battlefield. Throws std::runtime_error on a failure.
+    ///
+    /// @param type building type to place
+    void check_build_cursor(uint16_t type);
+
+    /// Checks build placement over the battlefield zoomed out, on the game's
+    /// own screen and on a larger window at two chrome scales.
+    ///
+    /// On 640x480, and on 1920x1080 with HUD scaling on (the chrome twice
+    /// the game's size) and off, the wheel zooms out about the
+    /// battlefield's centre from zoom 1 to half way to the farthest zoom any
+    /// Maximum zoom out choice allows, then on to that farthest zoom. At
+    /// each zoom the pointer, moved by SDL's events, goes to a clear stretch
+    /// of ground and to points of the battlefield that show the map: the
+    /// normal cursor must stay, drawn with its point on the pointer; the
+    /// outline must be drawn exactly around the footprint of the site under
+    /// the pointer, in the colour that says whether it may be built on,
+    /// centred on the pointer within half a cell and the site's lift above
+    /// the ground there; and a click must order MobileBuild at that site
+    /// when it is clear, always on the clear ground, and nothing when it is
+    /// refused. Restores the layout, the settings, the zoom and the camera;
+    /// throws std::runtime_error listing every failure.
+    ///
+    /// @param builder local mobile builder, selected
+    /// @param type building type to place
+    void check_build_site_zooms(uint16_t builder, uint16_t type);
 
     /// Checks the build ghost's outline at every edge and corner of the map and at several zooms.
     ///
@@ -11486,12 +13604,20 @@ class Runtime final : public menu::Host,
     /// battlefield's do in the chosen interface type, at the map point under
     /// the pointer and on the unit whose icon is under it: a left click
     /// (megamap_click) and a right press (megamap_right_press). A left drag
-    /// selects a box of the viewer's units, and a left double-click on one
-    /// of them every unit of its type, in either interface type.
-    /// Presses are taken in the overlays' area and not where placed_hud_covers
-    /// claims; the release of a press taken is taken anywhere. The presses'
-    /// buttons and modifiers go to the pointer's key word
-    /// (record_pointer_event), as the battlefield's do.
+    /// selects a box of the viewer's units, one that takes in none closing
+    /// the unit info panel, and a left double-click on one of them every
+    /// unit of its type, in either interface type. A press acts on the icon
+    /// last drawn under it (MegamapState::unit_at), as a finger's tap does
+    /// with no frame drawn since it landed.
+    /// Presses are taken in the overlays' area where the battlefield would
+    /// take them: not where placed_hud_covers claims or on a HUD button under
+    /// the pointer, such as a button of the exit menu over the megamap, and
+    /// while the in-game menu or another panel holds the match only a right
+    /// press beside the menu (right_press_beside_menu). The release of a press
+    /// taken is taken anywhere, and any other in the area off a HUD button.
+    /// Nothing is taken on a page opened over the match. The presses' buttons
+    /// and modifiers go to the pointer's key word (record_pointer_event), as
+    /// the battlefield's do.
     ///
     /// @param event the pointer event
     /// @param x pointer column on the canvas
@@ -11509,7 +13635,8 @@ class Runtime final : public menu::Host,
     /// cursor gives the selection the armed command, or the default order,
     /// there (issue_selection_orders), a click that gives none leaving the
     /// command armed, except an armed MOVE, which the click ends; in the
-    /// right-click interface a highlight cursor drops the selection. An armed
+    /// right-click interface a highlight cursor drops the selection and
+    /// closes the unit info panel. An armed
     /// MOVE on a unit whose cursor takes no click moves the selection to the
     /// ground there.
     ///
@@ -11520,7 +13647,8 @@ class Runtime final : public menu::Host,
     /// Acts on a right press on the megamap as one on the battlefield does
     /// (handle_match_right_press), at a map point and on a unit: an armed
     /// command drops back to the default order; otherwise the left-click
-    /// interface drops the selection, Control held or not, and the
+    /// interface drops the selection, Control held or not, closing the unit
+    /// info panel and the in-game menu beside which it was pressed, and the
     /// right-click interface gives the selection the default order there.
     ///
     /// @param target the unit whose icon is under the pointer, or 0
@@ -11528,6 +13656,31 @@ class Runtime final : public menu::Host,
     void megamap_right_press(
         uint16_t target, const std::optional<oa::sim::ground_orders::Point>& ground
     );
+
+    /// Returns the ground point the open megamap shows under a canvas point,
+    /// or none off its map.
+    ///
+    /// @param x canvas column
+    /// @param y canvas row
+    /// @return the point on the terrain, or none
+    std::optional<oa::sim::ground_orders::Point> megamap_ground(float x, float y);
+
+    /// Returns the unit whose icon the open megamap drew under a canvas
+    /// point, or 0, as a press there takes it (MegamapState::unit_at).
+    ///
+    /// @param x canvas column
+    /// @param y canvas row
+    /// @return the unit, or 0
+    [[nodiscard]] uint16_t megamap_unit_at(float x, float y) const;
+
+    /// Picks the cursor a press on the open megamap at a canvas point acts
+    /// by (pick_map_cursor), for the icon and the ground under it; the touch
+    /// controls read it as they read the battlefield's.
+    ///
+    /// @param x canvas column
+    /// @param y canvas row
+    /// @return a cursor table index
+    uint8_t megamap_cursor_at(float x, float y);
 
     /// Redraws the radar's terrain picture at its own size from the map's
     /// minimap (ui.megamap enhanced-minimap) while the hack acts
@@ -11680,7 +13833,9 @@ class Runtime final : public menu::Host,
 
     /// Selects the local units whose position lies in a drag box: the canvas corners go back to
     /// Game.drag_start and drag_end, and selection::select_units_in_box selects or, with shift,
-    /// toggles the units there and visits the local units on screen for 'n'.
+    /// toggles the units there and visits the local units on screen for 'n'. The rotated view
+    /// tests each unit where it drew it (selection::select_units_where), with the same speech,
+    /// sound and visits. A box that leaves nothing selected closes the unit info panel.
     ///
     /// @param x0 one corner's column
     /// @param y0 one corner's row
@@ -11688,6 +13843,17 @@ class Runtime final : public menu::Host,
     /// @param y1 the other corner's row
     /// @param add true (shift) to toggle the units in the box instead of replacing the selection
     void box_select_units(int x0, int y0, int x1, int y1, bool add);
+
+    /// The classic view's part of box_select_units: the box as map points
+    /// in Game.drag_start and drag_end, which selection::select_units_in_box selects in.
+    ///
+    /// @param x0 one corner's column
+    /// @param y0 one corner's row
+    /// @param x1 the other corner's column
+    /// @param y1 the other corner's row
+    /// @param add true (shift) to toggle the units in the box instead of replacing the selection
+    /// @return true when anything ends up selected
+    bool select_units_in_classic_box(int x0, int y0, int x1, int y1, bool add);
 
     /// Gives the selection an order on each unit whose projected position lies in a canvas box.
     ///
@@ -11802,12 +13968,37 @@ class Runtime final : public menu::Host,
     ///         phone layout places it
     [[nodiscard]] std::optional<oa::ui::display_layout::Rect> unit_info_area() const;
 
-    /// Handles a left click while the unit info panel is open: DONE closes it.
+    /// Returns the point of the canvas in the unit info panel's own pixels, through where
+    /// unit_info_area() shows it or, on the phone layout, through its placed region.
+    ///
+    /// @param x canvas column
+    /// @param y canvas row
+    /// @return the point in the panel's pixels, or nothing when the panel is not open or the
+    ///         point is off it
+    [[nodiscard]] std::optional<oa::ui::display_layout::Point>
+    unit_info_point(float x, float y) const;
+
+    /// Handles a click on the open unit info panel, of either button: DONE closes it.
     ///
     /// @param x canvas column
     /// @param y canvas row
     /// @return true when the click was on the panel
     bool click_unit_info(float x, float y);
+
+    /// Gives the pointer to the open unit info panel, as 3.1c's panel over the order panel takes
+    /// it.
+    ///
+    /// A left or right press on the panel is the panel's: it starts no drag box and gives no
+    /// order. The release that ends it is the panel's wherever it comes up and clicks the panel
+    /// when over it (click_unit_info). A press on the side column's buttons does nothing while
+    /// the panel is open; the battlefield and the radar take theirs. Nothing is taken while the
+    /// in-game menu is open over the panel.
+    ///
+    /// @param event a mouse event, in canvas coordinates
+    /// @param x canvas column
+    /// @param y canvas row
+    /// @return true when the panel took the event
+    bool unit_info_pointer(const SDL_Event& event, float x, float y);
 
     /// Draws the unit info panel over the battlefield where unit_info_area() puts it: its face,
     /// its controls, the statistic labels and the unit's picture at HOTR at the picture's own size.
@@ -12371,6 +14562,144 @@ class Runtime final : public menu::Host,
     /// must sing. Throws std::runtime_error on a failure.
     void check_unit_speech();
 
+    /// Plays skirmishes with the mutators the command line named.
+    ///
+    /// None, then ridge-tough alone, then none again, then ridge-commander-boom
+    /// alone. The commanders return to the health the first match recorded,
+    /// ridge-tough leaves both at 4000 with a mutator layer mounted, and
+    /// ridge-commander-boom stops the start with its own error and leaves no
+    /// layer. Prints
+    /// "mutator layer check: passed". Throws std::runtime_error on a failure.
+    void check_mutator_layer();
+
+    /// The verdict remembered for this list, from the file only.
+    ///
+    /// Main thread only. Throws std::logic_error while a match loads or runs.
+    /// A missing file, a file that cannot be opened, and a file that is not
+    /// verdict text are no remembered verdict. This does not run a dry run.
+    ///
+    /// @param list the mutators, prerequisites included
+    /// @return the stored record, or nothing
+    [[nodiscard]] std::optional<oa::data::mutators::VerdictRecord>
+    remembered_verdict(std::span<const oa::data::mutators::ResolvedMutator> list) const;
+
+    /// Prepares a dry run of this list against the running game's files.
+    ///
+    /// Main thread only. Throws std::logic_error while a match loads or runs.
+    /// The job copies the loose roots and the mounted archives, and the
+    /// pipeline input a match would use with no map. The caller runs it.
+    ///
+    /// @param list the mutators, prerequisites included
+    /// @return the job any thread can run
+    [[nodiscard]] oa::data::mutators::DryRunJob
+    prepare_mutator_check(std::span<const oa::data::mutators::ResolvedMutator> list) const;
+
+    /// The mod half of a verdict key for the game as it is now.
+    ///
+    /// The same digest `prepare_mutator_check` stores, without copying a
+    /// pipeline input or stating the hack check. A rebuild computes it once
+    /// and reuses it for every list. The loadout digest is not part of it.
+    ///
+    /// @return the digest of the running mod, its folders and its archives
+    [[nodiscard]] oa::base::sha256::Digest mutator_mod_digest() const;
+
+    /// The verdict key of one list under a mod digest already computed.
+    ///
+    /// The loadout digest is this list's own. The mod digest and the engine
+    /// version are the ones `mod_digest` names. It matches the key
+    /// `prepare_mutator_check` would store for the same list.
+    ///
+    /// @param list the mutators, prerequisites included
+    /// @param mod_digest the digest `mutator_mod_digest` returned
+    /// @return the key
+    [[nodiscard]] oa::data::mutators::VerdictKey verdict_key_for_list(
+        std::span<const oa::data::mutators::ResolvedMutator> list,
+        const oa::base::sha256::Digest& mod_digest
+    ) const;
+
+    /// The verdict file, read once. A missing file and a file that is not
+    /// verdict text are an empty list. This does not throw.
+    ///
+    /// @return the stored verdicts
+    [[nodiscard]] std::vector<oa::data::mutators::RememberedVerdict> read_mutator_verdicts() const;
+
+    /// Remembers one verdict in the player's Cache folder.
+    ///
+    /// Main thread only. Throws std::logic_error while a match loads or runs.
+    /// The file is read, the verdict is remembered, and the whole file is
+    /// written back. A cancelled verdict is not stored. A write that fails
+    /// is logged and does not throw. A file of garbage is replaced.
+    ///
+    /// @param key the list, the mod and the engine version
+    /// @param record the verdict to store
+    void remember_mutator_verdict(
+        const oa::data::mutators::VerdictKey& key, const oa::data::mutators::VerdictRecord& record
+    );
+
+    /// Returns the remembered verdict, or runs a dry run and remembers it.
+    ///
+    /// Main thread only. Throws std::logic_error while a match loads or runs.
+    /// The dry run itself is the only part another thread could run; this
+    /// call runs it on the calling thread. A remembered verdict does not
+    /// run again.
+    ///
+    /// @param list the mutators, prerequisites included
+    /// @return the verdict
+    oa::data::mutators::VerdictRecord
+    check_mutators(std::span<const oa::data::mutators::ResolvedMutator> list);
+
+    /// Writes four made-up mutators beside the preferences file and checks
+    /// each against the installed game, then again from the verdict file.
+    ///
+    /// A changed option runs again. A file of garbage is ignored and
+    /// rewritten. Prints "mutator verdicts check: passed".
+    /// Throws std::runtime_error on a failure.
+    void check_mutator_verdicts();
+
+    /// Writes two made-up mutators that each multiply commander turn rate
+    /// and worker time, runs them against the installed game, and requires
+    /// both fields held at 32767 with one dry-run note each.
+    ///
+    /// The verdict stays compatible. Prints "mutator dry run check: passed".
+    /// Throws std::runtime_error on a failure.
+    void check_mutator_dry_run();
+
+    /// Checks a recorded loadout against the installed mutators.
+    ///
+    /// The command line names ridge-tough and ridge-art-a, both installed in
+    /// the player's Mutators folder. An unreadable loadout and one whose
+    /// mutator is missing, at another package, at another version, or a folder
+    /// entry are refused. A skirmish plays ridge-art-a for one match and then
+    /// the player's list again, including after a start that does not happen.
+    /// Prints "replay loadout check: passed". Throws std::runtime_error on a
+    /// failure.
+    void check_replay_loadout();
+
+    /// Plays skirmishes and checks each one reads gamedata/sidedata.tdf again.
+    ///
+    /// Needs --mod-dir on a folder that does not already hold that file. The first match keeps
+    /// the commanders the run started with. A file written into the mod folder, giving slot 0's
+    /// side the other side's commander, is what the next match plays, and the menus return to the
+    /// run's sides when it ends. A file with no sides, and a commander the game has no unit for,
+    /// each refuse the start and leave the run's sides in place. With the file removed, the last
+    /// match keeps the run's table. Prints "side data per match check: passed".
+    /// Throws std::runtime_error on a failure.
+    void check_side_data_per_match();
+
+    /// Plays three skirmishes and checks a download button's picture follows
+    /// the mod folder.
+    ///
+    /// Needs --mod-dir on a folder that holds neither file this check writes.
+    /// Before the first match, a download file links ARMPW onto ARMLAB's
+    /// download page, in the empty slot after ARMWAR and ARMFLEA. That button
+    /// is linked and has no picture. The bytes of the lab's first build-page
+    /// art, read through the store, are then copied to ARMPW's
+    /// download-button art in the mod folder, and the second match draws that
+    /// picture. With the file removed, the third match's button has no
+    /// picture again. Prints "gadget art per match check: passed".
+    /// Throws std::runtime_error on a failure.
+    void check_gadget_art_per_match();
+
     /// Places a finished structure of the local player's on the first free site in the rings of
     /// cells around a unit.
     ///
@@ -12701,6 +15030,22 @@ class Runtime final : public menu::Host,
     /// std::runtime_error on a failure.
     void check_wreck_pick();
 
+    /// Checks the click snap (ui.click-snap) through SDL input, under a
+    /// profile that gives a wreck radius of 1 cell and a mex radius of 3, or
+    /// without the hack. With the hack on, the commander selected and
+    /// RECLAIM armed, the cursor on open ground one cell beside a placed
+    /// wreck must show Reclaim, and the arrow with the snap override key
+    /// held, two cells beside it or with the player's wreck radius at 0; a
+    /// click there must give the commander a Reclaim of the wreck, plain and
+    /// queued with Shift after a Move; with the snap override key held, or
+    /// two cells beside the wreck, the click must give nothing, and with no
+    /// order armed it must give a Move to the ground clicked. A Metal
+    /// Extractor's build click on a clear site two cells from a deposit must
+    /// snap onto the deposit and order MobileBuild there. With the hack off,
+    /// RECLAIM one cell beside the wreck must show the arrow and a click
+    /// there give nothing. Throws std::runtime_error on a failure.
+    void check_click_snap();
+
     /// Checks the building drawn under the build cursor (ui.build-preview)
     /// in the standard, Basic and Full tiers at several zooms: a tower is
     /// placed over a site near the commander and drawn at every tick of two
@@ -12757,6 +15102,34 @@ class Runtime final : public menu::Host,
     /// refuse_take_line holds it back; a single-player game then reads it for
     /// the speed lock (read_speed_lock_line).
     void submit_chat_line();
+
+    /// Queues a line for a computer seat on this machine.
+    ///
+    /// Refuses with not_a_seat while no match runs. The line is posted and
+    /// sent after the frame's ticks (flush_seat_chat).
+    ///
+    /// @param seat player slot
+    /// @param text the words, without a "<Name>" head
+    /// @param mode everyone, allies, enemies or chosen
+    /// @param target player slot for chosen
+    /// @return why the line was queued or refused
+    [[nodiscard]] seat_chat::Said
+    say_for_seat(uint8_t seat, std::string_view text, uint8_t mode, uint8_t target);
+
+    /// Replaces the listener that hears chat for the computer seats.
+    ///
+    /// @param listener the listener; a null heard hears nothing
+    void set_seat_chat_listener(const seat_chat::Listener& listener) noexcept;
+
+    /// Hands a chat line from another machine to the computer seats it reached.
+    ///
+    /// A null line is ignored. With no match running, nothing is handed on.
+    ///
+    /// @param from slot of the sender
+    /// @param addressee slot the record was addressed to
+    /// @param broadcast the record went to every player
+    /// @param text the line as this machine shows it; null is ignored
+    void hear_seat_chat_remote(uint8_t from, uint8_t addressee, bool broadcast, const char* text);
 
     /// Holds back a ".take" or ".takecmd" chat line while another player's
     /// commander lies destroyed (sharing.take-requires-live-commander), and
@@ -13242,7 +15615,9 @@ class Runtime final : public menu::Host,
     /// Draws a map rectangle into the next <directory>\<prefix>nnnn.bmp, as MakePoster captures it.
     ///
     /// The battlefield is drawn at 1:1 in strips one view high less a row, each
-    /// filled one view wide at a time with the camera there.
+    /// filled one view wide at a time with the camera there. Every view is
+    /// drawn as the standard tier draws it, in every tier, and the frame is
+    /// drawn again in its own tier afterwards.
     ///
     /// @param directory output folder under the save root
     /// @param prefix file name prefix
@@ -13314,6 +15689,31 @@ class Runtime final : public menu::Host,
     /// @param enter_line runs one console line
     /// @return what was checked, as the end of the poster check's report
     std::string check_long_output_directory(const std::function<void(const char*)>& enter_line);
+
+    /// Checks that MakePoster writes the battlefield as the processor draws
+    /// it in every tier.
+    ///
+    /// With the view zoomed out to a half, whole ticks and the interface's
+    /// clock held, a rectangle two views wide and high around the view is
+    /// written in each tier given: the standard tier's poster shows the map
+    /// in many colours, and each other tier's is the same file byte for
+    /// byte. Each poster puts the zoom and the camera back and leaves the
+    /// Full tier's frame to the card; the first rebuilds the sight grids
+    /// from what the units see (enter_poster_scene), and after each later
+    /// one the frame presented is the frame presented before it. Ends in
+    /// the last tier given. Throws std::runtime_error on a failure.
+    ///
+    /// @param set_level sets the flag's level and decides the tier again
+    /// @param levels the tiers checked, by the level that draws in each,
+    ///        the standard tier's first
+    /// @param at_zoom sets a zoom and centres the camera on the check's unit
+    /// @param report_directory where a poster that differs is kept
+    void check_poster_tiers(
+        const std::function<void(oa::ui::engine_settings::HardwareAcceleration)>& set_level,
+        std::span<const oa::ui::engine_settings::HardwareAcceleration> levels,
+        const std::function<void(float)>& at_zoom,
+        const fs::path& report_directory
+    );
     // The 8-bit view of the match frame the poster writes: the palette index
     // of an RGB pixel and the display whose palette the image carries.
 
@@ -13625,6 +16025,9 @@ class Runtime final : public menu::Host,
 
   private:
 
+    /// Posts and sends the computer seats' queued chat after the frame's ticks.
+    void flush_seat_chat();
+
     /// Reads the Summary fields a load needs from a save file.
     ///
     /// @param path savegame file
@@ -13727,6 +16130,61 @@ class Runtime final : public menu::Host,
     /// @param[in,out] bank the save, read whole
     /// @return false, with the status line naming both profiles, when it may not
     bool check_saved_mod_profile(oa::data::persist::Bank* bank);
+
+    /// Writes the Mutators account of a save made while mutators are in play:
+    /// the match's canonical loadout, or the text kept with a finished
+    /// campaign mission once that match has been released. A match that
+    /// applied none writes nothing, so its save keeps the bytes it has today.
+    ///
+    /// @param[in,out] bank the save being written
+    void save_mutators(oa::data::persist::Bank* bank) const;
+
+    /// Checks that a save's mutators can be played, and chooses them for the
+    /// match the load starts.
+    ///
+    /// A save with no Mutators account plays none, whatever set this run had
+    /// chosen. One whose mutator is missing or at another release is refused,
+    /// and the status line names it. A campaign save's mutators are kept
+    /// aside until that load has worked, and then become the campaign's
+    /// chosen set; a skirmish save leaves that set as it is.
+    ///
+    /// @param[in,out] bank the save, read whole
+    /// @return false, with the status line set, when the mutators cannot be played
+    bool check_saved_mutators(oa::data::persist::Bank* bank);
+
+    /// Writes the Brains account of a save made while brains are seated:
+    /// each seat's player, brain, version, package, level, options and name,
+    /// and the plain data its save() returned. A match that seated no brain
+    /// writes nothing, so its save keeps the bytes it has today.
+    ///
+    /// @param[in,out] bank the save being written
+    /// @throws std::runtime_error when the account cannot be written
+    void save_brains(oa::data::persist::Bank* bank);
+
+    /// Seats the brains a save names, before the match's first tick.
+    ///
+    /// A save with no Brains account seats none, so a campaign start hands
+    /// none of its own. Text that does not parse is refused. A brain that is
+    /// not installed is refused, unless this load was asked to play the
+    /// built-in player on those seats, which then seats the others. Saved
+    /// state is handed on only when the installed version and package are
+    /// the saved ones.
+    ///
+    /// @param[in,out] bank the save, read whole
+    /// @return false, with the status line set, when the save cannot be played
+    bool check_saved_brains(oa::data::persist::Bank* bank);
+
+    /// Asks "Load with the built-in player?" when the save names a brain that
+    /// is not installed, pushing the question over the screen that asked.
+    ///
+    /// A save with no Brains account, or text that does not parse, asks
+    /// nothing: the load itself refuses text that does not parse. LOAD WITH
+    /// THE BUILT-IN PLAYER loads this path with the built-in player on the
+    /// missing seats. BACK loads nothing.
+    ///
+    /// @param path the save, already resolved
+    /// @return true when the question was asked and the load has not started
+    bool offer_builtin_brain_load(const std::filesystem::path& path);
 
     /// Restores each rule-state table of the match from the save's ModProfile
     /// account; a table the save does not hold keeps its state as built.
@@ -15833,6 +18291,9 @@ class Runtime final : public menu::Host,
     oa::Image match_chrome_{};
     std::optional<renderer::ScreenResources> match_hud_;
     std::string match_hud_panel_; // GUI file of match_hud_, as its loader named it
+    /// The side column's art (match_hud_art); dropped as a match loads and
+    /// ends and as the language shown or its packs change.
+    std::optional<MatchHudArt> match_hud_art_;
     /// Where draw_match_bars repeats the top bar's art right of PANELTOP.
     oa::ui::hud::TopBarPieces top_bar_pieces_{};
     // How place_match_panel placed match_hud_ (panel_flag::beside_hud or
@@ -16143,6 +18604,12 @@ class Runtime final : public menu::Host,
     // Build page button captions by gadget index (the queued counts).
     std::vector<std::string> build_captions_;
     oa::data::defs::SideTable side_table_{};
+    /// SHA-256 of the gamedata/sidedata.tdf bytes the run read. All zero when the file was missing.
+    oa::base::sha256::Digest side_data_digest_{};
+    /// True when the run found no gamedata/sidedata.tdf, so the zero digest is not an empty file.
+    bool side_data_missing_ = false;
+    /// The run's side table while a match plays one parsed from different bytes.
+    std::unique_ptr<oa::data::defs::SideTable> run_side_table_;
     // The language word SIDEDATA.TDF and the interface art and fonts its
     // sides name are read for, from their language folders first: the
     // game's as it starts, kept for the run, as 3.1c loads them as it
@@ -16440,6 +18907,8 @@ class Runtime final : public menu::Host,
     oa::ui::hud::KillBoard kill_board_{};
     // The message log's random numbers (message_hooks), never the match's.
     PresentationRandom message_random_{};
+    // Chat a computer seat on this machine reads and sends (seat_chat.hpp).
+    seat_chat::SeatChat seat_chat_{};
     std::optional<oa::ui::gui_layout::Layout> talk_layout_{};
     oa::formats::gaf::Archive match_talk_{};
     int32_t match_camera_x_ = 0, match_camera_z_ = 0;
@@ -16548,6 +19017,9 @@ class Runtime final : public menu::Host,
     };
 
     std::optional<UnitInfoPanel> unit_info_panel_{};
+    // The mouse button whose press the unit info panel took, until its
+    // release; zero for none (unit_info_pointer).
+    uint8_t unit_info_pressed_button_ = 0;
     bool chat_composing_ = false;
     // The quick key, lowercase, that pressed a button of a panel over the
     // match at the last key press; zero for none. The character it types
@@ -16644,6 +19116,15 @@ class Runtime final : public menu::Host,
     /// unless a check switches it on. Declared after sdl_, so its textures go
     /// before the renderer.
     AcceleratedPresentation accelerated_{};
+    /// The match's effect lights, glows and water events, by the match they
+    /// were seen in (observe_match_effect_tick); presentation only.
+    std::shared_ptr<MatchEffects> match_effects_{};
+    /// The rotated view's camera and GPU resources; null until a match first
+    /// draws with Allow Full 3D Mode on. Declared after sdl_, so they go
+    /// before the SDL host.
+    std::unique_ptr<LiveRenderer, void (*)(LiveRenderer*) noexcept> live_renderer_{
+        nullptr, &destroy_live_renderer
+    };
     /// The Full tier's presentation; null until the tier first switches on
     /// in the run. Declared after sdl_, so its pages and targets go before
     /// the renderer.
@@ -17063,7 +19544,13 @@ class Runtime final : public menu::Host,
     float pointer_x_ = 0;
     float pointer_y_ = 0;
     oa::formats::gaf::Archive cursor_gaf_{};
+    /// Match HUD GAFs this match could not read or parse, folded to lower
+    /// case. Cleared when the match ends, so the next match reads them again.
     std::set<std::string> missing_gaf_paths_{};
+    /// Match HUD GAFs whose failure to parse, or whose other failure to read,
+    /// this run has already logged, by the same key. A file the store does
+    /// not hold stays silent and is not recorded here.
+    std::set<std::string> reported_gaf_paths_{};
     /// The sounds found missing in the run, by audio::game_audio::sound_resource_key.
     std::set<std::string> missing_sounds_{};
     /// The sounds whose failure to play the run has reported, by the same key.
@@ -17194,13 +19681,101 @@ class Runtime final : public menu::Host,
     std::unique_ptr<LibraryHost, void (*)(LibraryHost*) noexcept> library_{
         nullptr, destroy_library_host
     };
-    // What the Library showed as a switch of the mod from it ended this run,
-    // or the run before while this run has not opened it again yet; null
-    // for none.
+    // The mutator picker's catalogue and pictures, while the picker is open.
+    std::unique_ptr<MutatorPickerState, void (*)(MutatorPickerState*) noexcept> mutator_picker_{
+        nullptr, destroy_mutator_picker_state
+    };
+    /// Where the picker reads its list. The own feed until a check replaces it.
+    MutatorPickerFeed mutator_picker_feed_{};
+    /// True once a feed is installed. The own feed is installed on first open.
+    bool mutator_picker_feed_set_{false};
+    // The brain picker's badge pictures, while the picker is open.
+    std::unique_ptr<BrainPickerState, void (*)(BrainPickerState*) noexcept> brain_picker_state_{
+        nullptr, destroy_brain_picker_state
+    };
+    /// Where the brain picker reads its list. The own feed until a check replaces it.
+    BrainPickerFeed brain_picker_feed_{};
+    /// True once a feed is installed. The own feed is installed on first open.
+    bool brain_picker_feed_set_{false};
+
+    /// The own feed's list of brains, the built-in player first.
+    ///
+    /// Reads the installed brains. Does not run a script. An icon is decoded
+    /// here and kept until the picker closes.
+    ///
+    /// @param context the runtime
+    /// @return the brains, in the order the picker lists them
+    static std::vector<oa::ui::brain_picker::Brain> own_brain_picker_brains(void* context);
+
+    /// The own feed's generation: it moves when a brain is installed or removed.
+    ///
+    /// @param context the runtime
+    /// @return the count
+    static uint64_t own_brain_picker_generation(void* context);
+
+    /// The own feed's list of mutators.
+    ///
+    /// @param context the runtime
+    /// @param setup which setup opened the picker
+    /// @return the mutators; the screen fills the setup, the set and the mod
+    static oa::ui::mutator_picker::Inputs
+    own_picker_inputs(void* context, oa::ui::mutator_picker::Setup setup);
+
+    /// The own feed's generation: the content service, ended downloads,
+    /// the Library's picture cache and a kept dry-run verdict.
+    ///
+    /// @param context the runtime
+    /// @return the count
+    static uint64_t own_picker_generation(void* context);
+
+    /// The own feed's enqueue: one catalogue package, nothing fetched here.
+    ///
+    /// @param context the runtime
+    /// @param registry the registry id
+    /// @param key the package key
+    /// @param[out] why why it was not queued; may be null
+    /// @return the queue item, or nothing when it was refused
+    static std::optional<uint64_t> own_picker_enqueue(
+        void* context, std::string_view registry, std::string_view key, std::string* why
+    );
+
+    /// The own feed's cancel: a download of that package that is still waiting.
+    ///
+    /// @param context the runtime
+    /// @param registry the registry id
+    /// @param key the package key
+    static void own_picker_cancel(void* context, std::string_view registry, std::string_view key);
+
+    /// The own feed's retry: a download of that package that stopped.
+    ///
+    /// @param context the runtime
+    /// @param registry the registry id
+    /// @param key the package key
+    static void own_picker_retry(void* context, std::string_view registry, std::string_view key);
+
+    /// The own feed's check: prepares the list on this thread and runs the
+    /// dry run on the Library's worker. A list that cannot be resolved
+    /// starts nothing. The verdict arrives in a later list.
+    ///
+    /// @param context the runtime
+    /// @param id the mutator's id
+    /// @param chosen the options it is shown with
+    /// @return true when a check was queued
+    static bool own_picker_check(
+        void* context, std::string_view id, const oa::ui::mutator_picker::Chosen& chosen
+    );
+
+    // What the Library showed as a switch of the mod from it ended the run
+    // before, while this run has not opened it again or dropped it; null for
+    // none.
     std::shared_ptr<const LibraryReturn> library_return_{};
     // When this run first tried to open the kept Library again, in
     // milliseconds of the platform's clock; none before.
     std::optional<uint32_t> library_return_since_{};
+    // What the Library showed as a switch of the mod from it ended this run
+    // (keep_library_for_restart), for the next (library_return); null for
+    // none.
+    std::shared_ptr<const LibraryReturn> library_kept_{};
     // What the progress dialog says while a switch of the mod in the Library
     // applies (restart_line); empty for none.
     std::string restart_line_{};
@@ -17228,10 +19803,218 @@ class Runtime final : public menu::Host,
     mutable std::unique_ptr<MapPackState, void (*)(MapPackState*) noexcept> map_pack_state_{
         nullptr, destroy_map_pack_state
     };
+    // The installed mutators; null until first read.
+    mutable std::unique_ptr<MutatorLibraryState, void (*)(MutatorLibraryState*) noexcept>
+        mutator_library_state_{nullptr, destroy_mutator_library_state};
+    // The installed brains; null until first read.
+    mutable std::unique_ptr<BrainLibraryState, void (*)(BrainLibraryState*) noexcept>
+        brain_library_state_{nullptr, destroy_brain_library_state};
+    /// Moves when a brain package is installed or removed, including a change
+    /// before the listing is first read. The brain picker's own feed reads it.
+    /// It starts at 1, so a generation of 0 still means a feed has not spoken.
+    mutable uint64_t installed_brains_generation_{1};
+    /// True while the Library was on the OA layer last frame. Its closing
+    /// reloads the installed brains once, not every frame it stays closed.
+    bool library_was_open_{};
+    // The mutators the next matches apply, and the running match's result;
+    // null until a choice is stored.
+    std::unique_ptr<MutatorState, void (*)(MutatorState*) noexcept> mutator_state_{
+        nullptr, destroy_mutator_state
+    };
+    /// The brain named for each seat. Empty until a setup chooses one.
+    std::array<std::optional<BrainSeatChoice>, OA_PLAYER_COUNT> brain_seat_choices_{};
+    /// Dry runs `check_mutators`, the Library and the picker have kept.
+    /// A verdict read from the file does not count, and nor does a cancelled run.
+    uint32_t mutator_dry_runs_{};
+    /// How many times `prepare_mutator_check` has run. A rebuild that only
+    /// reads verdicts does not move it.
+    mutable uint32_t mutator_prepares_{};
+    // The battle room's mutator list and its layer; null until a room is followed.
+    std::unique_ptr<RoomMutatorState, void (*)(RoomMutatorState*) noexcept> room_mutator_state_{
+        nullptr, destroy_room_mutator_state
+    };
+
+    /// One lack the battle room's chat has already named.
+    struct RoomLackNote {
+        int32_t slot{-1};   ///< the player's slot
+        uint8_t position{}; ///< the mutator's place in the room's list
+        std::string name{}; ///< the mutator's name, as the line posted it
+        bool operator==(const RoomLackNote&) const = default;
+    };
+
+    /// The names the chat last posted for this room. Empty when it posted none.
+    std::vector<std::string> mutator_room_chat_names_{};
+    /// The ids of the list those names were posted for. A change is a change
+    /// of ids, so a guest that installs a mutator it lacked, and now shows
+    /// its name instead of its id, posts nothing again.
+    std::vector<std::string> mutator_room_chat_ids_{};
+    /// True once this room has been observed, including a room that plays none.
+    bool mutator_room_chat_held_{};
+    /// The lacks the host has already posted for this room.
+    std::vector<RoomLackNote> mutator_room_lacks_{};
+    /// The ids the guest's chat last posted for what this machine lacks.
+    /// A name that arrives later for one of these ids does not post again.
+    std::vector<std::string> guest_lack_ids_{};
+    /// True once this room has been observed for that line, including a
+    /// guest that lacked nothing.
+    bool guest_lack_held_{};
+    /// GET MAP's rectangle, in the layer's points. Width 0 while it shows nothing.
+    ShownBox get_map_shown_box_{};
+    // Downloads started for the host's mutators; null until a guest asks.
+    std::unique_ptr<HostMutatorFetchState, void (*)(HostMutatorFetchState*) noexcept>
+        host_mutator_fetch_state_{nullptr, destroy_host_mutator_fetch_state};
+
+    /// The player's mutators while a replay or a saved game plays another list; null until then.
+    std::unique_ptr<LoadoutOnceHold, void (*)(LoadoutOnceHold*) noexcept> loadout_once_hold_{
+        nullptr, destroy_loadout_once_hold
+    };
+
+    /// The crash record beside the preferences file, and a leftover read at
+    /// the start. Null until the preferences are loaded. A run with no
+    /// preferences file holds a record that reads and writes nothing.
+    /// Runtime's destructor does not delete the file.
+    std::unique_ptr<MutatorMemory, void (*)(MutatorMemory*) noexcept> mutator_memory_{
+        nullptr, destroy_mutator_memory
+    };
+    /// The setup whose START chose the mutators of the next match. Empty
+    /// when no setup started it. The next match start takes it.
+    std::optional<mutators_memory::Setup> mutator_setup_{};
+    /// The mutators the skirmish setup will start with. Empty until MUTATORS…
+    /// hands a set back. Emptied when SKIRMISH is entered from anywhere but
+    /// the map picker or the skirmish setup itself, and when the main menu loads.
+    std::vector<oa::ui::mutator_picker::Chosen> skirmish_mutators_{};
+    /// The mutators a campaign run will start with, for every mission. Emptied
+    /// when NEWGAME or Any Mission is entered from Single Player or the main
+    /// menu, and when the main menu loads.
+    std::vector<oa::ui::mutator_picker::Chosen> campaign_mutators_{};
+    /// The mutators that stopped the start the question is asking about.
+    std::vector<MutatorStartStop> mutator_start_stops_{};
+    /// The setup that start was for. Empty when no setup started it.
+    std::optional<mutators_memory::Setup> mutator_start_setup_{};
+    /// True when "Start without X?" has a stop list the player has not answered.
+    bool mutator_start_pending_{false};
+    /// True once the crash question has been offered this run.
+    bool mutator_crash_offered_{false};
+    /// A campaign save's mutators, applied to `campaign_mutators_` only after
+    /// that load has worked. Empty for a skirmish save and once the load ends.
+    std::optional<std::vector<oa::ui::mutator_picker::Chosen>> saved_campaign_mutators_{};
+    /// The button screen's helpers read the setup's records.
+    friend struct MutatorButtonAccess;
+    /// The seat screen's helpers read the setup's records and write a choice.
+    friend struct BrainSeatsAccess;
+    /// The battle-room seat screen writes a choice onto this machine's computers.
+    friend struct BrainRoomAccess;
+    /// `--no-mutators` has already logged the list it refused.
+    bool mutator_refusal_logged_{};
+    /// A failure to store or erase a remembered set has already been logged.
+    bool mutator_sets_failure_logged_{};
+    /// A failure to store or erase the default brain has already been logged.
+    bool brain_default_failure_logged_{};
+    /// The seats skirmish, the battle room and campaign keep for this run.
+    /// Empty until that setup is entered. The battle room's is written at
+    /// START in seating order. The room's buttons do not read it.
+    std::array<oa::data::brain_library::Seats, 3> setup_brain_seats_{};
+
+    /// One computer this machine runs, and the choice it plays.
+    struct RoomBrainChoice {
+        uint32_t player_id{};                  ///< the computer's player id
+        uint8_t slot{};                        ///< the slot it sits in
+        oa::ui::brain_picker::Choice choice{}; ///< the brain, or the built-in player
+    };
+
+    /// The computers this machine runs, in the order it seated them.
+    std::vector<RoomBrainChoice> room_brain_choices_{};
+    /// How many remembered multiplayer seats this visit has already given
+    /// out. It advances as computers are seated and does not go back when
+    /// one leaves. No computer left on this machine resets it.
+    std::size_t room_brain_cursor_{};
+    /// Writes a choice onto one computer this machine runs, or every one,
+    /// and publishes it onto the lobby.
+    ///
+    /// @param lobby the battle room
+    /// @param player_id the computer the picker was opened on
+    /// @param choice the choice USE THIS handed
+    /// @param every true when the choice is for every computer this machine runs
+    void apply_room_brain_choice(
+        oa::ui::frontend_multiplayer::Lobby& lobby,
+        uint32_t player_id,
+        const oa::ui::brain_picker::Choice& choice,
+        bool every
+    );
+    /// The brains the next match seats. Disengaged means none were handed.
+    /// An engaged empty list seats nobody.
+    std::optional<std::vector<BrainSeat>> pending_brain_seats_;
+    /// The brains the running match seated. Empty when no match is running.
+    std::vector<BrainSeat> seated_brains_;
+
+    /// A brain another machine's computer plays, as the room showed it.
+    struct RemotePlayedBrain {
+        int32_t player{};         ///< the player, 0 to 9
+        std::string id{};         ///< the brain's id
+        std::string name{};       ///< the brain's name
+        std::string version{};    ///< the brain's version
+        std::string level_id{};   ///< the level's id
+        std::string level_name{}; ///< the level's name
+    };
+
+    /// Brains other machines' computers play in the running match. Empty when
+    /// this match started with none, and once the next match starts.
+    std::vector<RemotePlayedBrain> remote_played_brains_{};
+    /// The seats the last successful load handed on. Cleared when that load
+    /// stops before its match.
+    oa::data::brain_library::Seats loaded_brain_seats_{};
+    /// True for the one load that plays the built-in player on a missing brain.
+    bool load_missing_brains_as_builtin_{false};
+    /// A failure to store the seats has already been logged.
+    bool brain_seats_failure_logged_{};
+    /// The seed of the match being started, copied into a brain's log.
+    uint32_t brain_match_seed_{};
+    /// True once this match's facts are stored for its brains. Cleared as
+    /// each match configures its computer players.
+    bool brain_game_facts_stored_{};
+    /// True once this match has published a start rule. Cleared with the notes.
+    bool brain_starts_noted_{false};
+    /// The rule `publish_brain_starts` last chose. Unknown until then.
+    oa::data::brain_facts::StartRule brain_start_rule_{oa::data::brain_facts::StartRule::unknown};
+    /// Start positions of the schema in play. Empty until they are noted.
+    std::vector<oa::data::brain_facts::MapStart> brain_map_starts_{};
+    /// Each player's zero-based start, or -1. Cleared as the notes are.
+    std::array<int16_t, OA_PLAYER_COUNT> brain_player_start_{
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
+    };
+    /// True when this machine placed that player.
+    std::array<bool, OA_PLAYER_COUNT> brain_player_placed_{};
+    /// True when a map-unit placement was recorded for this match.
+    bool brain_start_from_map_{false};
+    /// True when a commander placement was recorded for this match.
+    bool brain_start_from_commander_{false};
+    /// One log per seat for the latest brain seated there.
+    std::array<BrainLog, OA_PLAYER_COUNT> brain_logs_{};
+    /// The id a seat's brain was not seated under. Empty when it was seated
+    /// or the seat was not given a brain. A folder is named by its id.
+    std::array<std::string, OA_PLAYER_COUNT> brain_unseated_id_{};
+    /// Why that brain was not seated. Empty when the seat was seated.
+    std::array<std::string, OA_PLAYER_COUNT> brain_unseated_reason_{};
+    /// The id, version and level of the brain last prepared for the seat.
+    std::array<std::string, OA_PLAYER_COUNT> brain_seat_id_{};
+    std::array<std::string, OA_PLAYER_COUNT> brain_seat_version_{};
+    std::array<std::string, OA_PLAYER_COUNT> brain_seat_level_{};
+    /// True after that seat's brain stopped. The match plays on.
+    std::array<bool, OA_PLAYER_COUNT> brain_seat_stopped_{};
+    /// The tick a brain stopped, and the sentence that names why.
+    std::array<uint32_t, OA_PLAYER_COUNT> brain_stop_tick_{};
+    std::array<std::string, OA_PLAYER_COUNT> brain_stop_text_{};
+    /// True after this match's shadow lines have been printed.
+    bool shadow_report_printed_{false};
     // The mounted pack map, the game's names, the fits and the refusals;
     // null until a pack map is first named.
     std::unique_ptr<PackMapState, void (*)(PackMapState*) noexcept> pack_map_state_{
         nullptr, destroy_pack_map_state
+    };
+    /// The brain log and the record file for this run. Null until a match
+    /// asks for either.
+    std::unique_ptr<BrainTraceFiles, void (*)(BrainTraceFiles*) noexcept> brain_trace_files_{
+        nullptr, destroy_brain_trace_files
     };
     // The registries and their catalogues; null until start_content.
     std::unique_ptr<ContentState, void (*)(ContentState*) noexcept> content_{
@@ -17313,9 +20096,10 @@ class Runtime final : public menu::Host,
 
     std::vector<AuthoredPlace> match_hud_authored_{};
     uint16_t pending_build_type_ = 0;
-    // A building of pending_build_type_ was queued with Shift held: letting
-    // Shift go ends build mode (end_build_on_shift_release).
-    bool build_queued_with_shift_ = false;
+    // An order of the armed command, or a building, was queued with Shift
+    // held: letting Shift go returns to the default order
+    // (end_command_on_shift_release).
+    bool command_queued_with_shift_ = false;
     // Cursor GAF frames the order overlays draw, rendered once each.
     std::map<const oa::formats::gaf::Frame*, oa::formats::gaf::RenderedFrame>
         overlay_sprite_frames_{};

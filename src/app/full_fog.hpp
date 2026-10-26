@@ -24,6 +24,17 @@
 //   the even tone the dither averages to, drawn over the objects;
 // - the black pass over cells never mapped, a solid quad per tile.
 //
+// The Classic fog (Fog of War's Classic) draws what the processor draws
+// instead: each partial tile's FOG.GAF shape, its opaque texels as the
+// rectangles of ClassicShapes, so that the edges step from cell to cell
+// as the game drew them. The greyed pass draws the greyed terrain under
+// the gray tiles' rectangles at alpha 1, the dithered form clears every
+// other map pixel under them to the dither colour through a page of the
+// checkerboard, and the black pass fills the black tiles' rectangles with
+// their palette colours; tiles wholly out of sight or never mapped are
+// drawn as the smooth passes draw them, which is already the processor's
+// picture.
+//
 // Beside the fog, the alphas of the quads that stand in for the two
 // painters that shade the world beneath them, the kill board's shade and
 // light levels among them (level_alpha).
@@ -257,6 +268,147 @@ uint32_t append_unmapped(
     card::CardFrame& frame,
     const oa::present::world_renderer::FogGrid& grid,
     const card::Colour& colour,
+    const FogPlacement& placement,
+    card::TargetHandle target,
+    const card::Rect* scissor
+);
+
+/// One rectangle of a FOG.GAF tile's opaque texels of one palette index,
+/// within one quarter of the tile, so that it lies over one terrain tile.
+struct ShapeBox {
+    uint8_t x{};      ///< the left texel within the tile, 0 to 31
+    uint8_t y{};      ///< the top texel
+    uint8_t width{};  ///< texels across, 1 to 16
+    uint8_t height{}; ///< texels down, 1 to 16
+    uint8_t index{};  ///< the palette index of its texels
+};
+
+/// The Classic fog's shapes: the opaque texels of each FOG.GAF tile of
+/// both banks, every variant and every partial corner mask, as rectangles.
+/// Each row of a quarter's texels is cut into runs of one palette index,
+/// and a run is one rectangle with the runs under it that match it.
+struct ClassicShapes {
+    std::vector<ShapeBox> boxes; ///< every tile's rectangles, in FogTileSet's order
+    /// Where each tile's rectangles begin in `boxes`, in FogTileSet's
+    /// order, and after the last tile's, the end; empty until built.
+    std::vector<uint32_t> first;
+
+    /// Returns whether the shapes are built.
+    [[nodiscard]] bool built() const noexcept {
+        return first.size() == 2 * oa::present::world_renderer::FogTileSet::tiles_per_bank + 1;
+    }
+
+    /// Returns a tile's rectangles.
+    ///
+    /// @param bank black or gray tiles
+    /// @param variant tile-set variant, 0..3
+    /// @param mask partial corner mask, 1..14
+    /// @return the tile's rectangles; none before the shapes are built
+    [[nodiscard]] std::span<const ShapeBox>
+    at(oa::present::world_renderer::FogTileSet::Bank bank,
+       int32_t variant,
+       uint8_t mask) const noexcept;
+};
+
+/// Builds the Classic fog's shapes from the FOG.GAF tile art.
+///
+/// @param tiles the tile art; shapes of art not loaded are left unbuilt
+/// @param[out] shapes the shapes
+void build_classic_shapes(
+    const oa::present::world_renderer::FogTileSet& tiles, ClassicShapes& shapes
+);
+
+/// Texels a side of the Classic dither's page: one fog tile's.
+inline constexpr uint32_t dither_page_edge = 32;
+
+/// Fills the Classic dither's page, dither_page_edge texels a side: opaque
+/// white at each texel whose column and row sum to an even number, the map
+/// pixels the dither clears, and clear between. A fog tile's top-left map
+/// pixel is always even across and down, so the page laid over any tile
+/// clears the pixels the processor clears.
+///
+/// @param[out] texels the page's texels, row by row
+void build_dither_texels(std::vector<card::Texel>& texels);
+
+/// Appends the Classic greyed pass over the cells mapped but out of sight:
+/// a tile wholly out of sight as append_unseen_terrain draws it, at alpha
+/// 1, and a tile partly out of sight as the greyed terrain under the
+/// rectangles of its gray FOG.GAF shape (the shape of its variant,
+/// (row + column + phase) & 3, and corner mask), at alpha 1, so that its
+/// edge steps as the game's does. Each level of `levels` is one pass over
+/// the same quads, in order, at the alphas pass_alpha gives. Quads past
+/// the map's edge are left out, as the terrain's are.
+///
+/// @param[in,out] frame the frame
+/// @param grid the fog grid, built for the placement's camera
+/// @param shapes the Classic fog's shapes, built
+/// @param atlas the map's atlas, whose grid and slots the greyed pages share
+/// @param greyed_pages the executor's greyed page for each page of the atlas, in order
+/// @param levels the levels drawn, in order, with their shares
+/// @param placement where the grid lands in the target
+/// @param target the target the quads are drawn into; none for the window
+/// @param scissor the pixels of the target the draw may write; null for all
+/// @return quads appended, every level counted
+uint32_t append_unseen_terrain_classic(
+    card::CardFrame& frame,
+    const oa::present::world_renderer::FogGrid& grid,
+    const ClassicShapes& shapes,
+    const oa::present::gpu_world::TerrainAtlas& atlas,
+    std::span<const card::PageHandle> greyed_pages,
+    std::span<const GreyedLevel> levels,
+    const FogPlacement& placement,
+    card::TargetHandle target,
+    const card::Rect* scissor
+);
+
+/// Appends the Classic dithered form of the greyed pass: for each fog tile
+/// with any corner out of sight and not wholly never mapped, the dither's
+/// page drawn NEAREST in the dither colour over the whole tile where every
+/// corner is out of sight, and over the rectangles of its gray FOG.GAF
+/// shape elsewhere, so that every other map pixel under the gray tiles
+/// takes the dither colour, as the processor clears them. It goes over the
+/// objects, as the smooth form does.
+///
+/// @param[in,out] frame the frame
+/// @param grid the fog grid, built for the placement's camera
+/// @param shapes the Classic fog's shapes, built
+/// @param page the dither's page (build_dither_texels), dither_page_edge texels a side
+/// @param dither the dither colour, its alpha ignored
+/// @param placement where the grid lands in the target
+/// @param target the target the quads are drawn into; none for the window
+/// @param scissor the pixels of the target the draw may write; null for all
+/// @return quads appended
+uint32_t append_unseen_dither_classic(
+    card::CardFrame& frame,
+    const oa::present::world_renderer::FogGrid& grid,
+    const ClassicShapes& shapes,
+    card::PageHandle page,
+    const card::Colour& dither,
+    const FogPlacement& placement,
+    card::TargetHandle target,
+    const card::Rect* scissor
+);
+
+/// Appends the Classic black pass over the cells never mapped: tiles
+/// wholly never mapped as append_unmapped draws them, solid quads of the
+/// colour, and for each tile partly never mapped the rectangles of its
+/// black FOG.GAF shape, each a solid quad of its texels' palette colour.
+///
+/// @param[in,out] frame the frame
+/// @param grid the fog grid, built for the placement's camera
+/// @param shapes the Classic fog's shapes, built
+/// @param colour the colour of a tile wholly never mapped, its alpha ignored
+/// @param palette the colour of each palette index, through the display's gamma
+/// @param placement where the grid lands in the target
+/// @param target the target the quads are drawn into; none for the window
+/// @param scissor the pixels of the target the draw may write; null for all
+/// @return quads appended
+uint32_t append_unmapped_classic(
+    card::CardFrame& frame,
+    const oa::present::world_renderer::FogGrid& grid,
+    const ClassicShapes& shapes,
+    const card::Colour& colour,
+    std::span<const card::Colour, OA_PALETTE_COLORS> palette,
     const FogPlacement& placement,
     card::TargetHandle target,
     const card::Rect* scissor

@@ -1,0 +1,107 @@
+# Mutator picker
+
+The mutator picker: which mutators are on, in which order, with which options and clash mode, what each row and the footer say, the question asked before a prerequisite is switched off, and the screen that draws them. Library `oa-ui-mutator-picker`, headers `include/oa/ui/mutator_picker/`, namespace `oa::ui::mutator_picker`.
+
+It reads no file, clock, preference or network. The host fills `Inputs` and lays the screen out for its frame. Every word a player reads comes from `text.hpp` through the Library's `TextHooks`. Nothing here hosts the screen on the OA layer. The pointer, a finger, the keys, typed text, the wheel and the controller drive the model and the screen state, as [Input](#input) describes.
+
+## The screen
+
+`window_size` is the size class's dialog (480×324, 720×486, 960×600 points), no larger than the frame. `picker_layout` lays a modal kit window out from the model: the header ("Mutators", the setup and the mod, the close mark), the filters and the search, the hint, the On rows numbered under "ON · APPLIED TOP TO BOTTOM", the Off rows under "OFF · NOT APPLIED", and the footer. Every row has a kit drag handle, a badge, the name, one line and a switch. At Regular the list pane is 400 points and the search 220; at Large, 440 and 280. At Compact the filter is a 128-point drop-down and the details are a page of their own: `picker_layout` returns `details_page_layout` while `details_page` is set. `draw_picker` draws the window face, the display list and the window edge.
+
+Regular and Large show the selected mutator's details beside the list: the badge, the name, the version and author, the description, each option as a kit control (a level strip, a drop-down, a switch or a slider), the clash mode when the mutator brings units or weapons, "Order" with ▲ UP and ▼ DOWN, and the facts Checked, Works with and Changes. Compact's page has the same details, with BACK and USE THESE. Read-only locks every option, the clash mode and ▲ UP and ▼ DOWN, disables the drag handles and shows the summary and CLOSE alone. A drag draws the row whole inside the list's view, as items only, leaves its controls on the well, and draws a 2-point accent line at the drop under the moving row; a refused drop draws no line. A y outside the view is clamped so the row stays whole.
+
+The controls a journey presses, as `oa.` and the name:
+
+| Name | What it is |
+|---|---|
+| `mutators.filter` | Compact's filter drop-down. Items `all`, `installed`, `downloads`, `tag-<tag>` |
+| `mutators.filter.all`, `.installed`, `.downloads` | The filter pills |
+| `mutators.tags` | TAGS. Items `mutators.tags.<tag>` for the tags that do not fit as pills |
+| `mutators.search` | The search field |
+| `mutators.list` | The list. Its scroll bar is `mutators.list.bar` |
+| `mutators.row.<id>` | A row. Its text is the mutator's name |
+| `mutators.row.<id>.grip` | The row's drag handle. Out of Tab's order |
+| `mutators.row.<id>.switch` | The row's switch. Out of Tab's order. Parts `off` and `on` |
+| `mutators.option.<option-id>` | One option of the selected mutator |
+| `mutators.clash` | Add or Replace, when the mutator brings units or weapons. Parts `add` and `replace` |
+| `mutators.up`, `mutators.down` | ▲ UP and ▼ DOWN |
+| `mutators.details` | Compact's DETAILS |
+| `mutators.back` | The details page's BACK |
+| `mutators.cancel`, `mutators.use` | CANCEL and USE THESE |
+| `mutators.done` | Read-only's CLOSE |
+| `mutators.close` | The header's × |
+| `mutators.hint`, `mutators.summary`, `mutators.verdict` | Labels. No press |
+| `mutators.details.bar` | The details' scroll bar. Out of Tab's order |
+
+Tab's order is the filters, the tag pills, TAGS, the search, the list, the option controls, the clash mode, ▲ UP, ▼ DOWN, the footer's buttons and the close mark. At Compact it is the drop-down, the search, the list, DETAILS, CANCEL, USE THESE and the close mark. On the details page it is the options, the clash mode, ▲ UP, ▼ DOWN, BACK, USE THESE and the close mark. TAGS is left out when every tag is a pill, and DETAILS when nothing is selected. A disabled control, a grip, a row's switch and a label take no focus. A details control clipped out of view stays focusable, so the layout keeps it in that order: Tab scrolls the details until it shows. The host fills `ScreenState` and lays the screen out again after each input that asks for a redraw.
+
+## Input
+
+`picker_pointer`, `picker_key`, `picker_text`, `picker_wheel`, `picker_command` and `picker_stick` change only the model and `ScreenState`. They return what the host must do. `cancel` closes the picker. `use` uses the On list. `ask_turn_off` asks before a prerequisite is switched off, and names it, then the On mutators that need it. `get` names the mutators just switched on that are not installed, prerequisites included, in the On list's order. `check` names the mutator whose option changed, and the mutator whose clash mode changed. A clash change answers `check` only when the stored mode changes.
+
+A press on a row selects it and does not scroll the list. The keys scroll the selection into view. A press on its switch flips it, through `switch_on` or `switch_off`. A press on its grip holds it. A mouse starts the drag once the pointer has moved 3 points; a finger starts it at once, and selects the row as it presses. While the drag is held, the target is the gap nearest the pointer among the On rows and the Off section, the list scrolls one row when the pointer is within 16 points of the list's top or bottom, and `ScreenState::drag` follows. The release calls `drop`. A release outside the list, Escape, or the pointer leaving the window ends the drag and changes nothing. Dropping an Off row into the On list switches it on there. Dropping an On row into the Off section switches it off, and asks first when another On mutator needs it. The model decides the order: the input does not.
+
+A finger pressed on a row, not on its grip, that moves past its reach scrolls the list and presses nothing on lift. A tap selects, and a tap on the switch flips it. Presses on the filters, TAGS, a drop-down's items, the search, a level strip, a slider's knob, ▲ UP, ▼ DOWN, DETAILS, BACK, CANCEL, USE THESE, CLOSE and the header's × do what their names say. The scroll bars are held as the Library's are: a press on the thumb grabs it, and a press on the well jumps the thumb's middle there. The wheel scrolls the pane under the pointer, including a scroll bar's well, or the items of an open drop-down. The right stick (`picker_stick`) scrolls the pane that holds the focus.
+
+Tab and Shift+Tab follow the order above, including a details control the layout kept after clipping it. The arrows move by where controls sit. On the list, Up and Down move the selection and keep the focus, and leave the list past its ends. Page Up and Page Down move by the rows shown. Home and End go to the ends and stay on the list. With nothing selected, a downward key and Home select the first row, and End selects the last. Space flips the selected row's switch. Enter opens Compact's details page, or moves the focus to the details' first control at Regular and Large. On a level strip or a slider the arrows step the value. Space or Enter flips an option's switch or opens a drop-down. Escape closes an open menu first, then clears a focused search that holds words, then ends a drag, then leaves the details page, then answers `cancel`. Typed text and the editing keys go to the search while it has the focus. Keys while a drag, a finger or a slider is held are ignored, except Escape, which ends the hold and changes nothing.
+
+`find` focuses the search, leaving Compact's details page first so the field is on the screen. `back` closes a menu, or leaves the details page, or answers `cancel`. `flip` flips the selected row's switch. `use` answers `use` when USE THESE is enabled. `waiting` only replaces the summary; it does not disable USE THESE. The host maps a controller as it does for the Library: the D-pad and the left stick are the arrows, A is Space, B is `back`, Menu is `use`, L1 and R1 are Shift+Tab and Tab, Y is `find`, X is `flip`, and the right stick is `picker_stick`.
+
+Read-only selects rows and scrolls the details. The model refuses every change to the On list, the options, the clash mode and the order. Only CLOSE and the header's × answer.
+
+`focused_field` returns the search field's rectangle while it has the focus, so the host can place the system's text input. It returns a rectangle rather than a `ScreenResult`, because a result cannot carry the field the text input needs.
+
+## Entry points
+
+- `open` switches the last set on in its order, with its options. An option the mutator no longer has is dropped. A value it no longer allows, and an option the set does not name, take the default. A mutator that is gone is named in `left_out` by its id. The order is mended so every prerequisite sits above its dependants, then the list is read from the top: a mutator that is locked beside those kept above it (see the rows) is left out and named in `left_out`, so of two that conflict the later one goes, and one that needs a mutator left out goes too. A kept mutator gets the prerequisites it lacks above it. At most `most_on` (32) stay on. `from_last_set` is set when the set was remembered and anything is on. The selection is the first On mutator, or the first mutator by name.
+- `refresh` takes new inputs and keeps the On list, its order, its options, the filters, the search and the selection, then settles the list as `open` does. A mutator the inputs no longer hold is dropped and named by its id. A mutator whose prerequisite went or no longer meets its range, whose needs became a loop, that became unavailable or that now conflicts with one above it goes off with its On dependants, each named in `left_out`; its row says why. A prerequisite a mutator now needs is brought in above it when it can be had. A question about a mutator that went off is dropped.
+- `switch_on` switches a mutator on with its default options and brings the prerequisites it lacks. It refuses when the picker is read-only, when its row is locked (with the row's line), and when the On list would pass 32. Not being installed is no refusal.
+- `switch_off` asks, and changes nothing, when an On mutator needs it. `confirm_turn_off` switches it off with every On mutator that needs it at that moment, including one switched on after the question was asked. `cancel_turn_off` clears the question.
+- `allowed_places`, `move_to`, `move_up` and `move_down` reorder inside the band below the lowest On prerequisite and above the highest On dependant. `drop` moves, switches on, or switches off, from where the row was dropped.
+- `set_option` keeps a choice, a toggle or a number when the value is one the option allows. Choices and toggles are compared as identifiers. A number is read with the manifest's number grammar (`oa::formats::oamod::parse_number`) and kept in its canonical text (`canonical_number_text`), so `1e1` is kept as `10` and `+4` or `00.5` is refused. `number_values` lists the values a number offers, its stops from the minimum to the maximum in canonical text, for the slider and the arrows that step it. `set_clash` keeps Add or Replace on an On mutator that brings units or weapons.
+- `rows`, `filter_count`, `tag_count`, `tags_shown`, `default_options_text`, `footer` and `hint` are what the list draws. `result` is the On list. `ready` is true when every On mutator is installed, none is locked, and each has its prerequisites on above it. `item_text` and `list_text` are the setup's short lines. `turn_off_question` is the question `asking` holds, naming the dependants on now.
+
+### Locked rows
+
+One check decides whether a mutator can be on beside the On list; `rows`, `switch_on`, `open`, `refresh` and `ready` all use it. It reads the mutator's prerequisite closure (`prerequisite_closure`) and locks the row, in the danger tone, with the first reason that holds:
+
+- the mutator is unavailable: "Not compatible with this mod: {reason}";
+- its closure is a loop: "Not compatible with this mod: These mutators need each other: {ids}", the Library's `blocked_cycle`, naming the ids in the loop;
+- a prerequisite is not among the inputs, or its version is outside the range its dependant asks for (`oa::formats::oamut::condition_met`): "Not compatible with this mod: Needs {name} {range}, which no registry offers", the Library's `blocked_prerequisite`, or "Needs {name}, which no registry offers" when no range is asked;
+- a prerequisite is unavailable: its reason, as for the mutator;
+- the mutator, or a prerequisite it would bring, conflicts with an On mutator ("Cannot run beside {name}", naming the On one), or the two conflict with each other. A conflict between two mutators already on is not checked against a third.
+
+## State
+
+`Picker` holds the host's `Inputs`, the On list (`Chosen`: id, option values, and clash mode when the mutator brings units or weapons), the prerequisites brought for a dependant, the names left out of the last set, the filter, the tag, the search, the selection, whether the set was the remembered one, and the turn-off question while it is open. The host may set the filter, the tag and the search. The other fields change through the functions above.
+
+`Inputs::clash_default` is the clash mode a mutator uses when its manifest names none. The host passes the setting `mutators.clash-default`. The model does not read it.
+
+## Invariants
+
+- After every change, every prerequisite in the On list stands above the On mutators that need it. The order is the Library's closure (`prerequisite_closure`, `dependants_of`, `prerequisites_above`).
+- After every change, no On mutator is locked: each has its whole closure on above it, in range and available, with no loop and no conflict. `ready` then needs only every On mutator installed.
+- A prerequisite is not switched off while a dependant is on until the player confirms.
+- Only On mutators hold option values, in the mutator's option order. Switching off and on again starts from the defaults.
+- A number outside its range, or off its step, is refused. Numbers are read and compared with the manifest's grammar, exactly, never as floating-point values, and kept in canonical text.
+- On rows are shown under every filter, tag and search, numbered from 1. Off rows follow, filtered, by name.
+- A row shows one line, the first case that holds: locked (above), an incompatible or failed verdict, needed by an On mutator, a no-effect verdict, a download, not installed, the options (and the clash choice when it brings units or weapons), or the summary.
+- The footer chip is the check in progress, else the first incompatible or failed On verdict, else nothing while any On verdict is unchecked, else the first no-effect verdict, else checked. With no mod played, each chip is the base game's own sentence (`verdict_checked_base` and the rest), so a translation never reads "with" and the translated "No Mod". The summary counts the On mutators and names the first brought prerequisite that is still on with its dependant.
+- Read-only refuses every change. Opening still applies the set. Cancelling a question is still allowed, so a question cannot stick.
+- No word is looked up except through `TextHooks`.
+
+## Tests
+
+`ui-mutator-picker-prompts` builds the four questions: "Start without X?" for one mutator and for several, "Forget the last set?", "Get mutators" before and after a download stops, and "The game did not start" for one difference and for several. It checks each title, paragraph, failure line, bar, button, id, cancel, primary and marked button, that the texts fit at every size class, and that a lookup translates. The app raises them: the start question over a skirmish or a campaign briefing, the forget question on the main menu after a crash, Get mutators over the picker, and the network question where a start was refused.
+
+`ui-mutator-picker-input` drives the screen at Compact, Regular and Large: dragging a row, a finger, the keys, the commands, the search, the option controls and read-only. After every input it checks that every prerequisite still stands above the On mutators that need it. A press of USE THESE while `waiting` is set still answers `use`.
+
+`ui-mutator-picker-layout` lays the screen out in a synthetic font at Compact, Regular and Large and at 640×480, 1920×1080 and 2560×1440. It checks that every part lies in the window, that no two controls meet apart from the list and its hint and rows and a row and its grip and switch, that every row has a grip and a switch, that the On rows are numbered, that each option is a control of its type, that the clash strip is present when the mutator brings units or weapons, that ▲ and ▼ are disabled at a band's ends and while read-only, that Compact's DETAILS opens a page with BACK, that Tab's order is the one above, that the names are sound, and that every text fits, in the design's French and in long German as well as in English. It also checks a drag onto a middle row, read-only viewing, both empty lists and `waiting`.
+
+`ui-mutator-picker-draw-data` draws those pictures in the installed game's fonts, each twice and byte for byte the same, with nothing outside the window. The drag picture pulls a row over a middle row. The French picture uses the catalogue. The same run lays the list, the details page and read-only out at each class in German, French, Spanish and Italian, and draws On numbers through 24 at Compact and Regular. `oa-ui-mutator-picker-draw-test --data languages/interface.tdf --frames DIR` writes `mutator-picker-compact.png`, `-regular.png`, `-large.png`, `-details-compact.png`, `-drag-regular.png`, `-view-regular.png` and `-fr-compact.png`.
+
+`ui-mutator-picker-model` opens an empty set, a full set, a set that names a removed mutator and a removed option, a value out of range, a set out of order, a set with a prerequisite missing, a set holding two mutators that conflict, and a set past the cap. It switches Gatehouse Keep on, refuses Grounded beside Quiet Seas, refuses Ridge Walls with its reason, refuses a loop, and refuses every change while read-only. It locks and refuses a mutator whose prerequisite is missing, out of its range (Gatehouse 3.9 against `>= 4.0`), unavailable, or conflicts with an On mutator, and lets an unrelated mutator on beside a conflicting pair. It refreshes after a prerequisite goes, after its version falls below the range, after needs become a loop, after a new need that can or cannot be had, after a new conflict and after a mutator becomes unavailable. It asks before Gatehouse goes off, confirms and cancels, and confirms after a dependant came on while the question was open. It moves and drops through a chain of three and a diamond. It accepts and refuses each option type, lists a number's values (including stops the grammar cannot write) and keeps numbers in canonical spelling. It checks every row line and the clash mode on a row, the filters' counts, the tags, the footer's chip for each verdict and the base game's chips in a German lookup, the hint for each setup, the short texts and the question, and a lookup that translates one line. Random walks of every call, with questions left open across other calls and refreshes that change the inputs, check after each call that the order holds, that the set is playable, that `ready` is true exactly when it is also installed, and that each Off row's lock matches what `switch_on` does.
+
+## Limitations
+
+Nothing here downloads, runs a verdict check, or stores the remembered set. The host does, and the host maps the platform's keys and the controller onto the input. The screen lays out and draws what the model already decided: which rows show, their order, their lines and what is locked. The clash default is an input, not a preference this module reads. `Chosen` carries the clash mode for the loadout; the loadout record itself does not have that field yet. One row line means a higher-priority line hides the options and the clash choice; the On record still holds them. The model sees one version of each mutator, the one the host gives; a prerequisite whose given version is out of range is locked even when another registry might offer one in range. A number option whose minimum, maximum or step does not read, whose step is not above zero, or whose range holds more than 1,000 steps offers no values and keeps its default; a stop that needs more significant digits than the number grammar holds is not offered. Mutators whose prerequisites need each other are refused rather than placed. `Needed by` names the first On dependant in the On list. Opening records `came_with` only for a prerequisite the set itself did not name. A read-only picker settles the host's set as any other, so a mutator the guest's inputs lock is left out of the guest's view.

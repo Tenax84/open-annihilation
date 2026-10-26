@@ -96,12 +96,51 @@ inline constexpr std::string_view hardware_acceleration = "open-annihilation.har
 inline constexpr std::string_view vertical_sync = "open-annihilation.vertical-sync";
 /// 1 or 0 (EngineSettings::smooth_motion).
 inline constexpr std::string_view smooth_motion = "open-annihilation.smooth-motion";
+/// 1 or 0 (EngineSettings::allow_full_3d).
+inline constexpr std::string_view allow_full_3d = "open-annihilation.allow-full-3d";
+/// 1 or 0 (EngineSettings::unlocked_camera).
+inline constexpr std::string_view unlocked_camera = "open-annihilation.unlocked-camera";
+/// Legacy weapon lighting switch.
+inline constexpr std::string_view weapon_lighting = "open-annihilation.weapon-lighting";
+/// Effect intensity in percent, from 0 to 200.
+inline constexpr std::string_view weapon_lighting_intensity =
+    "open-annihilation.weapon-lighting.intensity";
+/// Legacy nanolathe lighting switch, migrated to 0% or 100%.
+inline constexpr std::string_view nanolathe_lighting = "open-annihilation.nanolathe-lighting";
+/// Effect intensity in percent, from 0 to 200.
+inline constexpr std::string_view nanolathe_lighting_intensity =
+    "open-annihilation.nanolathe-lighting.intensity";
+/// Legacy wreck glow switch, migrated to 0% or 100%.
+inline constexpr std::string_view wreck_glow = "open-annihilation.wreck-glow";
+/// Effect intensity in percent, from 0 to 200.
+inline constexpr std::string_view wreck_glow_intensity = "open-annihilation.wreck-glow.intensity";
+/// Legacy heat distortion switch, migrated to 0% or 100%.
+inline constexpr std::string_view heat_distortion = "open-annihilation.heat-distortion";
+/// Effect intensity in percent, from 0 to 200.
+inline constexpr std::string_view heat_distortion_intensity =
+    "open-annihilation.heat-distortion.intensity";
+
+/// Effect intensity in percent, from 0 to 200.
+inline constexpr std::string_view water_ripples_intensity =
+    "open-annihilation.water-ripples.intensity";
+/// Effect intensity in percent, from 0 to 200.
+inline constexpr std::string_view coastal_waves_intensity =
+    "open-annihilation.coastal-waves.intensity";
+/// Effect intensity in percent, from 0 to 200.
+inline constexpr std::string_view underwater_shimmer_intensity =
+    "open-annihilation.underwater-shimmer.intensity";
+/// Effect intensity in percent, from 0 to 200.
+inline constexpr std::string_view naval_reflections_intensity =
+    "open-annihilation.naval-reflections.intensity";
+
 /// "sharp", "whole-steps" or "unfiltered" (EngineSettings::menu_scaling).
 inline constexpr std::string_view menu_scaling = "open-annihilation.menu-scaling";
 /// 1 or 0 (EngineSettings::native_density).
 inline constexpr std::string_view native_density = "open-annihilation.native-density";
 /// "off", "reduced" or "full" (EngineSettings::explosion_flash).
 inline constexpr std::string_view explosion_flash = "open-annihilation.explosion-flash";
+/// "classic" or "smooth" (EngineSettings::fog_of_war).
+inline constexpr std::string_view fog_of_war = "open-annihilation.fog-of-war";
 /// "rendered" or "dots" (EngineSettings::zoomed_out_units).
 inline constexpr std::string_view zoomed_out_units = "open-annihilation.zoomed-out-units";
 /// The share of normal size past which Zoomed out units applies: "1/2",
@@ -197,14 +236,61 @@ inline constexpr std::string_view file_type_oalang = "open-annihilation.file-typ
 /// "on" or "off" (EngineSettings::file_type_oareg). Absent, or any text
 /// other than off, the game opens registry files.
 inline constexpr std::string_view file_type_oareg = "open-annihilation.file-types.oareg";
+/// "on" or "off" (EngineSettings::file_type_oamut). Absent, or any text
+/// other than off, the game opens mutator packages.
+inline constexpr std::string_view file_type_oamut = "open-annihilation.file-types.oamut";
+/// "on" or "off" (EngineSettings::file_type_oabrain). Absent, or any text
+/// other than off, the game opens brain packages.
+inline constexpr std::string_view file_type_oabrain = "open-annihilation.file-types.oabrain";
 /// "on" or "off" (EngineSettings::file_type_oalaunch). Absent, or any text
 /// other than off, the game opens launch files.
 inline constexpr std::string_view file_type_oalaunch = "open-annihilation.file-types.oalaunch";
+/// The last mutator set a skirmish setup started a game with: the canonical
+/// loadout text, mutators in order with versions, package SHA-256s and
+/// options. Absent, or text that cannot be read as that loadout, means no
+/// set. Restore defaults does not erase it.
+inline constexpr std::string_view mutators_skirmish = "open-annihilation.mutators.skirmish";
+/// The last mutator set the multiplayer host's setup started a game with:
+/// the canonical loadout text, mutators in order with versions, package
+/// SHA-256s and options. Absent, or text that cannot be read as that
+/// loadout, means no set. Restore defaults does not erase it.
+inline constexpr std::string_view mutators_multiplayer = "open-annihilation.mutators.multiplayer";
+/// The last mutator set a campaign setup started a game with: the canonical
+/// loadout text, mutators in order with versions, package SHA-256s and
+/// options. Absent, or text that cannot be read as that loadout, means no
+/// set. Restore defaults does not erase it.
+inline constexpr std::string_view mutators_campaign = "open-annihilation.mutators.campaign";
+/// The default brain's id. Absent, empty, or an id no installed brain has,
+/// the built-in computer player is the default. Restore defaults does not
+/// erase it. USE BY DEFAULT writes it.
+inline constexpr std::string_view brain_default = "open-annihilation.brain.default";
+/// The computer seats a skirmish last started with, as the seat text.
+/// Absent, or text that cannot be read as seats, means no seats. START
+/// writes it when a seat names a brain, or when it is already there.
+/// Restore defaults does not erase it.
+inline constexpr std::string_view brains_skirmish = "open-annihilation.brains.skirmish";
+/// The computer seats the battle room last started with, as the seat text.
+/// Absent, or text that cannot be read as seats, means no seats. That
+/// setup writes it when a seat names a brain, or when it is already there.
+/// Restore defaults does not erase it.
+inline constexpr std::string_view brains_multiplayer = "open-annihilation.brains.multiplayer";
+/// The computer seats a campaign last started with, as the seat text.
+/// Absent, or text that cannot be read as seats, means no seats. A
+/// mission's start writes it when a seat names a brain, or when it is
+/// already there. Restore defaults does not erase it.
+inline constexpr std::string_view brains_campaign = "open-annihilation.brains.campaign";
 static_assert(base_game.find('|') == std::string_view::npos);
 static_assert(base_game.find('\\') == std::string_view::npos);
 static_assert(expansions_prefix.find('|') == std::string_view::npos);
 static_assert(expansions_prefix.back() == '.');
 static_assert(content_note.find('|') == std::string_view::npos);
+static_assert(mutators_skirmish.find('|') == std::string_view::npos);
+static_assert(mutators_multiplayer.find('|') == std::string_view::npos);
+static_assert(mutators_campaign.find('|') == std::string_view::npos);
+static_assert(brain_default.find('|') == std::string_view::npos);
+static_assert(brains_skirmish.find('|') == std::string_view::npos);
+static_assert(brains_multiplayer.find('|') == std::string_view::npos);
+static_assert(brains_campaign.find('|') == std::string_view::npos);
 } // namespace key
 
 /// Tells whether two tags are the same, ignoring ASCII case and reading '_' as '-'.
@@ -603,6 +689,25 @@ inline constexpr std::array<ExplosionFlash, 3> explosion_flash_choices{
     ExplosionFlash::full,
 };
 
+/// Fog of War: how the edges of the fog are drawn where the graphics card
+/// draws the battlefield (Hardware acceleration Full). Where the processor
+/// draws it, the fog is always drawn as the game drew it. Either way it
+/// changes only what the frames show, never what any player can see.
+enum class FogOfWar : uint8_t {
+    /// as the game drew it: black and greyed ground with hard edges that
+    /// step from sight cell to sight cell, through the game's own fog tiles
+    /// with their dithered fringe
+    classic,
+    /// soft edges that fade across each sight cell
+    smooth,
+};
+
+/// The ways of Fog of War, in the order the dialog offers them.
+inline constexpr std::array<FogOfWar, 2> fog_of_war_choices{
+    FogOfWar::classic,
+    FogOfWar::smooth,
+};
+
 /// Zoomed out units: how the battlefield's units are drawn farther out than
 /// After zoom.
 enum class ZoomedOutUnits : uint8_t {
@@ -932,6 +1037,28 @@ enum class ContentCheck : uint8_t {
     never,              ///< only when the player asks
 };
 
+/// Coloured weapon lighting's percent with Hardware acceleration Full where
+/// the preferences store none (default_effect_intensity).
+inline constexpr uint32_t default_weapon_lighting = 20;
+/// Nanolathe glow's percent with Hardware acceleration Full where the
+/// preferences store none.
+inline constexpr uint32_t default_nanolathe_lighting = 20;
+/// Wreck glow's percent with Hardware acceleration Full where the
+/// preferences store none.
+inline constexpr uint32_t default_wreck_glow = 30;
+/// Heat distortion's percent with Hardware acceleration Full where the
+/// preferences store none.
+inline constexpr uint32_t default_heat_distortion = 40;
+/// Water ripples' percent where the preferences store none, at every
+/// Hardware acceleration.
+inline constexpr uint32_t default_water_ripples = 60;
+/// Coastal waves' percent where the preferences store none.
+inline constexpr uint32_t default_coastal_waves = 30;
+/// Underwater shimmer's percent where the preferences store none.
+inline constexpr uint32_t default_underwater_shimmer = 100;
+/// Naval reflections' percent where the preferences store none.
+inline constexpr uint32_t default_naval_reflections = 100;
+
 /// The settings, as the dialog shows them and the game puts them in effect.
 struct EngineSettings {
     /// Path nodes the path search may visit in a game tick, all players
@@ -1009,6 +1136,31 @@ struct EngineSettings {
     /// latest tick left them, as the game drew them 30 times a second. It
     /// changes only what the frames show, never the game.
     bool smooth_motion{true};
+    /// Allows rotating and tilting the battlefield with Full acceleration.
+    bool allow_full_3d{true};
+    /// Allows angles beyond the range suited to the map artwork.
+    bool unlocked_camera{};
+    /// Weapon fire, projectiles and impacts light nearby surfaces; percent.
+    /// 0 as constructed, where acceleration is Off (default_effect_intensity).
+    uint32_t weapon_lighting{};
+    /// Nanolathe streams and construction glow intensity, in percent.
+    /// 0 as constructed, where acceleration is Off (default_effect_intensity).
+    uint32_t nanolathe_lighting{};
+    /// Cooling wreck glow intensity, in percent.
+    /// 0 as constructed, where acceleration is Off (default_effect_intensity).
+    uint32_t wreck_glow{};
+    /// Heat distortion strength around hot weapons and wrecks, in percent.
+    /// 0 as constructed, where acceleration is Off (default_effect_intensity).
+    uint32_t heat_distortion{};
+    /// Water ripples intensity, in percent.
+    uint32_t water_ripples{default_water_ripples};
+    /// Coastal waves intensity, in percent.
+    uint32_t coastal_waves{default_coastal_waves};
+    /// Underwater shimmer intensity, in percent.
+    uint32_t underwater_shimmer{default_underwater_shimmer};
+    /// Naval reflections intensity, in percent.
+    uint32_t naval_reflections{default_naval_reflections};
+
     /// How the menus are enlarged to the window.
     MenuScaling menu_scaling{MenuScaling::sharp};
     /// Which screens the front end's menus show; the game's own unless the
@@ -1022,6 +1174,9 @@ struct EngineSettings {
     /// How strongly explosions' flashes light the battlefield; a mod's
     /// profile may hold them lower still (ui.explosion-flash).
     ExplosionFlash explosion_flash{ExplosionFlash::full};
+    /// How the fog's edges are drawn while the graphics card draws the
+    /// battlefield; the processor's drawing is always Classic.
+    FogOfWar fog_of_war{FogOfWar::smooth};
     /// Shots and explosions glow, their light blurred over what is around
     /// them, and the battlefield's edges are smoothed where Enhanced
     /// anti-aliasing does not smooth them, while the graphics card draws the
@@ -1103,9 +1258,11 @@ struct EngineSettings {
     /// the switch shows whether this copy is the default opener, and OK
     /// changes that only when the switch moved. iOS takes the type from the app.
     bool file_type_oamod{true};
-    bool file_type_oamap{true};  ///< the game opens map packs (.oamap)
-    bool file_type_oalang{true}; ///< the game opens language packs (.oalang)
-    bool file_type_oareg{true};  ///< the game opens registry files (.oareg)
+    bool file_type_oamap{true};   ///< the game opens map packs (.oamap)
+    bool file_type_oalang{true};  ///< the game opens language packs (.oalang)
+    bool file_type_oareg{true};   ///< the game opens registry files (.oareg)
+    bool file_type_oamut{true};   ///< the game opens mutator packages (.oamut)
+    bool file_type_oabrain{true}; ///< the game opens brain packages (.oabrain)
     /// The game opens launch files (.oalaunch), which start it in their
     /// battle room, as -c does.
     bool file_type_oalaunch{true};
@@ -1206,6 +1363,81 @@ highest_offered_unit_limit(const oa::data::limits::UnitsPerPlayer& units) noexce
 /// @param inputs the platform, the preferences file and the installation
 /// @return the defaults
 [[nodiscard]] EngineSettings default_settings(const Inputs& inputs);
+
+/// A Graphics effect drawn at a percent, from 0% to 200% in steps of 10%.
+struct EffectSlider {
+    /// Its name: the word of its preferences key between "open-annihilation."
+    /// and ".intensity", such as "weapon-lighting".
+    std::string_view name{};
+    uint32_t EngineSettings::* percent{}; ///< its percent in the settings
+    /// With no stored percent it reads as its acceleration gives
+    /// (default_effect_intensity), rather than as its default alone.
+    bool follows_acceleration{};
+    /// Its percent with Hardware acceleration Full where the preferences
+    /// store none, such as default_weapon_lighting.
+    uint32_t full_default{};
+};
+
+/// Every effect drawn at a percent: Coloured weapon lighting, Nanolathe
+/// glow, Wreck glow and Heat distortion, then the water's four.
+inline constexpr std::array<EffectSlider, 8> effect_sliders{{
+    {"weapon-lighting", &EngineSettings::weapon_lighting, true, default_weapon_lighting},
+    {"nanolathe-lighting", &EngineSettings::nanolathe_lighting, true, default_nanolathe_lighting},
+    {"wreck-glow", &EngineSettings::wreck_glow, true, default_wreck_glow},
+    {"heat-distortion", &EngineSettings::heat_distortion, true, default_heat_distortion},
+    {"water-ripples", &EngineSettings::water_ripples, false, default_water_ripples},
+    {"coastal-waves", &EngineSettings::coastal_waves, false, default_coastal_waves},
+    {"underwater-shimmer", &EngineSettings::underwater_shimmer, false, default_underwater_shimmer},
+    {"naval-reflections", &EngineSettings::naval_reflections, false, default_naval_reflections},
+}};
+
+/// Returns the percent an effect reads as when none is stored: its own
+/// default with Hardware acceleration Full (EffectSlider::full_default).
+/// Below Full, Coloured weapon lighting, Nanolathe glow, Wreck glow and Heat
+/// distortion read 0, so a battlefield drawn without Full keeps the game's
+/// own look until the player turns an effect on; the water's four, locked
+/// there, keep their default.
+///
+/// @param percent the effect's percent in the settings (EffectSlider::percent)
+/// @param acceleration the Hardware acceleration setting
+/// @return 0 to 200; 0 for a field that is no effect's
+[[nodiscard]] constexpr uint32_t default_effect_intensity(
+    uint32_t EngineSettings::* percent, HardwareAcceleration acceleration
+) noexcept {
+    for (const EffectSlider& slider : effect_sliders)
+        if (slider.percent == percent)
+            return slider.follows_acceleration && acceleration != HardwareAcceleration::full
+                       ? 0U
+                       : slider.full_default;
+    return 0U;
+}
+
+/// Moves the four effects with Hardware acceleration: leaving Full sets
+/// Coloured weapon lighting, Nanolathe glow, Wreck glow and Heat distortion
+/// to 0%, and reaching Full sets each to its own default there
+/// (default_effect_intensity). A change that neither leaves nor reaches Full
+/// leaves them, so a player may turn them on below Full.
+///
+/// @param[in,out] settings the settings after the change
+/// @param before Hardware acceleration before the change
+void follow_acceleration_with_effects(
+    EngineSettings& settings, HardwareAcceleration before
+) noexcept;
+
+/// Sets each effect that follows acceleration (EffectSlider) and whose
+/// percent the preferences do not store, nor its earlier On or Off, to the
+/// percent an acceleration gives an unset one, as read_settings sets it from
+/// the stored acceleration. An effect the preferences store keeps its
+/// percent.
+///
+/// @param[in,out] settings the settings read from `values`
+/// @param values the preferences the settings were read from
+/// @param acceleration the acceleration whose unset percent applies
+void follow_acceleration_with_unset_effects(
+    EngineSettings& settings,
+    const oa::platform::preferences::Values& values,
+    HardwareAcceleration acceleration
+);
 
 /// Reads the settings from the preferences.
 ///
@@ -1504,6 +1736,8 @@ enum class Lock : uint8_t {
     needs_sticky,
     /// The welcome setup is walked through again only from the main menu.
     main_menu,
+    needs_full_acceleration, ///< Requires Full hardware acceleration.
+    needs_full_3d,           ///< Allow Full 3D Mode is off.
 };
 
 /// The game the dialog opens over.
@@ -1535,6 +1769,8 @@ struct GameState {
 
 /// What the dialog cannot change, and what its header says of the game.
 struct Locks {
+    Lock water_effects{};         ///< Requires Full hardware acceleration.
+    Lock unlocked_camera{};       ///< Requires Allow Full 3D Mode.
     Lock path_search{};           ///< Pathfinding cycles
     Lock unit_limit{};            ///< Unit limit
     Lock skirmish_players{};      ///< Skirmish players

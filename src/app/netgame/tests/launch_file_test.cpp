@@ -156,6 +156,13 @@ content:
   base-game: totala
   expansions: [core-contingency]
   mod: ridge
+  mutators:
+    - wide-sight
+    - id: fast-builders
+      version: "1.0"
+      options:
+        factor: 2
+        rush: on
 status:
   standard-output: true
   file: status.jsonl
@@ -272,7 +279,7 @@ bool same_block(const nl::LaunchBlock& left, const nl::LaunchBlock& right) {
         const auto& one = left.computers[at];
         const auto& other = right.computers[at];
         same = one.faction == other.faction && one.team == other.team && one.color == other.color &&
-               one.difficulty == other.difficulty;
+               one.difficulty == other.difficulty && same_text(one.brain, other.brain);
     }
     for (int32_t at = 0; same && at < left.restriction_count && at < nl::kLaunchRestrictionLimit;
          ++at)
@@ -1050,7 +1057,17 @@ void check_launch() {
     expect(
         plan.content.named && plan.content.base_game == "totala" &&
             plan.content.expansions.size() == 1 &&
-            plan.content.expansions[0] == "core-contingency" && plan.content.mod == "ridge",
+            plan.content.expansions[0] == "core-contingency" && plan.content.mod == "ridge" &&
+            plan.content.mutators_named && plan.content.mutators.size() == 2 &&
+            plan.content.mutators[0].id == "wide-sight" &&
+            plan.content.mutators[0].version.empty() &&
+            plan.content.mutators[1].id == "fast-builders" &&
+            plan.content.mutators[1].version == "1.0" &&
+            plan.content.mutators[1].options.size() == 2 &&
+            plan.content.mutators[1].options[0] ==
+                std::pair<std::string, std::string>{"factor", "2"} &&
+            plan.content.mutators[1].options[1] ==
+                std::pair<std::string, std::string>{"rush", "true"},
         "content"
     );
     expect(
@@ -1192,6 +1209,89 @@ void check_options_match_the_file(const std::string& launch, const std::string& 
             const std::string option(field.option.substr(0, field.option.find_first_of(" [")));
             expect(replaced.contains(option), option + " has a replacement case");
         }
+}
+
+/// The fifth part and the group's brain are read, an empty part is the built-in
+/// player, a bad id is refused at its place, and a sixth part is refused.
+void check_computer_brains() {
+    const auto named =
+        parse({"--host", "--computer-player", "core:2::hard:steady-commander"}).launch.block;
+    expect(
+        named.computer_count == 1 && named.computers[0].faction == nl::faction::core &&
+            named.computers[0].team == 2 && named.computers[0].color == 0 &&
+            named.computers[0].difficulty == nl::difficulty::hard &&
+            same_text(named.computers[0].brain, "steady-commander"),
+        "the fifth part names the brain"
+    );
+    const auto empty_tail = parse({"--host", "--computer-player", "core:2::hard:"}).launch.block;
+    expect(
+        empty_tail.computer_count == 1 &&
+            empty_tail.computers[0].difficulty == nl::difficulty::hard &&
+            empty_tail.computers[0].brain[0] == '\0',
+        "an empty fifth part seats the built-in player"
+    );
+    const auto four = parse({"--host", "--computer-player", "core:none:4:easy"}).launch.block;
+    expect(
+        four.computer_count == 1 && four.computers[0].brain[0] == '\0' &&
+            four.computers[0].team == 0 && four.computers[0].difficulty == nl::difficulty::easy,
+        "four parts leave the brain empty"
+    );
+    const std::string bad_option =
+        rejection({"--host", "--computer-player", "core:1::hard:Steady"});
+    expect(
+        bad_option == "--computer-player brain: is not a kebab-case brain id",
+        "a bad id names --computer-player brain: " + bad_option
+    );
+    const std::string too_many =
+        rejection({"--host", "--computer-player", "core:1:2:hard:steady-commander:extra"});
+    expect(
+        too_many == "--computer-player: expected SIDE[:TEAM[:COLOUR[:DIFFICULTY[:BRAIN]]]]",
+        "more than five parts are refused: " + too_many
+    );
+    const std::string file = refused_text(
+        "oalaunch: 1\n"
+        "game:\n"
+        "  role: host\n"
+        "computer-players:\n"
+        "  - side: arm\n"
+        "  - side: core\n"
+        "    team: 2\n"
+        "    difficulty: hard\n"
+        "    brain: steady-commander\n"
+    );
+    expect(file.empty(), "a group's brain is read: " + file);
+    const auto grouped = launch_file::read_launch_text(
+        "launch.oalaunch",
+        "oalaunch: 1\n"
+        "game:\n"
+        "  role: host\n"
+        "computer-players:\n"
+        "  - side: arm\n"
+        "    brain: \"\"\n"
+        "  - side: core\n"
+        "    team: 2\n"
+        "    difficulty: hard\n"
+        "    brain: steady-commander\n"
+    );
+    expect(
+        grouped.block.computer_count == 2 && grouped.block.computers[0].brain[0] == '\0' &&
+            same_text(grouped.block.computers[1].brain, "steady-commander") &&
+            grouped.block.computers[1].difficulty == nl::difficulty::hard,
+        "the group's brain is stored, and an empty one is the built-in player"
+    );
+    const std::string bad_file = refused_text(
+        "oalaunch: 1\n"
+        "game:\n"
+        "  role: host\n"
+        "computer-players:\n"
+        "  - side: arm\n"
+        "  - side: core\n"
+        "    brain: Nope\n"
+    );
+    expect(
+        bad_file == "launch.oalaunch: computer-players[2].brain: is not a kebab-case brain id",
+        "a bad id names computer-players[2].brain: " + bad_file
+    );
 }
 
 /// The names and the password a launch takes are as long as the game keeps
@@ -1750,6 +1850,134 @@ void check_standard_input(const Scratch& scratch) {
     close_reader(empty_input);
 }
 
+/// content.mutators keeps order, normalises options, and refuses a bad list.
+void check_mutators() {
+    const auto both = launch_file::read_launch_text(
+        "launch.oalaunch",
+        "oalaunch: 1\n"
+        "content:\n"
+        "  mutators:\n"
+        "    - wide-sight\n"
+        "    - id: fast-builders\n"
+        "      version: \"1.0\"\n"
+        "      options:\n"
+        "        factor: 2\n"
+        "        rush: on\n"
+        "        shown: true\n"
+        "        quiet: off\n"
+        "        hidden: false\n"
+    );
+    expect(!both.content.named && both.content.mutators_named, "mutators do not name content");
+    expect(both.content.mutators.size() == 2, "both forms are kept");
+    expect(
+        both.content.mutators[0].id == "wide-sight" && both.content.mutators[0].options.empty() &&
+            both.content.mutators[1].id == "fast-builders" &&
+            both.content.mutators[1].version == "1.0",
+        "the order and the version are kept"
+    );
+    const auto& options = both.content.mutators[1].options;
+    expect(
+        options.size() == 5 && options[0].second == "2" && options[1].second == "true" &&
+            options[2].second == "true" && options[3].second == "false" &&
+            options[4].second == "false",
+        "on, off, true and false are normalised"
+    );
+    const auto empty =
+        launch_file::read_launch_text("launch.oalaunch", "oalaunch: 1\ncontent:\n  mutators: []\n");
+    expect(
+        empty.content.mutators_named && empty.content.mutators.empty() && !empty.content.named,
+        "an empty list names no mutators"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators: wide-sight\n") ==
+            "launch.oalaunch: content.mutators: expected a list",
+        "option text is not a list"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators: [1]\n") ==
+            "launch.oalaunch: content.mutators[1]: expected a mutator id or a group",
+        "a number is not a mutator"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators:\n  - version: \"1.0\"\n") ==
+            "launch.oalaunch: content.mutators[1]: expected an id",
+        "a group needs an id"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - wide-sight\n  - id: fast-builders\n"
+            "    colour: 2\n"
+        ) == "launch.oalaunch: content.mutators[2].colour: is not a mutator setting",
+        "another key is not a mutator setting"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators: [Wide-Sight]\n") ==
+            "launch.oalaunch: content.mutators[1]: expected a mutator id",
+        "an id the manifest would refuse"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        Factor: 1\n"
+        ) == "launch.oalaunch: content.mutators[1].options.Factor: expected an option id",
+        "an option id the manifest would refuse"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - wide-sight\n  - id: fast-builders\n"
+            "    options: [factor]\n"
+        ) == "launch.oalaunch: content.mutators[2].options: expected a group of options",
+        "options are a group"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        factor: [2]\n"
+        ) == "launch.oalaunch: content.mutators[1].options.factor: expected text, a number, on or "
+             "off",
+        "an option value is not a list"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        health: \"1000,extra=true\"\n"
+        ) == "launch.oalaunch: content.mutators[1].options.health: expected a value of letters, "
+             "digits, _, - or .",
+        "a value cannot carry another option"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        health: \"1000,health=3000\"\n"
+        ) == "launch.oalaunch: content.mutators[1].options.health: expected a value of letters, "
+             "digits, _, - or .",
+        "a value cannot repeat an option"
+    );
+    expect(
+        refused_text(
+            "oalaunch: 1\ncontent:\n  mutators:\n  - id: wide-sight\n    options:\n"
+            "        health: \"two thousand\"\n"
+        ) == "launch.oalaunch: content.mutators[1].options.health: expected a value of letters, "
+             "digits, _, - or .",
+        "a value is an identifier"
+    );
+    expect(
+        refused_text("oalaunch: 1\ncontent:\n  mutators: [wide-sight, wide-sight]\n") ==
+            "launch.oalaunch: content.mutators[2]: \"wide-sight\" is named twice",
+        "the same id twice"
+    );
+    std::string many = "oalaunch: 1\ncontent:\n  mutators:\n";
+    for (int index = 0; index < 32; ++index)
+        many += "  - wide-" + std::to_string(index) + "\n";
+    const auto taken = launch_file::read_launch_text("launch.oalaunch", many);
+    expect(taken.content.mutators.size() == 32, "32 mutators are taken");
+    many += "  - wide-32\n";
+    expect(
+        refused_text(many) == "launch.oalaunch: content.mutators[33]: expected at most 32 mutators",
+        "33 mutators are refused"
+    );
+}
+
 } // namespace
 
 int main() {
@@ -1763,10 +1991,12 @@ int main() {
     check_spaced_paths(scratch);
     check_switch_notes();
     check_launch();
+    check_mutators();
     check_options_match_the_file(
         scratch.write("launch.oalaunch", kLaunch), scratch.write("plain.oalaunch", kPlainHost)
     );
     check_refusals(scratch);
+    check_computer_brains();
     check_name_limits();
     check_either_file(scratch);
     check_kept_status(scratch);

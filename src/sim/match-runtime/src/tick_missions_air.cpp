@@ -79,7 +79,6 @@ constexpr uint16_t seek_attack_turn = 0x5555;
 constexpr uint16_t seek_guard_turn = 0x4000;
 constexpr uint16_t seek_turn_jitter = 0x2000;
 constexpr uint32_t seek_wait_ticks = 0x1e;
-constexpr int32_t repair_pad_search_radius = 0xf00;
 
 int32_t signed_bits(uint32_t n) {
     return std::bit_cast<int32_t>(n);
@@ -125,11 +124,6 @@ AttackPoint backward(const AttackPoint& from, uint16_t angle, int32_t magnitude)
     point[0] += static_cast<uint32_t>(sim::unit_movement::sine_scaled(angle, magnitude));
     point[2] += static_cast<uint32_t>(sim::unit_movement::cosine_scaled(angle, magnitude));
     return point;
-}
-
-int32_t square_high(uint32_t delta) {
-    const auto value = static_cast<int64_t>(signed_bits(delta));
-    return static_cast<int32_t>(static_cast<uint64_t>(value * value) >> 32);
 }
 
 } // namespace
@@ -403,9 +397,9 @@ class TickHost::AirAttackMissions {
     /// @return True when the unit was off the map and a goal toward the centre
     ///     was installed.
     bool return_to_map();
-    /// Sends a damaged aircraft to a random active repair pad of its owner
-    /// within 0xf00 world units by queueing VTOL_Landing on it; pads are
-    /// scanned in unit order.
+    /// Sends a damaged aircraft to a random pad of those its owner's pad
+    /// list offers within 0xf00 world units (Match::repair_pads_in_reach)
+    /// by queueing VTOL_Landing on it.
     ///
     /// @return True when a pad was found and the landing queued.
     bool seek_repair_pad();
@@ -512,31 +506,12 @@ bool TickHost::AirAttackMissions::return_to_map() {
 }
 
 bool TickHost::AirAttackMissions::seek_repair_pad() {
-    auto* owner = oa::world_unit_owner(&world, &unit);
-    if (!owner)
-        return false;
-    uint32_t count = 0;
-    auto* first = oa::world_player_units(&world, owner, &count);
-    std::vector<oa::Unit*> pads;
-    constexpr uint32_t pad_flags = OA_UNIT_DEF_FLAG_BUILDER | OA_UNIT_DEF_FLAG_IS_AIRBASE;
-    constexpr int32_t limit = repair_pad_search_radius * repair_pad_search_radius;
-    for (uint32_t i = 0; first && i < count; ++i) {
-        auto& pad = first[i];
-        if (!pad.type_index || (def_of(pad).flags & pad_flags) != pad_flags ||
-            !(pad.state_flags & 1))
-            continue;
-        const auto dx =
-            static_cast<uint32_t>(unit.position.x) - static_cast<uint32_t>(pad.position.x);
-        const auto dz =
-            static_cast<uint32_t>(unit.position.z) - static_cast<uint32_t>(pad.position.z);
-        if (square_high(dz) + square_high(dx) <= limit)
-            pads.push_back(&pad);
-    }
-    if (pads.empty())
+    const auto pads = host.match.repair_pads_in_reach(unit);
+    if (pads == 0)
         return false;
     clear_goal();
-    auto& pad = *pads[host.random(static_cast<uint32_t>(pads.size()))];
-    push_front(new_order(sim::ground_orders::vtol_landing_kind, &host.unit_view(pad), nullptr));
+    auto* pad = host.match.repair_pad_in_reach(unit, host.random(pads));
+    push_front(new_order(sim::ground_orders::vtol_landing_kind, &host.unit_view(*pad), nullptr));
     order.wait_events = 0;
     return true;
 }

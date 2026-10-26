@@ -69,8 +69,8 @@ does before the pass:
 
 - The engine: configure with the game (`OA_GAME_DIR`), build, and run the
   whole ctest, which then includes
-  `engine-layout`, `engine-layout-selftest` and `layout-pass-selftest`;
-  build `oa-doc-check` too.
+  `engine-layout`, `engine-layout-selftest` and `layout-pass-selftest`,
+  and with Clang `doc-check`.
 - The engine with the recorder extensions, as CI builds it: configure with
   `-DOA_RECORD_EXTENSION_HOOKS=ON`, build, and run the whole
   ctest (`extension-hooks-options` and `extension-hooks-game` read the

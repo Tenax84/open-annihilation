@@ -4,6 +4,8 @@
 // Radar interaction, zoom, camera panning and move/patrol orders.
 #include "oa/app/runtime.hpp"
 #include "oa/app/far_view.hpp"
+#include "oa/app/frame_coordinates.hpp"
+#include "oa/app/full_screen.hpp"
 #include "device_state.hpp"
 #include "oa/core/map_plot.h"
 #include "engine_settings_state.hpp"
@@ -85,6 +87,41 @@ std::optional<uint64_t> rendered_units_budget_override() noexcept {
     }();
     return parsed;
 }
+
+#ifdef SDL_PLATFORM_MACOS
+/// Returns the point of the match's screen that a pointer past a full-screen
+/// window's edge touches (read_full_screen_pointer), in the layout's pixels,
+/// mapped as a pointer event at that point of the window is.
+///
+/// @param window the game's window
+/// @param renderer the window's renderer
+/// @param width the layout's width in pixels
+/// @param height the layout's height in pixels
+/// @return the point, on the layout's last row or column past an edge;
+///         none where read_full_screen_pointer gives none, or where SDL
+///         cannot map the point into the frame
+std::optional<SDL_FPoint>
+full_screen_edge_point(SDL_Window* window, SDL_Renderer* renderer, int32_t width, int32_t height) {
+    if (renderer == nullptr || width <= 0 || height <= 0)
+        return std::nullopt;
+    const std::optional<SDL_FPoint> touched = read_full_screen_pointer(window);
+    if (!touched)
+        return std::nullopt;
+    SDL_Event motion{};
+    motion.type = SDL_EVENT_MOUSE_MOTION;
+    motion.motion.windowID = SDL_GetWindowID(window);
+    motion.motion.x = touched->x;
+    motion.motion.y = touched->y;
+    if (!convert_event_to_frame(renderer, motion))
+        return std::nullopt;
+    // The window's last row or column is the layout's, over a scaled
+    // frame's black bars too.
+    return SDL_FPoint{
+        std::clamp(motion.motion.x, 0.0F, static_cast<float>(width - 1)),
+        std::clamp(motion.motion.y, 0.0F, static_cast<float>(height - 1))
+    };
+}
+#endif
 
 } // namespace
 
@@ -841,9 +878,21 @@ void Runtime::pan_match_camera() {
     // The pointer on the screen's outermost pixels scrolls toward that edge,
     // and in a corner both ways, whatever panel lies under it, as in 3.1c: in
     // full screen and in a window alike, while the pointer is in the window
-    // at a place SDL has reported on this screen.
+    // at a place SDL has reported on this screen. On macOS a full-screen
+    // window may lie below the camera housing of a MacBook's display, and a
+    // pointer in the strip beside the housing, outside the window past its
+    // top edge, touches that edge (full_screen_pointer).
     const auto flags = sdl_.window != nullptr ? SDL_GetWindowFlags(sdl_.window) : 0u;
-    if (match_pointer_known_ && (flags & SDL_WINDOW_MOUSE_FOCUS) != 0) {
+    std::optional<SDL_FPoint> touched;
+    if (match_pointer_known_ && (flags & SDL_WINDOW_MOUSE_FOCUS) != 0)
+        touched = SDL_FPoint{match_pointer_x_, match_pointer_y_};
+#ifdef SDL_PLATFORM_MACOS
+    else if ((flags & SDL_WINDOW_MOUSE_FOCUS) == 0)
+        touched = full_screen_edge_point(
+            sdl_.window, sdl_.renderer, match_layout_.width, match_layout_.height
+        );
+#endif
+    if (touched) {
         // A window point covers several pixels on a high-density display, and
         // the pointer rests on the outermost point, not the outermost pixel;
         // on a window at native density the layout is in window points. A
@@ -858,8 +907,8 @@ void Runtime::pan_match_camera() {
             per_point = per_point * static_cast<float>(match_layout_.width) / presented.w;
         const auto edge = edge_scroll_depth(at_native_density(flags) && !scaled, per_point);
         const auto way = oa::ui::hud::edge_scroll(
-            static_cast<int32_t>(std::floor(match_pointer_x_)),
-            static_cast<int32_t>(std::floor(match_pointer_y_)),
+            static_cast<int32_t>(std::floor(touched->x)),
+            static_cast<int32_t>(std::floor(touched->y)),
             match_layout_.width,
             match_layout_.height,
             edge
@@ -875,6 +924,10 @@ void Runtime::pan_match_camera() {
 void Runtime::scroll_match_view_by(double screen_dx, double screen_dy) {
     if (!selected_tnt_ || (screen_dx == 0.0 && screen_dy == 0.0))
         return;
+    if (live_renderer_active()) {
+        std::ignore = scroll_live_match_view(screen_dx, screen_dy);
+        return;
+    }
     const auto zoom = static_cast<double>(match_zoom() <= 0.0F ? 1.0F : match_zoom());
     const auto place = match_view_place();
     const auto [map_width, map_height] = shown_map_size();
@@ -908,6 +961,10 @@ void Runtime::scroll_match_view(int32_t way_x, int32_t way_z, double step) {
     way_z = std::clamp(way_z, -1, 1);
     if (!selected_tnt_ || !(step > 0.0) || (way_x == 0 && way_z == 0))
         return;
+    if (live_renderer_active()) {
+        std::ignore = scroll_live_match_view(way_x * step, way_z * step);
+        return;
+    }
     // Zoom keeps the on-screen rate constant; the view's exact place keeps
     // the world rate exact rather than rounding it every frame.
     const auto zoom = static_cast<double>(match_zoom() <= 0.0F ? 1.0F : match_zoom());

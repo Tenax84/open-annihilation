@@ -4,10 +4,14 @@
 // The progress dialog while a piece of work runs off the thread that draws.
 #include "oa/app/long_work.hpp"
 
+#include "render_host.hpp"
 #include "render_state.hpp"
 #include "window_pixels.hpp"
 
+#include "oa/app/full_screen.hpp"
+#include "oa/app/game_directory.hpp"
 #include "oa/app/window_icon.hpp"
+#include "oa/data/languages.hpp"
 #include "oa/data/languages/interface_text.hpp"
 #include "oa/platform/log_files.hpp"
 #include "oa/platform/system.hpp"
@@ -25,11 +29,15 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
-#include <stdexcept>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -203,18 +211,19 @@ void paint_progress_dialog(
     kit::draw_work_dialog(kit::placed_at(drawn, {x, y}), dialog);
 }
 
-/// Puts a quit back and drops every other event. The job is not stopped.
-void pump_progress_events() {
-    SDL_Event polled;
-    while (SDL_PollEvent(&polled)) {
-        if (polled.type == SDL_EVENT_QUIT || polled.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
-            std::ignore = SDL_PushEvent(&polled);
-            break;
-        }
-    }
+} // namespace
+
+void LongWork::use_line(std::string_view key) {
+    std::lock_guard lock(line_mutex_);
+    line_key_ = std::string(key);
 }
 
-} // namespace
+std::string LongWork::line_key(std::string_view fallback) const {
+    std::lock_guard lock(line_mutex_);
+    if (line_key_.empty())
+        return std::string(fallback);
+    return line_key_;
+}
 
 bool long_work_running() noexcept {
     return progress_running_flag().load(std::memory_order_acquire);
@@ -272,7 +281,9 @@ LongWorkResult run_long_work(
     std::string_view title,
     std::string_view line,
     const std::function<void(paint::Canvas&)>& behind,
-    const std::function<void(LongWork&)>& job
+    const std::function<void(LongWork&)>& job,
+    uint32_t show_after_ms,
+    LongWorkClose close
 ) {
     if (window == nullptr || renderer == nullptr || long_work_running()) {
         LongWork inline_work;
@@ -283,6 +294,7 @@ LongWorkResult run_long_work(
     // Copied before the job, which may change the language the catalogue shows.
     std::string title_shown(oa::data::languages::interface_text(title));
     std::string line_shown(oa::data::languages::interface_text(line));
+    std::string key_shown(line);
     LongWorkResult result;
     std::exception_ptr failure;
     {
@@ -306,11 +318,29 @@ LongWorkResult run_long_work(
         WindowFrame window_frame(renderer, "the progress dialog");
         paint::Canvas pixels;
         while (true) {
-            pump_progress_events();
+            // A close is put back for after the dialog. The window's own
+            // events are dropped, though full screen's hold on the pointer
+            // still follows them.
+            if (drop_window_events(window) && close == LongWorkClose::ends_game) {
+                work.stop.store(true, std::memory_order_release);
+                std::cerr << "open-annihilation: progress dialog: the window was closed; the "
+                             "game ends\n";
+                // The read that is waiting cannot be interrupted. Leaving
+                // through main would join that read. The renderer records are
+                // closed first, so the next start does not count this one
+                // as a failure, and the process then ends.
+                if (host != nullptr)
+                    host->finish_records();
+                std::_Exit(0);
+            }
             const bool done = finished.load(std::memory_order_acquire);
             const uint32_t now = oa::platform::tick_ms();
+            if (std::string published = work.line_key(key_shown); published != key_shown) {
+                key_shown = std::move(published);
+                line_shown = std::string(oa::data::languages::interface_text(key_shown));
+            }
             if (!showing) {
-                if (done || now - began < long_work_show_after_ms) {
+                if (done || now - began < show_after_ms) {
                     if (done)
                         break;
                     SDL_Delay(16);
@@ -324,7 +354,7 @@ LongWorkResult run_long_work(
             }
             if (done) {
                 title_shown = std::string(oa::data::languages::interface_text(title));
-                line_shown = std::string(oa::data::languages::interface_text(line));
+                line_shown = std::string(oa::data::languages::interface_text(key_shown));
             }
             const int32_t amount = bar_amount(work);
             const uint32_t turn = kit::refresh_eighth(now - shown_at);
@@ -362,6 +392,83 @@ LongWorkResult run_long_work(
     if (failure)
         std::rethrow_exception(failure);
     return result;
+}
+
+void require_icloud_download_lines() {
+    // The catalogue is read with the archives, after this look. The check
+    // reads the file the game ships so the four languages are required here.
+    const std::filesystem::path file =
+        std::filesystem::path(oa::platform::program_directory()) / "languages" / "interface.tdf";
+    std::ifstream input(file, std::ios::binary);
+    const std::string bytes(
+        std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>{}
+    );
+    oa::data::languages::InterfaceText catalogue;
+    std::string error;
+    if (!input || !catalogue.add(bytes, &error))
+        throw std::runtime_error(
+            "icloud wait: the interface catalogue was not read" +
+            (error.empty() ? std::string() : ": " + error)
+        );
+    const auto fits = [](std::string_view line) {
+        kit::WorkDialog dialog;
+        dialog.title = "Open Annihilation";
+        dialog.line = std::string(line);
+        dialog.progress = -1;
+        dialog.size_class = kit::SizeClass::compact;
+        // The same size the smooth dialog draws the small font at 640x480.
+        const auto placed = kit::place_work_dialog(dialog, [](std::string_view text) {
+            return paint::text_width(
+                progress_fonts(), text, kit::smooth_text_points(kit::FontRole::small), false
+            );
+        });
+        if (placed.line.text != line)
+            throw std::runtime_error(
+                "icloud wait: the line does not fit the progress dialog: " + std::string(line)
+            );
+    };
+    const std::string_view english = icloud_download_line;
+    fits(english);
+    int translated_languages = 0;
+    for (const oa::data::languages::Language* language : oa::data::languages::known_languages()) {
+        const std::string_view tag = language->tag;
+        if (tag != "de" && tag != "fr" && tag != "es" && tag != "it")
+            continue;
+        ++translated_languages;
+        const std::string_view translated = catalogue.text(english, *language);
+        if (translated == english)
+            throw std::runtime_error(
+                std::string("icloud wait: ") + std::string(tag) + " has no translation"
+            );
+        fits(translated);
+        std::cout << "icloud wait: " << tag << ": " << translated << "\n";
+    }
+    if (translated_languages != 4)
+        throw std::runtime_error("icloud wait: a built-in language is missing");
+}
+
+bool warm_progress_dialog(SDL_Window* window, SDL_Renderer* renderer) noexcept {
+    if (window == nullptr || renderer == nullptr)
+        return false;
+    try {
+        paint::Canvas pixels;
+        const kit::Frame room = progress_room(window, renderer, pixels);
+        if (room.area.width <= 0 || pixels.width <= 0)
+            return false;
+        fill_progress_behind(pixels, nullptr);
+        for (uint32_t turn = 0; turn < 8; ++turn)
+            paint_progress_dialog(
+                pixels,
+                room,
+                oa::data::languages::interface_text("Open Annihilation"),
+                oa::data::languages::interface_text("Loading the game's archives"),
+                -1,
+                turn
+            );
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 } // namespace oa::app

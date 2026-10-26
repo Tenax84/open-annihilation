@@ -8,6 +8,7 @@
 #include "oa/app/view_rules.hpp"
 #include "oa/audio/music_session.hpp"
 #include "oa/audio/sdl_music.hpp"
+#include "oa/platform/dataless.hpp"
 #include "oa/ui/services/timers.hpp"
 #include "oa/ui/frontend/options.hpp"
 #include <cstddef>
@@ -17,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <vector>
 
 namespace oa::app {
 
@@ -65,6 +67,9 @@ struct Runtime::MusicHost {
     bool in_match{};
     bool menu_paused{};
     bool on_panel{};
+    // Files macOS has moved out of the player's folders, fetched without
+    // holding startup.
+    oa::platform::EvictedFetch evicted;
 
     // CDLISTS is saved as kinds change; the runtime's settings may already
     // be gone here.
@@ -116,6 +121,9 @@ void Runtime::music_start() {
     else if (!audio::sdl_music_decoder_available())
         std::cerr << "music: this build cannot decode music files\n";
     host.device = audio::sdl_music_device_create(disc);
+    // The player's folders were asked for at startup. The music folder is
+    // known only once a game folder is mounted.
+    host.evicted.start({audio::music_disc_directory(music_folder)}, "in the music folder");
 
     auto& mixer = *host.mixer;
     mixer.music = audio::sdl_music_device(host.device);

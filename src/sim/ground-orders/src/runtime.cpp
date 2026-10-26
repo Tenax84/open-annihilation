@@ -104,17 +104,27 @@ bool GroundRuntime::fit_height(
 }
 
 void GroundRuntime::drive(
-    sim::simulation_state::Unit& unit, uint32_t tick, uint8_t sea_level, Host& host
+    sim::simulation_state::Unit& unit,
+    uint32_t tick,
+    uint8_t sea_level,
+    Host& host,
+    FastUnitSteering fast_units
 ) {
     if (mirrored_driver) {
         steer_ground(
-            geometry, movement, mirrored_navigation, acceleration, deceleration, sea_level
+            geometry,
+            movement,
+            mirrored_navigation,
+            acceleration,
+            deceleration,
+            sea_level,
+            fast_units
         );
         return;
     }
     std::array<uint8_t, 3> unused_weapon_flags{};
     tick_navigation({unit, geometry, movement, navigation, false, unused_weapon_flags}, tick, host);
-    steer_ground(geometry, movement, navigation, acceleration, deceleration, sea_level);
+    steer_ground(geometry, movement, navigation, acceleration, deceleration, sea_level, fast_units);
 }
 
 namespace {

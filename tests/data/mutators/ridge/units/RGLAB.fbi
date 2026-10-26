@@ -1,0 +1,10 @@
+// SPDX-FileCopyrightText: The Open Annihilation Authors; see COPYRIGHT
+// SPDX-License-Identifier: GPL-3.0-only
+
+[UNITINFO]
+{
+UnitName=RGLAB;
+Builder=1;
+BMcode=0;
+WorkerTime=100;
+}

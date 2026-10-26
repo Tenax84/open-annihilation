@@ -37,6 +37,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -103,6 +104,46 @@ struct LayerView {
     /// arrives in, and the picture's rectangle holds.
     oa::ui::display_layout::Point picture_size{};
 };
+
+/// Maps a rectangle of the 640 by 480 frame to the OA layer's points through
+/// the picture's place in the window, the edges outward.
+///
+/// MORE MAPS… and MUTATORS… place from this, and the button check measures
+/// with it.
+///
+/// @param seen what the layer's screens are placed on
+/// @param frame_rect the rectangle, in the frame's pixels
+/// @return the rectangle, in the layer's points
+inline oa::ui::kit::Rect
+frame_to_points(const LayerView& seen, const oa::ui::kit::Rect& frame_rect) {
+    if (seen.picture_size.x <= 0 || seen.picture_size.y <= 0)
+        return {};
+    const int64_t percent = std::max(seen.scale_percent, int32_t{100});
+    const auto& picture = seen.picture;
+    const auto across = [&](int32_t column) {
+        return picture.x + static_cast<int64_t>(column) * picture.width / seen.picture_size.x;
+    };
+    const auto down = [&](int32_t row) {
+        return picture.y + static_cast<int64_t>(row) * picture.height / seen.picture_size.y;
+    };
+    const auto floor_points = [percent](int64_t pixels) {
+        const int64_t scaled = pixels * 100;
+        return static_cast<int32_t>(
+            scaled >= 0 ? scaled / percent : -((-scaled + percent - 1) / percent)
+        );
+    };
+    const auto ceil_points = [percent](int64_t pixels) {
+        const int64_t scaled = pixels * 100;
+        return static_cast<int32_t>(
+            scaled >= 0 ? (scaled + percent - 1) / percent : -(-scaled / percent)
+        );
+    };
+    const int32_t left = floor_points(across(frame_rect.x));
+    const int32_t top = floor_points(down(frame_rect.y));
+    const int32_t right = ceil_points(across(frame_rect.x + frame_rect.width));
+    const int32_t bottom = ceil_points(down(frame_rect.y + frame_rect.height));
+    return {left, top, right - left, bottom - top};
+}
 
 /// Where a screen of the OA layer shows.
 struct LayerPlacement {
@@ -671,18 +712,21 @@ class OaLayer {
     /// @return true when the layer took it
     bool take_input(const ScreenInput& input);
 
-    /// Offers a gamepad action to the top screen before it becomes a key or a
-    /// click. A screen that answers other than pass took it.
+    /// Offers a gamepad action to the screens that show before it becomes a
+    /// key or a click: the top modal screen alone when one shows, otherwise
+    /// each from the top until one answers other than pass. A screen that
+    /// answers other than pass took it.
     ///
     /// @param action the action
-    /// @return true when the top screen took it
+    /// @return true when a screen took it
     bool take_pad_action(oa::ui::pad_controls::Action action);
 
-    /// Offers the right stick's motion in a menu to the top screen, in notches
-    /// of the wheel, before it becomes a turn of the wheel.
+    /// Offers the right stick's motion in a menu, in notches of the wheel,
+    /// before it becomes a turn of the wheel, to the screens that show as
+    /// take_pad_action offers an action.
     ///
     /// @param notches the turn; positive towards the top
-    /// @return true when the top screen took it
+    /// @return true when a screen took it
     bool take_pad_stick(float notches);
 
     /// Carries out a screen's answer: close takes it off, latching the key
@@ -875,6 +919,20 @@ class OaLayer {
     /// @param[in,out] controls the list they are appended to
     void automation_controls(std::vector<AutomationControl>& controls) const;
 
+    /// Returns how far the nearest pressable control of a screen that shows
+    /// lies from a point, in the same canvas pixels a finger's claim uses.
+    ///
+    /// A control is pressable when it is enabled, shown and has an area. A
+    /// point inside one is no distance. A modal screen that shows answers
+    /// for its own controls only. A screen that does not show answers
+    /// nothing. Nothing farther than `radius` is answered.
+    ///
+    /// @param x canvas pixels
+    /// @param y canvas pixels
+    /// @param radius how far a control may lie, in canvas pixels
+    /// @return that distance, or nothing when none is within radius
+    [[nodiscard]] std::optional<float> nearest_control(float x, float y, float radius) const;
+
     /// The Library button and the Settings button beside it, in the window's
     /// pixels, mapped the way automation lists them. During a match the
     /// canvas positions are mapped the same way, even when the main menu's
@@ -895,6 +953,21 @@ class OaLayer {
     ///
     /// @return the count
     [[nodiscard]] uint32_t front_darkenings() const;
+
+    /// Drops the drawings the front end keeps of the screens whose revision
+    /// covers what they draw, so that the next present draws every screen
+    /// again. A check that reads what a frame draws, as the text-fit check
+    /// reads the texts the kit records while they are drawn, calls it before
+    /// that frame.
+    void forget_kept_drawings() noexcept;
+
+    /// Returns the number of the drawing the front end keeps of a screen, as
+    /// the last present left it, by which a check tells whether a present
+    /// drew the screen again.
+    ///
+    /// @param screen the screen
+    /// @return the drawing's number; 0 when none is kept
+    [[nodiscard]] uint64_t kept_drawing(const LayerScreen& screen) const noexcept;
 
     /// The layer's overlay's input callback (OverlayDesc::event): take_input.
     ///
@@ -1169,6 +1242,7 @@ class OaLayer {
         uint32_t icon_height{};     ///< the icon's rows
         const void* language{};     ///< the interface's language
         uint64_t languages{};       ///< the languages' registry generation
+        uint64_t interface_words{}; ///< the interface's words' generation (interface_generation)
         bool modern_text{};         ///< game text is drawn in the modern fonts
         bool outline{};             ///< modern text is outlined
         bool shadow{};              ///< modern text casts a shadow
@@ -1682,11 +1756,6 @@ class WorkScreen final : public LayerScreen {
     ///
     /// @return the revision
     [[nodiscard]] uint64_t revision() const override { return revision_; }
-
-    /// Tells that every change to what the screen draws moves its revision.
-    ///
-    /// @return true
-    [[nodiscard]] bool revision_covers_drawing() const override { return true; }
 
     /// Has nothing of its own to close.
     void close(bool /*by_key*/) override {}

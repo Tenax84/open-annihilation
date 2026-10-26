@@ -134,7 +134,10 @@ void sample_texture_row_w16(
 /// The source's top-left lands on target column target.origin_x -
 /// source.origin_x + x and row target.origin_y - source.origin_y + y. A
 /// pixel is written, with its biased depth, where the target depth is not
-/// above the source depth plus `depth_bias`.
+/// above the source depth plus `depth_bias`. The source's part past the
+/// target's right or bottom edge is left out: a composite cut to a size
+/// smaller than the units it carries (limits.model-composite
+/// clamp-oversize) keeps them where the cut leaves them.
 ///
 /// @param source sprite with pixels and a depth plane in aux
 /// @param[in,out] target sprite with pixels and a depth plane in aux
@@ -142,7 +145,7 @@ void sample_texture_row_w16(
 /// @param y row offset
 /// @param depth_bias added to every source depth
 /// @quirk Nothing is drawn when the placement starts left of or above the
-///     target; the right and bottom edges are not clipped.
+///     target.
 void composite_depth_sprite(
     const Sprite& source, Sprite& target, int32_t x, int32_t y, int32_t depth_bias
 ) noexcept;

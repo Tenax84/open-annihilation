@@ -9,6 +9,7 @@
 #pragma once
 
 #include "oa/ui/frontend_renderer/artless.hpp"
+#include "oa/ui/kit/tag_icon.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -54,6 +55,8 @@ struct NavEntry {
     bool selected{};       ///< it is the open section
     bool hovered{};        ///< the pointer is over it, or a press on it is held
     bool focused{};        ///< the keyboard focus outlines it
+    /// A tag icon at the caption's left start. None leaves the caption where it was.
+    std::optional<TagIcon> tag{};
 };
 
 /// A nav list: its face, the rule at its right, an optional divider and its entries.

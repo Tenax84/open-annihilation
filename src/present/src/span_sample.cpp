@@ -5,6 +5,7 @@
 
 #include "oa/present/display.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -259,20 +260,29 @@ void composite_depth_sprite(
     const Sprite& source, Sprite& target, int32_t x, int32_t y, int32_t depth_bias
 ) noexcept {
     const int32_t left = wrap_add(target.origin_x - source.origin_x, x);
-    int32_t row = wrap_add(target.origin_y - source.origin_y, y);
-    if (left < 0 || row < 0)
+    const int32_t top = wrap_add(target.origin_y - source.origin_y, y);
+    if (left < 0 || top < 0)
         return;
-    const auto* pixel = static_cast<const uint8_t*>(source.data);
-    const auto* depth = static_cast<const uint8_t*>(source.aux);
-    for (int32_t r = 0; r < static_cast<int32_t>(source.height); ++r, ++row) {
-        const int32_t offset = wrap_add(wrap_mul(static_cast<int32_t>(target.width), row), left);
+    // The columns and rows that land inside the target.
+    const int32_t columns = std::min(
+        static_cast<int32_t>(source.width), std::max(static_cast<int32_t>(target.width) - left, 0)
+    );
+    const int32_t rows = std::min(
+        static_cast<int32_t>(source.height), std::max(static_cast<int32_t>(target.height) - top, 0)
+    );
+    for (int32_t r = 0; r < rows; ++r) {
+        const std::size_t from = static_cast<std::size_t>(r) * source.width;
+        const auto* pixel = static_cast<const uint8_t*>(source.data) + from;
+        const auto* depth = static_cast<const uint8_t*>(source.aux) + from;
+        const int32_t offset =
+            wrap_add(wrap_mul(static_cast<int32_t>(target.width), wrap_add(top, r)), left);
         uint8_t* out = static_cast<uint8_t*>(target.data) + offset;
         uint8_t* out_depth = static_cast<uint8_t*>(target.aux) + offset;
-        for (uint32_t i = 0; i < source.width; ++i, ++pixel, ++depth, ++out, ++out_depth) {
-            const int32_t biased = wrap_add(*depth, depth_bias);
-            if (*pixel != source.key && static_cast<int32_t>(*out_depth) <= biased) {
-                *out = *pixel;
-                *out_depth = static_cast<uint8_t>(biased);
+        for (int32_t i = 0; i < columns; ++i) {
+            const int32_t biased = wrap_add(depth[i], depth_bias);
+            if (pixel[i] != source.key && static_cast<int32_t>(out_depth[i]) <= biased) {
+                out[i] = pixel[i];
+                out_depth[i] = static_cast<uint8_t>(biased);
             }
         }
     }

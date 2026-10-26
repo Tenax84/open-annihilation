@@ -38,6 +38,20 @@ constexpr std::size_t hack_id_max = 64;
 constexpr std::size_t pack_key_max = 64;
 constexpr std::size_t pack_name_max = 64;
 constexpr std::size_t pack_version_max = 32;
+constexpr std::size_t mutator_id_max = 64;
+constexpr std::size_t mutator_version_max = 32;
+constexpr std::size_t mutator_option_key_max = 32;
+constexpr std::size_t mutator_option_value_max = 32;
+/// Bit 0 of the mutators flags: the layer was built. Bit 1: a package is
+/// lacking. Bit 2: a mutator failed. Bits 3 to 7 are sent as 0 and ignored.
+constexpr uint8_t mutators_built_flag = 0x01;
+constexpr uint8_t mutators_lacking_flag = 0x02;
+constexpr uint8_t mutators_failed_flag = 0x04;
+/// Flags, loadout digest, layer digest, index, total, held and the state word.
+constexpr std::size_t mutators_fixed_value_bytes = 1 + digest_bytes + digest_bytes + 1 + 1 + 1 + 8;
+/// The mutator-modes field is one little-endian mask.
+constexpr std::size_t mutator_modes_value_bytes = 4;
+static_assert(mutators_fixed_value_bytes == 76);
 
 enum class ByteKind { ascii, kebab, id, text };
 
@@ -135,6 +149,14 @@ bool string_in_rule(
     return false;
 }
 
+/// Reads a little-endian u64. The caller has eight bytes.
+uint64_t load_le64(const uint8_t* bytes) noexcept {
+    uint64_t value = 0;
+    for (unsigned shift = 0; shift < 64; shift += 8)
+        value |= static_cast<uint64_t>(bytes[shift / 8]) << shift;
+    return value;
+}
+
 /// A window over bytes that never reads past its end.
 struct Window {
     const uint8_t* data{};
@@ -171,6 +193,14 @@ struct Window {
         if (!take(4, &bytes))
             return false;
         *out = load_u32(bytes);
+        return true;
+    }
+
+    bool u64(uint64_t* out) noexcept {
+        const uint8_t* bytes = nullptr;
+        if (!take(8, &bytes))
+            return false;
+        *out = load_le64(bytes);
         return true;
     }
 };
@@ -211,6 +241,11 @@ void put_u16(uint8_t* out, std::size_t* used, uint16_t value) noexcept {
 void put_u32(uint8_t* out, std::size_t* used, uint32_t value) noexcept {
     store_u32(out + *used, value);
     *used += 4;
+}
+
+void put_u64(uint8_t* out, std::size_t* used, uint64_t value) noexcept {
+    for (unsigned shift = 0; shift < 64; shift += 8)
+        put_u8(out, used, static_cast<uint8_t>(value >> shift));
 }
 
 void put_string(uint8_t* out, std::size_t* used, std::string_view text) noexcept {
@@ -639,6 +674,311 @@ bool read_map_pack(Window window, PresenceMapPack* out) {
     return true;
 }
 
+/// Tells whether every state bit at or past total is clear.
+bool states_in_rule(uint64_t states, uint8_t total) noexcept {
+    if (total >= presence_mutators_max)
+        return true;
+    const auto shift = static_cast<unsigned>(2u * total);
+    const uint64_t used = (uint64_t{1} << shift) - 1;
+    return (states & ~used) == 0;
+}
+
+/// Tells whether the fixed part of a mutators field is inside its rule.
+bool mutators_prefix_ok(
+    bool built,
+    const PresenceDigest& layer,
+    uint8_t index,
+    uint8_t total,
+    uint8_t held,
+    uint64_t states
+) noexcept {
+    if (total < 1 || total > presence_mutators_max || held > total)
+        return false;
+    if (index != presence_mutator_index_none && index >= total)
+        return false;
+    if (!built) {
+        for (const uint8_t byte : layer)
+            if (byte != 0)
+                return false;
+    }
+    return states_in_rule(states, total);
+}
+
+/// Tells whether every bit of a clash mask names a mutator in the list.
+bool clash_mask_fits(uint32_t mask, uint8_t total) noexcept {
+    if (total < 1 || total > presence_mutators_max)
+        return false;
+    if (total == presence_mutators_max)
+        return true;
+    const uint32_t used = (uint32_t{1} << total) - 1u;
+    return (mask & ~used) == 0;
+}
+
+bool option_ok(const PresenceMutatorOption& option) noexcept {
+    return string_in_rule(option.key, 1, mutator_option_key_max, ByteKind::ascii) &&
+           string_in_rule(option.value, 0, mutator_option_value_max, ByteKind::text);
+}
+
+bool mutator_ok(const PresenceMutator& item) noexcept {
+    if (!string_in_rule(item.id, 1, mutator_id_max, ByteKind::kebab) ||
+        !string_in_rule(item.version, 0, mutator_version_max, ByteKind::text) ||
+        item.options.size() > presence_mutator_options_max)
+        return false;
+    for (const auto& option : item.options)
+        if (!option_ok(option))
+            return false;
+    return true;
+}
+
+bool mutators_ok(const PresenceMutators& field) noexcept {
+    if (!mutators_prefix_ok(
+            field.built, field.layer_digest, field.index, field.total, field.held, field.states
+        ) ||
+        field.mutators.size() > field.total)
+        return false;
+    for (const auto& item : field.mutators)
+        if (!mutator_ok(item))
+            return false;
+    return true;
+}
+
+bool part_ok(const PresenceMutatorPart& part) noexcept {
+    if (part.first >= presence_mutators_max || part.mutators.empty() ||
+        part.mutators.size() > presence_mutators_max - part.first)
+        return false;
+    for (const auto& item : part.mutators)
+        if (!mutator_ok(item))
+            return false;
+    return true;
+}
+
+std::size_t option_value_bytes(const PresenceMutatorOption& option) noexcept {
+    return string_bytes(option.key) + string_bytes(option.value);
+}
+
+std::size_t mutator_value_bytes(const PresenceMutator& item) noexcept {
+    std::size_t size =
+        string_bytes(item.id) + string_bytes(item.version) + presence_mutator_prefix_bytes + 1;
+    for (const auto& option : item.options)
+        size += option_value_bytes(option);
+    return size;
+}
+
+std::size_t mutator_part_value_bytes(const PresenceMutatorPart& part) noexcept {
+    std::size_t size = digest_bytes + 1;
+    for (const auto& item : part.mutators)
+        size += mutator_value_bytes(item);
+    return size;
+}
+
+void write_mutator(uint8_t* out, std::size_t* used, const PresenceMutator& item) noexcept {
+    put_string(out, used, item.id);
+    put_string(out, used, item.version);
+    put_bytes(out, used, item.sha256_prefix.data(), presence_mutator_prefix_bytes);
+    put_u8(out, used, static_cast<uint8_t>(item.options.size()));
+    for (const auto& option : item.options) {
+        put_string(out, used, option.key);
+        put_string(out, used, option.value);
+    }
+}
+
+void write_mutators_prefix(
+    uint8_t* out, std::size_t* used, const PresenceMutators& field
+) noexcept {
+    unsigned flags = 0;
+    if (field.built)
+        flags |= mutators_built_flag;
+    if (field.lacking)
+        flags |= mutators_lacking_flag;
+    if (field.failed)
+        flags |= mutators_failed_flag;
+    put_u8(out, used, static_cast<uint8_t>(flags));
+    put_bytes(out, used, field.digest.data(), digest_bytes);
+    put_bytes(out, used, field.layer_digest.data(), digest_bytes);
+    put_u8(out, used, field.index);
+    put_u8(out, used, field.total);
+    put_u8(out, used, field.held);
+    put_u64(out, used, field.states);
+}
+
+void write_mutators(
+    uint8_t* out, std::size_t* used, const PresenceMutators& field, std::size_t keep
+) noexcept {
+    std::size_t value = mutators_fixed_value_bytes;
+    for (std::size_t cursor = 0; cursor < keep; ++cursor)
+        value += mutator_value_bytes(field.mutators[cursor]);
+    put_u8(out, used, static_cast<uint8_t>(PresenceTag::mutators));
+    put_u16(out, used, static_cast<uint16_t>(value));
+    write_mutators_prefix(out, used, field);
+    for (std::size_t cursor = 0; cursor < keep; ++cursor)
+        write_mutator(out, used, field.mutators[cursor]);
+}
+
+void write_mutator_part(uint8_t* out, std::size_t* used, const PresenceMutatorPart& part) noexcept {
+    put_u8(out, used, static_cast<uint8_t>(PresenceTag::mutator_part));
+    put_u16(out, used, static_cast<uint16_t>(mutator_part_value_bytes(part)));
+    put_bytes(out, used, part.digest.data(), digest_bytes);
+    put_u8(out, used, part.first);
+    for (const auto& item : part.mutators)
+        write_mutator(out, used, item);
+}
+
+bool read_mutator(Window* window, PresenceMutator* out) {
+    PresenceMutator item;
+    const uint8_t* prefix = nullptr;
+    uint8_t option_count = 0;
+    if (!read_string(window, 1, mutator_id_max, ByteKind::kebab, &item.id) ||
+        !read_string(window, 0, mutator_version_max, ByteKind::text, &item.version) ||
+        !window->take(presence_mutator_prefix_bytes, &prefix) || !window->u8(&option_count) ||
+        option_count > presence_mutator_options_max)
+        return false;
+    std::memcpy(item.sha256_prefix.data(), prefix, presence_mutator_prefix_bytes);
+    for (uint8_t option_index = 0; option_index < option_count; ++option_index) {
+        PresenceMutatorOption option;
+        if (!read_string(window, 1, mutator_option_key_max, ByteKind::ascii, &option.key) ||
+            !read_string(window, 0, mutator_option_value_max, ByteKind::text, &option.value))
+            return false;
+        item.options.push_back(std::move(option));
+    }
+    *out = std::move(item);
+    return true;
+}
+
+bool read_mutators(Window window, PresenceMutators* out) {
+    PresenceMutators field;
+    uint8_t flags = 0;
+    const uint8_t* digest = nullptr;
+    const uint8_t* layer = nullptr;
+    if (!window.u8(&flags) || !window.take(digest_bytes, &digest) ||
+        !window.take(digest_bytes, &layer) || !window.u8(&field.index) ||
+        !window.u8(&field.total) || !window.u8(&field.held) || !window.u64(&field.states))
+        return false;
+    field.built = (flags & mutators_built_flag) != 0;
+    field.lacking = (flags & mutators_lacking_flag) != 0;
+    field.failed = (flags & mutators_failed_flag) != 0;
+    std::memcpy(field.digest.data(), digest, digest_bytes);
+    std::memcpy(field.layer_digest.data(), layer, digest_bytes);
+    if (!mutators_prefix_ok(
+            field.built, field.layer_digest, field.index, field.total, field.held, field.states
+        ))
+        return false;
+    while (window.size != 0) {
+        PresenceMutator item;
+        if (!read_mutator(&window, &item))
+            return false;
+        field.mutators.push_back(std::move(item));
+    }
+    if (field.mutators.size() > field.total)
+        return false;
+    *out = std::move(field);
+    return true;
+}
+
+bool read_mutator_part(Window window, PresenceMutatorPart* out) {
+    PresenceMutatorPart part;
+    const uint8_t* digest = nullptr;
+    if (!window.take(digest_bytes, &digest) || !window.u8(&part.first))
+        return false;
+    std::memcpy(part.digest.data(), digest, digest_bytes);
+    while (window.size != 0) {
+        PresenceMutator item;
+        if (!read_mutator(&window, &item))
+            return false;
+        part.mutators.push_back(std::move(item));
+    }
+    if (!part_ok(part))
+        return false;
+    *out = std::move(part);
+    return true;
+}
+
+/// Adds mutators that continue the list. Items already held are skipped.
+void append_continuing(
+    PresenceLoadoutAssembly& assembly, uint8_t first, const std::vector<PresenceMutator>& items
+) {
+    if (first > assembly.mutators.size())
+        return;
+    std::size_t cursor = assembly.mutators.size() - first;
+    while (cursor < items.size() && assembly.mutators.size() < assembly.total &&
+           assembly.mutators.size() < presence_mutators_max) {
+        assembly.mutators.push_back(items[cursor]);
+        ++cursor;
+    }
+}
+
+/// The most computer players one brains field lists.
+constexpr std::size_t brain_count_max = 10;
+constexpr std::size_t brain_id_max = 64;
+constexpr std::size_t brain_name_max = 32;
+constexpr std::size_t brain_version_max = 16;
+constexpr std::size_t brain_level_id_max = 64;
+constexpr std::size_t brain_level_name_max = 24;
+/// Bit 0 of a brain item's flags: the brain sees every unit. A bit past 0
+/// refuses the field when it is read.
+constexpr uint8_t brain_full_awareness_flag = 0x01;
+
+/// Cuts text at a UTF-8 character boundary.
+///
+/// A limit that lands inside a character keeps the bytes before that character.
+///
+/// @param text the text
+/// @param most the most bytes
+/// @return the text, shortened when it was longer
+std::string_view cut_on_character(std::string_view text, std::size_t most) noexcept {
+    if (text.size() <= most)
+        return text;
+    std::size_t cut = most;
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xc0u) == 0x80u)
+        --cut;
+    return text.substr(0, cut);
+}
+
+/// A brain item's name, version and level after the field's length limits.
+struct BrainShown {
+    std::string_view name{};
+    std::string_view version{};
+    std::string_view level{};
+};
+
+/// Tells whether one brain item can be written, and the text the field carries.
+bool brain_item_ok(const PresenceBrain& item, BrainShown* shown) noexcept {
+    if (!string_in_rule(item.id, 1, brain_id_max, ByteKind::kebab) ||
+        !string_in_rule(item.level_id, 1, brain_level_id_max, ByteKind::kebab))
+        return false;
+    if (!text_bytes(reinterpret_cast<const uint8_t*>(item.name.data()), item.name.size()) ||
+        !text_bytes(reinterpret_cast<const uint8_t*>(item.version.data()), item.version.size()) ||
+        !text_bytes(reinterpret_cast<const uint8_t*>(item.level.data()), item.level.size()))
+        return false;
+    const auto name = cut_on_character(item.name, brain_name_max);
+    const auto version = cut_on_character(item.version, brain_version_max);
+    const auto level = cut_on_character(item.level, brain_level_name_max);
+    if (!string_in_rule(name, 1, brain_name_max, ByteKind::text) ||
+        !string_in_rule(version, 0, brain_version_max, ByteKind::text) ||
+        !string_in_rule(level, 1, brain_level_name_max, ByteKind::text))
+        return false;
+    *shown = BrainShown{name, version, level};
+    return true;
+}
+
+/// Bytes of one brain item, its texts already within their limits.
+std::size_t brain_item_bytes(const PresenceBrain& item, BrainShown shown) noexcept {
+    return 4 + string_bytes(item.id) + string_bytes(shown.name) + string_bytes(shown.version) +
+           string_bytes(item.level_id) + string_bytes(shown.level) + 1;
+}
+
+/// Writes one brain item. The caller has kept room for it.
+void write_brain_item(
+    uint8_t* out, std::size_t* used, const PresenceBrain& item, BrainShown shown
+) noexcept {
+    put_u32(out, used, item.player);
+    put_string(out, used, item.id);
+    put_string(out, used, shown.name);
+    put_string(out, used, shown.version);
+    put_string(out, used, item.level_id);
+    put_string(out, used, shown.level);
+    put_u8(out, used, item.full_awareness ? brain_full_awareness_flag : 0);
+}
+
 } // namespace
 
 WireError
@@ -681,6 +1021,13 @@ WireError encode_presence(
         return WireError::bad_argument;
     if (record.language && !language_ok(*record.language))
         return WireError::bad_argument;
+    if (record.mutators && !mutators_ok(*record.mutators))
+        return WireError::bad_argument;
+    if (record.mutator_modes &&
+        (!record.mutators || !clash_mask_fits(*record.mutator_modes, record.mutators->total)))
+        return WireError::bad_argument;
+    if (record.mutator_part && !part_ok(*record.mutator_part))
+        return WireError::bad_argument;
 
     const auto limit = capacity < presence_record_max_bytes ? capacity : presence_record_max_bytes;
     std::size_t fixed = presence_record_header_bytes;
@@ -698,8 +1045,14 @@ WireError encode_presence(
         fixed += presence_field_header_bytes + origin_value_bytes(*record.mod_origin);
     if (record.sim_hash)
         fixed += presence_field_header_bytes + digest_bytes;
+    if (record.mutators)
+        fixed += presence_field_header_bytes + mutators_fixed_value_bytes;
+    if (record.mutator_modes)
+        fixed += presence_field_header_bytes + mutator_modes_value_bytes;
     if (record.map_pack)
         fixed += presence_field_header_bytes + map_pack_value_bytes(*record.map_pack);
+    if (record.mutator_part)
+        fixed += presence_field_header_bytes + mutator_part_value_bytes(*record.mutator_part);
     // A list's count is fixed. Only the ids after it are cut, and only
     // after every later list's count has its room.
     constexpr std::size_t hack_prefix = presence_field_header_bytes + 2;
@@ -713,10 +1066,21 @@ WireError encode_presence(
     if (fixed > limit)
         return WireError::buffer_too_small;
 
+    std::size_t mutator_keep = 0;
     std::size_t dev_keep = 0;
     std::size_t game_keep = 0;
     std::size_t view_keep = 0;
     std::size_t room = limit - fixed;
+    // Whole mutators take room before developer overrides and hack ids.
+    if (record.mutators) {
+        for (const auto& item : record.mutators->mutators) {
+            const auto item_bytes = mutator_value_bytes(item);
+            if (item_bytes > room)
+                break;
+            room -= item_bytes;
+            ++mutator_keep;
+        }
+    }
     auto cut_overrides = [&]() noexcept {
         dev_keep = 0;
         if (!record.developer)
@@ -764,8 +1128,17 @@ WireError encode_presence(
         write_origin(local, &used, *record.mod_origin);
     if (record.sim_hash)
         write_sim(local, &used, *record.sim_hash);
+    if (record.mutators)
+        write_mutators(local, &used, *record.mutators, mutator_keep);
+    if (record.mutator_modes) {
+        put_u8(local, &used, static_cast<uint8_t>(PresenceTag::mutator_modes));
+        put_u16(local, &used, static_cast<uint16_t>(mutator_modes_value_bytes));
+        put_u32(local, &used, *record.mutator_modes);
+    }
     if (record.map_pack)
         write_map_pack(local, &used, *record.map_pack);
+    if (record.mutator_part)
+        write_mutator_part(local, &used, *record.mutator_part);
     if (record.developer) {
         std::size_t value = 1 + 2;
         for (std::size_t i = 0; i < dev_keep; ++i)
@@ -821,6 +1194,10 @@ WireError decode_presence(const uint8_t* record, std::size_t size, PresenceRecor
     bool saw_content = false;
     bool saw_bundles = false;
     bool saw_language = false;
+    bool saw_mutators = false;
+    bool saw_part = false;
+    bool saw_modes = false;
+    std::optional<uint32_t> pending_modes;
     std::size_t at = presence_record_header_bytes;
     while (at < size) {
         assert(at + presence_field_header_bytes <= size);
@@ -908,8 +1285,32 @@ WireError decode_presence(const uint8_t* record, std::size_t size, PresenceRecor
             std::string language;
             if (read_language(value, &language))
                 decoded.language = std::move(language);
+        } else if (tag == static_cast<uint8_t>(PresenceTag::mutators)) {
+            if (saw_mutators)
+                continue;
+            saw_mutators = true;
+            PresenceMutators loaded;
+            if (read_mutators(value, &loaded))
+                decoded.mutators = std::move(loaded);
+        } else if (tag == static_cast<uint8_t>(PresenceTag::mutator_part)) {
+            if (saw_part)
+                continue;
+            saw_part = true;
+            PresenceMutatorPart part;
+            if (read_mutator_part(value, &part))
+                decoded.mutator_part = std::move(part);
+        } else if (tag == static_cast<uint8_t>(PresenceTag::mutator_modes)) {
+            if (saw_modes)
+                continue;
+            saw_modes = true;
+            uint32_t mask = 0;
+            if (value.size == mutator_modes_value_bytes && value.u32(&mask))
+                pending_modes = mask;
         }
     }
+    if (pending_modes && decoded.mutators &&
+        clash_mask_fits(*pending_modes, decoded.mutators->total))
+        decoded.mutator_modes = pending_modes;
     *out = std::move(decoded);
     return WireError::ok;
 }
@@ -1062,6 +1463,168 @@ WireError encode_presence_map_pack(
     write_map_pack_value(out, &used, pack);
     assert(used == size);
     *written = used;
+    return WireError::ok;
+}
+
+WireError encode_presence_brains(
+    std::span<const PresenceBrain> brains,
+    uint8_t* out,
+    std::size_t capacity,
+    std::size_t* written,
+    std::size_t* sent
+) noexcept {
+    if (out == nullptr || written == nullptr || sent == nullptr || brains.empty())
+        return WireError::bad_argument;
+    const std::size_t offered = brains.size() < brain_count_max ? brains.size() : brain_count_max;
+    std::array<BrainShown, brain_count_max> shown{};
+    for (std::size_t index = 0; index < offered; ++index)
+        if (!brain_item_ok(brains[index], &shown[index]))
+            return WireError::bad_argument;
+    std::size_t value_bytes = 1;
+    std::size_t count = 0;
+    for (std::size_t index = 0; index < offered; ++index) {
+        const auto item_bytes = brain_item_bytes(brains[index], shown[index]);
+        if (value_bytes + item_bytes > capacity)
+            break;
+        value_bytes += item_bytes;
+        ++count;
+    }
+    if (count == 0)
+        return WireError::buffer_too_small;
+    std::size_t used = 0;
+    put_u8(out, &used, static_cast<uint8_t>(count));
+    for (std::size_t index = 0; index < count; ++index)
+        write_brain_item(out, &used, brains[index], shown[index]);
+    assert(used == value_bytes);
+    *written = used;
+    *sent = count;
+    return WireError::ok;
+}
+
+std::optional<std::vector<PresenceBrain>> decode_presence_brains(std::span<const uint8_t> value) {
+    Window window{value.data(), value.size()};
+    uint8_t count = 0;
+    if (!window.u8(&count) || count < 1 || count > brain_count_max)
+        return std::nullopt;
+    std::vector<PresenceBrain> brains;
+    brains.reserve(count);
+    for (uint8_t index = 0; index < count; ++index) {
+        PresenceBrain item;
+        uint8_t flags = 0;
+        if (!window.u32(&item.player) ||
+            !read_string(&window, 1, brain_id_max, ByteKind::kebab, &item.id) ||
+            !read_string(&window, 1, brain_name_max, ByteKind::text, &item.name) ||
+            !read_string(&window, 0, brain_version_max, ByteKind::text, &item.version) ||
+            !read_string(&window, 1, brain_level_id_max, ByteKind::kebab, &item.level_id) ||
+            !read_string(&window, 1, brain_level_name_max, ByteKind::text, &item.level) ||
+            !window.u8(&flags) || (flags & static_cast<uint8_t>(~brain_full_awareness_flag)) != 0)
+            return std::nullopt;
+        item.full_awareness = (flags & brain_full_awareness_flag) != 0;
+        brains.push_back(std::move(item));
+    }
+    if (window.size != 0)
+        return std::nullopt;
+    return brains;
+}
+
+WireError encode_presence_mutator_part(
+    const PresenceMutators& loadout,
+    uint8_t first,
+    uint8_t* out,
+    std::size_t capacity,
+    std::size_t* written,
+    uint8_t* sent
+) noexcept {
+    if (out == nullptr || written == nullptr || sent == nullptr)
+        return WireError::bad_argument;
+    if (first >= loadout.mutators.size() || first >= presence_mutators_max)
+        return WireError::bad_argument;
+    const std::size_t end = loadout.mutators.size() < presence_mutators_max
+                                ? loadout.mutators.size()
+                                : static_cast<std::size_t>(presence_mutators_max);
+    for (std::size_t cursor = first; cursor < end; ++cursor)
+        if (!mutator_ok(loadout.mutators[cursor]))
+            return WireError::bad_argument;
+    const std::size_t prefix = digest_bytes + 1;
+    std::size_t value_bytes = prefix;
+    uint8_t count = 0;
+    for (std::size_t cursor = first; cursor < end; ++cursor) {
+        const auto item_bytes = mutator_value_bytes(loadout.mutators[cursor]);
+        if (value_bytes + item_bytes > capacity)
+            break;
+        value_bytes += item_bytes;
+        ++count;
+    }
+    if (count == 0)
+        return WireError::buffer_too_small;
+    std::size_t used = 0;
+    put_bytes(out, &used, loadout.digest.data(), digest_bytes);
+    put_u8(out, &used, first);
+    for (uint8_t cursor = 0; cursor < count; ++cursor)
+        write_mutator(out, &used, loadout.mutators[static_cast<std::size_t>(first) + cursor]);
+    assert(used == value_bytes);
+    *written = used;
+    *sent = count;
+    return WireError::ok;
+}
+
+std::optional<PresenceMutatorsState>
+presence_mutators_state(const uint8_t* record, std::size_t size) noexcept {
+    std::span<const uint8_t> value;
+    if (!find_presence_field(record, size, PresenceTag::mutators, &value) ||
+        value.size() < mutators_fixed_value_bytes)
+        return std::nullopt;
+    const uint8_t* cursor = value.data();
+    const uint8_t flags = cursor[0];
+    cursor += 1;
+    PresenceMutatorsState state;
+    state.built = (flags & mutators_built_flag) != 0;
+    state.lacking = (flags & mutators_lacking_flag) != 0;
+    state.failed = (flags & mutators_failed_flag) != 0;
+    std::memcpy(state.digest.data(), cursor, digest_bytes);
+    cursor += digest_bytes;
+    std::memcpy(state.layer_digest.data(), cursor, digest_bytes);
+    cursor += digest_bytes;
+    state.index = cursor[0];
+    state.total = cursor[1];
+    state.held = cursor[2];
+    state.states = load_le64(cursor + 3);
+    if (!mutators_prefix_ok(
+            state.built, state.layer_digest, state.index, state.total, state.held, state.states
+        ))
+        return std::nullopt;
+    return state;
+}
+
+bool presence_assembly_take(PresenceLoadoutAssembly& assembly, const PresenceRecord& host) {
+    const PresenceLoadoutAssembly previous = assembly;
+    if (!host.mutators) {
+        assembly = {};
+        return assembly != previous;
+    }
+    const PresenceMutators& incoming = *host.mutators;
+    if (assembly.digest != incoming.digest || assembly.total != incoming.total) {
+        assembly = {};
+        assembly.digest = incoming.digest;
+        assembly.total = incoming.total;
+    }
+    append_continuing(assembly, 0, incoming.mutators);
+    if (host.mutator_part && host.mutator_part->digest == assembly.digest)
+        append_continuing(assembly, host.mutator_part->first, host.mutator_part->mutators);
+    return assembly != previous;
+}
+
+bool presence_assembly_whole(const PresenceLoadoutAssembly& assembly) noexcept {
+    return assembly.total != 0 && assembly.mutators.size() == assembly.total;
+}
+
+WireError presence_clash_modes(uint32_t mask, uint8_t count, PresenceClashMode* modes) noexcept {
+    if (modes == nullptr || !clash_mask_fits(mask, count))
+        return WireError::bad_argument;
+    for (uint8_t position = 0; position < count; ++position) {
+        const uint32_t bit = uint32_t{1} << position;
+        modes[position] = (mask & bit) != 0 ? PresenceClashMode::add : PresenceClashMode::replace;
+    }
     return WireError::ok;
 }
 

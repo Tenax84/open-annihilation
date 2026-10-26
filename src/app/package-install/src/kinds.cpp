@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // The kinds of package the game installs, and the names and folder reads
-// each kind shares: oamod, oamap, oalang and expansion.
+// each kind shares: oamod, oamap, oalang, expansion, oamut and oabrain.
 
 #include "files.hpp"
 
@@ -11,7 +11,11 @@
 #include "oa/app/package_install/oalang.hpp"
 #include "oa/app/package_install/oamap.hpp"
 #include "oa/app/package_install/oamod.hpp"
+#include "oa/app/package_install/oamut.hpp"
+#include "oa/app/package_install/oabrain.hpp"
 #include "oa/app/package_install/oaexp.hpp"
+#include "oa/data/brain_library/library.hpp"
+#include "oa/data/mutator_library/library.hpp"
 #include "oa/app/package_install/origin.hpp"
 #include "oa/app/package_install/prompts.hpp"
 #include "oa/app/user_folder.hpp"
@@ -24,6 +28,9 @@
 #include <utility>
 
 namespace oa::app::package_install {
+
+static_assert(oamut::mutators_folder_name == oa::data::mutator_library::mutators_folder_name);
+static_assert(oabrain::brains_folder_name == oa::data::brain_library::brains_folder_name);
 
 namespace fs = std::filesystem;
 
@@ -83,6 +90,24 @@ constexpr KindPrompts kExpansionPrompts{
     .refused = &oaexp::refused_prompt,
 };
 
+constexpr KindPrompts kMutatorPrompts{
+    .installing = &oamut::installing_prompt,
+    .question = &oamut::question_prompt,
+    .installed = &oamut::installed_prompt,
+    .updated = &oamut::updated_prompt,
+    .refusal_text = &oamut::refusal_text,
+    .refused = &oamut::refused_prompt,
+};
+
+constexpr KindPrompts kBrainPrompts{
+    .installing = &oabrain::installing_prompt,
+    .question = &oabrain::question_prompt,
+    .installed = &oabrain::installed_prompt,
+    .updated = &oabrain::updated_prompt,
+    .refusal_text = &oabrain::refusal_text,
+    .refused = &oabrain::refused_prompt,
+};
+
 constexpr PackageKind kKinds[] = {
     {
         .name = "oamod",
@@ -139,6 +164,34 @@ constexpr PackageKind kKinds[] = {
         .plan = &oaexp::plan_install,
         .check_staged = nullptr,
         .prompts = &kExpansionPrompts,
+    },
+    {
+        .name = "oamut",
+        .extension = oamut::oamut_extension,
+        .manifest = "oamut.yaml",
+        .manifest_most_bytes = oa::formats::oamod::max_input_bytes,
+        .root_folder = oamut::mutators_folder_name,
+        .prefix = ".oamut-",
+        .read_manifest = &oamut::read_manifest,
+        .read_installed = &oamut::read_installed,
+        .read_backup = &oamut::read_backup,
+        .plan = &oamut::plan_install,
+        .check_staged = nullptr,
+        .prompts = &kMutatorPrompts,
+    },
+    {
+        .name = "oabrain",
+        .extension = oabrain::oabrain_extension,
+        .manifest = "oabrain.yaml",
+        .manifest_most_bytes = oa::formats::oamod::max_input_bytes,
+        .root_folder = oabrain::brains_folder_name,
+        .prefix = ".oabrain-",
+        .read_manifest = &oabrain::read_manifest,
+        .read_installed = &oabrain::read_installed,
+        .read_backup = &oabrain::read_backup,
+        .plan = &oabrain::plan_install,
+        .check_staged = &oabrain::check_staged,
+        .prompts = &kBrainPrompts,
     },
 };
 

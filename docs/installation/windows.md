@@ -83,9 +83,9 @@ open-annihilation-<version>-windows-x64-setup.exe /S /D=C:\Games\Open Annihilati
 
 This makes a folder such as `open-annihilation-<version>-windows-x64` that
 holds `open-annihilation.exe`, `oa-intro.exe`, `oa-tool.exe`, `LICENSE`,
-`ATTRIBUTIONS.md`, `licenses/`, `fonts/`, `languages/interface.tdf` and
-`registries/`. Always start the game from this folder, never from inside
-the `.zip`.
+`ATTRIBUTIONS.md`, `licenses/`, `fonts/`, `languages/interface.tdf`,
+`registries/` and `classic.oabrain` in `brains/`. Always start the game from
+this folder, never from inside the `.zip`.
 
 ## 4. Get the game data
 
@@ -151,7 +151,9 @@ bottom right of the main menu opens. See [Settings](../settings.md), and
 Each start registers this copy of the game, for your Windows account, as
 the opener of the file types left on in [Settings › System](../settings.md#system):
 mod packages (`.oamod`), map packs (`.oamap`), language packs (`.oalang`),
-registry files (`.oareg`) and launch files (`.oalaunch`). All five are on
+mutator packages (`.oamut`), brain packages (`.oabrain`), registry files
+(`.oareg`) and launch files
+(`.oalaunch`). All seven are on
 until you turn one off. Turning one off and pressing OK withdraws that type
 at once; turning one on registers it at once. Neither waits for a restart. The game's icon is
 put on the types it opens. Double-click a `.oamod` file to install the mod
@@ -276,7 +278,7 @@ command, still takes the screenshots and films.
 - The uninstaller also removes the launch file association the installer
   made for everyone. For the Windows account that runs it, it removes the
   game's registration as the opener of `.oamod`, `.oalang`, `.oamap`,
-  `.oareg` and `.oalaunch` files while that registration opens them with
+  `.oamut`, `.oabrain`, `.oareg` and `.oalaunch` files while that registration opens them with
   the installed `open-annihilation.exe`, and the empty (Default) of
   `HKEY_CURRENT_USER\Software\Classes\.oalaunch` that hid the association
   while Launch files was off. A type that a copy you unzipped elsewhere
@@ -292,15 +294,19 @@ command, still takes the screenshots and films.
   Open Annihilation from another copy, one unzipped or installed again:
   that start registers the copy that runs in its place, withdraws the types
   turned off in its settings, and removes the empty (Default) of
-  `.oalaunch`. Or delete the ten keys below in that account.
+  `.oalaunch`. Or delete the fourteen keys below in that account.
 - **To remove a zip copy:** delete that folder. The Open Annihilation
   folder in Documents is separate and stays until you delete it yourself.
 - **To remove your settings and logs too,** delete the Local AppData folder
   above. To make Windows forget a copy you unzipped as the opener of
-  `.oamod`, `.oalang`, `.oamap`, `.oareg` and `.oalaunch` files, delete
-  these ten keys with the Registry Editor:
+  `.oamod`, `.oalang`, `.oamap`, `.oamut`, `.oabrain`, `.oareg` and `.oalaunch` files, delete
+  these fourteen keys with the Registry Editor:
   `HKEY_CURRENT_USER\Software\Classes\.oamod`,
   `HKEY_CURRENT_USER\Software\Classes\OpenAnnihilation.Mod`,
+  `HKEY_CURRENT_USER\Software\Classes\.oamut`,
+  `HKEY_CURRENT_USER\Software\Classes\OpenAnnihilation.Mutator`,
+  `HKEY_CURRENT_USER\Software\Classes\.oabrain`,
+  `HKEY_CURRENT_USER\Software\Classes\OpenAnnihilation.Brain`,
   `HKEY_CURRENT_USER\Software\Classes\.oalang`,
   `HKEY_CURRENT_USER\Software\Classes\OpenAnnihilation.Language`,
   `HKEY_CURRENT_USER\Software\Classes\.oamap`,

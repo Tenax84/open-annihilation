@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Enhanced anti-aliasing of units: the levels and the samples each draws
-// with, Off drawing exactly as without the setting, the coverage of a unit's
-// edges, and the finer image kept with the game's.
+// with, Off drawing exactly as without the setting, a fixed composite counted
+// in the game's pixels at every level, the coverage of a unit's edges, and
+// the finer image kept with the game's.
 
 #include "oa/present/model/unit_supersampling.hpp"
 #include "oa/present/display.hpp"
@@ -223,6 +224,48 @@ void whole_pixels_draw_as_off() {
     }
 }
 
+// A profile that keeps the composite's size (limits.model-composite with
+// clamp-oversize) counts that size in the game's pixels at every level: a
+// unit whose image fits it draws whole, as Off draws it, and a larger one is
+// cut where Off cuts it, from its image's top left. A mod that keeps 1280
+// pixels and gives its commanders a ground quad of the image key 108 pixels
+// across saw them cut at 16x, where the composite held 80 of the game's
+// pixels: turned across a slope, a commander kept only its top left part.
+void fixed_composite_counts_game_pixels() {
+    for (const int32_t side : {48, 12}) {
+        const bool fits = side == 48;
+        for (const uint32_t depth : {0U, static_cast<uint32_t>(OA_UNIT_FLAG2_Z_BUFFER)}) {
+            const auto stage = [&](Scene& scene) {
+                scene.renderer.composite_limits = {side, side, true};
+                CHECK(init_composite_buffer(scene.renderer));
+                // A cut image's silhouette is not drawn at Off, so the cut
+                // case draws no shadow.
+                scene.renderer.graphics_flags =
+                    fits ? graphics_shadows | graphics_vehicle_shadows : 0;
+                scene.unit->position.y = 40 * unit_fixed;
+                scene.unit->flags2 |= depth;
+            };
+            Scene off;
+            stage(off);
+            off.draw(UnitSupersampling::off);
+            CHECK(off.level_at(100, 80) == ink);
+            // Only a depth image draws through the composite.
+            CHECK((off.level_at(106, 86) == ink) == (fits || depth == 0));
+            for (const UnitSupersampling level : finer_levels) {
+                Scene finer;
+                stage(finer);
+                finer.draw(level);
+                CHECK(finer.rgb == off.rgb);
+                // Off after a finer draw cuts as Off does, however far the
+                // finer draw grew the composite.
+                finer.rgb.assign(finer.rgb.size(), ground);
+                finer.draw(UnitSupersampling::off);
+                CHECK(finer.rgb == off.rgb);
+            }
+        }
+    }
+}
+
 // Half a pixel off the grid, the square's left and right columns are half
 // covered and blend half and half with the ground; the rest is the palette
 // colour or the ground exactly, and the same draw gives the same pixels.
@@ -311,6 +354,7 @@ int main() {
     levels_fit_the_region();
     off_draws_as_without();
     whole_pixels_draw_as_off();
+    fixed_composite_counts_game_pixels();
     edges_blend_by_coverage();
     finer_image_follows_the_cache();
     unfinished_units_draw_their_frame();

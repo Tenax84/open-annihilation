@@ -10,13 +10,20 @@ defaults belong to the frontend.
 | Windows | Local AppData / `CorePrime/Open Annihilation/preferences.conf` |
 | Linux | `$XDG_CONFIG_HOME/open-annihilation/preferences.conf`, or `$HOME/.config/open-annihilation/preferences.conf` |
 
-Beside the preferences file the game keeps two files of its own, in the
+Beside the preferences file the game keeps files of its own, in the
 same format, which it writes itself and the player never needs to edit:
 `renderer-state.conf`, what it has seen of each graphics driver on this
 machine (`src/app/include/oa/app/renderer_state.hpp`), and
 `renderer-sentinel.conf`, the stage a start has reached, which a clean exit
 deletes. Deleting either loses nothing but that record. With
-`--preferences-file` neither is read or written.
+`--preferences-file` neither of those two is read or written.
+`mutators-sentinel.conf` names the mutators in play while a match with
+mutators runs, and a clean match end or a clean exit deletes it. A start
+that finds one keeps what it names and deletes the file, so the next start
+does not ask again. It lives beside whichever preferences file the run
+uses, including one `--preferences-file` names. Two runs whose
+preferences files share a folder share this file, so runs at the same
+time use separate folders.
 
 Data the engine keeps for the player, such as game data it unpacks, goes in a
 per-user data folder (`data_directory()`), beside the preferences file on
@@ -114,6 +121,31 @@ reads is chosen from that token. Absent, no such note is waiting.
 `--content GAME[:EXPANSION,...]` names the base game and expansions for
 one run and writes nothing. An expansion the list needs is included; one
 that was only waiting is not.
+`open-annihilation.mutators.skirmish`,
+`open-annihilation.mutators.multiplayer` and
+`open-annihilation.mutators.campaign` each hold the last set that setup
+started a game with, as the canonical loadout text: the mutators in
+order, with versions, package SHA-256s and options. A setup's START
+writes its key only when that game has mutators. `--mutator` and a
+launch file never write them, and a game without mutators leaves them
+as they are. Absent, or text that cannot be read as that loadout, the
+setup has no set. Restore defaults does not erase them.
+`open-annihilation.brain.default` holds the id of the brain the player
+uses as the default computer player. Absent, empty, or an id that is not
+installed, the built-in computer player is the default. Restore defaults
+does not erase it. USE BY DEFAULT writes it. Uninstalling that brain
+erases the key, so it does not keep naming a brain that is gone.
+`open-annihilation.brains.skirmish`,
+`open-annihilation.brains.multiplayer` and
+`open-annihilation.brains.campaign` each hold the computer seats that
+setup last started a game with, as the seat text: each seat's place and,
+when it names one, its brain, level and options. A skirmish's START and a
+campaign mission's start write their key when a seat names a brain, or
+when the key is already there. A start whose seats name no brain, and
+whose key is absent, writes nothing. The multiplayer key is the battle
+room's and is written the same way when that setup starts a game. Absent,
+or text that cannot be read as seats, the setup has no seats. Restore
+defaults does not erase them.
 `open-annihilation.user-folder` holds the folder the player keeps their
 saved games, screenshots, films, recordings and mods in, as an absolute
 UTF-8 path, in place of `Open Annihilation` in Documents; absent or
@@ -189,9 +221,14 @@ of range is clamped. A switch is On for any number above 0: a word such as
 | `open-annihilation.menu-scaling` | `sharp`, `whole-steps` or `unfiltered` | `sharp` |
 | `open-annihilation.native-density` | 0 or 1 | 0; 1 where the platform opens every window at native density |
 | `open-annihilation.explosion-flash` | `off`, `reduced` or `full` | `full` |
+| `open-annihilation.fog-of-war` | `classic` or `smooth`; any other text reads as `smooth` | `smooth` |
 | `open-annihilation.enhanced-graphics` | 0 or 1: shots and explosions glow, and edges are smoothed where enhanced anti-aliasing is off, in the Full tier on SDL's GPU renderer, which a start with it on chooses first | 0 |
 | `open-annihilation.zoomed-out-units` | `rendered` or `dots`; any other text, `icons` among them, reads as `rendered` | `rendered` |
 | `open-annihilation.zoomed-out-after` | `1/2`, `1/3`, `1/4`, `1/6`, `1/8`, `1/12` or `1/16`; any other text reads as `1/6` | `1/6` |
+| `open-annihilation.allow-full-3d` | 0 or 1 | 1 |
+| `open-annihilation.unlocked-camera` | 0 or 1 | 0 |
+| `open-annihilation.weapon-lighting.intensity`, `open-annihilation.nanolathe-lighting.intensity`, `open-annihilation.wreck-glow.intensity`, `open-annihilation.heat-distortion.intensity` | percent, 0 to 200, held to that range and rounded to the nearest 10; any other text is ignored. Without it, the effect's earlier switch (`open-annihilation.weapon-lighting`, `.nanolathe-lighting`, `.wreck-glow` or `.heat-distortion`, 0 or 1) reads as 0 or 100 | with `open-annihilation.hardware-acceleration` at `full`, 20 for weapon lighting and nanolathe lighting, 30 for wreck glow and 40 for heat distortion; else 0 |
+| `open-annihilation.water-ripples.intensity`, `open-annihilation.coastal-waves.intensity`, `open-annihilation.underwater-shimmer.intensity`, `open-annihilation.naval-reflections.intensity` | percent, 0 to 200, held to that range and rounded to the nearest 10; any other text is ignored | 60 for water ripples, 30 for coastal waves, and 100 for underwater shimmer and naval reflections |
 | `open-annihilation.window-frame` | `hidden-in-play` or `always-shown`; any other text reads as `hidden-in-play` | `hidden-in-play` |
 | `open-annihilation.hud-scaling` | 0 or 1 | 1 |
 | `open-annihilation.interface-size` | `automatic`, or the percent `100`, `150`, `200`, `300` or `400`; `150` read while `open-annihilation.modern-fonts` reads 0 reads as `100`; any other text, `0` among them, reads as `automatic` | `automatic` |
@@ -208,12 +245,15 @@ of range is clamped. A switch is On for any number above 0: a word such as
 | `open-annihilation.file-types.oamap` | `on` or `off`, as the mod packages' key | on: this copy opens map packs |
 | `open-annihilation.file-types.oalang` | `on` or `off`, as the mod packages' key | on: this copy opens language packs |
 | `open-annihilation.file-types.oareg` | `on` or `off`, as the mod packages' key | on: this copy opens registry files |
+| `open-annihilation.file-types.oamut` | `on` or `off`, as the mod packages' key | on: this copy opens mutator packages |
+| `open-annihilation.file-types.oabrain` | `on` or `off`, as the mod packages' key | on: this copy opens brain packages |
 | `open-annihilation.file-types.oalaunch` | `on` or `off`, as the mod packages' key | on: this copy opens launch files |
 | `open-annihilation.base-game` | `totala` or `totala-demo`; any other text reads as `totala` | `totala`, with every copied expansion of it that can be on |
 | `open-annihilation.expansions.<game>` | comma-separated expansion ids, in the built-in order; empty means none on | every copied expansion of that game that can be on |
 | `open-annihilation.content-note` | `required-expansion` when a mod was cleared because an expansion it needs went off | no note waiting |
+| `mutators.clash-default` | `add` or `replace`; any other text reads as `replace`. The clash mode a mutator uses when the player and its manifest leave it unset. `Runtime::apply_match_mutators` reads it, and so does the battle room on the host, which sends each mode with its list; a guest plays the host's modes and never reads its own | `replace` |
 
-The five file-type keys are words, `on` and `off`, not the `0` and `1` of
+The seven file-type keys are words, `on` and `off`, not the `0` and `1` of
 the other switches. Settings › System shows a switch for each on Windows,
 Linux and macOS, and OK registers, withdraws or changes the default opener
 of a type whose switch moved, that type alone. A start registers the types

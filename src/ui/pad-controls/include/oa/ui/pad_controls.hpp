@@ -307,7 +307,8 @@ enum class Action : uint8_t {
     info,           ///< menus: information about the focused item, as F1
     wheel_up,       ///< menus: a wheel step up
     wheel_down,     ///< menus: a wheel step down
-    /// menus: focuses the Library's search (Y). On any other screen it does nothing.
+    /// menus: focuses the Library's search (Y). On the skirmish setup and the
+    /// campaign launch it opens MUTATORS…. On any other screen it does nothing.
     library_search,
     /// menus: the selected Library entry's first action (X), when that action
     /// can be pressed. On any other screen it does nothing.

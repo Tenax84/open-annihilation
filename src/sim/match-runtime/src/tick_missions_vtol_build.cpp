@@ -39,7 +39,6 @@ constexpr int32_t feature_reclaim_particle_floor = 30;
 constexpr int32_t feature_reclaim_sprays_per_step = 2;
 constexpr uint32_t decloak_hold_ticks = 300;
 constexpr uint32_t patrol_step_ticks = 0x2d;
-constexpr int32_t repair_pad_radius = 0xf00;
 constexpr oa_fixed feature_scan_radius = 0xf00000;
 constexpr oa_fixed feature_scan_step = 0x300000;
 constexpr double reserve_fraction = 0.2;
@@ -543,31 +542,16 @@ class TickHost::VtolBuildMissions {
         return true;
     }
 
-    /// Sends a damaged aircraft to a random active repair pad of its owner
-    /// within 0xf00 world units; the pads come from the owner's unit range.
+    /// Sends a damaged aircraft to a random pad of those its owner's pad
+    /// list offers within 0xf00 world units (Match::repair_pads_in_reach).
     ///
     /// @return True when a pad was found and VTOL_Landing queued.
     bool land_at_repair_pad() {
-        auto* owner = oa::world_unit_owner(&world(), &unit);
-        if (!owner)
-            return false;
-        uint32_t count = 0;
-        auto* first = oa::world_player_units(&world(), owner, &count);
-        std::vector<oa::Unit*> pads;
-        for (uint32_t i = 0; first && i < count; ++i) {
-            auto& candidate = first[i];
-            const auto* d = def_of(candidate);
-            if (candidate.type_index == 0 || !d || (d->flags & OA_UNIT_DEF_FLAG_BUILDER) == 0 ||
-                (d->flags & OA_UNIT_DEF_FLAG_IS_AIRBASE) == 0 || (candidate.state_flags & 1) == 0)
-                continue;
-            if (squared_world_distance(unit.position, candidate.position) <=
-                repair_pad_radius * repair_pad_radius)
-                pads.push_back(&candidate);
-        }
-        if (pads.empty())
+        const auto pads = match.repair_pads_in_reach(unit);
+        if (pads == 0)
             return false;
         drop_goal();
-        auto* pad = pads[host.random(static_cast<uint32_t>(pads.size()))];
+        const auto* pad = match.repair_pad_in_reach(unit, host.random(pads));
         (void)push_order(vtol_landing_kind, &match.units_[pad->id], nullptr);
         order.wait_events = 0;
         return true;

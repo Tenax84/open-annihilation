@@ -27,12 +27,14 @@
 #include "oa/app/runtime.hpp"
 
 #include "engine_settings_menu_host.hpp"
+#include "engine_settings_state.hpp"
 #include "frame_stats_panel.hpp"
 #include "full_fog.hpp"
 #include "full_presentation.hpp"
 #include "match_models.hpp"
 #include "render_host.hpp"
 #include "render_run.hpp"
+#include "renderer_effect_sources.hpp"
 #include "runtime_full.hpp"
 #include "xrgb_conversion.hpp"
 
@@ -737,7 +739,24 @@ std::vector<uint8_t> card_draw_mask(
             const auto& sprite = list.sprites[draw.index];
             if (sprite.frame == nullptr || (draw.kind == WorldDrawKind::lit_sprite && !flashes))
                 break;
-            const SceneRect rect = sprite_scene_rect(sprite, zoom);
+            SceneRect rect = sprite_scene_rect(sprite, zoom);
+            const bool effect_styled =
+                sprite.soft_effect || sprite.effect_scale != 1.0F || sprite.effect_opacity != 1.0F;
+            if (effect_styled) {
+                // The standard tier keeps the original cutout. Full may shrink,
+                // fade or filter it, so exclude precisely the union of both
+                // footprints from palette-exact and flash-only comparisons.
+                const float left =
+                    (sprite.place.x - sprite.frame->origin_x * sprite.effect_scale) * zoom;
+                const float top =
+                    (sprite.place.y - sprite.frame->origin_y * sprite.effect_scale) * zoom;
+                const float right = left + sprite.frame->width * sprite.effect_scale * zoom;
+                const float bottom = top + sprite.frame->height * sprite.effect_scale * zoom;
+                rect.left = std::min(rect.left, static_cast<int64_t>(std::floor(left)));
+                rect.top = std::min(rect.top, static_cast<int64_t>(std::floor(top)));
+                rect.right = std::max(rect.right, static_cast<int64_t>(std::ceil(right)));
+                rect.bottom = std::max(rect.bottom, static_cast<int64_t>(std::ceil(bottom)));
+            }
             const int left = field.x + static_cast<int>(rect.left);
             const int top = field.y + static_cast<int>(rect.top);
             const int w = std::max(1, static_cast<int>(rect.right - rect.left));
@@ -748,7 +767,7 @@ std::vector<uint8_t> card_draw_mask(
                 w + 2 * sprite_mask_margin,
                 h + 2 * sprite_mask_margin
             );
-            if (whole && draw.kind == WorldDrawKind::sprite && !fog_cut)
+            if (whole && draw.kind == WorldDrawKind::sprite && !fog_cut && !effect_styled)
                 break;
             mark_rect(mask, width, height, left, top, w, h, sprite_mask_margin);
             break;
@@ -1598,6 +1617,57 @@ int Runtime::check_render_tiers() {
                       << weapon_registry_.name(*laser_weapon) << '\n';
         }
     }
+    // A weapon lights in the colour its shot is drawn in: the Arm
+    // commander's laser, whose colour is red in the interface palette its
+    // beam is drawn in and pale green as an entry of the battlefield
+    // palette, lights red. Its shot alone is in the pool, at the local
+    // unit's place; the match's own pool is put back after.
+    if (const auto* laser = weapon_registry_.find("ARMCOMLASER"); !laser) {
+        std::cout << "render tiers check: the data has no ARMCOMLASER; the colour of a laser's "
+                     "light is not checked\n";
+    } else {
+        oa::World& world = match_->state();
+        const int32_t match_count = world.game.projectile_count;
+        const oa::Projectile match_shot = world.projectiles[0];
+        oa::Projectile shot{};
+        shot.def = static_cast<oa_ref32>(laser->registry_index) + 1U;
+        shot.position = oa::world_unit_at(&world, anchor)->position;
+        shot.origin = shot.position;
+        shot.origin.x += lens_check_laser_length;
+        world.projectiles[0] = shot;
+        world.game.projectile_count = 1;
+        at_zoom(1.0F);
+        std::ignore = presented();
+        const auto beam = ui_color_rgb(laser->color);
+        const auto& lines = match_models().draws.lines;
+        const bool drawn = std::any_of(lines.begin(), lines.end(), [&](const LineDraw& line) {
+            return line.color == beam;
+        });
+        std::optional<renderer_effect_sources::Source> light;
+        for (const auto& source : collect_match_effect_sources())
+            if (source.origin == renderer_effect_sources::Origin::projectile)
+                light = source;
+        world.projectiles[0] = match_shot;
+        world.game.projectile_count = match_count;
+        std::ignore = presented();
+        const auto channel = [](float value) {
+            return std::to_string(static_cast<int>(std::lround(value * 255)));
+        };
+        if (!drawn)
+            fail("the Arm commander's laser's shot drew no line in its colour");
+        if (!light)
+            fail("the Arm commander's laser's shot cast no light");
+        if (light->red != beam[0] / 255.0F || light->green != beam[1] / 255.0F ||
+            light->blue != beam[2] / 255.0F)
+            fail(
+                "the Arm commander's laser lit in " + channel(light->red) + "," +
+                channel(light->green) + "," + channel(light->blue) + ", not its beam's " +
+                std::to_string(beam[0]) + "," + std::to_string(beam[1]) + "," +
+                std::to_string(beam[2])
+            );
+        std::cout << "render tiers check: the Arm commander's laser lights in its beam's colour, "
+                  << int{beam[0]} << ',' << int{beam[1]} << ',' << int{beam[2]} << '\n';
+    }
     // Zoom 1 at a whole-number chrome scale: the frame the processor composes.
     at_zoom(1.0F);
     {
@@ -1897,7 +1967,37 @@ int Runtime::check_render_tiers() {
     // It runs after the zoom ease: it switches the tier off and on, which
     // drops the prescale targets the frames before made, and the ease
     // counts on finding them made.
-    check_smooth_panning(switch_tier, at_zoom, anchor);
+    {
+        // Raw terrain references elsewhere keep optional effects off. Panning
+        // must also move illuminated and distorted scene pixels with the view.
+        if (!engine_settings_)
+            fail("smooth panning needs the current graphics settings");
+        auto& settings = engine_settings_->current;
+
+        struct RestoreEffects {
+            oa::ui::engine_settings::EngineSettings& settings;
+            std::array<uint32_t, 4> saved;
+
+            ~RestoreEffects() {
+                settings.weapon_lighting = saved[0];
+                settings.nanolathe_lighting = saved[1];
+                settings.wreck_glow = saved[2];
+                settings.heat_distortion = saved[3];
+            }
+        } restore{
+            settings,
+            {settings.weapon_lighting,
+             settings.nanolathe_lighting,
+             settings.wreck_glow,
+             settings.heat_distortion}
+        };
+
+        settings.weapon_lighting = 100;
+        settings.nanolathe_lighting = 100;
+        settings.wreck_glow = 100;
+        settings.heat_distortion = 100;
+        check_smooth_panning(switch_tier, at_zoom, anchor);
+    }
     // The overlays a profile's visual rules paint, where it turns them on,
     // in the standard and accelerated tiers; the Full tier's after its own
     // cases.
@@ -2088,6 +2188,15 @@ int Runtime::check_render_tiers() {
     } else
         std::cout << "render tiers check: the Full cases need --hardware-acceleration=full; "
                      "skipped\n";
+    // MakePoster writes the standard tier's battlefield in every tier.
+    {
+        std::vector<HardwareAcceleration> poster_levels{
+            HardwareAcceleration::off, HardwareAcceleration::basic
+        };
+        if (asked_level == HardwareAcceleration::full)
+            poster_levels.push_back(HardwareAcceleration::full);
+        check_poster_tiers(set_level, poster_levels, at_zoom, report_directory);
+    }
     // Switched off, every frame is the standard tier's again, the whole
     // frame where the chrome's scale is a whole number.
     switch_tier(false);
@@ -2265,6 +2374,10 @@ void Runtime::check_full_render_tier(
             full_->plan.passes[0].sampling != card::Sampling::nearest || full_->plan.through_target)
             fail("zoom " + zoom_text(zoom) + " was not drawn from level 0 NEAREST");
         const auto mask = card_mask(zoom, read);
+        // The standard reference rebuilds the list without Full's effect trails.
+        // Keep the Full frame's exclusions before that replaces its draw plan.
+        const auto single_flash_mask = flash_mask(zoom, read, false);
+        const auto stacked_flash_mask = flash_mask(zoom, read, true);
         const std::string full_cost = cost();
         const auto stage = full_->sprites;
         if (stage.pages_overflowed)
@@ -2286,9 +2399,9 @@ void Runtime::check_full_render_tier(
         // reaches a pixel; stacked flashes are reported, not held
         // (most_flash_difference).
         const auto flashes =
-            compare_masked(read, expected, battlefield(), cursor(), flash_mask(zoom, read, false));
+            compare_masked(read, expected, battlefield(), cursor(), single_flash_mask);
         const auto stacked =
-            compare_masked(read, expected, battlefield(), cursor(), flash_mask(zoom, read, true));
+            compare_masked(read, expected, battlefield(), cursor(), stacked_flash_mask);
         std::cout << "render tiers check: full tier zoom " << zoom_text(zoom) << ": " << stage.lit
                   << " explosion flashes; " << flashes.under.pixels
                   << " pixels one alone lights: most " << flashes.under.most << ", mean "
@@ -4981,6 +5094,76 @@ void Runtime::check_full_overlays(
                   << dithered_differing << " not the even tone\n";
         if ((whole_in_view && dithered < least_fog_pixels) || dithered_differing != 0)
             fail("the dithered fog at zoom " + zoom_text(zoom) + " is not the even tone");
+        // Fog of War's Classic: the card draws the FOG.GAF shapes the
+        // processor draws, so that under every tile with a corner out of
+        // sight or never mapped, its edges included, each pixel the objects
+        // leave alone, where the two tiers agree with the fog off, is the
+        // processor's, under the greyed fog, the black, and the dithered
+        // with the black, whose band along the black's edge is the fringe.
+        {
+            namespace engine = oa::ui::engine_settings;
+            const engine::EngineSettings smooth_settings = engine_settings();
+            engine::EngineSettings classic_settings = smooth_settings;
+            classic_settings.fog_of_war = engine::FogOfWar::classic;
+            apply_engine_settings(classic_settings);
+
+            struct ClassicCase {
+                bool line_of_sight{};
+                bool mapping{};
+                bool dithered{};
+                std::string_view name;
+            };
+
+            for (const ClassicCase& fog_case :
+                 {ClassicCase{true, false, false, "greyed"},
+                  ClassicCase{true, true, false, "black"},
+                  ClassicCase{true, true, true, "dithered"}}) {
+                set_fog(fog_case.line_of_sight, fog_case.mapping, fog_case.dithered);
+                const auto card = full_frame();
+                const auto classic_objects = object_mask(zoom, card);
+                const auto processor = standard();
+                const std::string slug =
+                    "fog-classic-" + std::string(fog_case.name) + "-zoom-" + zoom_text(zoom);
+                write_png(picture(slug), card);
+                std::size_t fogged = 0;
+                std::size_t at_edges = 0;
+                std::size_t differing = 0;
+                for (const auto& tile : fog_tiles(zoom)) {
+                    if (tile.tile.unseen == 0 && tile.tile.unmapped == 0)
+                        continue;
+                    const bool edge_tile =
+                        tile.tile.unmapped != wr::fog_mask_full &&
+                        (tile.tile.unseen != wr::fog_mask_full || tile.tile.unmapped != 0);
+                    for (int y = tile.area.y; y < tile.area.y + tile.area.h; ++y)
+                        for (int x = tile.area.x; x < tile.area.x + tile.area.w; ++x) {
+                            if (!inside(field, x, y) || inside(pointer, x, y) ||
+                                classic_objects
+                                        [static_cast<std::size_t>(y) * card.width +
+                                         static_cast<std::size_t>(x)] != 0 ||
+                                !same(pixel(full_clear, x, y), pixel(processor_clear, x, y)))
+                                continue;
+                            ++fogged;
+                            if (edge_tile)
+                                ++at_edges;
+                            if (!same(pixel(card, x, y), pixel(processor, x, y)))
+                                ++differing;
+                        }
+                }
+                std::cout << "render tiers check: full tier classic " << fog_case.name
+                          << " fog at zoom " << zoom_text(zoom) << ": " << fogged
+                          << " pixels under fogged tiles, " << at_edges << " of them at edges, "
+                          << differing << " differing from the processor's\n";
+                if (at_edges == 0 || differing != 0) {
+                    write_png(picture(slug + "-standard"), processor);
+                    apply_engine_settings(smooth_settings);
+                    fail(
+                        "the classic " + std::string(fog_case.name) + " fog at zoom " +
+                        zoom_text(zoom) + " strays from the processor's"
+                    );
+                }
+            }
+            apply_engine_settings(smooth_settings);
+        }
     }
     // At a quarter and at the floor, where every level drawn comes from its
     // mosaic, one level at a quarter and two at the floor: the greyed pass

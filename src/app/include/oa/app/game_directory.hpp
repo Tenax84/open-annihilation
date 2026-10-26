@@ -28,6 +28,11 @@
 #include <string_view>
 #include <vector>
 
+namespace oa::platform {
+struct FileResidence;
+using FileResidenceProbe = bool (*)(const std::filesystem::path&, FileResidence&, void*);
+} // namespace oa::platform
+
 namespace oa::app {
 
 namespace fs = std::filesystem;
@@ -478,6 +483,55 @@ struct ManagedMount {
 [[nodiscard]] std::optional<GameDirectory> compose_managed_content(
     const ManagedMount& request, const oa::platform::preferences::Values& values
 );
+
+/// The progress dialog's line while iCloud is fetching the game's files, on
+/// macOS only. An English key of the interface catalogue.
+inline constexpr std::string_view icloud_download_line =
+    "Downloading the game's files from iCloud…";
+
+/// How the compose on this thread reports evicted archives. Null stops
+/// telling. The pointers are used only while compose runs on that thread.
+struct ArchiveWait {
+    /// Replaces the line. `key` is an English catalogue key.
+    void (*line)(void* context, std::string_view key){};
+    /// Sets how many files are fetched out of the whole.
+    void (*amounts)(void* context, int32_t done, int32_t whole){};
+    /// True when the player has closed the window.
+    bool (*stopped)(void* context){};
+    void* context{}; ///< passed to the three calls
+};
+
+/// Installs the report. A null progress stops telling.
+///
+/// @param progress the report; null clears it
+void set_archive_wait(const ArchiveWait* progress) noexcept;
+
+/// A file the residence probe is about to have read, so a check can hold
+/// that read. Null reads at once.
+using EvictedArchiveHold = void (*)(const std::filesystem::path& path, void* context);
+
+/// Installs the hold around the one-byte read of an evicted archive.
+///
+/// @param hold the hold; null reads at once
+/// @param context passed to the hold
+void set_evicted_archive_hold(EvictedArchiveHold hold, void* context) noexcept;
+
+/// Replaces the question of where a file's bytes are. Null asks the system.
+///
+/// @param probe the question; null asks the system
+/// @param context passed to the probe
+void set_archive_residence_probe(oa::platform::FileResidenceProbe probe, void* context) noexcept;
+
+/// The English line the waiting compose last published, or empty.
+///
+/// @return the catalogue key
+[[nodiscard]] std::string archive_wait_line();
+
+/// Writes a finished record of the base game and one small archive, so a
+/// check can hold that archive's read. The other recorded files are empty.
+///
+/// @param user the player's folder
+void plant_icloud_wait_copy(const std::filesystem::path& user);
 
 /// Says why the chosen base game cannot be mounted from the player's folder,
 /// for a start that stops there.

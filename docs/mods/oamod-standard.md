@@ -655,12 +655,14 @@ Each parameter resolves in this order; later steps win.
 4. **The profile's own value.**
 5. **The player's settings**, for `install` and `match` parameters the
    profile binds under `settings`.
-6. **The host's choice for this game**, for `match` parameters.
-7. **A per-unit or per-weapon data key**, for that unit or weapon type only,
+6. **The player's overrides** (Developer Mode), for standard hacks.
+7. **The host's choice for this game**, for `match` parameters. A mutator's
+   hacks are such choices, and they apply over the player's overrides.
+8. **A per-unit or per-weapon data key**, for that unit or weapon type only,
    applied when its files are read (for example `veterancy.thresholds`
    overriding `veterancy.model`'s `default-thresholds`).
 
-After steps 5 and 6, a parameter with `clamp-between` is held between the
+After steps 5 and 7, a parameter with `clamp-between` is held between the
 two parameters it names, with a warning when it moves. Constraints are
 checked after the profile's own values and again at the end.
 
@@ -706,10 +708,21 @@ fresh install starts where the mod's own install would.
 ### 5.5 The host's choices
 
 A `match` parameter may also be changed by the host for one game, after the
-player's settings. The resolver takes each choice as `ENTRY.PARAM=VALUE`,
+player's overrides. The resolver takes each choice as `ENTRY.PARAM=VALUE`,
 the value written as in a profile. A choice for a parameter that is not
-`match`, or for an entry the profile does not turn on, is refused. The
-unit limit's `default` is held between its `min` and `max`.
+`match` is refused. A choice for an entry the profile does not turn on is
+refused, unless the choice turns on an entry the registry marks
+`mutator: true`. The unit limit's `default` is held between its `min` and
+`max`.
+
+Mutators are such choices. A mutator's `hacks` block may set the `match`
+parameters of an entry marked `mutator: true`, over Developer Mode, for that
+game only. The registry check refuses `mutator: true` on an install-scoped
+entry (one with no `match` parameter), on an entry that touches the
+interface (`visual: true`, entry `scope: view`, an id under `ui.`, or a
+`match` parameter of `scope: view`), and on an entry whose kind is not a
+hack or a limit. The entries that carry it are `limits.units-per-player` and
+`console.game-speed-range`.
 
 The `match` parameters in the registry are the unit limit
 (`limits.units-per-player.default`) and the game speed range
@@ -850,7 +863,10 @@ What each limit holds:
 - **`model-composite`**: the size of the buffer a model is drawn into.
   Without `clamp-oversize` the buffer grows to fit a larger model, as in
   3.1c; with it the buffer keeps its size and a larger model is cut to it
-  from its top left. Local display only.
+  from its top left, its build outline and the units it carries with it.
+  The size is counted in the game's pixels: with Enhanced anti-aliasing a
+  model is drawn finer into a buffer as many times larger, so a model that
+  fits is drawn whole at every level. Local display only.
 
 There is no weapon-id limit: every profile keeps 3.1c's 256 weapon ids.
 
@@ -990,17 +1006,23 @@ the player sees.
 
 Much of what mods do in their data needs no profile entry at all, only an
 engine that plays exactly as 3.1c. The engine holds to these behaviours as
-part of playing 3.1c:
+part of playing 3.1c. Mutators, which change one game rather than a
+profile, are [the OAMUT standard](../mutators/oamut-standard.md).
 
 | Area | Behaviour |
 | --- | --- |
 | Unit scripts | `set ARMORED` turns on `DamageModifier`; a negative `EnergyUse` is paid out while the unit is activated; a script can attach and drop any unit, and attaching to piece −1 hides the passenger; scripts may scan every unit slot in one tick without sleeping; `MoveRate` calls reach ground units. |
 | Deaths and wrecks | `setSFXoccupy` codes reach `Killed`; corpse types up to 25; wrecks that turn into further wrecks over several steps. |
-| AI and builds | Build orders named `MAKENUKE` and `MAKEANTI` become stockpile orders; manual fire of the third weapon works with an empty second weapon. |
+| AI and builds | Build orders named `MAKENUKE` and `MAKEANTI` become stockpile orders: from the build buttons and a computer player's factories, as in 3.1c, and from a computer player's builders, which in 3.1c place such a round as a unit; manual fire of the third weapon works with an empty second weapon. |
 | Sides | A side's HUD panels come from the GAF its SIDEDATA `intgaf` names, its resource numbers and unit panel are drawn in the font its `font` names, and its resource bars come from its own `SIDEn` section; the rest of its interface, such as its general build pages, follows its `nameprefix`. A unit page draws the panel art its GUI names, `ARMPAN` or `ARMPAN2` for a third side whose pages are the `nameprefix`'s templates; when the side's `intgaf` holds art named by that GAF's stem without `INT` and the page's name without its side, `RUMPAN2` in `RUMINT.gaf` for `ARMPAN2`, the side's own is drawn instead. Commanders and build lists come from SIDEDATA, never from fixed unit names. The skirmish side button shows the `SIDEx` frame of the side it has chosen, for every SIDEDATA side, where 3.1c's two-stage button wraps back to Arm after Core. |
 | Transports | A script may drop every passenger at once; a blocked drop cell is handled as 3.1c handles it. |
 | Loading | Missing weapons, sounds, fonts and sprite sequences; unknown unit names in AI profiles; misspelled SIDEDATA sections; duplicate unit and feature names; a missing semicolon; brackets inside weapon names; non-square footprints of mobile units; maps without a terrain file. Each loads as 3.1c loads it. |
 | Files | An empty file wins its path and contributes nothing, hiding the file beneath it. |
+| Copyright and version | A unit is left out of the game when its Copyright is not the game's own notice. The year in that notice is ignored, so any year of the notice matches. A missing Copyright, and `Copyright=""`, are not that notice, so the unit is left out. The file stays. A unit is also left out when its Version is above the running build. The Version is read as a double: its whole part is the major number, and the minor number is the fraction times ten, rounded down. For 3.1c the build is major 3 and minor 1, so 3.1 and 3.15 are kept and 3.2 is left out. The rounding is in binary, so 3.3 reads as minor 2, not 3. |
+| Side | The computer builds a candidate only when that unit's Side equals the builder's, letter for letter. An off-side unit in a build list still takes its share of the computer's weighted draw, and a draw that lands on it builds nothing. The build pages a player opens do not compare Side. |
+| Value limits | BuildTime is stored as a 32-bit whole number. MaxDamage is stored as a 32-bit unsigned number. A finished unit's health is the low 16 bits of MaxDamage, read as signed, so when those bits are above 32,767 the unit starts on negative health. WorkerTime is stored as a signed 16-bit number: a value outside −32,768 to 32,767 keeps its low 16 bits, so 32,768 is stored as −32,768 and 65,536 as 0. A weapon's Range is a 32-bit whole number. Its default damage is stored as a signed 16-bit number. |
+| Features | `blocking` and `reclaimable` are separate flags, and `reclaimable` defaults to off. Only the low bit of `blocking` stops movement, so `blocking=0` is passable and does not set `reclaimable`. A `blocking` of 2 is passable for the same reason. |
+| Sight tables | `gamedata/los.tdf` holds numbered `TABLE` sections. Those patterns serve only sight that follows terrain. Circular sight uses the mask table, and a band of 0 marking only the unit's own cell holds only in the terrain mode. `[TABLEINFO]` `numtables` is how many tables are loaded. A table past that count is not loaded. In the terrain mode the band is clamped to one less than the count, so the last loaded table is never read, and `TABLE1` is the pattern for sight band 1. Fewer than two tables, a negative count included, fails the sight check with `altitude sight requires at least two table entries`. A table of more than 8,191 lines fails the whole `los.tdf` load, and that fails the skirmish start. |
 
 ## 9. Standard hacks
 
@@ -1151,9 +1173,12 @@ Network play is part of the engine, and reads its rules from the profile:
   `console.game-speed-range`.
 - **Integrity check.** When the profile turns on the integrity check
   ([`network.vercheck`](standard-hacks/network.vercheck.md)), a machine's
-  answer about its game data is a digest of its profile's sim hash and the
+  answer about its game data is a digest of the hash the match plays (the
+  profile's sim hash, or the plain baseline without a profile) and the
   map, so two machines agree exactly when they play the same rules on the
-  same map.
+  same map. While the match holds a mutator digest, that digest is folded
+  into the hash the match plays. Without one, the bytes stay that hash
+  and the map.
 
 Without a profile, network play uses 3.1c's rules.
 
