@@ -2804,9 +2804,10 @@ void Runtime::open_library(std::optional<library::Tab> tab) {
         library::set_query(host.model, {});
         library::close_details(host.model);
         library::set_tab(host.model, shown);
-        // Over Open Annihilation's main menu the Library shows in the main
-        // menu's look, over the whole window.
-        if (oa_main_menu_shown())
+        // On the main menu, unless the run takes the game's own menus, the
+        // Library shows in Open Annihilation's menus' look, over the whole
+        // window.
+        if (main_menu_opens_oa_screens())
             push_library_menu_screen();
         else
             layer.push(std::make_unique<LibraryScreen>(*this));

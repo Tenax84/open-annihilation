@@ -541,6 +541,37 @@ latched the closing key and drew a backdrop.
   rectangle in the window's pixels and that rectangle mapped back onto the
   canvas.
 
+## The game's main menu's LIBRARY and SETTINGS
+
+While Menu style is Classic, MAINMENU.GUI, the game's own main menu, has
+two buttons more, LIBRARY and SETTINGS, in its own look
+(`Runtime::add_main_menu_entries`, `runtime_main_menu.cpp`).
+
+- **What they are.** Records of MAINMENU.GUI, copies of SINGLE and INTRO:
+  LIBRARY stands above SINGLE and SETTINGS above INTRO, one button's step
+  (SINGLE to MULTI) higher, with the game's button art, font, hover and
+  press. Each stands on a copy of its button's plate from the menu's
+  picture, the plate's 10 columns left and 9 right of the button and 7
+  rows above it and 6 below; the pipes beside the plate are not copied.
+  Their captions come from the interface catalogue; their quick keys are
+  L and T. Automation lists them as `LIBRARY` and `SETTINGS`, as the
+  game's own buttons are listed.
+- **What they do.** A press on LIBRARY opens the Library on Active and a
+  press on SETTINGS opens Settings (`Runtime::activate_main_menu_entry`),
+  both as Open Annihilation's Library and Settings screens over the whole
+  window (`Runtime::main_menu_opens_oa_screens`). The menu handler of the
+  game never sees them. Cmd+, (Ctrl+, elsewhere) opens Settings as well.
+- **When they are added.** Each time MAINMENU.GUI loads, its language
+  changes included, unless the run takes the game's own menus
+  (`--classic-main-menu`), an extension's overlay stands over the main
+  menu, or MAINMENU.GUI has no SINGLE or INTRO, already has a record of
+  either name, or has no room above them. Without them the main menu
+  keeps the Library and Settings buttons in its corner
+  (`EngineSettingsMenuHost`), which open the same screens, or the Library
+  and Settings in their own looks under `--classic-main-menu`. While Menu
+  style is Open Annihilation, Open Annihilation's main menu covers them.
+- **Limitations.** Their plates join none of the picture's pipes.
+
 ## Open Annihilation's main menu
 
 The main menu and the Single Player menu are both column menus
@@ -582,8 +613,8 @@ them.
   dialog open (`Runtime::oa_menus_chosen_`), no package owns the frame, no
   add-on's overlay stands over the menu and no message box of the game's
   shows: those boxes are drawn in the front end's picture, so the menu
-  steps aside while one is open. MAINMENU.GUI's Library and Settings
-  buttons neither show nor take input under it. Menu style Classic, the
+  steps aside while one is open. MAINMENU.GUI's LIBRARY and SETTINGS,
+  or its corner buttons, neither show nor take input under it. Menu style Classic, the
   default, and `--classic-main-menu` keep the game's own menu, and so does
   every check and every unattended run, which drive MAINMENU.GUI's buttons
   where 3.1c has them.
@@ -613,8 +644,8 @@ them.
   frame by frame, nor while the frame statistics show
   (`Runtime::quiet_frames_allowed`): those present every frame and draw the
   cursor in it.
-- **Limitations.** The first-run setup's coach marks still point at the
-  corners where MAINMENU.GUI's Library and Settings buttons stand. The
+- **Limitations.** The first-run setup's coach marks still point at
+  MAINMENU.GUI's LIBRARY and SETTINGS, or at its corner buttons. The
   captions are drawn in the dialog's fonts, not the title's.
 
 
@@ -941,17 +972,17 @@ which rises over it (`Runtime::draw_selection_bar`).
 
 ## Open Annihilation's Settings screen
 
-While Open Annihilation's main menu shows, the main menu's SETTINGS, its
-Settings button and Cmd+, (Ctrl+, elsewhere) open the settings dialog in a
-look of its own, and so does the Multiplayer screen's OPTIONS over
+On the main menu, Open Annihilation's or the game's, the main menu's
+SETTINGS and Cmd+, (Ctrl+, elsewhere) open the settings dialog in a look of
+its own, and so does the Multiplayer screen's OPTIONS over
 SELPROV.GUI, where the screen stays open until the game leaves SELPROV.GUI (`Runtime::push_settings_menu_screen`,
 `runtime_settings_menu.cpp`): one screen, `settings` like the dialog's
 (`settings_menu.hpp`, `settings_menu.cpp`), modal over the whole window on
 the menus' art and steel. Under a smaller OPEN ANNIHILATION title and a
 SETTINGS heading it has a CATEGORIES panel, the chosen category's panel and
 a DETAILS panel, then RESTORE DEFAULTS and UNDO on the left, CANCEL and OK
-on the right, and the version plate. With Menu style Classic or
-`--classic-main-menu`, and in a match, the dialog shows in its own look as before.
+on the right, and the version plate. With `--classic-main-menu`, and in a
+match, the dialog shows in its own look as before.
 
 - **Categories.** Sound, Music, Graphics and Game Speeds, the game's own
   options, then Controls, Interface, Language & Text and Engine Limits,
@@ -1018,16 +1049,16 @@ on the right, and the version plate. With Menu style Classic or
 
 ## Open Annihilation's Library screen
 
-While Open Annihilation's main menu shows, the Library opens in a look of
-its own (`Runtime::push_library_menu_screen`, `runtime_library_menu.cpp`):
+On the main menu, Open Annihilation's or the game's, the Library opens in
+a look of its own (`Runtime::push_library_menu_screen`, `runtime_library_menu.cpp`):
 one screen named `library`, as the Library's own (`library_menu.hpp`,
 `library_menu.cpp`), modal over the whole window on the menus' art and
 steel. Under a smaller OPEN ANNIHILATION title and a LIBRARY heading, with
 the refresh button at the heading's right, it has a LIBRARY panel of tabs,
 the chosen tab's panel and a DETAILS panel, then the tab's button on the
 left (UPDATE ALL, or ADD REGISTRY… on Registries), SETTINGS and CLOSE on
-the right, and the version plate. With Menu style Classic or
-`--classic-main-menu` the Library shows in its own look as before (`Runtime::LibraryScreen`).
+the right, and the version plate. With `--classic-main-menu` the Library
+shows in its own look as before (`Runtime::LibraryScreen`).
 
 - **Tabs.** Active, then under a divider Mods, Maps and Updates, then
   under another Registries, each with a small picture and its count; an
@@ -1109,9 +1140,9 @@ centred in the window at its scale. Its model, its screen's state and its feed a
 the host's (`Runtime::LibraryHost`, made on first use, joined as the
 runtime goes).
 
-- **How it opens.** The main menu's OA button opens it
-  (`Runtime::open_library`) when a press is released over it, on Active,
-  with the button's sound;
+- **How it opens.** MAINMENU.GUI's LIBRARY, or the main menu's OA button
+  where LIBRARY is not added, opens it (`Runtime::open_library`) when a
+  press is released over it, on Active, with the button's sound;
   Settings › Downloads' REGISTRIES IN THE LIBRARY… opens it on Registries
   over Settings (`DialogAction::open_library`). It opens only where the
   settings do: on the main menu, never over a message box, a frame a
@@ -2764,7 +2795,8 @@ hosts them on the OA layer.
   `Runtime::SettingsScreen` in `oa_layer.cpp`, on the main menu and in a
   match. `engine_settings_menu_host.hpp` and
   `runtime_engine_settings_menu.cpp` hold the main menu's OA button and
-  Settings button, an overlay at the picture's bottom-right corner (its
+  Settings button, while MAINMENU.GUI has no LIBRARY and SETTINGS of its
+  own, an overlay at the picture's bottom-right corner (its
   top-right corner while an extension's overlay stands over the main menu)
   under the extensions' overlays, drawn into the main menu's picture: the
   Settings button in the corner, showing the settings icon

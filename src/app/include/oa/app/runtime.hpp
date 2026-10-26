@@ -1098,6 +1098,11 @@ class Runtime final : public menu::Host,
     /// @return true while it covers it
     [[nodiscard]] bool briefing_menu_covers();
 
+    /// The record names of the LIBRARY and SETTINGS buttons MAINMENU.GUI is
+    /// given (add_main_menu_entries).
+    static constexpr std::string_view main_menu_library_record = "LIBRARY";
+    static constexpr std::string_view main_menu_settings_record = "SETTINGS";
+
   private:
 
     /// Runs one pass of the idle loop.
@@ -5521,6 +5526,30 @@ class Runtime final : public menu::Host,
     ///
     /// @return true while it is
     [[nodiscard]] bool oa_main_menu_shown();
+
+    /// Adds MAINMENU.GUI's LIBRARY and SETTINGS buttons as the main menu
+    /// loads: copies of SINGLE and INTRO, each one button's step above the
+    /// button it copies, on a copy of that button's plate from the menu's
+    /// picture (main_menu_entries_). Not with `--classic-main-menu`, under
+    /// an extension's overlay, or on a MAINMENU.GUI without SINGLE and INTRO
+    /// or without room above them; the main menu then keeps its corner
+    /// buttons (EngineSettingsMenuHost).
+    void add_main_menu_entries();
+
+    /// Opens what MAINMENU.GUI's LIBRARY or SETTINGS button opens when the
+    /// selected record is one of them.
+    ///
+    /// @return true when it was one of them
+    bool activate_main_menu_entry();
+
+    /// Tells whether Settings and the Library, opened on the main menu, show
+    /// as Open Annihilation's Settings and Library screens: always over
+    /// Open Annihilation's main menu, and over the game's while the run
+    /// does not take the game's own menus (Options::classic_main_menu), no
+    /// package owns the frame and the OA layer has fonts.
+    ///
+    /// @return true while they do
+    [[nodiscard]] bool main_menu_opens_oa_screens();
 
     /// Tells whether Open Annihilation's Single Player menu is on the OA
     /// layer, covering SINGLE.GUI.
@@ -16259,6 +16288,9 @@ class Runtime final : public menu::Host,
     // settings dialog open (keep_main_menu_screen): the menus follow a change
     // of the setting from there, never under the dialog.
     bool oa_menus_chosen_ = false;
+    // MAINMENU.GUI as loaded now holds the LIBRARY and SETTINGS buttons
+    // add_main_menu_entries adds.
+    bool main_menu_entries_ = false;
     // What Open Annihilation's Multiplayer screen keeps while it steps
     // aside: the address typed, whether it was first read from the stored
     // one, and how far TCP.GUI is in taking it.
