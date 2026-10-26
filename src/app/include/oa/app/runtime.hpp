@@ -1400,10 +1400,9 @@ class Runtime final : public menu::Host,
     /// It shows where the game draws no cursor of its own: without the game's
     /// cursors, while the application is inactive, and while a screen that
     /// the system's pointer drives is open over the game (the Game files
-    /// screen). Everywhere else, in the game's own menus, dialogs and message
-    /// boxes, the game draws its cursor and the system's pointer is hidden.
-    /// Over Open Annihilation's main menu and in a match the system's pointer
-    /// shows the game's cursor (show_system_cursor).
+    /// screen). Everywhere else the system's pointer shows the game's cursor
+    /// (show_system_cursor), or, where it cannot, the game draws its cursor
+    /// and the system's pointer is hidden.
     ///
     /// @return true where the system's pointer is to show
     [[nodiscard]] bool system_pointer_wanted() const;
@@ -11579,11 +11578,18 @@ class Runtime final : public menu::Host,
     /// @return true when it may
     [[nodiscard]] bool quiet_frames_allowed() const;
 
+    /// Tells whether the game's cursor may show as the system's pointer:
+    /// not while the cursor is hidden, lifted by touch, a middle-click pan's
+    /// or left out of the frame, nor while quiet frames are not allowed.
+    ///
+    /// @return true when it may
+    [[nodiscard]] bool system_cursor_may_show() const;
+
     /// Shows the game's cursor as the system's pointer over Open
-    /// Annihilation's main menu and over a match's layers, enlarged as the
-    /// picture is, so that the pointer moves without a frame being drawn. Not while the cursor is
-    /// hidden, lifted by touch, a middle-click pan's or left out of the
-    /// frame, nor while quiet frames are not allowed.
+    /// Annihilation's main menu, over the game's own menus
+    /// (front_end_system_cursor_) and over a match's layers, enlarged as
+    /// the picture is, so that the pointer moves without a frame being
+    /// drawn. Not where system_cursor_may_show says no.
     ///
     /// @param area where the picture lies in the window, in window pixels
     /// @param picture_width the picture's width, in its pixels
@@ -19163,14 +19169,18 @@ class Runtime final : public menu::Host,
         SDL_Cursor* cursor{};                   ///< the system's pointer
     };
 
-    /// The game's cursors made as the system's pointer over Open
-    /// Annihilation's main menu and a match (show_system_cursor), at
+    /// The game's cursors made as the system's pointer (show_system_cursor), at
     /// system_cursor_scale_ and the display gamma system_cursor_gamma_.
     std::vector<SystemCursor> system_cursors_{};
     float system_cursor_scale_ = 0.0F;             ///< the scale system_cursors_ were made at
     std::array<uint8_t, 256> system_cursor_gamma_{}; ///< the gamma system_cursors_ were made at
     /// The system's pointer shows the game's cursor (show_system_cursor).
     bool system_cursor_shown_ = false;
+    /// This frame of the game's own menus left the cursor out of its
+    /// picture for the system's pointer to show (tick_and_draw_cursor);
+    /// present_front_end draws it above the picture where the system
+    /// cannot.
+    bool front_end_system_cursor_ = false;
     /// The front end was presented with Open Annihilation's main menu
     /// covering its picture this frame (present_covered_front_end).
     bool covered_front_end_ = false;

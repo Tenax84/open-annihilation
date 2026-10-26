@@ -1353,16 +1353,25 @@ void Runtime::render() {
     if (!covered_front_end_)
         covered_shown_.reset();
     // The match's layers show the cursor as the system's pointer too
-    // (finish_match_layers); any other frame draws it.
+    // (finish_match_layers), and so do the game's own menus where it may
+    // show (tick_and_draw_cursor); any other frame draws it.
     const bool match_layers = screen_ == Screen::match && match_use_layers_;
-    if (!covered_front_end_ && !match_layers &&
+    const bool menus_may_use_system_cursor =
+        screen_ != Screen::match && screen_ != Screen::loading && system_cursor_may_show();
+    if (!covered_front_end_ && !match_layers && !menus_may_use_system_cursor &&
         (system_cursor_shown_ || !system_cursors_.empty()))
         release_system_cursor();
+    front_end_system_cursor_ = false;
     const auto compose_start = std::chrono::steady_clock::now();
     if (covered_front_end_)
         tick_and_draw_cursor();
     else
         rebuild_surface();
+    // A frame of the game's menus that drew its cursor, or none, leaves the
+    // system's pointer to the game.
+    if (!covered_front_end_ && !match_layers && !front_end_system_cursor_ &&
+        (system_cursor_shown_ || !system_cursors_.empty()))
+        release_system_cursor();
     const auto composed = elapsed_since(compose_start);
     phase_times_.compose += composed;
     frame_pacing::note_frame_measure(
@@ -1490,6 +1499,11 @@ void Runtime::present_front_end() {
     }
     if (!drawn)
         draw_frame(sdl_.renderer, frontend_texture_, standard_mode);
+    // The cursor as the system's pointer, as large as the picture's pixels
+    // are in the window's, so that it moves between frames.
+    // tick_and_draw_cursor left it out of the picture for it.
+    const bool system_cursor =
+        front_end_system_cursor_ && show_system_cursor(sdl_places ? reckoned : wanted, frame_w);
     // The icons go over the scaled picture and under the screens, which cover
     // the buttons while a dialog is open.
     if (sharp_menu_buttons)
@@ -1511,8 +1525,11 @@ void Runtime::present_front_end() {
             if (SDL_GetRenderLogicalPresentationRect(sdl_.renderer, &picture_area))
                 oa_layer().present(&picture_area);
         }
-        present_software_cursor(false);
     }
+    // A cursor left out of the picture that the system's pointer does not
+    // show is drawn above it.
+    if (front_end_system_cursor_ ? !system_cursor : oa_layer().shows(false))
+        present_software_cursor(false);
     capture_render_target();
     if (render_fault_due(RenderFaultPoint::present))
         throw PresentError("injected present error");
@@ -1626,11 +1643,14 @@ bool Runtime::quiet_frames_allowed() const {
            director_ == nullptr && !video_capture_ && !frame_run_clock_ns_ && !frame_stats_shown_;
 }
 
+bool Runtime::system_cursor_may_show() const {
+    return quiet_frames_allowed() && cursors_loaded_ && cursor_image_ != nullptr &&
+           !frame_without_cursor_ && !system_pointer_screen_open_ && application_active_ &&
+           !middle_pan_shows_direction() && !touch_cursor().replaces_pointer;
+}
+
 bool Runtime::show_system_cursor(const SDL_FRect& area, int picture_width) {
-    const bool wanted = quiet_frames_allowed() && cursors_loaded_ && cursor_image_ != nullptr &&
-                        !frame_without_cursor_ && !system_pointer_screen_open_ &&
-                        application_active_ && !middle_pan_shows_direction() &&
-                        !touch_cursor().replaces_pointer && picture_width > 0 && area.w > 0.0F;
+    const bool wanted = system_cursor_may_show() && picture_width > 0 && area.w > 0.0F;
     if (!wanted) {
         if (system_cursor_shown_ || !system_cursors_.empty())
             release_system_cursor();
