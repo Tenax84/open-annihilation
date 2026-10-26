@@ -9,8 +9,12 @@ rem older executable. Arguments are passed to open-annihilation unchanged.
 rem
 rem Environment: OA_BUILD_TYPE (default: Release), OA_BUILD_DIR (default:
 rem build-<type>, build for Debug, the folders run.sh uses), OA_BUILD_JOBS
-rem (default: 6), OA_GAME_DIR (the installation; without it the game uses the
-rem folder chosen before, or asks for one).
+rem (default: every processor), OA_GAME_DIR (the installation; without it the
+rem game uses the folder chosen before, or asks for one).
+rem
+rem The game is built without its self-checks (OA_SELF_CHECKS=OFF), as the
+rem release packages are: the --check-* options are left out, so the build
+rem compiles less.
 setlocal EnableExtensions
 
 set "repo_dir=%~dp0"
@@ -18,6 +22,7 @@ if "%repo_dir:~-1%"=="\" set "repo_dir=%repo_dir:~0,-1%"
 if not defined OA_BUILD_TYPE set "OA_BUILD_TYPE=Release"
 if not defined OA_BUILD_DIR set "OA_BUILD_DIR=%repo_dir%\build-%OA_BUILD_TYPE%"
 if /i "%OA_BUILD_TYPE%"=="Debug" if "%OA_BUILD_DIR%"=="%repo_dir%\build-Debug" set "OA_BUILD_DIR=%repo_dir%\build"
+if not defined OA_BUILD_JOBS set "OA_BUILD_JOBS=%NUMBER_OF_PROCESSORS%"
 if not defined OA_BUILD_JOBS set "OA_BUILD_JOBS=6"
 set "build_dir=%OA_BUILD_DIR%"
 
@@ -46,8 +51,15 @@ call "%vs_dir%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
 :have_compiler
 
 rem A build tree is configured once; afterwards the build reruns CMake by
-rem itself when a CMakeLists.txt or .cmake file changes.
-if exist "%build_dir%\CMakeCache.txt" goto build
+rem itself when a CMakeLists.txt or .cmake file changes. A tree configured
+rem with the self-checks is configured again without them.
+if not exist "%build_dir%\CMakeCache.txt" goto configure
+findstr /b /c:"OA_SELF_CHECKS:BOOL=OFF" "%build_dir%\CMakeCache.txt" >nul && goto build
+echo Configuring %build_dir% without the self-checks...
+cmake -S "%repo_dir%" -B "%build_dir%" -DOA_SELF_CHECKS=OFF || exit /b 1
+goto build
+
+:configure
 set "sdl_prefix=%repo_dir%\local\deps\sdl-install"
 rem SDL installs its package file under cmake on Windows, lib\cmake elsewhere.
 set "have_sdl="
@@ -64,7 +76,7 @@ if not exist "%repo_dir%\local\deps\text-fonts\DejaVuSans.ttf" (
 set "prefix_path=%sdl_prefix%;%repo_dir%\local\deps\zlib-install"
 echo Configuring %build_dir%...
 cmake -S "%repo_dir%" -B "%build_dir%" -G Ninja "-DCMAKE_BUILD_TYPE=%OA_BUILD_TYPE%" ^
-    -DOA_BUILD_PLATFORM=ON -DOA_BUILD_INTRO_PLAYER=ON "-DCMAKE_PREFIX_PATH=%prefix_path%" || exit /b 1
+    -DOA_BUILD_PLATFORM=ON -DOA_BUILD_INTRO_PLAYER=ON -DOA_SELF_CHECKS=OFF "-DCMAKE_PREFIX_PATH=%prefix_path%" || exit /b 1
 
 :build
 echo Building current native code in %build_dir%...
