@@ -18,6 +18,7 @@
 #include "library_menu.hpp"
 #include "menu_paint.hpp"
 #include "oa_layer.hpp"
+#include "runtime_game_menu_art.hpp"
 
 #include "oa/app/runtime.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
@@ -334,9 +335,6 @@ struct Runtime::LibraryMenuHost {
             if (!library::can_check_now(model))
                 return false;
             result.action = library::Action::check_now;
-            return runtime_.library_act(result);
-        case LibraryMenuCommand::settings:
-            result.action = library::Action::settings;
             return runtime_.library_act(result);
         case LibraryMenuCommand::close:
             result.action = library::Action::close;
@@ -1062,8 +1060,13 @@ void Runtime::push_library_menu_screen() {
     actions.press = [host](const LibraryMenuPress& asked) { return host->press(asked); };
     actions.viewed = [host](const LibraryMenuView& view) { host->viewed(view); };
     actions.closed = [host] { host->closed(); };
+    // Over the game's own main menu the screen looks as the game's menus;
+    // over Open Annihilation's menus as they do.
+    std::optional<GameMenuArt> game_art;
+    if (screen_ == Screen::main_menu && !oa_main_menu_shown())
+        game_art = read_game_menu_art(assets_, "LIBRARY", "library");
     oa_layer().push(make_library_menu(
-        library_screen_name, [host] { return host->facts(); }, std::move(actions)
+        library_screen_name, [host] { return host->facts(); }, std::move(actions), std::move(game_art)
     ));
 }
 

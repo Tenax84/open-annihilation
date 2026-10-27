@@ -19,6 +19,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -121,6 +123,11 @@ constexpr kit::Colour note_colour{150, 152, 144};        ///< the details' note
 constexpr kit::Colour lock_colour{232, 164, 52};         ///< a lock's reason, amber
 /// How strongly the row under the pointer is lit amber, in 256ths.
 constexpr uint32_t row_light_opacity = 34;
+/// The shade over the game's art of what cannot be changed, and how much of it.
+constexpr kit::Colour grayed_colour{0, 0, 0};
+constexpr uint32_t grayed_opacity = 128;
+/// A category's picture on the game's button: dark, as its bevel's shade.
+constexpr kit::Colour game_icon_colour{40, 44, 40};
 
 /// What a press can reach.
 enum class Part : uint8_t {
@@ -196,6 +203,7 @@ constexpr Part footer_part(Footer footer) noexcept {
 
 /// Where the screen's fixed parts lie, in its points.
 struct SettingsLayout {
+    double unit{};                                   ///< the points a row of the 1080-row window takes
     kit::Rect background{};                          ///< the picture, cut by the screen's edges
     kit::Rect title{};                               ///< the title
     kit::Rect heading{};                             ///< the heading
@@ -245,15 +253,17 @@ struct SettingsLayout {
 /// @param width the screen's width, in points
 /// @param height the screen's height, in points
 /// @param title_size the title picture's width and height, in pixels
+/// @param largest_unit the most points a row of the 1080-row window takes
 /// @return where they lie
-SettingsLayout lay_out_settings_menu(int32_t width, int32_t height, kit::Point title_size) {
+SettingsLayout lay_out_settings_menu(int32_t width, int32_t height, kit::Point title_size, double largest_unit) {
     SettingsLayout placed;
     const double columns = std::max(width, 1);
     const double rows = std::max(height, 1);
     // A point is this many rows of the 1080-row window; a window narrower
     // than design_least_columns of them takes a smaller one, centred down.
-    const double unit = std::min(rows / design_rows, columns / design_least_columns);
+    const double unit = std::min({rows / design_rows, columns / design_least_columns, largest_unit});
     const double top = (rows - design_rows * unit) / 2.0;
+    placed.unit = unit;
     const double middle = columns / 2.0;
     const auto across = [&](double design) { return nearest(design * unit); };
     const auto down = [&](double design) { return nearest(top + design * unit); };
@@ -361,6 +371,47 @@ SettingsLayout lay_out_settings_menu(int32_t width, int32_t height, kit::Point t
     placed.plate_height = std::max(across(plate_rows), 1);
     placed.plate_margin = across(plate_margin_columns);
     return placed;
+}
+
+/// How many columns of each end of the game's level bar its frame takes up:
+/// its rim and the narrowing round its rod. The knob stays off them.
+constexpr int32_t level_end_rim = 6;
+
+/// Gives the four buttons the shape of the game's buttons on their plates:
+/// as high as they are, each as wide as its picture is for that height, the
+/// first two from the left, the last two from the right.
+///
+/// @param[in,out] buttons the buttons, in Footer's order
+/// @param art the game's buttons, in Footer's order, up and held
+/// @param gap between two buttons of a side
+void shape_game_buttons(
+    std::array<kit::Rect, footer_count>& buttons,
+    const std::array<std::array<WindowIcon, 2>, 4>& art,
+    int32_t gap
+) {
+    const kit::Rect& first = buttons[static_cast<std::size_t>(Footer::restore)];
+    const kit::Rect& last = buttons[static_cast<std::size_t>(Footer::ok)];
+    const int32_t left = first.x;
+    const int32_t right = last.x + last.width;
+    std::array<int32_t, footer_count> widths{};
+    for (std::size_t footer = 0; footer < footer_count; ++footer) {
+        const WindowIcon& up = art[footer][0];
+        widths[footer] = up.height == 0 ? buttons[footer].width
+                                        : nearest(static_cast<double>(buttons[footer].height) *
+                                                  up.width / up.height);
+    }
+    const auto at = [&](Footer footer) -> kit::Rect& {
+        return buttons[static_cast<std::size_t>(footer)];
+    };
+    const auto wide = [&](Footer footer) { return widths[static_cast<std::size_t>(footer)]; };
+    at(Footer::restore).x = left;
+    at(Footer::restore).width = wide(Footer::restore);
+    at(Footer::undo).x = left + wide(Footer::restore) + gap;
+    at(Footer::undo).width = wide(Footer::undo);
+    at(Footer::ok).x = right - wide(Footer::ok);
+    at(Footer::ok).width = wide(Footer::ok);
+    at(Footer::cancel).x = right - wide(Footer::ok) - gap - wide(Footer::cancel);
+    at(Footer::cancel).width = wide(Footer::cancel);
 }
 
 /// Draws a category's picture: a small line drawing in one colour.
@@ -525,7 +576,8 @@ void draw_padlock(const kit::Canvas& canvas, const kit::Rect& box, kit::Colour i
 /// The Settings screen as a screen of the OA layer.
 ///
 /// Its points are the layer's: one point is the view's scale in window
-/// pixels, from the room's top left corner, and the screen covers the room.
+/// pixels, a pixel over the game's picture, from the room's top left
+/// corner, and the screen covers the room.
 class SettingsMenuScreen final : public LayerScreen {
   public:
 
@@ -534,12 +586,17 @@ class SettingsMenuScreen final : public LayerScreen {
     /// @param shows tells whether the screen shows
     /// @param facts reads what the settings show now
     /// @param actions what its presses do
+    /// @param game_art the game's art it is drawn with; none for the main menu's
     SettingsMenuScreen(
         std::function<bool()> shows,
         std::function<SettingsMenuFacts()> facts,
-        SettingsMenuActions actions
+        SettingsMenuActions actions,
+        std::optional<SettingsMenuGameArt> game_art
     )
-        : shows_(std::move(shows)), facts_(std::move(facts)), actions_(std::move(actions)) {
+        : shows_(std::move(shows)), facts_(std::move(facts)), actions_(std::move(actions)),
+          painter_(game_art ? std::optional<GameMenuArt>(std::move(game_art->common)) : std::nullopt) {
+        if (game_art)
+            game_buttons_ = std::move(game_art->buttons);
         facts_now_ = facts_();
     }
 
@@ -548,15 +605,16 @@ class SettingsMenuScreen final : public LayerScreen {
     /// @return settings_menu_screen_name
     [[nodiscard]] std::string_view name() const override { return settings_menu_screen_name; }
 
-    /// Returns where the screen shows: the whole room, at the view's scale;
-    /// nowhere in a match.
+    /// Returns where the screen shows: the whole room, at the view's scale,
+    /// or at the window's own pixels over the game's picture; nowhere in a
+    /// match.
     ///
     /// @param placed_on what the screen is placed on
     /// @return its place
     [[nodiscard]] LayerPlacement placement(const LayerView& placed_on) const override {
         if (placed_on.match || placed_on.room.width <= 0 || placed_on.room.height <= 0)
             return {};
-        const int32_t percent = std::max(placed_on.scale_percent, int32_t{100});
+        const int32_t percent = percent_of(placed_on);
         const kit::Point size = points_of(placed_on);
         const kit::Rect at = kit::to_canvas({0, 0, size.x, size.y}, percent);
         return {{placed_on.room.x, placed_on.room.y, at.width, at.height}, size.x, size.y, percent};
@@ -572,15 +630,23 @@ class SettingsMenuScreen final : public LayerScreen {
     /// @return false
     [[nodiscard]] bool backdrop() const override { return false; }
 
-    /// Draws the background, the title, the heading, the three panels, the
-    /// buttons and the version plate.
+    /// Draws the background, the title and the heading (the game's title
+    /// alone over the game's picture), the three panels, the buttons and
+    /// the version plate.
     ///
     /// @param canvas where it draws, at the layer's scale
     void draw(const kit::Canvas& canvas) const override {
         const MenuArt& art = menu_art();
-        draw_backdrop(canvas, size_, layout_.background);
-        fitted_.draw(canvas, layout_.title, art.title);
-        draw_ruled_heading(canvas, layout_.heading, worded("SETTINGS"), layout_.heading_gap);
+        // Over the game's picture the game's title stands in place of the
+        // title and the heading, its pixels unsmoothed as the game's own
+        // OPTIONS.
+        if (painter_.shown()) {
+            painter_.draw_background(canvas);
+        } else {
+            draw_backdrop(canvas, size_, layout_.background);
+            fitted_.draw(canvas, layout_.title, art.title);
+            draw_ruled_heading(canvas, layout_.heading, worded("SETTINGS"), layout_.heading_gap);
+        }
         draw_categories(canvas);
         draw_center(canvas);
         draw_details(canvas);
@@ -607,11 +673,27 @@ class SettingsMenuScreen final : public LayerScreen {
             return;
         size_ = size;
         const MenuArt& art = menu_art();
+        // Over the game's art the parts are laid out on its stage, the room
+        // round it the picture's alone.
+        const kit::Rect stage = game_menu_stage(size_.x, size_.y);
         layout_ = lay_out_settings_menu(
             size_.x,
             size_.y,
-            {static_cast<int32_t>(art.title.width), static_cast<int32_t>(art.title.height)}
+            {static_cast<int32_t>(art.title.width), static_cast<int32_t>(art.title.height)},
+            painter_.shown() ? std::min(stage.height / design_rows, stage.width / design_least_columns)
+                             : std::numeric_limits<double>::infinity()
         );
+        painter_.lay_out(size_.x, size_.y, layout_.unit);
+        if (painter_.shown() && game_buttons_) {
+            layout_.background = painter_.background();
+            shape_game_buttons(
+                layout_.buttons,
+                *game_buttons_,
+                layout_.buttons[static_cast<std::size_t>(Footer::undo)].x -
+                    layout_.buttons[static_cast<std::size_t>(Footer::restore)].x -
+                    layout_.buttons[static_cast<std::size_t>(Footer::restore)].width
+            );
+        }
         laid_out_ = true;
         fitted_.clear();
         place_content();
@@ -925,13 +1007,24 @@ class SettingsMenuScreen final : public LayerScreen {
 
   private:
 
+    /// Returns the window pixels a point takes, in percent: the view's, or
+    /// one over the game's picture, as the game's art is drawn in whole
+    /// pixels of the window and scaled with the window rather than with
+    /// Interface size.
+    ///
+    /// @param placed_on what the screen is placed on
+    /// @return the percent
+    [[nodiscard]] int32_t percent_of(const LayerView& placed_on) const noexcept {
+        return painter_.shown() ? 100 : std::max(placed_on.scale_percent, int32_t{100});
+    }
+
     /// Returns the room's size in the view's points, rounded up, so that the
     /// screen covers every pixel of the room.
     ///
     /// @param placed_on what the screen is placed on
     /// @return the width and height, in points
-    [[nodiscard]] static kit::Point points_of(const LayerView& placed_on) noexcept {
-        const int64_t percent = std::max(placed_on.scale_percent, int32_t{100});
+    [[nodiscard]] kit::Point points_of(const LayerView& placed_on) const noexcept {
+        const int64_t percent = percent_of(placed_on);
         const auto up = [percent](int32_t pixels) {
             return static_cast<int32_t>(
                 (static_cast<int64_t>(pixels) * 100 + percent - 1) / percent
@@ -1210,6 +1303,21 @@ class SettingsMenuScreen final : public LayerScreen {
         return {area.x, area.y, std::max(area.width - layout_.value - layout_.option_gap, 1), area.height};
     }
 
+    /// Returns where a slider's knob's middle goes: from its first stop, as
+    /// many points on as reach its last. The game's knob stays inside the
+    /// frame of the bar's two ends (level_end_rim).
+    ///
+    /// @param track the track (track_rect)
+    /// @return the first stop's column and the columns on to the last
+    [[nodiscard]] std::pair<int32_t, int32_t> knob_travel(const kit::Rect& track) const noexcept {
+        if (!painter_.content())
+            return {track.x + layout_.knob / 2, std::max(track.width - layout_.knob, 1)};
+        const double scale = piece_scale(track.height, slider_piece(SliderPiece::level_start).height);
+        const int32_t rim = nearest(scale * level_end_rim);
+        const int32_t knob = piece_place({0, 0}, slider_piece(SliderPiece::level_knob), scale).width;
+        return {track.x + rim + knob / 2, std::max(track.width - 2 * rim - knob, 1)};
+    }
+
     /// Returns the column of a slider's stop along its track.
     ///
     /// @param track the track (track_rect)
@@ -1217,8 +1325,7 @@ class SettingsMenuScreen final : public LayerScreen {
     /// @param count how many stops it has
     /// @return the knob's middle
     [[nodiscard]] int32_t stop_column(const kit::Rect& track, int32_t stop, int32_t count) const noexcept {
-        const int32_t from = track.x + layout_.knob / 2;
-        const int32_t reach = std::max(track.width - layout_.knob, 1);
+        const auto [from, reach] = knob_travel(track);
         if (count <= 1)
             return from;
         return from + nearest(static_cast<double>(reach) * std::clamp(stop, 0, count - 1) / (count - 1));
@@ -1451,9 +1558,7 @@ class SettingsMenuScreen final : public LayerScreen {
         const SettingsMenuRow* row = row_of(drag_row_);
         if (row == nullptr || !row->enabled || row->count <= 0 || !actions_.set_stop)
             return;
-        const kit::Rect track = track_rect(drag_row_.section, drag_row_.row);
-        const int32_t from = track.x + layout_.knob / 2;
-        const int32_t reach = std::max(track.width - layout_.knob, 1);
+        const auto [from, reach] = knob_travel(track_rect(drag_row_.section, drag_row_.row));
         const double share = std::clamp(static_cast<double>(at.x - from) / reach, 0.0, 1.0);
         const int32_t stop = row->count > 1 ? nearest(share * (row->count - 1)) : 0;
         if (stop == row->index)
@@ -1525,8 +1630,136 @@ class SettingsMenuScreen final : public LayerScreen {
         return pointed || (focused_ && focused_->section == section && focused_->row == row);
     }
 
-    /// Draws a panel's label on a steel plate set into its frame at its top
-    /// left.
+    /// Returns how many points one of the game's pictures' pixels covers.
+    ///
+    /// @return the points a pixel; 1 without the game's art
+    [[nodiscard]] double picture_scale() const noexcept { return painter_.picture_scale(); }
+
+    /// Returns how wide a text in the game's font is drawn in a box.
+    ///
+    /// @param box the box
+    /// @param text the text
+    /// @return its width, in points
+    [[nodiscard]] int32_t game_text_width(const kit::Rect& box, std::string_view text) const {
+        return painter_.text_width(box, text);
+    }
+
+    /// Draws a text in the game's font (GameMenuPainter::draw_text).
+    ///
+    /// @param canvas where it draws
+    /// @param box the box
+    /// @param text the text
+    /// @param align where the text sits along the box's width
+    /// @param ink its tint
+    /// @param edge how its pixels are drawn
+    void draw_game_text(
+        const kit::Canvas& canvas, const kit::Rect& box, std::string_view text, kit::Align align, Ink ink,
+        TextEdge edge = TextEdge::sharp
+    ) const {
+        painter_.draw_text(canvas, box, text, align, ink, edge);
+    }
+
+    /// Returns one of the game's slider pieces.
+    ///
+    /// @param piece the piece
+    /// @param held the held arrow, the piece after it
+    /// @return the piece
+    [[nodiscard]] const WindowIcon& slider_piece(SliderPiece piece, bool held = false) const {
+        return painter_.slider_piece(piece, held);
+    }
+
+    /// Returns how many points a pixel of the game's slider pieces covers
+    /// where a piece is to fit a room (GameMenuPainter::piece_scale).
+    ///
+    /// @param room the room, in points
+    /// @param pixels the piece's pixels across it
+    /// @return the points a pixel
+    [[nodiscard]] double piece_scale(int32_t room, uint32_t pixels) const noexcept {
+        return painter_.piece_scale(room, pixels);
+    }
+
+    /// Returns where one of the game's slider pieces lies, its top left at a
+    /// point.
+    ///
+    /// @param at the point
+    /// @param piece the piece
+    /// @param scale the points a pixel
+    /// @return its place
+    [[nodiscard]] static kit::Rect piece_place(kit::Point at, const WindowIcon& piece, double scale) noexcept {
+        return GameMenuPainter::piece_place(at, piece, scale);
+    }
+
+    /// Draws the game's level slider: its track, its knob at its stop, its
+    /// value, darkened when it cannot be changed.
+    ///
+    /// @param canvas where it draws
+    /// @param section the row's section
+    /// @param row its place there
+    void draw_game_slider(const kit::Canvas& canvas, std::size_t section, std::size_t row) const {
+        const SettingsMenuRow& shown = facts_now_.sections[section].rows[row];
+        const kit::Rect reach = track_rect(section, row);
+        const WindowIcon& start = slider_piece(SliderPiece::level_start);
+        const WindowIcon& track = slider_piece(SliderPiece::level_track);
+        const WindowIcon& end = slider_piece(SliderPiece::level_end);
+        const WindowIcon& knob = slider_piece(SliderPiece::level_knob);
+        const double scale = piece_scale(reach.height, start.height);
+        const int32_t height = std::max(nearest(scale * start.height), 1);
+        const int32_t top = reach.y + (reach.height - height) / 2;
+        const kit::Rect first = piece_place({reach.x, top}, start, scale);
+        kit::Rect last = piece_place({0, top}, end, scale);
+        last.x = reach.x + reach.width - last.width;
+        const kit::Rect between{first.x + first.width, top, last.x - first.x - first.width, height};
+        const int32_t step = std::max(nearest(scale * track.width), 1);
+        const kit::Canvas along = kit::clipped(canvas, between);
+        for (int32_t x = between.x; x < between.x + between.width; x += step)
+            fitted_.draw(along, {x, top, step, height}, track);
+        fitted_.draw(canvas, first, start);
+        fitted_.draw(canvas, last, end);
+        kit::Rect stop = piece_place({0, 0}, knob, scale);
+        stop.x = stop_column(reach, shown.index, shown.count) - stop.width / 2;
+        stop.y = top + (height - stop.height) / 2;
+        fitted_.draw(canvas, stop, knob);
+        if (!shown.enabled)
+            kit::blend_rect(canvas, {reach.x, top, reach.width, height}, grayed_colour, grayed_opacity);
+        const kit::Rect area = control_rect(section, row);
+        draw_game_text(
+            canvas,
+            {area.x + area.width - layout_.value, area.y, layout_.value, area.height},
+            shown.value,
+            kit::Align::right,
+            shown.enabled ? Ink::plain : Ink::faded
+        );
+    }
+
+    /// Draws the game's scroll bar: its arrows, its track between them and
+    /// its knob where the scroll puts it.
+    ///
+    /// @param canvas where it draws
+    void draw_game_scroll_bar(const kit::Canvas& canvas) const {
+        const auto held = [this](bool up) {
+            const Hit hit{up ? Part::scroll_up : Part::scroll_down, 0, 0, 0};
+            return hovered_ == hit && pressed_ == hit;
+        };
+        painter_.draw_scroll_bar(
+            canvas, layout_.scroll_bar, scroll_arrow_rect(true), scroll_arrow_rect(false), well_rect(),
+            thumb_rect(), held(true), held(false)
+        );
+    }
+
+    /// Draws a panel's frame: the game's, its tube along the panel's edges
+    /// and its corners and bolts past them, on the game's ground, over the
+    /// game's picture; the steel rim otherwise.
+    ///
+    /// @param canvas where it draws
+    /// @param panel the panel
+    void draw_frame(const kit::Canvas& canvas, const kit::Rect& panel) const {
+        if (!painter_.draw_frame(canvas, panel))
+            draw_panel_frame(canvas, panel, layout_.rim);
+    }
+
+    /// Draws a panel's label at its top left: in the game's font,
+    /// unsmoothed, over the game's picture; on a steel plate set into its
+    /// frame otherwise.
     ///
     /// @param canvas where it draws
     /// @param panel the panel
@@ -1534,6 +1767,16 @@ class SettingsMenuScreen final : public LayerScreen {
     void draw_label(const kit::Canvas& canvas, const kit::Rect& panel, std::string_view text) const {
         const int32_t left = panel.x + layout_.rim + layout_.label_left;
         const int32_t reach = panel.x + panel.width - layout_.rim - layout_.inset;
+        if (painter_.content()) {
+            draw_game_text(
+                canvas,
+                {left, panel.y + layout_.label_top, reach - left, layout_.label_height},
+                text,
+                kit::Align::left,
+                Ink::plain
+            );
+            return;
+        }
         const int32_t width = std::min(
             label_plate_width(canvas, text, layout_.label_height, band_tracking), reach - left
         );
@@ -1546,19 +1789,24 @@ class SettingsMenuScreen final : public LayerScreen {
     }
 
     /// Draws the CATEGORIES panel: a plate for each category with its
-    /// picture and its name, the chosen one in amber, and the divider.
+    /// picture and its name, the chosen one marked, and the divider.
     ///
     /// @param canvas where it draws
     void draw_categories(const kit::Canvas& canvas) const {
-        draw_panel_frame(canvas, layout_.categories, layout_.rim);
+        draw_frame(canvas, layout_.categories);
         draw_label(canvas, layout_.categories, worded("CATEGORIES"));
         const kit::Measure regular = [&canvas](std::string_view line) {
             return kit::measure_text(canvas, kit::FontRole::regular, line);
         };
         if (const auto row = divider_row()) {
-            const kit::Rect line{layout_.list.x, *row, layout_.list.width, 1};
-            kit::fill_rect(canvas, line, steel_dark_colour);
-            kit::fill_rect(canvas, {line.x, line.y + 1, line.width, 1}, steel_light_colour);
+            // The game's divider is its frame's tube, repeated across from
+            // the frame's left tube to its right one.
+            if (painter_.draw_rule(canvas, layout_.categories, *row)) {
+            } else {
+                const kit::Rect line{layout_.list.x, *row, layout_.list.width, 1};
+                kit::fill_rect(canvas, line, steel_dark_colour);
+                kit::fill_rect(canvas, {line.x, line.y + 1, line.width, 1}, steel_light_colour);
+            }
         }
         const kit::Canvas inside = kit::clipped(canvas, layout_.list);
         for (std::size_t entry = 0; entry < facts_now_.categories.size(); ++entry) {
@@ -1568,6 +1816,27 @@ class SettingsMenuScreen final : public LayerScreen {
             const Hit hit{Part::category, entry, 0, 0};
             const bool lit = hovered_ == hit;
             const bool held = lit && pressed_ == hit;
+            // The game's button stands held for the chosen category; only
+            // the name under the pointer turns amber. The picture stays dark
+            // on the button's light stone.
+            if (painter_.content()) {
+                painter_.draw_plain_button(inside, plate, chosen || held ? 1 : 0);
+                const int32_t icon = std::min(layout_.icon, plate.height - 6);
+                const kit::Rect picture{
+                    plate.x + layout_.icon_gap, plate.y + (plate.height - icon) / 2, icon, icon
+                };
+                draw_icon(inside, picture, category.icon, game_icon_colour);
+                const int32_t text_left = picture.x + picture.width + layout_.icon_gap;
+                draw_game_text(
+                    inside,
+                    {text_left, plate.y, plate.x + plate.width - layout_.icon_gap - text_left, plate.height},
+                    category.name,
+                    kit::Align::left,
+                    lit ? Ink::lit : Ink::plain,
+                    TextEdge::smoothed
+                );
+                continue;
+            }
             draw_steel_button(inside, plate, chosen ? chosen_steel_colour : entry_steel_colour);
             kit::Rect box = plate;
             if (held) {
@@ -1606,7 +1875,7 @@ class SettingsMenuScreen final : public LayerScreen {
     ///
     /// @param canvas where it draws
     void draw_center(const kit::Canvas& canvas) const {
-        draw_panel_frame(canvas, layout_.center, layout_.rim);
+        draw_frame(canvas, layout_.center);
         draw_label(canvas, layout_.center, facts_now_.heading);
         const kit::Canvas view = kit::clipped(canvas, layout_.view);
         if (facts_now_.sections.empty())
@@ -1636,6 +1905,21 @@ class SettingsMenuScreen final : public LayerScreen {
     void draw_strip(const kit::Canvas& canvas, std::size_t section) const {
         const SettingsMenuSection& shown = facts_now_.sections[section];
         const kit::Rect strip = strip_rect(section);
+        // Over the game's art the title and the badge stand in its sunk bar.
+        if (painter_.content()) {
+            painter_.draw_well(canvas, strip);
+            int32_t right = strip.x + strip.width - layout_.row_pad;
+            if (!shown.badge.empty()) {
+                const kit::Rect badge{strip.x, strip.y, right - strip.x, strip.height};
+                draw_game_text(canvas, badge, shown.badge, kit::Align::right, Ink::lit);
+                right -= game_text_width(badge, shown.badge) + layout_.option_gap;
+            }
+            const int32_t left = strip.x + layout_.row_pad;
+            draw_game_text(
+                canvas, {left, strip.y, right - left, strip.height}, shown.title, kit::Align::left, Ink::plain
+            );
+            return;
+        }
         draw_steel_button(canvas, strip, strip_steel_colour);
         const kit::Measure small = [&canvas](std::string_view line) {
             return kit::measure_text(canvas, kit::FontRole::small, line);
@@ -1696,14 +1980,23 @@ class SettingsMenuScreen final : public LayerScreen {
             );
             label_right -= side + layout_.option_gap;
         }
-        outlined_text(
-            canvas,
-            kit::FontRole::regular,
-            kit::fit(shown.label, label_right - label_left, regular),
-            {label_left, whole.y, label_right - label_left, whole.height},
-            kit::Align::left,
-            label_ink
-        );
+        if (painter_.content())
+            draw_game_text(
+                canvas,
+                {label_left, whole.y, label_right - label_left, whole.height},
+                shown.label,
+                kit::Align::left,
+                !shown.enabled ? Ink::faded : lit ? Ink::lit : Ink::plain
+            );
+        else
+            outlined_text(
+                canvas,
+                kit::FontRole::regular,
+                kit::fit(shown.label, label_right - label_left, regular),
+                {label_left, whole.y, label_right - label_left, whole.height},
+                kit::Align::left,
+                label_ink
+            );
         switch (shown.control) {
         case SettingsMenuControl::selector:
             draw_selector(canvas, section, row);
@@ -1715,6 +2008,10 @@ class SettingsMenuScreen final : public LayerScreen {
             draw_buttons(canvas, section, row);
             break;
         case SettingsMenuControl::text: {
+            if (painter_.content()) {
+                draw_game_text(canvas, control, shown.value, kit::Align::right, Ink::plain);
+                break;
+            }
             const kit::Measure small = [&canvas](std::string_view line) {
                 return kit::measure_text(canvas, kit::FontRole::small, line);
             };
@@ -1729,7 +2026,8 @@ class SettingsMenuScreen final : public LayerScreen {
             break;
         }
         }
-        if (lit) {
+        // Over the game's art the light alone shows the row.
+        if (lit && !painter_.content()) {
             draw_glow(canvas, whole, chosen_colour, layout_.glow / 2);
             draw_ring(canvas, whole, 2, chosen_colour);
         }
@@ -1747,6 +2045,19 @@ class SettingsMenuScreen final : public LayerScreen {
         const bool usable = enabled(hit);
         const bool lit = usable && hovered_ == hit;
         const bool held = lit && pressed_ == hit;
+        // The game's arrow, held while it is pressed, darkened when it
+        // cannot be pressed.
+        if (painter_.content()) {
+            const WindowIcon& arrow = slider_piece(left ? SliderPiece::back : SliderPiece::next, held);
+            const double scale = piece_scale(rect.height, arrow.height);
+            kit::Rect place = piece_place({0, 0}, arrow, scale);
+            place.x = rect.x + (rect.width - place.width) / 2;
+            place.y = rect.y + (rect.height - place.height) / 2;
+            fitted_.draw(canvas, place, arrow);
+            if (!usable)
+                kit::blend_rect(canvas, place, grayed_colour, grayed_opacity);
+            return;
+        }
         draw_steel_button(canvas, rect, button_steel_colour);
         if (lit)
             kit::outline_rect(canvas, rect, hover_edge_colour);
@@ -1775,6 +2086,17 @@ class SettingsMenuScreen final : public LayerScreen {
         const kit::Rect value = value_rect(section, row);
         const Hit hit{Part::value, section, row, 0};
         const bool lit = enabled(hit) && hovered_ == hit;
+        if (painter_.content()) {
+            painter_.draw_well(canvas, value);
+            draw_game_text(
+                canvas,
+                {value.x + layout_.option_gap, value.y, value.width - 2 * layout_.option_gap, value.height},
+                shown.value,
+                kit::Align::centre,
+                !shown.enabled ? Ink::faded : lit ? Ink::lit : Ink::plain
+            );
+            return;
+        }
         draw_steel(canvas, value, cell_steel_colour);
         if (lit)
             kit::outline_rect(canvas, value, hover_edge_colour);
@@ -1798,6 +2120,10 @@ class SettingsMenuScreen final : public LayerScreen {
     /// @param section the row's section
     /// @param row its place there
     void draw_slider(const kit::Canvas& canvas, std::size_t section, std::size_t row) const {
+        if (painter_.content()) {
+            draw_game_slider(canvas, section, row);
+            return;
+        }
         const SettingsMenuRow& shown = facts_now_.sections[section].rows[row];
         const kit::Rect reach = track_rect(section, row);
         const Hit hit{Part::track, section, row, 0};
@@ -1853,6 +2179,35 @@ class SettingsMenuScreen final : public LayerScreen {
         const kit::Measure small = [&canvas](std::string_view line) {
             return kit::measure_text(canvas, kit::FontRole::small, line);
         };
+        if (painter_.content()) {
+            if (!shown.value.empty()) {
+                const kit::Rect area = control_rect(section, row);
+                draw_game_text(
+                    canvas,
+                    {area.x, area.y, area.width / 2 - layout_.option_gap, area.height},
+                    shown.value,
+                    kit::Align::right,
+                    Ink::plain
+                );
+            }
+            for (std::size_t at = 0; at < shown.buttons.size(); ++at) {
+                const Hit hit{Part::button, section, row, at};
+                const kit::Rect rect = button_rect(section, row, at);
+                const bool usable = enabled(hit);
+                const bool lit = usable && hovered_ == hit;
+                const bool held = lit && pressed_ == hit;
+                painter_.draw_plain_button(canvas, rect, !usable ? 2 : held ? 1 : 0);
+                draw_game_text(
+                    canvas,
+                    {rect.x + layout_.option_gap, rect.y, rect.width - 2 * layout_.option_gap, rect.height},
+                    shown.buttons[at],
+                    kit::Align::centre,
+                    !usable ? Ink::faded : lit ? Ink::lit : Ink::plain,
+                    TextEdge::smoothed
+                );
+            }
+            return;
+        }
         if (!shown.value.empty()) {
             const kit::Rect area = control_rect(section, row);
             const kit::Rect value{area.x, area.y, area.width / 2 - layout_.option_gap, area.height};
@@ -1894,6 +2249,10 @@ class SettingsMenuScreen final : public LayerScreen {
     ///
     /// @param canvas where it draws
     void draw_scroll_bar(const kit::Canvas& canvas) const {
+        if (painter_.content()) {
+            draw_game_scroll_bar(canvas);
+            return;
+        }
         for (const bool up : {true, false}) {
             const Hit hit{up ? Part::scroll_up : Part::scroll_down, 0, 0, 0};
             const kit::Rect rect = scroll_arrow_rect(up);
@@ -1929,21 +2288,37 @@ class SettingsMenuScreen final : public LayerScreen {
         return shown_row_ ? row_of(*shown_row_) : nullptr;
     }
 
+    /// Returns how many points each pixel of the game's font covers in a
+    /// row's label: the size DETAILS writes in too.
+    ///
+    /// @return the points a pixel
+    [[nodiscard]] int32_t game_text_square() const { return painter_.text_square(layout_.row_height); }
+
     /// Draws the DETAILS panel: the row's label, what it does, why it is
     /// locked, its default and when a change takes effect; without a row,
-    /// the category's name and how to read about a row.
+    /// the category's name and how to read about a row. Over the game's art
+    /// it writes in the game's font, the default in the game's sunk bar.
     ///
     /// @param canvas where it draws
     void draw_details(const kit::Canvas& canvas) const {
-        draw_panel_frame(canvas, layout_.details, layout_.rim);
+        draw_frame(canvas, layout_.details);
         draw_label(canvas, layout_.details, worded("DETAILS"));
         const kit::Rect& about = layout_.about;
-        const kit::Measure regular = [&canvas](std::string_view line) {
+        const int32_t square = painter_.content() ? game_text_square() : 1;
+        const kit::Measure game = painter_.measure(square);
+        const kit::Measure regular = painter_.content() ? game : kit::Measure([&canvas](std::string_view line) {
             return kit::measure_text(canvas, kit::FontRole::regular, line);
-        };
-        const kit::Measure small = [&canvas](std::string_view line) {
+        });
+        const kit::Measure small = painter_.content() ? game : kit::Measure([&canvas](std::string_view line) {
             return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
+        });
+        // Over the game's art each line's box makes the game's font as big
+        // as in a row's label.
+        const int32_t game_line = painter_.content() ? painter_.line_height(square) : 0;
+        const int32_t small_line =
+            painter_.content() ? game_line : kit::smooth_text_points(kit::FontRole::small) + 6;
+        const int32_t regular_line =
+            painter_.content() ? game_line : kit::smooth_text_points(kit::FontRole::regular) + 6;
         const SettingsMenuRow* row = told_row();
         std::string title;
         std::string paragraph;
@@ -1955,8 +2330,6 @@ class SettingsMenuScreen final : public LayerScreen {
                 title = facts_now_.categories[facts_now_.chosen].name;
             paragraph = worded("Point at a setting to read what it does.");
         }
-        const int32_t small_line = kit::smooth_text_points(kit::FontRole::small) + 6;
-        const int32_t regular_line = kit::smooth_text_points(kit::FontRole::regular) + 6;
         int32_t y = about.y;
         kit::WrapRules title_rules;
         title_rules.most_lines = most_title_lines;
@@ -1966,10 +2339,11 @@ class SettingsMenuScreen final : public LayerScreen {
         );
         int32_t line_y = y + (title_height - static_cast<int32_t>(title_lines.size()) * regular_line) / 2;
         for (const std::string& line : title_lines) {
-            outlined_text(
-                canvas, kit::FontRole::regular, line, {about.x, line_y, about.width, regular_line},
-                kit::Align::left, caption_lit_colour
-            );
+            const kit::Rect box{about.x, line_y, about.width, regular_line};
+            if (painter_.content())
+                draw_game_text(canvas, box, line, kit::Align::left, Ink::plain);
+            else
+                outlined_text(canvas, kit::FontRole::regular, line, box, kit::Align::left, caption_lit_colour);
             line_y += regular_line;
         }
         y += title_height + layout_.paragraph_gap;
@@ -1979,25 +2353,26 @@ class SettingsMenuScreen final : public LayerScreen {
         // language's facts stand one to a line.
         kit::WrapRules paragraph_rules;
         paragraph_rules.newlines = true;
-        const auto lines_of = [&](std::string_view text, kit::Colour ink) {
+        const auto lines_of = [&](std::string_view text, kit::Colour ink, Ink game_ink) {
             for (const std::string& line : kit::wrap(text, about.width, small, paragraph_rules)) {
                 if (y + small_line > bottom)
                     return;
-                kit::box_text(
-                    canvas, kit::FontRole::small, line, {about.x, y, about.width, small_line},
-                    kit::Align::left, ink
-                );
+                const kit::Rect box{about.x, y, about.width, small_line};
+                if (painter_.content())
+                    draw_game_text(canvas, box, line, kit::Align::left, game_ink);
+                else
+                    kit::box_text(canvas, kit::FontRole::small, line, box, kit::Align::left, ink);
                 y += small_line;
             }
         };
-        lines_of(paragraph, plate_text_colour);
+        lines_of(paragraph, plate_text_colour, Ink::plain);
         if (row != nullptr && !row->lock.empty()) {
             y += small_line / 2;
-            lines_of(filled(worded("Locked: {reason}"), "{reason}", row->lock), lock_colour);
+            lines_of(filled(worded("Locked: {reason}"), "{reason}", row->lock), lock_colour, Ink::lit);
         }
         if (!facts_now_.notice.empty()) {
             y += small_line / 2;
-            lines_of(facts_now_.notice, lock_colour);
+            lines_of(facts_now_.notice, lock_colour, Ink::lit);
         }
         if (row == nullptr)
             return;
@@ -2006,26 +2381,30 @@ class SettingsMenuScreen final : public LayerScreen {
             about.width, layout_.default_height
         };
         if (!row->default_value.empty()) {
-            kit::fill_rect(canvas, box, box_colour);
-            draw_sunk_edge(canvas, box);
-            kit::box_text(
-                canvas,
-                kit::FontRole::small,
-                kit::fit(filled(worded("Default: {value}"), "{value}", row->default_value), box.width - 2 * layout_.row_pad, small),
-                {box.x + layout_.row_pad, box.y, box.width - 2 * layout_.row_pad, box.height},
-                kit::Align::left,
-                caption_colour
-            );
+            const std::string text = filled(worded("Default: {value}"), "{value}", row->default_value);
+            const kit::Rect inner{box.x + layout_.row_pad, box.y, box.width - 2 * layout_.row_pad, box.height};
+            if (painter_.content()) {
+                painter_.draw_well(canvas, box);
+                draw_game_text(canvas, inner, text, kit::Align::left, Ink::plain);
+            } else {
+                kit::fill_rect(canvas, box, box_colour);
+                draw_sunk_edge(canvas, box);
+                kit::box_text(
+                    canvas, kit::FontRole::small, kit::fit(text, inner.width, small), inner,
+                    kit::Align::left, caption_colour
+                );
+            }
         }
-        if (!row->takes_effect.empty())
-            kit::box_text(
-                canvas,
-                kit::FontRole::small,
-                kit::fit(row->takes_effect, about.width, small),
-                {about.x, box.y + box.height, about.width, layout_.note_height},
-                kit::Align::left,
-                note_colour
-            );
+        if (!row->takes_effect.empty()) {
+            const kit::Rect note{about.x, box.y + box.height, about.width, layout_.note_height};
+            if (painter_.content())
+                draw_game_text(canvas, note, row->takes_effect, kit::Align::left, Ink::faded);
+            else
+                kit::box_text(
+                    canvas, kit::FontRole::small, kit::fit(row->takes_effect, about.width, small), note,
+                    kit::Align::left, note_colour
+                );
+        }
     }
 
     /// Draws one of the four buttons with the main menu's button faces, its
@@ -2040,6 +2419,12 @@ class SettingsMenuScreen final : public LayerScreen {
         const bool held = lit && pressed_ == hit;
         const Face face = held ? Face::pressed : lit ? Face::hover : Face::normal;
         const kit::Rect& rect = layout_.buttons[static_cast<std::size_t>(footer)];
+        // The game's buttons carry their captions, and show no hover: the
+        // pointer over a button leaves it as it is.
+        if (game_buttons_) {
+            fitted_.draw(canvas, rect, (*game_buttons_)[static_cast<std::size_t>(footer)][held ? 1 : 0]);
+            return;
+        }
         fitted_.draw(canvas, rect, art.faces[static_cast<std::size_t>(face)]);
         const std::string text = worded(footer_captions[static_cast<std::size_t>(footer)]);
         kit::Rect box = rect;
@@ -2082,6 +2467,10 @@ class SettingsMenuScreen final : public LayerScreen {
     std::optional<RowAt> focused_{};             ///< the row the keys moved the focus to
     std::optional<RowAt> shown_row_{};           ///< the row DETAILS tells of
     bool closing_{};                             ///< Cancel or OK was pressed
+    /// The Options screen's buttons the four buttons are drawn as, over the
+    /// game's own main menu.
+    std::optional<std::array<std::array<WindowIcon, 2>, 4>> game_buttons_{};
+    GameMenuPainter painter_;                    ///< draws with the game's art, where it is given
     FittedArt fitted_{};                         ///< the title and the faces, filtered
     uint64_t revision_{1};                       ///< counts the changes to what it draws
 };
@@ -2091,10 +2480,11 @@ class SettingsMenuScreen final : public LayerScreen {
 std::unique_ptr<LayerScreen> make_settings_menu(
     std::function<bool()> shows,
     std::function<SettingsMenuFacts()> facts,
-    SettingsMenuActions actions
+    SettingsMenuActions actions,
+    std::optional<SettingsMenuGameArt> game_art
 ) {
     return std::make_unique<SettingsMenuScreen>(
-        std::move(shows), std::move(facts), std::move(actions)
+        std::move(shows), std::move(facts), std::move(actions), std::move(game_art)
     );
 }
 

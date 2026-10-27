@@ -1088,9 +1088,32 @@ one screen named `library`, as the Library's own (`library_menu.hpp`,
 steel. Under a smaller OPEN ANNIHILATION title and a LIBRARY heading, with
 the refresh button at the heading's right, it has a LIBRARY panel of tabs,
 the chosen tab's panel and a DETAILS panel, then the tab's button on the
-left (UPDATE ALL, or ADD REGISTRY… on Registries), SETTINGS and CLOSE on
-the right, and the version plate. With `--classic-main-menu` the Library
+left (UPDATE ALL, or ADD REGISTRY… on Registries), CLOSE on the right, and the version plate. With `--classic-main-menu` the Library
 shows in its own look as before (`Runtime::LibraryScreen`).
+
+Over the game's own main menu the Library, as Settings, is drawn with the
+game's art (`game_menu_art.hpp`, `game_menu_art.cpp`; read by
+`runtime_game_menu_art.cpp`): FRONTBG under a LIBRARY title in the game's
+font with REFRESH right of it, the score board's frame round the panels and
+its tube between the tabs and over the facts, and commongui.gaf's pieces
+within them: plain buttons for the tabs, filters, switches and small
+buttons, held while chosen; the list box for the search, the rows, cards,
+tiles, badges and boxes; the sunk bar for the strips, the foot and the
+pills; the check box's lamp for the expansions and the base games; and its
+scroll bar. A row that can be got shows a green arrow dropping into an
+open steel tray, drawn in the colours of the game's scroll arrows, the
+arrow amber under the pointer. UPDATE ALL and CLOSE stand on the
+Options screen's plates. Every text is in the game's font, amber under the
+pointer and where it warns. Over the game's picture the Library and
+Settings are drawn in the window's own pixels, whatever Interface size is.
+Their panels, buttons, title and text are laid out on a 1024x768 stage,
+taken as many whole times as the window holds it and centred in it, so
+that they keep the same sizes against each other on every window; the
+picture alone fills the window round the stage. Every text on them is at
+one size: a pixel of the font is 1.5 rows of a 1080-row window, cut to
+whole pixels, smaller only in a box too small for it. Where the stage cuts
+the picture's top off, the title stands at least half as far below the
+stage's top as it stands below the picture's.
 
 - **Tabs.** Active, then under a divider Mods, Maps and Updates, then
   under another Registries, each with a small picture and its count; an
@@ -1114,8 +1137,9 @@ shows in its own look as before (`Runtime::LibraryScreen`).
   played. MAPS: the installed maps' minimaps that fit, their names, and
   BROWSE MAPS, which shows Maps. DETAILS tells of the tile under the
   pointer, and its foot says when a change applies as the Library closes.
-- **Mods, Maps and Updates.** The search field, the filters with their
-  counts, TAGS ▾, whose list chooses a tag or every tag, and the rows in
+- **Mods, Maps and Updates.** The search field with TAGS ▾ at its right,
+  whose list chooses a tag or every tag, the filters with their counts
+  under them, and the rows in
   the Library's order: the badge, or the minimap of a map pack without
   one, or the letters; the name; the maker and summary, or the download's
   state in amber with its bar under it, or why GET is blocked; the

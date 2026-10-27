@@ -19,17 +19,27 @@
 // MUSIC.GUI and SPEEDS.GUI. OK keeps both and saves them, Cancel and Undo
 // put back what the screen opened with, and Restore defaults sets both to
 // their defaults, the game's options as their panels' RESTORE does.
+//
+// Over the game's own main menu the screen is drawn with the game's art
+// (options_screen_art): the game's menu art the Library shares
+// (read_game_menu_art), its title SETTINGS, and the Options screen's
+// Restore Default, Undo Changes, Cancel and OK as the game draws them, each
+// cut out with its plate and clear around it.
 
+#include "column_menu.hpp"
 #include "library_host.hpp"
 #include "menu_paint.hpp"
 #include "oa_layer.hpp"
+#include "runtime_game_menu_art.hpp"
 #include "settings_menu.hpp"
 
 #include "oa/app/runtime.hpp"
 #include "oa/audio/game_audio.hpp"
 #include "oa/data/defs/layout.hpp"
 #include "oa/data/languages.hpp"
+#include "oa/formats/hpi.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
+#include "oa/ui/frontend_renderer.hpp"
 #include "oa/ui/frontend_state/initialization.hpp"
 #include "oa/ui/gui_layout.hpp"
 #include "oa/ui/library/library.hpp"
@@ -39,7 +49,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
@@ -55,6 +67,7 @@ namespace oa::app {
 namespace {
 
 namespace settings = oa::ui::engine_settings;
+namespace renderer = oa::ui::frontend_renderer;
 namespace kit = oa::ui::kit;
 namespace library = oa::ui::library;
 namespace init = oa::ui::frontend_state::initialization;
@@ -98,6 +111,75 @@ constexpr int32_t sound_mode_spatial = 2;
 constexpr uint32_t music_volume_default = 32;
 /// The play mode the music panel's RESTORE sets: by the kind of each track.
 constexpr uint8_t cd_mode_default = 4;
+
+/// The Options screen's buttons the Settings screen's RESTORE DEFAULTS, UNDO,
+/// CANCEL and OK are drawn as, in that order.
+constexpr std::array<std::string_view, 4> options_buttons{"RESTORE", "UNDO", "CANCEL", "PREV"};
+
+/// Returns the art the Settings screen is drawn with over the game's own
+/// main menu: the game's menu art (read_game_menu_art), its title SETTINGS,
+/// and the Options screen's Restore Default, Undo Changes, Cancel and OK as
+/// the game draws them up and held over the picture STARTOPT.GUI's setup
+/// asks for, with their captions and quick keys, each cut out with its
+/// plate, clear where the bare picture's ground lies around it.
+///
+/// @param assets the game's files
+/// @return the art; none when a file is missing, or a button or its plate
+///         does not lie on the picture, the reason on stderr
+std::optional<SettingsMenuGameArt> options_screen_art(oa::AssetStore& assets) {
+    std::optional<GameMenuArt> common = read_game_menu_art(assets, "SETTINGS", "settings");
+    if (!common)
+        return std::nullopt;
+    try {
+        const renderer::ScreenResources screen = read_options_screen(assets);
+        const oa::Image bare = read_bare_picture(assets);
+        SettingsMenuGameArt art;
+        std::array<std::size_t, options_buttons.size()> found{};
+        std::vector<renderer::ButtonPresentation> up;
+        for (std::size_t at = 0; at < options_buttons.size(); ++at) {
+            const auto& gadgets = screen.layout.gadgets;
+            const auto named = gui_record_named(gadgets, options_buttons[at]);
+            const auto* fields =
+                named ? std::get_if<oa::ui::gui_layout::ButtonFields>(&gadgets[*named].fields)
+                      : nullptr;
+            if (fields == nullptr) {
+                std::cerr << "settings: STARTOPT.GUI has no button " << options_buttons[at] << '\n';
+                return std::nullopt;
+            }
+            found[at] = *named;
+            renderer::ButtonPresentation shown;
+            shown.name = gadgets[*named].common.name;
+            shown.quick_key = static_cast<char>(fields->quick_key);
+            up.push_back(std::move(shown));
+        }
+        std::vector<renderer::ButtonPresentation> held = up;
+        for (auto& shown : held)
+            shown.condition = renderer::ButtonCondition::pressed;
+        const renderer::Surface drawn_up = renderer::render_screen(screen, up);
+        const renderer::Surface drawn_held = renderer::render_screen(screen, held);
+        for (std::size_t at = 0; at < options_buttons.size(); ++at) {
+            const auto& placed = screen.layout.gadgets[found[at]].common;
+            const int32_t x = placed.x - options_plate_left;
+            const int32_t y = placed.y - options_plate_top;
+            const int32_t width = placed.width + options_plate_left + options_plate_right;
+            const int32_t height = placed.height + options_plate_top + options_plate_bottom;
+            art.buttons[at] = {
+                cut_out(drawn_up, x, y, width, height), cut_out(drawn_held, x, y, width, height)
+            };
+            for (WindowIcon& cut : art.buttons[at])
+                clear_bare_ground(cut, bare, x, y);
+            if (art.buttons[at][0].width == 0 || art.buttons[at][1].width == 0) {
+                std::cerr << "settings: " << options_buttons[at] << "'s plate does not lie on the Options screen\n";
+                return std::nullopt;
+            }
+        }
+        art.common = std::move(*common);
+        return art;
+    } catch (const std::exception& error) {
+        std::cerr << "settings: the Options screen's art is unavailable: " << error.what() << '\n';
+        return std::nullopt;
+    }
+}
 
 /// A group of the game's own options: one of its Options screen's panels.
 enum class ClassicGroup : uint8_t { sound, music, visuals, speeds };
@@ -1388,8 +1470,16 @@ void Runtime::push_settings_menu_screen() {
     actions.undo = [host] { host->undo(); };
     actions.cancel = [host] { host->cancel(true); };
     actions.accept = [host] { host->accept(); };
+    // Over the game's own main menu the screen looks as the game's Options
+    // screen; over Open Annihilation's menus as they do.
+    std::optional<SettingsMenuGameArt> game_art;
+    if (screen_ == Screen::main_menu && !oa_main_menu_shown())
+        game_art = options_screen_art(assets_);
     oa_layer().push(make_settings_menu(
-        [host] { return host->shows(); }, [host] { return host->facts(); }, std::move(actions)
+        [host] { return host->shows(); },
+        [host] { return host->facts(); },
+        std::move(actions),
+        std::move(game_art)
     ));
 }
 

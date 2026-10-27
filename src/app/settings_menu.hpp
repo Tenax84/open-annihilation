@@ -17,17 +17,35 @@
 // under the pointer glows amber, and DETAILS says what it does, its default
 // and when it takes effect.
 //
+// Given the game's own art, as over the game's own main menu, the screen
+// stands on the bare picture the game's menus stand on instead of the main
+// menu's, and its four buttons are the Options screen's own, each on its
+// plate, as the game draws them up and held. A title in the game's font,
+// unsmoothed, where the Options screen has its OPTIONS, stands in place of
+// the title and the SETTINGS heading. The three panels stand in the frame
+// the game draws round its score board, its corners and sides as the game
+// draws them, on its dark green ground, each labelled in the game's font.
+// Within them the categories and a row's buttons are the game's plain
+// buttons, a section's title and a selector's value stand in its sunk bar,
+// the arrows, sliders and scroll bar are its own, and the captions, labels
+// and values are in its font.
+//
 // The screen is modal and draws nothing that moves on its own. What the
 // presses do is its host's: the screen asks for a step, a stop, a button,
 // a category, and the four buttons, and reads what the settings show again.
 #pragma once
 
+#include "game_menu_art.hpp"
 #include "oa_layer.hpp"
+
+#include "oa/app/window_icon.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -134,16 +152,29 @@ struct SettingsMenuActions {
     std::function<void()> accept{};           ///< OK: the settings kept, and the screen closes
 };
 
+/// The game's own art the Settings screen is drawn with over the game's own
+/// main menu: the game's menu art, and its Options screen's (STARTOPT.GUI)
+/// buttons.
+struct SettingsMenuGameArt {
+    GameMenuArt common{}; ///< the picture, the title, the frame and the gadgets' pieces
+    /// RESTORE DEFAULTS, UNDO, CANCEL and OK, left to right: the Options
+    /// screen's Restore Default, Undo Changes, Cancel and OK, each on its
+    /// plate, clear around it, first up, then held.
+    std::array<std::array<WindowIcon, 2>, 4> buttons{};
+};
+
 /// Makes the Settings screen.
 ///
 /// @param shows tells whether the screen shows; it closes when it does not
 /// @param facts reads what the settings show now
 /// @param actions what its presses do
+/// @param game_art the game's art it is drawn with; none for the main menu's
 /// @return the screen
 [[nodiscard]] std::unique_ptr<LayerScreen> make_settings_menu(
     std::function<bool()> shows,
     std::function<SettingsMenuFacts()> facts,
-    SettingsMenuActions actions
+    SettingsMenuActions actions,
+    std::optional<SettingsMenuGameArt> game_art = std::nullopt
 );
 
 } // namespace oa::app

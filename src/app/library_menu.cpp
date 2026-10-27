@@ -4,6 +4,7 @@
 // Open Annihilation's Library screen on the OA layer (library_menu.hpp).
 
 #include "library_menu.hpp"
+#include "game_menu_art.hpp"
 #include "menu_paint.hpp"
 
 #include "oa/ui/kit/canvas.hpp"
@@ -19,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -68,6 +70,7 @@ constexpr double icon_gap_columns = 14.0;     ///< from a plate's left to its pi
 constexpr double foot_rows = 40.0;            ///< the box at the tabs' foot
 constexpr double search_rows = 44.0;          ///< the search field's height
 constexpr double chip_rows = 38.0;            ///< a filter's plate's height
+constexpr double tags_columns = 180.0;        ///< TAGS' width, beside the search
 constexpr double gap_rows = 10.0;             ///< between the search, the filters and the rows
 constexpr double row_rows = 74.0;             ///< a package's row's height
 constexpr double row_gap_rows = 6.0;          ///< between two rows
@@ -102,7 +105,6 @@ constexpr double menu_columns = 300.0;        ///< TAGS' list's width
 constexpr double buttons_gap_rows = 18.0;     ///< between the panels and the buttons
 constexpr double button_rows = 58.0;          ///< the buttons' height
 constexpr double left_button_columns = 300.0; ///< a button's width on the left
-constexpr double settings_columns = 240.0;    ///< SETTINGS' width
 constexpr double close_columns = 240.0;       ///< CLOSE's width
 constexpr double footer_gap_columns = 16.0;   ///< between two buttons of a side
 constexpr double plate_top = 1004.0;          ///< the version plate's top
@@ -148,6 +150,15 @@ constexpr kit::Colour dash_colour{96, 104, 106};         ///< ADD REGISTRY…'s 
 constexpr uint32_t row_light_opacity = 26;
 /// How strongly a dimmed row is shaded, in 256ths.
 constexpr uint32_t dim_opacity = 110;
+/// A tab's picture on the game's buttons, and the magnifier on its text
+/// field: dark, as their bevel's shade.
+constexpr kit::Colour game_icon_colour{40, 44, 40};
+/// The gap between the game's title and the refresh button right of it, in
+/// the picture's pixels.
+constexpr int32_t game_refresh_gap = 10;
+/// How many times its height the refresh button is wide over the game's
+/// art, as the game's narrowest plain button.
+constexpr int32_t game_refresh_shape = 4;
 
 /// What a press can reach.
 enum class Part : uint8_t {
@@ -167,7 +178,6 @@ enum class Part : uint8_t {
     details_button, ///< a button of the details, by its place
     left_button,    ///< a button left of the version plate, by its place
     refresh,        ///< the header's refresh
-    settings,       ///< SETTINGS
     close,          ///< CLOSE
     tile,           ///< an Active tile, where it has no button, by LibraryMenuTile
     change_base,    ///< CHANGE…
@@ -196,6 +206,7 @@ struct Hit {
 
 /// Where the screen's fixed parts lie, in its points.
 struct LibraryLayout {
+    double unit{};             ///< the points a row of the 1080-row window takes
     kit::Rect background{};    ///< the picture, cut by the screen's edges
     kit::Rect title{};         ///< the title
     kit::Rect heading{};       ///< the heading
@@ -207,7 +218,6 @@ struct LibraryLayout {
     kit::Rect body{};          ///< inside it
     kit::Rect details{};       ///< the DETAILS panel
     kit::Rect about{};         ///< inside it, where its text lies
-    kit::Rect settings{};      ///< SETTINGS
     kit::Rect close{};         ///< CLOSE
     int32_t left{};            ///< the panels' left edge, where the left buttons start
     int32_t buttons_y{};       ///< the buttons' top
@@ -222,6 +232,7 @@ struct LibraryLayout {
     int32_t foot_height{};     ///< the box at the tabs' foot
     int32_t search_height{};   ///< the search field's height
     int32_t chip_height{};     ///< a filter's plate's height
+    int32_t tags_width{};      ///< TAGS' width, beside the search
     int32_t gap{};             ///< between the search, the filters and the rows
     int32_t row_height{};      ///< a row's height
     int32_t row_gap{};         ///< between two rows
@@ -269,15 +280,17 @@ struct LibraryLayout {
 /// @param width the screen's width, in points
 /// @param height the screen's height, in points
 /// @param title_size the title picture's width and height, in pixels
+/// @param largest_unit the most points a row of the 1080-row window takes
 /// @return where they lie
-LibraryLayout lay_out_library_menu(int32_t width, int32_t height, kit::Point title_size) {
+LibraryLayout lay_out_library_menu(int32_t width, int32_t height, kit::Point title_size, double largest_unit) {
     LibraryLayout placed;
     const double columns = std::max(width, 1);
     const double rows = std::max(height, 1);
     // A point is this many rows of the 1080-row window; a window narrower
     // than design_least_columns of them takes a smaller one, centred down.
-    const double unit = std::min(rows / design_rows, columns / design_least_columns);
+    const double unit = std::min({rows / design_rows, columns / design_least_columns, largest_unit});
     const double top = (rows - design_rows * unit) / 2.0;
+    placed.unit = unit;
     const double middle = columns / 2.0;
     const auto across = [&](double design) { return nearest(design * unit); };
     const auto down = [&](double design) { return nearest(top + design * unit); };
@@ -323,6 +336,7 @@ LibraryLayout lay_out_library_menu(int32_t width, int32_t height, kit::Point tit
     placed.foot_height = std::max(across(foot_rows), small_line + 4);
     placed.search_height = std::max(across(search_rows), regular_line + 4);
     placed.chip_height = std::max(across(chip_rows), small_line + 4);
+    placed.tags_width = std::max(across(tags_columns), 48);
     placed.gap = std::max(across(gap_rows), 2);
     placed.row_height = std::max(across(row_rows), regular_line + small_line + 4);
     placed.row_gap = std::max(across(row_gap_rows), 1);
@@ -394,12 +408,7 @@ LibraryLayout lay_out_library_menu(int32_t width, int32_t height, kit::Point tit
     placed.left = left;
     placed.left_width = across(left_button_columns);
     const int32_t close = across(close_columns);
-    const int32_t settings = across(settings_columns);
     placed.close = {left + content - close, placed.buttons_y, close, placed.button_height};
-    placed.settings = {
-        placed.close.x - placed.footer_gap - settings, placed.buttons_y, settings,
-        placed.button_height
-    };
     placed.plate_top = down(plate_top);
     placed.plate_height = std::max(across(plate_rows), 1);
     placed.plate_margin = across(plate_margin_columns);
@@ -637,6 +646,73 @@ void draw_shield(const kit::Canvas& canvas, const kit::Rect& box, kit::Colour in
     }
 }
 
+/// The side of the game's get mark, in its pixels.
+constexpr int32_t get_tray_side = 24;
+/// The game's get mark: a green arrow dropping into an open steel tray, one
+/// letter a pixel. '.' is clear; 'a', 'b' and 'c' are the arrow's edge, light
+/// and body; 'd', 'e' and 'f' are the tray's light, face and shade.
+constexpr std::array<std::string_view, get_tray_side> get_tray_pixels{
+    "........................",
+    ".........aaaaaa.........",
+    ".........abbbba.........",
+    ".........abccca.........",
+    ".........abccca.........",
+    ".........abccca.........",
+    ".........abccca.........",
+    ".........abccca.........",
+    ".....aaaaabcccaaaaa.....",
+    ".....abbbbbccccccca.....",
+    "......abccccccccca......",
+    ".......abccccccca.......",
+    "........abccccca........",
+    ".........abccca.........",
+    ".ddd......abca......ddd.",
+    ".def.......aa.......def.",
+    ".def................def.",
+    ".def................def.",
+    ".def................def.",
+    ".deeddddddddddddddddeef.",
+    ".deeeeeeeeeeeeeeeeeeeef.",
+    ".deeffffffffffffffffeef.",
+    ".efffffffffffffffffffff.",
+    "........................",
+};
+/// The get mark's arrow, as the game's scroll arrows: edge, light, body.
+constexpr std::array<kit::Colour, 3> get_arrow_colours{{{35, 91, 15}, {27, 159, 19}, {27, 127, 11}}};
+/// The get mark's arrow under the pointer, in the game's amber.
+constexpr std::array<kit::Colour, 3> get_arrow_lit_colours{{{105, 81, 29}, {248, 191, 70}, {218, 167, 61}}};
+/// The get mark's tray: light, face, shade.
+constexpr std::array<kit::Colour, 3> get_tray_colours{{{195, 195, 155}, {123, 123, 123}, {43, 43, 43}}};
+
+/// Draws the game's get mark, its pixels whole multiples of the picture's
+/// where the square has room, centred.
+///
+/// @param canvas where it draws
+/// @param box the square it fills
+/// @param lit whether its arrow is amber, under the pointer
+void draw_get_tray(const kit::Canvas& canvas, const kit::Rect& box, bool lit) {
+    const int32_t room = std::min(box.width, box.height);
+    if (room < 8)
+        return;
+    const int32_t side = room >= get_tray_side ? room / get_tray_side * get_tray_side : room;
+    const int32_t x = box.x + (box.width - side) / 2;
+    const int32_t y = box.y + (box.height - side) / 2;
+    const std::array<kit::Colour, 3>& arrow = lit ? get_arrow_lit_colours : get_arrow_colours;
+    for (int32_t row = 0; row < get_tray_side; ++row) {
+        const int32_t top = y + row * side / get_tray_side;
+        const int32_t bottom = y + (row + 1) * side / get_tray_side;
+        for (int32_t column = 0; column < get_tray_side; ++column) {
+            const char letter = get_tray_pixels[row][column];
+            if (letter < 'a' || letter > 'f')
+                continue;
+            const int32_t left = x + column * side / get_tray_side;
+            const int32_t right = x + (column + 1) * side / get_tray_side;
+            const kit::Colour ink = letter <= 'c' ? arrow[letter - 'a'] : get_tray_colours[letter - 'd'];
+            kit::fill_rect(canvas, {left, top, right - left, bottom - top}, ink);
+        }
+    }
+}
+
 /// Returns a rectangle a picture fits in, centred, keeping its shape.
 ///
 /// @param box where it is drawn
@@ -678,7 +754,7 @@ bool draw_fitted(const kit::Canvas& canvas, const kit::Rect& box, const LibraryM
 /// @param box the badge
 /// @param letters the letters while it has no picture
 /// @param picture its picture
-void draw_badge(
+void draw_steel_badge(
     const kit::Canvas& canvas,
     const kit::Rect& box,
     std::string_view letters,
@@ -726,7 +802,8 @@ std::string word_of(std::string_view text) {
 /// The Library screen as a screen of the OA layer.
 ///
 /// Its points are the layer's: one point is the view's scale in window
-/// pixels, from the room's top left corner, and the screen covers the room.
+/// pixels, a pixel over the game's picture, from the room's top left
+/// corner, and the screen covers the room.
 class LibraryMenuScreen final : public LayerScreen {
   public:
 
@@ -735,10 +812,15 @@ class LibraryMenuScreen final : public LayerScreen {
     /// @param name its name on the OA layer
     /// @param facts reads what the Library shows now
     /// @param actions what its presses do
+    /// @param game_art the game's art it is drawn with; none for the main menu's
     LibraryMenuScreen(
-        std::string_view name, std::function<LibraryMenuFacts()> facts, LibraryMenuActions actions
+        std::string_view name,
+        std::function<LibraryMenuFacts()> facts,
+        LibraryMenuActions actions,
+        std::optional<GameMenuArt> game_art
     )
-        : name_(name), facts_(std::move(facts)), actions_(std::move(actions)) {
+        : name_(name), facts_(std::move(facts)), actions_(std::move(actions)),
+          painter_(std::move(game_art)) {
         facts_now_ = facts_();
     }
 
@@ -747,15 +829,16 @@ class LibraryMenuScreen final : public LayerScreen {
     /// @return its name
     [[nodiscard]] std::string_view name() const override { return name_; }
 
-    /// Returns where the screen shows: the whole room, at the view's scale;
-    /// nowhere in a match.
+    /// Returns where the screen shows: the whole room, at the view's scale,
+    /// or at the window's own pixels over the game's picture; nowhere in a
+    /// match.
     ///
     /// @param placed_on what the screen is placed on
     /// @return its place
     [[nodiscard]] LayerPlacement placement(const LayerView& placed_on) const override {
         if (placed_on.match || placed_on.room.width <= 0 || placed_on.room.height <= 0)
             return {};
-        const int32_t percent = std::max(placed_on.scale_percent, int32_t{100});
+        const int32_t percent = percent_of(placed_on);
         const kit::Point size = points_of(placed_on);
         const kit::Rect at = kit::to_canvas({0, 0, size.x, size.y}, percent);
         return {{placed_on.room.x, placed_on.room.y, at.width, at.height}, size.x, size.y, percent};
@@ -771,16 +854,21 @@ class LibraryMenuScreen final : public LayerScreen {
     /// @return false
     [[nodiscard]] bool backdrop() const override { return false; }
 
-    /// Draws the background, the title, the heading and its refresh button,
-    /// the three panels, the buttons, the version plate, and TAGS' list
-    /// while it is open.
+    /// Draws the background, the title, the heading and its refresh button
+    /// (the game's title alone, the refresh button right of it, over the
+    /// game's picture), the three panels, the buttons, the version plate,
+    /// and TAGS' list while it is open.
     ///
     /// @param canvas where it draws, at the layer's scale
     void draw(const kit::Canvas& canvas) const override {
         const MenuArt& art = menu_art();
-        draw_backdrop(canvas, size_, layout_.background);
-        fitted_.draw(canvas, layout_.title, art.title);
-        draw_ruled_heading(canvas, layout_.heading, worded("LIBRARY"), layout_.heading_gap);
+        if (painter_.shown()) {
+            painter_.draw_background(canvas);
+        } else {
+            draw_backdrop(canvas, size_, layout_.background);
+            fitted_.draw(canvas, layout_.title, art.title);
+            draw_ruled_heading(canvas, layout_.heading, worded("LIBRARY"), layout_.heading_gap);
+        }
         draw_refresh_button(canvas);
         draw_tabs(canvas);
         draw_center(canvas);
@@ -790,7 +878,6 @@ class LibraryMenuScreen final : public LayerScreen {
                 canvas, {Part::left_button, at}, left_rect(at), facts_now_.left_buttons[at].caption,
                 facts_now_.left_buttons[at].enabled, art
             );
-        draw_footer(canvas, {Part::settings, 0}, layout_.settings, worded("SETTINGS"), true, art);
         draw_footer(canvas, {Part::close, 0}, layout_.close, worded("CLOSE"), true, art);
         draw_version_plate(
             canvas, size_.x, layout_.plate_top, layout_.plate_height, layout_.plate_margin,
@@ -811,15 +898,42 @@ class LibraryMenuScreen final : public LayerScreen {
             return;
         size_ = size;
         const MenuArt& art = menu_art();
+        // Over the game's art the parts are laid out on its stage, the room
+        // round it the picture's alone.
+        const kit::Rect stage = game_menu_stage(size_.x, size_.y);
         layout_ = lay_out_library_menu(
             size_.x,
             size_.y,
-            {static_cast<int32_t>(art.title.width), static_cast<int32_t>(art.title.height)}
+            {static_cast<int32_t>(art.title.width), static_cast<int32_t>(art.title.height)},
+            painter_.shown() ? std::min(stage.height / design_rows, stage.width / design_least_columns)
+                             : std::numeric_limits<double>::infinity()
         );
+        painter_.lay_out(size_.x, size_.y, layout_.unit);
+        if (painter_.shown())
+            fit_game_art();
         laid_out_ = true;
         fitted_.clear();
         place_content();
         ++revision_;
+    }
+
+    /// Places the parts the game's art draws otherwise: the picture, the
+    /// refresh button right of the game's title, as high as the title, and
+    /// the big buttons, each as wide as its plate is for their height.
+    void fit_game_art() {
+        layout_.background = painter_.background();
+        const kit::Rect& title = painter_.title();
+        const int32_t height = layout_.small_button;
+        layout_.refresh = {
+            title.x + title.width + nearest(painter_.picture_scale() * game_refresh_gap),
+            title.y + (title.height - height) / 2, height * game_refresh_shape, height
+        };
+        if (!painter_.content())
+            return;
+        const int32_t width = painter_.big_button_width(layout_.button_height);
+        const int32_t right = layout_.close.x + layout_.close.width;
+        layout_.close = {right - width, layout_.buttons_y, width, layout_.button_height};
+        layout_.left_width = width;
     }
 
     /// Follows the pointer over the parts: a press acts when it is released
@@ -1115,7 +1229,7 @@ class LibraryMenuScreen final : public LayerScreen {
                 add({Part::filter, chip}, chip_rect(chip), "filter." + word_of(shown.filters[chip].id),
                     shown.filters[chip].caption, shown.filters[chip].chosen, kit::ControlKind::button);
             if (!shown.tags.empty())
-                add({Part::tags, 0}, chip_rect(shown.filters.size()), "tags", tags_caption(),
+                add({Part::tags, 0}, tags_rect(), "tags", tags_caption(),
                     shown.tag_chosen, kit::ControlKind::choice);
             for (std::size_t row = 0; row < shown.rows.size(); ++row) {
                 const kit::Rect whole = row_rect(row);
@@ -1216,8 +1330,6 @@ class LibraryMenuScreen final : public LayerScreen {
         for (std::size_t at = 0; at < facts_now_.left_buttons.size(); ++at)
             add({Part::left_button, at}, left_rect(at), facts_now_.left_buttons[at].id,
                 facts_now_.left_buttons[at].caption, false, kit::ControlKind::button);
-        add({Part::settings, 0}, layout_.settings, "settings", worded("SETTINGS"), false,
-            kit::ControlKind::button);
         add({Part::close, 0}, layout_.close, "close", worded("CLOSE"), false, kit::ControlKind::button);
         return list;
     }
@@ -1271,13 +1383,24 @@ class LibraryMenuScreen final : public LayerScreen {
 
   private:
 
+    /// Returns the window pixels a point takes, in percent: the view's, or
+    /// one over the game's picture, as the game's art is drawn in whole
+    /// pixels of the window and scaled with the window rather than with
+    /// Interface size.
+    ///
+    /// @param placed_on what the screen is placed on
+    /// @return the percent
+    [[nodiscard]] int32_t percent_of(const LayerView& placed_on) const noexcept {
+        return painter_.shown() ? 100 : std::max(placed_on.scale_percent, int32_t{100});
+    }
+
     /// Returns the room's size in the view's points, rounded up, so that the
     /// screen covers every pixel of the room.
     ///
     /// @param placed_on what the screen is placed on
     /// @return the width and height, in points
-    [[nodiscard]] static kit::Point points_of(const LayerView& placed_on) noexcept {
-        const int64_t percent = std::max(placed_on.scale_percent, int32_t{100});
+    [[nodiscard]] kit::Point points_of(const LayerView& placed_on) const noexcept {
+        const int64_t percent = percent_of(placed_on);
         const auto up = [percent](int32_t pixels) {
             return static_cast<int32_t>((static_cast<int64_t>(pixels) * 100 + percent - 1) / percent);
         };
@@ -1507,23 +1630,38 @@ class LibraryMenuScreen final : public LayerScreen {
         };
     }
 
-    /// Returns the search field.
+    /// Returns the search field, which leaves room for TAGS at its right
+    /// when the list has tags.
     ///
     /// @return the field
     [[nodiscard]] kit::Rect search_rect() const noexcept {
         const kit::Rect& body = layout_.body;
-        return {body.x, body.y, body.width, layout_.search_height};
+        const int32_t right = facts_now_.list.tags.empty() ? body.x + body.width
+                                                           : tags_rect().x - layout_.button_gap;
+        return {body.x, body.y, std::max(right - body.x, 1), layout_.search_height};
     }
 
-    /// Returns a filter's plate, or TAGS after the filters.
+    /// Returns TAGS, at the search field's right, centred on it and as
+    /// wide and tall as the last filter below it.
+    ///
+    /// @return the plate
+    [[nodiscard]] kit::Rect tags_rect() const noexcept {
+        const kit::Rect& body = layout_.body;
+        const std::size_t filters = facts_now_.list.filters.size();
+        const kit::Rect below = filters > 0 ? chip_rect(filters - 1) : kit::Rect{};
+        const int32_t width = filters > 0 ? below.width : std::min(layout_.tags_width, body.width);
+        const int32_t height = std::min(layout_.chip_height, layout_.search_height);
+        const int32_t x = filters > 0 ? below.x : body.x + body.width - width;
+        return {x, body.y + (layout_.search_height - height) / 2, width, height};
+    }
+
+    /// Returns a filter's plate.
     ///
     /// @param chip the plate, by its place
     /// @return the plate
     [[nodiscard]] kit::Rect chip_rect(std::size_t chip) const noexcept {
         const kit::Rect& body = layout_.body;
-        const auto count = static_cast<int32_t>(
-            facts_now_.list.filters.size() + (facts_now_.list.tags.empty() ? 0 : 1)
-        );
+        const auto count = static_cast<int32_t>(facts_now_.list.filters.size());
         if (count <= 0)
             return {};
         const int32_t width = (body.width - (count - 1) * layout_.button_gap) / count;
@@ -1547,7 +1685,7 @@ class LibraryMenuScreen final : public LayerScreen {
     ///
     /// @return its place
     [[nodiscard]] kit::Rect tags_menu_rect() const noexcept {
-        const kit::Rect chip = chip_rect(facts_now_.list.filters.size());
+        const kit::Rect chip = tags_rect();
         const std::size_t count = std::min(facts_now_.list.tags.size() + 1, most_menu_items);
         const int32_t width = std::max(layout_.menu_width, chip.width);
         const int32_t right = layout_.body.x + layout_.body.width;
@@ -1942,8 +2080,6 @@ class LibraryMenuScreen final : public LayerScreen {
         for (std::size_t button = 0; button < facts_now_.left_buttons.size(); ++button)
             if (kit::contains(left_rect(button), at))
                 return {Part::left_button, button};
-        if (kit::contains(layout_.settings, at))
-            return {Part::settings, 0};
         if (kit::contains(layout_.close, at))
             return {Part::close, 0};
         return {};
@@ -1960,7 +2096,7 @@ class LibraryMenuScreen final : public LayerScreen {
         for (std::size_t chip = 0; chip < filters; ++chip)
             if (kit::contains(chip_rect(chip), at))
                 return {Part::filter, chip};
-        if (!facts_now_.list.tags.empty() && kit::contains(chip_rect(filters), at))
+        if (!facts_now_.list.tags.empty() && kit::contains(tags_rect(), at))
             return {Part::tags, 0};
         if (!kit::contains(view_, at))
             return {};
@@ -2083,7 +2219,6 @@ class LibraryMenuScreen final : public LayerScreen {
                    facts_now_.left_buttons[hit.index].enabled;
         case Part::refresh:
             return facts_now_.refresh_enabled;
-        case Part::settings:
         case Part::close:
             return true;
         case Part::tile:
@@ -2155,8 +2290,6 @@ class LibraryMenuScreen final : public LayerScreen {
             return plain(LibraryMenuCommand::left_button);
         case Part::refresh:
             return plain(LibraryMenuCommand::refresh);
-        case Part::settings:
-            return plain(LibraryMenuCommand::settings);
         case Part::close:
             return plain(LibraryMenuCommand::close);
         case Part::tile:
@@ -2273,8 +2406,158 @@ class LibraryMenuScreen final : public LayerScreen {
         return hovered_ == hit ? caption_lit_colour : caption_colour;
     }
 
-    /// Draws a panel's label on a steel plate set into its frame at its top
-    /// left.
+    /// Returns how many points each pixel of the game's font covers in the
+    /// panels: as in an expansion's row, the line the font fills best.
+    ///
+    /// @return the points a pixel
+    [[nodiscard]] int32_t game_square() const { return painter_.text_square(layout_.pill); }
+
+    /// Returns a measure of texts in a font: the game's over its art.
+    ///
+    /// @param canvas where the texts are drawn
+    /// @param role the font otherwise
+    /// @return the measure, in points
+    [[nodiscard]] kit::Measure measure(const kit::Canvas& canvas, kit::FontRole role) const {
+        if (painter_.content())
+            return painter_.measure(game_square());
+        return [&canvas, role](std::string_view line) { return kit::measure_text(canvas, role, line); };
+    }
+
+    /// Returns a line's height in a font: the game's over its art, its
+    /// letters a pixel of the font apart; the font's size and a room
+    /// otherwise.
+    ///
+    /// @param role the font otherwise
+    /// @param room the points over the font's size otherwise
+    /// @return the line's height, in points
+    [[nodiscard]] int32_t line(kit::FontRole role, int32_t room) const {
+        if (!painter_.content())
+            return kit::smooth_text_points(role) + room;
+        const int32_t square = game_square();
+        return static_cast<int32_t>(painter_.caption("A", Ink::plain).height) * square + square;
+    }
+
+    /// Returns the tint of the game's font a colour of the screen's own look
+    /// is drawn in: amber for the amber, darkened for the faded, the font's
+    /// own for the rest.
+    ///
+    /// @param ink the colour
+    /// @return the tint
+    [[nodiscard]] static Ink ink_of(kit::Colour ink) noexcept {
+        if (ink == warn_colour || ink == chosen_colour || ink == chosen_text_colour)
+            return Ink::lit;
+        if (ink == note_colour || ink == caption_faded_colour)
+            return Ink::faded;
+        return Ink::plain;
+    }
+
+    /// Writes a line of text in a box: in the game's font over its art, in a
+    /// font of the screen's own look, outlined or not, otherwise.
+    ///
+    /// @param canvas where it draws
+    /// @param role the font of the screen's own look
+    /// @param text the text, fitted to the box
+    /// @param box the box
+    /// @param align where the text sits along the box's width
+    /// @param ink its colour
+    /// @param outlined it is outlined in the screen's own look
+    /// @param tracking the extra points after each character in the screen's own look
+    void write(
+        const kit::Canvas& canvas,
+        kit::FontRole role,
+        std::string_view text,
+        const kit::Rect& box,
+        kit::Align align,
+        kit::Colour ink,
+        bool outlined = false,
+        int32_t tracking = 0
+    ) const {
+        if (painter_.content()) {
+            painter_.draw_text_at(canvas, box, text, align, ink_of(ink), game_square());
+            return;
+        }
+        if (outlined)
+            outlined_text(canvas, role, text, box, align, ink, tracking);
+        else
+            kit::box_text(canvas, role, text, box, align, ink);
+    }
+
+    /// Draws a panel's frame: the game's over its art; the steel rim
+    /// otherwise.
+    ///
+    /// @param canvas where it draws
+    /// @param panel the panel
+    void draw_frame(const kit::Canvas& canvas, const kit::Rect& panel) const {
+        if (!painter_.draw_frame(canvas, panel))
+            draw_panel_frame(canvas, panel, layout_.rim);
+    }
+
+    /// Draws a sunk box: the game's list box over its art; a dark well with
+    /// a sunk edge otherwise.
+    ///
+    /// @param canvas where it draws
+    /// @param box the box
+    void draw_sunk_box(const kit::Canvas& canvas, const kit::Rect& box) const {
+        if (painter_.content()) {
+            painter_.draw_box(canvas, box);
+            return;
+        }
+        kit::fill_rect(canvas, box, well_colour);
+        draw_sunk_edge(canvas, box);
+    }
+
+    /// Draws a box a row, a card or a tile stands in: the game's list box
+    /// over its art; a dark ground with an edge otherwise.
+    ///
+    /// @param canvas where it draws
+    /// @param box the box
+    void draw_row_box(const kit::Canvas& canvas, const kit::Rect& box) const {
+        if (painter_.content()) {
+            painter_.draw_box(canvas, box);
+            return;
+        }
+        kit::fill_rect(canvas, box, row_colour);
+        kit::outline_rect(canvas, box, row_edge_colour);
+    }
+
+    /// Marks a row, a card or a plate as chosen: an amber ring round it over
+    /// the game's art; an amber glow and ring otherwise.
+    ///
+    /// @param canvas where it draws
+    /// @param box what is chosen
+    void draw_chosen(const kit::Canvas& canvas, const kit::Rect& box) const {
+        if (painter_.content()) {
+            draw_ring(canvas, box, std::max(game_square(), 1), game_amber);
+            return;
+        }
+        draw_glow(canvas, box, chosen_colour, layout_.glow / 2);
+        draw_ring(canvas, box, 2, chosen_colour);
+    }
+
+    /// Draws a strip with a title: the game's sunk bar over its art; a steel
+    /// strip otherwise.
+    ///
+    /// @param canvas where it draws
+    /// @param strip the strip
+    /// @param title its title
+    /// @param lit the pointer is over what it heads
+    void draw_strip(const kit::Canvas& canvas, const kit::Rect& strip, std::string_view title, bool lit = false) const {
+        const kit::Rect words{strip.x + layout_.pad, strip.y, strip.width - 2 * layout_.pad, strip.height};
+        if (painter_.content()) {
+            painter_.draw_well(canvas, strip);
+            painter_.draw_text_at(canvas, words, title, kit::Align::left, lit ? Ink::lit : Ink::plain, game_square());
+            return;
+        }
+        draw_steel_button(canvas, strip, strip_steel_colour);
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
+        outlined_text(
+            canvas, kit::FontRole::small, kit::fit(title, words.width, small), words, kit::Align::left,
+            caption_colour, strip_tracking
+        );
+    }
+
+    /// Draws a panel's label: in the game's font over its art; on a steel
+    /// plate set into its frame at its top left otherwise.
     ///
     /// @param canvas where it draws
     /// @param panel the panel
@@ -2282,6 +2565,13 @@ class LibraryMenuScreen final : public LayerScreen {
     void draw_label(const kit::Canvas& canvas, const kit::Rect& panel, std::string_view text) const {
         const int32_t left = panel.x + layout_.rim + layout_.label_left;
         const int32_t reach = panel.x + panel.width - layout_.rim - layout_.inset;
+        if (painter_.content()) {
+            painter_.draw_text(
+                canvas, {left, panel.y + layout_.label_top, reach - left, layout_.label_height}, text,
+                kit::Align::left, Ink::plain
+            );
+            return;
+        }
         const int32_t width =
             std::min(label_plate_width(canvas, text, layout_.label_height, band_tracking), reach - left);
         draw_label_plate(
@@ -2289,7 +2579,8 @@ class LibraryMenuScreen final : public LayerScreen {
         );
     }
 
-    /// Draws a small steel button with its caption.
+    /// Draws a small button with its caption: the game's plain button over
+    /// its art; a small steel button otherwise.
     ///
     /// @param canvas where it draws
     /// @param rect the button
@@ -2301,6 +2592,10 @@ class LibraryMenuScreen final : public LayerScreen {
         const bool usable = enabled(hit);
         const bool lit = usable && hovered_ == hit;
         const bool held = lit && pressed_ == hit;
+        if (painter_.content()) {
+            painter_.draw_captioned_button(canvas, rect, caption, usable, lit, held);
+            return;
+        }
         draw_steel_button(canvas, rect, button_steel_colour);
         if (lit)
             kit::outline_rect(canvas, rect, hover_edge_colour);
@@ -2318,7 +2613,7 @@ class LibraryMenuScreen final : public LayerScreen {
         );
     }
 
-    /// Draws a tile: a dark well under a steel strip with its title.
+    /// Draws a tile: a dark well under a strip with its title.
     ///
     /// @param canvas where it draws
     /// @param whole the tile
@@ -2327,90 +2622,99 @@ class LibraryMenuScreen final : public LayerScreen {
     void draw_tile_frame(
         const kit::Canvas& canvas, const kit::Rect& whole, std::string_view title, bool lit
     ) const {
-        kit::fill_rect(canvas, whole, row_colour);
-        kit::outline_rect(canvas, whole, row_edge_colour);
-        const kit::Rect strip{whole.x, whole.y, whole.width, layout_.strip};
-        draw_steel_button(canvas, strip, strip_steel_colour);
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
-        outlined_text(
-            canvas, kit::FontRole::small, kit::fit(title, strip.width - 2 * layout_.pad, small),
-            {strip.x + layout_.pad, strip.y, strip.width - 2 * layout_.pad, strip.height},
-            kit::Align::left, caption_colour, strip_tracking
-        );
-        if (lit) {
+        draw_row_box(canvas, whole);
+        draw_strip(canvas, {whole.x, whole.y, whole.width, layout_.strip}, title, lit);
+        if (lit && !painter_.content()) {
             draw_glow(canvas, whole, chosen_colour, layout_.glow / 2);
             draw_ring(canvas, whole, 2, chosen_colour);
         }
     }
 
-    /// Draws the header's refresh button.
+    /// Draws the header's refresh button: the game's plain button with its
+    /// caption, amber while the registries are asked, over its art.
     ///
     /// @param canvas where it draws
     void draw_refresh_button(const kit::Canvas& canvas) const {
         const Hit hit{Part::refresh, 0};
         const bool lit = enabled(hit) && hovered_ == hit;
+        const int32_t inset = layout_.refresh.width / 5;
+        const kit::Rect mark{
+            layout_.refresh.x + inset, layout_.refresh.y + inset, layout_.refresh.width - 2 * inset,
+            layout_.refresh.height - 2 * inset
+        };
+        if (painter_.content()) {
+            painter_.draw_captioned_button(
+                canvas, layout_.refresh, worded("REFRESH"), enabled(hit), lit || facts_now_.refreshing,
+                lit && pressed_ == hit
+            );
+            return;
+        }
         draw_steel_button(canvas, layout_.refresh, button_steel_colour);
         if (lit)
             kit::outline_rect(canvas, layout_.refresh, hover_edge_colour);
-        const int32_t inset = layout_.refresh.width / 5;
-        draw_refresh_mark(
-            canvas,
-            {layout_.refresh.x + inset, layout_.refresh.y + inset, layout_.refresh.width - 2 * inset,
-             layout_.refresh.height - 2 * inset},
-            facts_now_.refreshing ? chosen_colour : caption_of(hit)
-        );
+        draw_refresh_mark(canvas, mark, facts_now_.refreshing ? chosen_colour : caption_of(hit));
     }
 
     /// Draws the LIBRARY panel: a plate for each tab with its picture and its
-    /// name, the chosen one in amber, the dividers, and the box at its foot.
+    /// name, the chosen one marked, the dividers, and the box at its foot.
     ///
     /// @param canvas where it draws
     void draw_tabs(const kit::Canvas& canvas) const {
-        draw_panel_frame(canvas, layout_.tabs, layout_.rim);
+        draw_frame(canvas, layout_.tabs);
         draw_label(canvas, layout_.tabs, worded("LIBRARY"));
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
-        };
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
+        const bool game = painter_.content();
+        const kit::Measure regular = measure(canvas, kit::FontRole::regular);
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
         for (std::size_t tab = 0; tab < facts_now_.tabs.size(); ++tab) {
             const LibraryMenuTab& shown = facts_now_.tabs[tab];
             const kit::Rect plate = tab_rect(tab);
             if (shown.after_divider && tab > 0) {
                 const int32_t row = plate.y - (layout_.divider + layout_.tab_gap) / 2;
-                kit::fill_rect(canvas, {plate.x, row, plate.width, 1}, steel_dark_colour);
-                kit::fill_rect(canvas, {plate.x, row + 1, plate.width, 1}, steel_light_colour);
+                // Over the game's art the divider is its frame's tube, from
+                // the frame's left tube to its right.
+                if (!painter_.draw_rule(canvas, layout_.tabs, row)) {
+                    kit::fill_rect(canvas, {plate.x, row, plate.width, 1}, steel_dark_colour);
+                    kit::fill_rect(canvas, {plate.x, row + 1, plate.width, 1}, steel_light_colour);
+                }
             }
             const bool chosen = tab == facts_now_.chosen;
             const Hit hit{Part::tab, tab};
             const bool lit = hovered_ == hit;
             const bool held = lit && pressed_ == hit;
-            draw_steel_button(canvas, plate, chosen ? chosen_steel_colour : entry_steel_colour);
+            // The game's button stands held for the chosen tab; only the
+            // name under the pointer turns amber.
+            if (game)
+                painter_.draw_plain_button(canvas, plate, chosen || held ? 1 : 0);
+            else
+                draw_steel_button(canvas, plate, chosen ? chosen_steel_colour : entry_steel_colour);
             kit::Rect box = plate;
-            if (held) {
+            if (held && !game) {
                 box.x += 1;
                 box.y += 1;
             }
             const kit::Colour ink = chosen ? chosen_text_colour : lit ? caption_lit_colour : caption_colour;
             const int32_t icon = std::min(layout_.icon, box.height - 6);
             const kit::Rect picture{box.x + layout_.icon_gap, box.y + (box.height - icon) / 2, icon, icon};
-            draw_tab_icon(canvas, picture, shown.icon, chosen ? chosen_text_colour : icon_colour);
+            draw_tab_icon(canvas, picture, shown.icon, game ? game_icon_colour : chosen ? chosen_text_colour : icon_colour);
             const int32_t dot = shown.attention ? std::max(box.height / 4, 6) : 0;
             const int32_t text_left = picture.x + picture.width + layout_.icon_gap;
             const int32_t text_right = box.x + box.width - layout_.icon_gap - (dot > 0 ? dot + layout_.icon_gap : 0);
-            outlined_text(
-                canvas, kit::FontRole::regular, kit::fit(shown.name, text_right - text_left, regular),
-                {text_left, box.y, text_right - text_left, box.height}, kit::Align::left, ink
-            );
+            const kit::Rect words{text_left, box.y, text_right - text_left, box.height};
+            if (game)
+                painter_.draw_text_at(canvas, words, shown.name, kit::Align::left, lit ? Ink::lit : Ink::plain, game_square());
+            else
+                outlined_text(
+                    canvas, kit::FontRole::regular, kit::fit(shown.name, words.width, regular), words,
+                    kit::Align::left, ink
+                );
             if (dot > 0)
                 kit::fill_round_rect(
                     canvas,
                     {box.x + box.width - layout_.icon_gap - dot, box.y + (box.height - dot) / 2, dot, dot},
-                    dot / 2, chosen_colour
+                    dot / 2, game ? game_amber : chosen_colour
                 );
+            if (game)
+                continue;
             if (chosen) {
                 draw_glow(canvas, plate, chosen_colour, layout_.glow);
                 draw_ring(canvas, plate, 2, chosen_colour);
@@ -2422,20 +2726,20 @@ class LibraryMenuScreen final : public LayerScreen {
         if (!facts_now_.queue.empty()) {
             kit::WrapRules rules;
             rules.most_lines = 2;
-            const int32_t line = kit::smooth_text_points(kit::FontRole::small) + 6;
+            const int32_t height = line(kit::FontRole::small, 6);
             const auto lines = kit::wrap(facts_now_.queue, layout_.foot.width, small, rules);
-            int32_t y = layout_.foot.y - layout_.gap - static_cast<int32_t>(lines.size()) * line;
+            int32_t y = layout_.foot.y - layout_.gap - static_cast<int32_t>(lines.size()) * height;
             for (const std::string& text : lines) {
-                kit::box_text(
-                    canvas, kit::FontRole::small, text, {layout_.foot.x, y, layout_.foot.width, line},
-                    kit::Align::left, warn_colour
-                );
-                y += line;
+                write(canvas, kit::FontRole::small, text, {layout_.foot.x, y, layout_.foot.width, height},
+                      kit::Align::left, warn_colour);
+                y += height;
             }
         }
-        kit::fill_rect(canvas, layout_.foot, well_colour);
-        draw_sunk_edge(canvas, layout_.foot);
-        kit::box_text(
+        if (game)
+            painter_.draw_well(canvas, layout_.foot);
+        else
+            draw_sunk_box(canvas, layout_.foot);
+        write(
             canvas, kit::FontRole::small,
             kit::fit(facts_now_.installed, layout_.foot.width - 2 * layout_.pad, small),
             {layout_.foot.x + layout_.pad, layout_.foot.y, layout_.foot.width - 2 * layout_.pad,
@@ -2448,7 +2752,7 @@ class LibraryMenuScreen final : public LayerScreen {
     ///
     /// @param canvas where it draws
     void draw_center(const kit::Canvas& canvas) const {
-        draw_panel_frame(canvas, layout_.center, layout_.rim);
+        draw_frame(canvas, layout_.center);
         draw_label(canvas, layout_.center, facts_now_.heading);
         switch (facts_now_.page) {
         case LibraryMenuPage::list:
@@ -2473,26 +2777,30 @@ class LibraryMenuScreen final : public LayerScreen {
     /// @param canvas where it draws
     void draw_list(const kit::Canvas& canvas) const {
         const LibraryMenuList& shown = facts_now_.list;
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
-        };
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
-        // The search: a sunk field with a magnifier, its words or its hint.
+        const bool game = painter_.content();
+        const kit::Measure regular = measure(canvas, kit::FontRole::regular);
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
+        // The search: a field with a magnifier, its words or its hint; the
+        // game's black list box, as the rows.
         const kit::Rect field = search_rect();
-        kit::fill_rect(canvas, field, well_colour);
-        draw_sunk_edge(canvas, field);
-        if (search_focused_)
-            draw_ring(canvas, field, 2, chosen_colour);
-        else if (hovered_.part == Part::search)
-            kit::outline_rect(canvas, field, hover_edge_colour);
+        if (game) {
+            painter_.draw_box(canvas, field);
+            if (search_focused_)
+                draw_ring(canvas, field, std::max(game_square(), 1), game_amber);
+        } else {
+            draw_sunk_box(canvas, field);
+            if (search_focused_)
+                draw_ring(canvas, field, 2, chosen_colour);
+            else if (hovered_.part == Part::search)
+                kit::outline_rect(canvas, field, hover_edge_colour);
+        }
+        const kit::Colour glass_ink = game ? game_icon_colour : caption_colour;
         const int32_t glass = std::max(field.height / 2, 8);
         const kit::Rect lens{field.x + layout_.pad, field.y + (field.height - glass) / 2, glass * 3 / 4, glass * 3 / 4};
-        draw_circle(canvas, lens, std::max(glass / 10, 1), caption_colour);
+        draw_circle(canvas, lens, std::max(glass / 10, 1), glass_ink);
         draw_line(
             canvas, {lens.x + lens.width - 1, lens.y + lens.height - 1},
-            {lens.x + glass - 1, lens.y + glass - 1}, std::max(glass / 8, 1), caption_colour
+            {lens.x + glass - 1, lens.y + glass - 1}, std::max(glass / 8, 1), glass_ink
         );
         const int32_t text_left = field.x + layout_.pad * 2 + glass;
         const int32_t text_width = field.x + field.width - layout_.pad - text_left;
@@ -2505,31 +2813,32 @@ class LibraryMenuScreen final : public LayerScreen {
                 words.erase(0, kit::character_bytes(words));
             words = "…" + words;
         }
-        kit::box_text(
+        write(
             canvas, kit::FontRole::regular, hint ? kit::fit(words, text_width, regular) : words,
             {text_left, field.y, text_width, field.height}, kit::Align::left,
             hint ? note_colour : caption_lit_colour
         );
         // The caret, after the words typed.
         if (search_focused_) {
-            const int32_t caret_height = kit::smooth_text_points(kit::FontRole::regular) + 4;
+            const int32_t caret_height =
+                game ? line(kit::FontRole::regular, 0) : kit::smooth_text_points(kit::FontRole::regular) + 4;
             kit::fill_rect(
                 canvas,
-                {text_left + (hint ? 0 : regular(words)) + 1, field.y + (field.height - caret_height) / 2, 2,
-                 caret_height},
-                chosen_colour
+                {text_left + (hint ? 0 : regular(words)) + 1, field.y + (field.height - caret_height) / 2,
+                 game ? std::max(game_square(), 2) : 2, caret_height},
+                game ? game_amber : chosen_colour
             );
         }
-        // The filters, then TAGS.
+        // The filters, then TAGS beside the search.
         for (std::size_t chip = 0; chip < shown.filters.size(); ++chip)
             draw_chip(canvas, chip_rect(chip), {Part::filter, chip}, shown.filters[chip].caption,
                       shown.filters[chip].chosen);
         if (!shown.tags.empty())
-            draw_chip(canvas, chip_rect(shown.filters.size()), {Part::tags, 0}, tags_caption() + " ▾",
+            draw_chip(canvas, tags_rect(), {Part::tags, 0}, tags_caption() + " ▾",
                       shown.tag_chosen || tags_open_);
         // The rows.
         if (shown.rows.empty()) {
-            kit::box_text(
+            write(
                 canvas, kit::FontRole::small, kit::fit(shown.empty, view_.width, small), view_,
                 kit::Align::centre, note_colour
             );
@@ -2544,7 +2853,8 @@ class LibraryMenuScreen final : public LayerScreen {
         }
     }
 
-    /// Draws a filter's plate.
+    /// Draws a filter's plate: the game's plain button, held while chosen,
+    /// over its art.
     ///
     /// @param canvas where it draws
     /// @param rect the plate
@@ -2556,15 +2866,17 @@ class LibraryMenuScreen final : public LayerScreen {
     ) const {
         const bool lit = hovered_ == hit;
         const bool held = lit && pressed_ == hit;
+        if (painter_.content()) {
+            painter_.draw_captioned_button(canvas, rect, caption, true, lit, chosen || held);
+            return;
+        }
         draw_steel_button(canvas, rect, chosen ? chosen_steel_colour : cell_steel_colour);
         kit::Rect box = rect;
         if (held) {
             box.x += 1;
             box.y += 1;
         }
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
         outlined_text(
             canvas, kit::FontRole::small, kit::fit(caption, box.width - 6, small), box, kit::Align::centre,
             chosen ? chosen_text_colour : lit ? caption_lit_colour : caption_colour
@@ -2575,6 +2887,28 @@ class LibraryMenuScreen final : public LayerScreen {
             kit::outline_rect(canvas, rect, hover_edge_colour);
     }
 
+    /// Draws a badge: a frame with the picture in it, or its letters; the
+    /// game's list box over its art.
+    ///
+    /// @param canvas where it draws
+    /// @param box the badge
+    /// @param letters the letters while it has no picture
+    /// @param picture its picture
+    void draw_badge(
+        const kit::Canvas& canvas, const kit::Rect& box, std::string_view letters, const LibraryMenuPicture& picture
+    ) const {
+        if (!painter_.content()) {
+            draw_steel_badge(canvas, box, letters, picture);
+            return;
+        }
+        painter_.draw_box(canvas, box);
+        const int32_t edge = std::max(box.width / 14, 2);
+        const kit::Rect inside{box.x + edge, box.y + edge, box.width - 2 * edge, box.height - 2 * edge};
+        if (draw_fitted(canvas, inside, picture))
+            return;
+        painter_.draw_text(canvas, inside, letters, kit::Align::centre, Ink::plain);
+    }
+
     /// Draws a package's row: its badge, its name and line, its version and
     /// size, its mark, and its download's bar.
     ///
@@ -2583,36 +2917,32 @@ class LibraryMenuScreen final : public LayerScreen {
     void draw_row(const kit::Canvas& canvas, std::size_t row) const {
         const LibraryMenuRow& shown = facts_now_.list.rows[row];
         const kit::Rect whole = row_rect(row);
+        const bool game = painter_.content();
         const bool chosen = facts_now_.list.selected && *facts_now_.list.selected == row;
         const bool lit = (hovered_ == Hit{Part::row, row}) || (hovered_ == Hit{Part::row_mark, row});
-        kit::fill_rect(canvas, whole, row_colour);
+        draw_row_box(canvas, whole);
         if (lit && !chosen)
-            kit::blend_rect(canvas, whole, chosen_colour, row_light_opacity);
-        kit::outline_rect(canvas, whole, row_edge_colour);
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
-        };
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
+            kit::blend_rect(canvas, whole, game ? game_amber : chosen_colour, row_light_opacity);
+        const kit::Measure regular = measure(canvas, kit::FontRole::regular);
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
         const int32_t badge = whole.height - 2 * layout_.pad;
         draw_badge(canvas, {whole.x + layout_.pad, whole.y + layout_.pad, badge, badge}, shown.letters, shown.picture);
         const kit::Rect mark = mark_rect(row);
         const int32_t version_left = mark.x - layout_.pad - layout_.version;
         const int32_t text_left = whole.x + 2 * layout_.pad + badge;
         const int32_t text_width = std::max(version_left - layout_.pad - text_left, 1);
-        const int32_t regular_line = kit::smooth_text_points(kit::FontRole::regular) + 6;
-        const int32_t small_line = kit::smooth_text_points(kit::FontRole::small) + 6;
+        const int32_t regular_line = line(kit::FontRole::regular, 6);
+        const int32_t small_line = line(kit::FontRole::small, 6);
         const int32_t lines_top = whole.y + (whole.height - regular_line - small_line - (shown.progress ? layout_.bar + 4 : 0)) / 2;
-        outlined_text(
+        write(
             canvas, kit::FontRole::regular, kit::fit(shown.name, text_width, regular),
             {text_left, lines_top, text_width, regular_line}, kit::Align::left,
-            shown.dimmed ? caption_faded_colour : caption_lit_colour
+            shown.dimmed ? caption_faded_colour : caption_lit_colour, true
         );
-        kit::box_text(
+        write(
             canvas, kit::FontRole::small, kit::fit(shown.line, text_width, small),
             {text_left, lines_top + regular_line, text_width, small_line}, kit::Align::left,
-            shown.line_warns ? warn_colour : plate_text_colour
+            shown.line_warns ? warn_colour : game ? note_colour : plate_text_colour
         );
         if (shown.progress) {
             const kit::Rect track{
@@ -2624,29 +2954,28 @@ class LibraryMenuScreen final : public LayerScreen {
             const double share = std::clamp(*shown.progress, 0.0, 1.0);
             const int32_t filled_width = nearest((track.width - 2) * share);
             if (filled_width > 0)
-                kit::fill_rect(canvas, {track.x + 1, track.y + 1, filled_width, track.height - 2}, chosen_colour);
+                kit::fill_rect(canvas, {track.x + 1, track.y + 1, filled_width, track.height - 2},
+                               game ? game_amber : chosen_colour);
         }
         const int32_t column_top = whole.y + (whole.height - 2 * small_line) / 2;
-        kit::box_text(
+        write(
             canvas, kit::FontRole::small, kit::fit(shown.version, layout_.version, small),
             {version_left, column_top, layout_.version, small_line}, kit::Align::right, plate_text_colour
         );
-        kit::box_text(
+        write(
             canvas, kit::FontRole::small, kit::fit(shown.size, layout_.version, small),
             {version_left, column_top + small_line, layout_.version, small_line}, kit::Align::right,
-            plate_text_colour
+            game ? note_colour : plate_text_colour
         );
         draw_mark(canvas, row, mark);
         if (shown.dimmed)
             kit::blend_rect(canvas, whole, well_colour, dim_opacity);
-        if (chosen) {
-            draw_glow(canvas, whole, chosen_colour, layout_.glow / 2);
-            draw_ring(canvas, whole, 2, chosen_colour);
-        }
+        if (chosen)
+            draw_chosen(canvas, whole);
     }
 
-    /// Draws a row's mark: a download arrow, an amber up-arrow in a ring or
-    /// a check in a ring.
+    /// Draws a row's mark: a download arrow (over the game's art, a green
+    /// arrow into a tray), an amber up-arrow in a ring or a check in a ring.
     ///
     /// @param canvas where it draws
     /// @param row the row, by its place
@@ -2656,24 +2985,32 @@ class LibraryMenuScreen final : public LayerScreen {
         const Hit hit{Part::row_mark, row};
         const bool lit = shown.mark_pressable && hovered_ == hit;
         const int32_t width = std::max(box.width / 14, 2);
-        const kit::Colour ink = lit ? caption_lit_colour : caption_colour;
+        // Over the game's art the marks are drawn in its font's white and
+        // amber.
+        const bool game = painter_.content();
+        const kit::Colour amber = game ? game_amber : chosen_colour;
+        const kit::Colour ink = lit ? (game ? game_amber : caption_lit_colour) : caption_colour;
         switch (shown.mark) {
         case LibraryMenuMark::none:
             return;
         case LibraryMenuMark::get:
-            draw_circle(canvas, box, width, lit ? caption_lit_colour : note_colour);
+            if (game) {
+                draw_get_tray(canvas, box, lit);
+                return;
+            }
+            draw_circle(canvas, box, width, lit ? ink : note_colour);
             draw_shaft_arrow(canvas, box, true, width, ink);
             break;
         case LibraryMenuMark::update:
-            draw_circle(canvas, box, width, chosen_colour);
-            draw_shaft_arrow(canvas, box, false, width, lit ? chosen_text_colour : chosen_colour);
+            draw_circle(canvas, box, width, amber);
+            draw_shaft_arrow(canvas, box, false, width, lit ? chosen_text_colour : amber);
             break;
         case LibraryMenuMark::installed:
             draw_circle(canvas, box, width, caption_colour);
             draw_check(canvas, box, width, caption_colour);
             break;
         }
-        if (lit)
+        if (lit && !game)
             draw_glow(canvas, box, chosen_colour, layout_.glow / 2);
     }
 
@@ -2682,14 +3019,11 @@ class LibraryMenuScreen final : public LayerScreen {
     /// @param canvas where it draws
     void draw_active(const kit::Canvas& canvas) const {
         const LibraryMenuActive& shown = facts_now_.active;
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
-        };
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
-        const int32_t regular_line = kit::smooth_text_points(kit::FontRole::regular) + 8;
-        const int32_t small_line = kit::smooth_text_points(kit::FontRole::small) + 6;
+        const bool game = painter_.content();
+        const kit::Measure regular = measure(canvas, kit::FontRole::regular);
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
+        const int32_t regular_line = line(kit::FontRole::regular, 8);
+        const int32_t small_line = line(kit::FontRole::small, 6);
         const auto lit_tile = [&](LibraryMenuTile tile) {
             return told_tile_ == tile && hovered_.part != Part::none;
         };
@@ -2701,7 +3035,10 @@ class LibraryMenuScreen final : public LayerScreen {
                                 int32_t bottom) {
             const kit::Rect badge{inside.x, inside.y, side, side};
             if (speech) {
-                draw_steel(on, badge, badge_steel_colour);
+                if (game)
+                    painter_.draw_box(on, badge);
+                else
+                    draw_steel(on, badge, badge_steel_colour);
                 draw_speech_mark(on, {badge.x + side / 6, badge.y + side / 6, side * 2 / 3, side * 2 / 3}, badge_ink_colour);
             } else {
                 draw_badge(on, badge, letters, picture);
@@ -2709,18 +3046,18 @@ class LibraryMenuScreen final : public LayerScreen {
             const int32_t left = badge.x + side + layout_.pad;
             const int32_t width = std::max(inside.x + inside.width - left, 1);
             int32_t y = inside.y;
-            outlined_text(
+            write(
                 on, kit::FontRole::regular, kit::fit(title, width, regular), {left, y, width, regular_line},
-                kit::Align::left, caption_lit_colour
+                kit::Align::left, caption_lit_colour, true
             );
             y += regular_line;
             kit::WrapRules rules;
             rules.most_lines = 2;
             for (const auto& [text, ink] : lines) {
-                for (const std::string& line : kit::wrap(text, width, small, rules)) {
+                for (const std::string& text_line : kit::wrap(text, width, small, rules)) {
                     if (y + small_line > bottom)
                         return;
-                    kit::box_text(on, kit::FontRole::small, line, {left, y, width, small_line}, kit::Align::left, ink);
+                    write(on, kit::FontRole::small, text_line, {left, y, width, small_line}, kit::Align::left, ink);
                     y += small_line;
                 }
             }
@@ -2766,12 +3103,12 @@ class LibraryMenuScreen final : public LayerScreen {
                 if (plate.y + plate.height > inside.y + inside.height)
                     break;
                 draw_expansion(clip, pill, plate);
-                if (pill + columns < count)
+                if (pill + columns < count && !game)
                     kit::fill_rect(clip, {plate.x, plate.y + plate.height + layout_.pill_gap / 2, plate.width, 1},
                                    rule_line_colour);
                 y = std::max(y, plate.y + plate.height + layout_.pill_gap);
             }
-            if (columns == 2) {
+            if (columns == 2 && !game) {
                 const kit::Rect second = expansion_rect(1);
                 kit::fill_rect(clip, {second.x - (layout_.pill_gap + 1) / 2, inside.y, 1,
                                       y - layout_.pill_gap - inside.y}, rule_line_colour);
@@ -2780,17 +3117,17 @@ class LibraryMenuScreen final : public LayerScreen {
             rules.most_lines = 3;
             if (!shown.expansions_lock.empty()) {
                 const int32_t lock = std::max(kit::smooth_text_points(kit::FontRole::small), 6);
-                draw_padlock(clip, {inside.x, y + (small_line - lock) / 2, lock, lock}, warn_colour);
-                for (const std::string& line : kit::wrap(shown.expansions_lock, inside.width - lock - layout_.pad, small, rules)) {
-                    kit::box_text(clip, kit::FontRole::small, line,
-                                  {inside.x + lock + layout_.pad, y, inside.width - lock - layout_.pad, small_line},
-                                  kit::Align::left, warn_colour);
+                draw_padlock(clip, {inside.x, y + (small_line - lock) / 2, lock, lock}, game ? game_amber : warn_colour);
+                for (const std::string& text : kit::wrap(shown.expansions_lock, inside.width - lock - layout_.pad, small, rules)) {
+                    write(clip, kit::FontRole::small, text,
+                          {inside.x + lock + layout_.pad, y, inside.width - lock - layout_.pad, small_line},
+                          kit::Align::left, warn_colour);
                     y += small_line;
                 }
             }
-            for (const std::string& line : kit::wrap(shown.expansions_hint, inside.width, small, rules)) {
-                kit::box_text(clip, kit::FontRole::small, line, {inside.x, y, inside.width, small_line},
-                              kit::Align::left, note_colour);
+            for (const std::string& text : kit::wrap(shown.expansions_hint, inside.width, small, rules)) {
+                write(clip, kit::FontRole::small, text, {inside.x, y, inside.width, small_line},
+                      kit::Align::left, note_colour);
                 y += small_line;
             }
         }
@@ -2815,7 +3152,7 @@ class LibraryMenuScreen final : public LayerScreen {
             const kit::Rect inside = tile_inside(tile);
             const std::size_t count = map_tiles_shown();
             if (shown.maps.empty())
-                kit::box_text(
+                write(
                     canvas, kit::FontRole::small,
                     kit::fit(shown.maps_empty, inside.width - layout_.browse - layout_.pad, small),
                     {inside.x, inside.y, inside.width - layout_.browse - layout_.pad, inside.height},
@@ -2823,27 +3160,33 @@ class LibraryMenuScreen final : public LayerScreen {
                 );
             for (std::size_t map = 0; map < count; ++map) {
                 const kit::Rect square = map_rect(map);
-                kit::fill_rect(canvas, square, well_colour);
-                if (!draw_fitted(canvas, {square.x + 2, square.y + 2, square.width - 4, square.height - 4},
-                                 shown.maps[map].picture))
-                    kit::outline_rect(canvas, square, row_edge_colour);
-                kit::outline_rect(canvas, square, steel_colour);
-                kit::box_text(
+                if (game) {
+                    painter_.draw_box(canvas, square);
+                    const int32_t edge = std::max(game_square(), 2);
+                    draw_fitted(canvas, {square.x + edge, square.y + edge, square.width - 2 * edge, square.height - 2 * edge},
+                                shown.maps[map].picture);
+                } else {
+                    kit::fill_rect(canvas, square, well_colour);
+                    if (!draw_fitted(canvas, {square.x + 2, square.y + 2, square.width - 4, square.height - 4},
+                                     shown.maps[map].picture))
+                        kit::outline_rect(canvas, square, row_edge_colour);
+                    kit::outline_rect(canvas, square, steel_colour);
+                }
+                write(
                     canvas, kit::FontRole::small,
                     kit::fit(shown.maps[map].name, square.width + layout_.tile_gap - 2, small),
                     {square.x - layout_.tile_gap / 2, square.y + square.height, square.width + layout_.tile_gap,
                      map_name_room},
-                    kit::Align::centre, plate_text_colour
+                    kit::Align::centre, game ? note_colour : plate_text_colour
                 );
             }
             draw_small_button(canvas, browse_rect(), {Part::browse_maps, 0}, worded("BROWSE MAPS"));
         }
     }
 
-    /// Draws an expansion's row: its sunken box, ticked amber while on, its
-    /// name in the small font, faded while off, and its arrow or its
-    /// padlock; the row under the pointer is washed amber and its box edged
-    /// amber.
+    /// Draws an expansion's row: its box, ticked while on (the game's check
+    /// box, lit while on, over its art), its name, faded while off, and its
+    /// arrow or its padlock; the row under the pointer is washed amber.
     ///
     /// @param canvas where it draws
     /// @param at the expansion, by its place
@@ -2851,43 +3194,56 @@ class LibraryMenuScreen final : public LayerScreen {
     void draw_expansion(const kit::Canvas& canvas, std::size_t at, const kit::Rect& plate) const {
         const LibraryMenuExpansion& shown = facts_now_.active.expansions[at];
         const Hit hit{Part::expansion, at};
+        const bool game = painter_.content();
         const bool lit = enabled(hit) && hovered_ == hit;
         if (lit)
-            kit::blend_rect(canvas, plate, chosen_colour, row_light_opacity);
-        const int32_t side = std::clamp(kit::smooth_text_points(kit::FontRole::small) + 2, 6, std::max(plate.height - 4, 6));
+            kit::blend_rect(canvas, plate, game ? game_amber : chosen_colour, row_light_opacity);
+        const int32_t side = game ? std::clamp(plate.height * 3 / 4, 6, std::max(plate.height - 2, 6))
+                                  : std::clamp(kit::smooth_text_points(kit::FontRole::small) + 2, 6, std::max(plate.height - 4, 6));
         const kit::Rect box{plate.x + layout_.pad / 2, plate.y + (plate.height - side) / 2, side, side};
-        kit::fill_rect(canvas, box, well_colour);
-        draw_sunk_edge(canvas, box);
-        kit::outline_rect(canvas, box, lit ? chosen_colour : row_edge_colour);
-        if (shown.on)
-            draw_check(canvas, box, std::max(side / 6, 2), shown.enabled || shown.locked ? chosen_colour : caption_faded_colour);
+        if (game) {
+            painter_.draw_check_box(canvas, box, shown.on);
+        } else {
+            kit::fill_rect(canvas, box, well_colour);
+            draw_sunk_edge(canvas, box);
+            kit::outline_rect(canvas, box, lit ? chosen_colour : row_edge_colour);
+            if (shown.on)
+                draw_check(canvas, box, std::max(side / 6, 2), shown.enabled || shown.locked ? chosen_colour : caption_faded_colour);
+        }
         const int32_t right = plate.x + plate.width - layout_.pad / 2 - (shown.arrow != LibraryMenuExpansionArrow::none || shown.locked ? side + layout_.pad / 2 : 0);
         const int32_t left = box.x + box.width + layout_.pad;
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
-        outlined_text(
-            canvas, kit::FontRole::small, kit::fit(shown.name, right - left, small),
-            {left, plate.y, right - left, plate.height}, kit::Align::left,
-            shown.on || lit ? caption_of(hit) : caption_faded_colour
-        );
+        const kit::Rect words{left, plate.y, right - left, plate.height};
+        if (game) {
+            painter_.draw_text_at(
+                canvas, words, shown.name, kit::Align::left,
+                lit ? Ink::lit : shown.on ? Ink::plain : Ink::faded, game_square()
+            );
+        } else {
+            const kit::Measure small = measure(canvas, kit::FontRole::small);
+            outlined_text(
+                canvas, kit::FontRole::small, kit::fit(shown.name, words.width, small), words, kit::Align::left,
+                shown.on || lit ? caption_of(hit) : caption_faded_colour
+            );
+        }
         const kit::Rect end{plate.x + plate.width - layout_.pad / 2 - side, box.y, side, side};
         const int32_t width = std::max(side / 9, 2);
+        const kit::Colour amber = game ? game_amber : warn_colour;
+        const kit::Colour ink = game ? (lit ? game_amber : caption_colour) : caption_of(hit);
         switch (shown.arrow) {
         case LibraryMenuExpansionArrow::none:
             if (shown.locked)
-                draw_padlock(canvas, end, warn_colour);
+                draw_padlock(canvas, end, amber);
             break;
         case LibraryMenuExpansionArrow::get:
-            draw_shaft_arrow(canvas, end, true, width, caption_of(hit));
-            kit::fill_rect(canvas, {end.x, end.y + end.height - width, end.width, width}, caption_of(hit));
+            draw_shaft_arrow(canvas, end, true, width, ink);
+            kit::fill_rect(canvas, {end.x, end.y + end.height - width, end.width, width}, ink);
             break;
         case LibraryMenuExpansionArrow::cancel:
-            draw_line(canvas, {end.x + 2, end.y + 2}, {end.x + end.width - 3, end.y + end.height - 3}, width, warn_colour);
-            draw_line(canvas, {end.x + end.width - 3, end.y + 2}, {end.x + 2, end.y + end.height - 3}, width, warn_colour);
+            draw_line(canvas, {end.x + 2, end.y + 2}, {end.x + end.width - 3, end.y + end.height - 3}, width, amber);
+            draw_line(canvas, {end.x + end.width - 3, end.y + 2}, {end.x + 2, end.y + end.height - 3}, width, amber);
             break;
         case LibraryMenuExpansionArrow::retry:
-            draw_refresh_mark(canvas, end, warn_colour);
+            draw_refresh_mark(canvas, end, amber);
             break;
         }
         if (shown.locked || !shown.enabled)
@@ -2902,66 +3258,63 @@ class LibraryMenuScreen final : public LayerScreen {
     void draw_chooser(const kit::Canvas& canvas) const {
         const LibraryMenuActive& shown = facts_now_.active;
         const kit::Rect& body = layout_.body;
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
-        };
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
-        const int32_t small_line = kit::smooth_text_points(kit::FontRole::small) + text_room;
-        const int32_t regular_line = kit::smooth_text_points(kit::FontRole::regular) + 6;
-        const kit::Rect strip{body.x, body.y, body.width, layout_.strip};
-        draw_steel_button(canvas, strip, strip_steel_colour);
-        outlined_text(
-            canvas, kit::FontRole::small, worded("BASE GAME"),
-            {strip.x + layout_.pad, strip.y, strip.width - 2 * layout_.pad, strip.height},
-            kit::Align::left, caption_colour, strip_tracking
-        );
-        kit::box_text(
+        const bool game = painter_.content();
+        const kit::Measure regular = measure(canvas, kit::FontRole::regular);
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
+        const int32_t small_line = line(kit::FontRole::small, text_room);
+        const int32_t regular_line = line(kit::FontRole::regular, 6);
+        draw_strip(canvas, {body.x, body.y, body.width, layout_.strip}, worded("BASE GAME"));
+        write(
             canvas, kit::FontRole::small, kit::fit(shown.chooser_lead, body.width, small),
-            {body.x, strip.y + strip.height + layout_.gap, body.width, small_line}, kit::Align::left,
+            {body.x, body.y + layout_.strip + layout_.gap, body.width, small_line}, kit::Align::left,
             plate_text_colour
         );
         int32_t y = chooser_row_rect(0).y;
         for (std::size_t row = 0; row < shown.chooser_rows.size(); ++row) {
-            const LibraryMenuBaseGame& game = shown.chooser_rows[row];
+            const LibraryMenuBaseGame& base = shown.chooser_rows[row];
             const kit::Rect whole = chooser_row_rect(row);
             const Hit hit{Part::chooser_row, row};
-            kit::fill_rect(canvas, whole, row_colour);
-            if (hovered_ == hit && !game.marked)
-                kit::blend_rect(canvas, whole, chosen_colour, row_light_opacity);
-            kit::outline_rect(canvas, whole, row_edge_colour);
+            draw_row_box(canvas, whole);
+            if (hovered_ == hit && !base.marked)
+                kit::blend_rect(canvas, whole, game ? game_amber : chosen_colour, row_light_opacity);
             const int32_t radio = std::max(whole.height / 3, 10);
             const kit::Rect dot{whole.x + layout_.pad, whole.y + (whole.height - radio) / 2, radio, radio};
-            draw_circle(canvas, dot, 2, game.marked ? chosen_colour : caption_colour);
-            if (game.marked)
-                kit::fill_round_rect(canvas, {dot.x + radio / 4, dot.y + radio / 4, radio / 2, radio / 2},
-                                     radio / 4, chosen_colour);
+            if (game) {
+                painter_.draw_check_box(canvas, dot, base.marked);
+            } else {
+                draw_circle(canvas, dot, 2, base.marked ? chosen_colour : caption_colour);
+                if (base.marked)
+                    kit::fill_round_rect(canvas, {dot.x + radio / 4, dot.y + radio / 4, radio / 2, radio / 2},
+                                         radio / 4, chosen_colour);
+            }
             const int32_t badge = whole.height - 2 * layout_.pad;
-            draw_badge(canvas, {dot.x + radio + layout_.pad, whole.y + layout_.pad, badge, badge}, game.letters, game.picture);
-            const int32_t state_width = std::min(small(game.state) + 2 * layout_.pad, whole.width / 4);
+            draw_badge(canvas, {dot.x + radio + layout_.pad, whole.y + layout_.pad, badge, badge}, base.letters, base.picture);
+            const int32_t state_width = std::min(small(base.state) + 2 * layout_.pad, whole.width / 4);
             const int32_t left = dot.x + radio + 2 * layout_.pad + badge;
             const int32_t width = std::max(whole.x + whole.width - 2 * layout_.pad - state_width - left, 1);
-            outlined_text(
-                canvas, kit::FontRole::regular, kit::fit(game.name, width, regular),
-                {left, whole.y + layout_.pad, width, regular_line}, kit::Align::left, caption_lit_colour
+            write(
+                canvas, kit::FontRole::regular, kit::fit(base.name, width, regular),
+                {left, whole.y + layout_.pad, width, regular_line}, kit::Align::left, caption_lit_colour, true
             );
-            kit::box_text(
-                canvas, kit::FontRole::small, kit::fit(game.detail, width, small),
+            write(
+                canvas, kit::FontRole::small, kit::fit(base.detail, width, small),
                 {left, whole.y + layout_.pad + regular_line, width, small_line}, kit::Align::left,
-                plate_text_colour
+                game ? note_colour : plate_text_colour
             );
-            if (!game.state.empty()) {
+            if (!base.state.empty()) {
                 const kit::Rect pill{
                     whole.x + whole.width - layout_.pad - state_width,
                     whole.y + (whole.height - layout_.tag_height) / 2, state_width, layout_.tag_height
                 };
-                draw_steel(canvas, pill, game.marked ? chosen_steel_colour : cell_steel_colour);
-                kit::box_text(canvas, kit::FontRole::small, kit::fit(game.state, pill.width - 4, small), pill,
-                              kit::Align::centre, game.marked ? chosen_text_colour : caption_colour);
+                if (game)
+                    painter_.draw_well(canvas, pill);
+                else
+                    draw_steel(canvas, pill, base.marked ? chosen_steel_colour : cell_steel_colour);
+                write(canvas, kit::FontRole::small, kit::fit(base.state, pill.width - 4, small), pill,
+                      kit::Align::centre, base.marked ? chosen_text_colour : caption_colour);
             }
-            if (game.marked)
-                draw_ring(canvas, whole, 2, chosen_colour);
+            if (base.marked)
+                draw_ring(canvas, whole, game ? std::max(game_square(), 1) : 2, game ? game_amber : chosen_colour);
             y = whole.y + whole.height + layout_.gap;
         }
         kit::WrapRules rules;
@@ -2970,11 +3323,11 @@ class LibraryMenuScreen final : public LayerScreen {
         for (const auto& [text, ink] :
              {std::pair<std::string, kit::Colour>{shown.chooser_note, plate_text_colour},
               std::pair<std::string, kit::Colour>{shown.chooser_problem, warn_colour}}) {
-            for (const std::string& line : kit::wrap(text, body.width, small, rules)) {
+            for (const std::string& text_line : kit::wrap(text, body.width, small, rules)) {
                 if (y + small_line > bottom)
                     break;
-                kit::box_text(canvas, kit::FontRole::small, line, {body.x, y, body.width, small_line},
-                              kit::Align::left, ink);
+                write(canvas, kit::FontRole::small, text_line, {body.x, y, body.width, small_line},
+                      kit::Align::left, ink);
                 y += small_line;
             }
         }
@@ -2988,17 +3341,12 @@ class LibraryMenuScreen final : public LayerScreen {
     /// @param canvas where it draws
     void draw_registries(const kit::Canvas& canvas) const {
         const LibraryMenuRegistries& shown = facts_now_.registries;
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
-        };
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
-        const kit::Measure secondary = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, secondary_caption_font, line);
-        };
-        const int32_t regular_line = kit::smooth_text_points(kit::FontRole::regular) + 8;
-        const int32_t small_line = kit::smooth_text_points(kit::FontRole::small) + 6;
+        const bool game = painter_.content();
+        const kit::Measure regular = measure(canvas, kit::FontRole::regular);
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
+        const kit::Measure secondary = measure(canvas, secondary_caption_font);
+        const int32_t regular_line = line(kit::FontRole::regular, 8);
+        const int32_t small_line = line(kit::FontRole::small, 6);
         const kit::Canvas inside = kit::clipped(canvas, view_);
         for (std::size_t card = 0; card < shown.cards.size(); ++card) {
             const kit::Rect whole = card_rect(card);
@@ -3009,10 +3357,9 @@ class LibraryMenuScreen final : public LayerScreen {
             const bool lit = hovered_.index == card &&
                              (hovered_.part == Part::card || hovered_.part == Part::card_off ||
                               hovered_.part == Part::card_on || hovered_.part == Part::card_refresh);
-            kit::fill_rect(inside, whole, row_colour);
+            draw_row_box(inside, whole);
             if (lit && !chosen)
-                kit::blend_rect(inside, whole, chosen_colour, row_light_opacity);
-            kit::outline_rect(inside, whole, row_edge_colour);
+                kit::blend_rect(inside, whole, game ? game_amber : chosen_colour, row_light_opacity);
             const int32_t badge = whole.height - 2 * layout_.pad;
             draw_badge(inside, {whole.x + layout_.pad, whole.y + layout_.pad, badge, badge}, item.letters, item.picture);
             const int32_t left = whole.x + 2 * layout_.pad + badge;
@@ -3021,35 +3368,46 @@ class LibraryMenuScreen final : public LayerScreen {
             int32_t y = whole.y + layout_.pad;
             const int32_t pill_width = item.pill.empty() ? 0 : std::min(small(item.pill) + 2 * layout_.pad, width / 2);
             const std::string title = kit::fit(item.title, width - pill_width - (pill_width > 0 ? layout_.pad : 0), regular);
-            outlined_text(inside, kit::FontRole::regular, title, {left, y, width, regular_line},
-                          kit::Align::left, caption_lit_colour);
+            write(inside, kit::FontRole::regular, title, {left, y, width, regular_line}, kit::Align::left,
+                  caption_lit_colour, true);
             if (pill_width > 0) {
                 const kit::Rect pill{
                     left + regular(title) + layout_.pad, y + (regular_line - layout_.tag_height) / 2,
                     pill_width, layout_.tag_height
                 };
-                kit::fill_rect(inside, pill, well_colour);
-                kit::outline_rect(inside, pill, item.pill_warns ? warn_colour : steel_light_colour);
-                kit::box_text(inside, kit::FontRole::small, kit::fit(item.pill, pill.width - 4, small), pill,
-                              kit::Align::centre, item.pill_warns ? warn_colour : caption_colour);
+                if (game) {
+                    painter_.draw_well(inside, pill);
+                } else {
+                    kit::fill_rect(inside, pill, well_colour);
+                    kit::outline_rect(inside, pill, item.pill_warns ? warn_colour : steel_light_colour);
+                }
+                write(inside, kit::FontRole::small, kit::fit(item.pill, pill.width - 4, small), pill,
+                      kit::Align::centre, item.pill_warns ? warn_colour : caption_colour);
             }
             y += regular_line;
-            kit::box_text(inside, kit::FontRole::small, kit::fit(item.address, width, small),
-                          {left, y, width, small_line}, kit::Align::left, note_colour);
+            write(inside, kit::FontRole::small, kit::fit(item.address, width, small),
+                  {left, y, width, small_line}, kit::Align::left, note_colour);
             y += small_line;
             const std::string packages = item.packages + " · ";
             const int32_t packages_width = std::min(small(packages), width);
-            kit::box_text(inside, kit::FontRole::small, kit::fit(packages, packages_width, small),
-                          {left, y, packages_width, small_line}, kit::Align::left, plate_text_colour);
-            kit::box_text(inside, kit::FontRole::small,
-                          kit::fit(item.refreshed, std::max(width - packages_width, 1), small),
-                          {left + packages_width, y, std::max(width - packages_width, 1), small_line},
-                          kit::Align::left, item.refresh_warns ? warn_colour : plate_text_colour);
-            // The switch, its chosen half amber.
+            write(inside, kit::FontRole::small, kit::fit(packages, packages_width, small),
+                  {left, y, packages_width, small_line}, kit::Align::left, plate_text_colour);
+            write(inside, kit::FontRole::small,
+                  kit::fit(item.refreshed, std::max(width - packages_width, 1), small),
+                  {left + packages_width, y, std::max(width - packages_width, 1), small_line},
+                  kit::Align::left, item.refresh_warns ? warn_colour : plate_text_colour);
+            // The switch, its chosen half amber; over the game's art two of
+            // its plain buttons, the chosen one held.
             for (const bool on : {false, true}) {
                 const kit::Rect half = switch_half(card, on);
                 const bool picked = item.on == on;
                 const Hit hit{on ? Part::card_on : Part::card_off, card};
+                if (game) {
+                    painter_.draw_captioned_button(
+                        inside, half, worded(on ? "ON" : "OFF"), true, hovered_ == hit, picked
+                    );
+                    continue;
+                }
                 draw_steel_button(inside, half, picked ? chosen_steel_colour : well_colour);
                 outlined_text(inside, secondary_caption_font, worded(on ? "ON" : "OFF"), half, kit::Align::centre,
                               picked ? chosen_text_colour : hovered_ == hit ? caption_lit_colour : note_colour);
@@ -3058,78 +3416,101 @@ class LibraryMenuScreen final : public LayerScreen {
             }
             const kit::Rect refresh = card_refresh_rect(card);
             const Hit refresh_hit{Part::card_refresh, card};
-            draw_steel_button(inside, refresh, button_steel_colour);
-            if (enabled(refresh_hit) && hovered_ == refresh_hit)
-                kit::outline_rect(inside, refresh, hover_edge_colour);
-            const int32_t mark = refresh.height * 3 / 5;
-            draw_refresh_mark(inside, {refresh.x + layout_.pad / 2, refresh.y + (refresh.height - mark) / 2, mark, mark},
-                              item.refreshing ? chosen_colour : caption_of(refresh_hit));
-            const int32_t caption_left = refresh.x + layout_.pad / 2 + mark + 2;
-            outlined_text(inside, secondary_caption_font,
-                          kit::fit(worded("REFRESH"), refresh.x + refresh.width - caption_left - 4, secondary),
-                          {caption_left, refresh.y, refresh.x + refresh.width - caption_left, refresh.height},
-                          kit::Align::centre, caption_of(refresh_hit));
-            if (chosen) {
-                draw_glow(inside, whole, chosen_colour, layout_.glow / 2);
-                draw_ring(inside, whole, 2, chosen_colour);
+            if (game) {
+                const bool usable = enabled(refresh_hit);
+                const bool refresh_lit = usable && hovered_ == refresh_hit;
+                painter_.draw_captioned_button(
+                    inside, refresh, worded("REFRESH"), usable, refresh_lit || item.refreshing,
+                    refresh_lit && pressed_ == refresh_hit
+                );
+            } else {
+                draw_steel_button(inside, refresh, button_steel_colour);
+                if (enabled(refresh_hit) && hovered_ == refresh_hit)
+                    kit::outline_rect(inside, refresh, hover_edge_colour);
+                const int32_t mark = refresh.height * 3 / 5;
+                draw_refresh_mark(inside, {refresh.x + layout_.pad / 2, refresh.y + (refresh.height - mark) / 2, mark, mark},
+                                  item.refreshing ? chosen_colour : caption_of(refresh_hit));
+                const int32_t caption_left = refresh.x + layout_.pad / 2 + mark + 2;
+                outlined_text(inside, secondary_caption_font,
+                              kit::fit(worded("REFRESH"), refresh.x + refresh.width - caption_left - 4, secondary),
+                              {caption_left, refresh.y, refresh.x + refresh.width - caption_left, refresh.height},
+                              kit::Align::centre, caption_of(refresh_hit));
             }
+            if (chosen)
+                draw_chosen(inside, whole);
         }
-        // ADD REGISTRY…: a dashed box with a plus.
+        // ADD REGISTRY…: a dashed box with a plus; the game's list box over
+        // its art.
         const kit::Rect box = add_rect();
         if (box.y < view_.y + view_.height) {
             const Hit hit{Part::add_registry, 0};
             const bool lit = hovered_ == hit;
-            const kit::Colour edge = lit ? chosen_colour : dash_colour;
-            const int32_t dash = std::max(layout_.pad, 4);
-            for (int32_t x = box.x; x < box.x + box.width; x += 2 * dash) {
-                const int32_t length = std::min(dash, box.x + box.width - x);
-                kit::fill_rect(inside, {x, box.y, length, 1}, edge);
-                kit::fill_rect(inside, {x, box.y + box.height - 1, length, 1}, edge);
+            if (game) {
+                painter_.draw_box(inside, box);
+            } else {
+                const kit::Colour edge = lit ? chosen_colour : dash_colour;
+                const int32_t dash = std::max(layout_.pad, 4);
+                for (int32_t x = box.x; x < box.x + box.width; x += 2 * dash) {
+                    const int32_t length = std::min(dash, box.x + box.width - x);
+                    kit::fill_rect(inside, {x, box.y, length, 1}, edge);
+                    kit::fill_rect(inside, {x, box.y + box.height - 1, length, 1}, edge);
+                }
+                for (int32_t y = box.y; y < box.y + box.height; y += 2 * dash) {
+                    const int32_t length = std::min(dash, box.y + box.height - y);
+                    kit::fill_rect(inside, {box.x, y, 1, length}, edge);
+                    kit::fill_rect(inside, {box.x + box.width - 1, y, 1, length}, edge);
+                }
             }
-            for (int32_t y = box.y; y < box.y + box.height; y += 2 * dash) {
-                const int32_t length = std::min(dash, box.y + box.height - y);
-                kit::fill_rect(inside, {box.x, y, 1, length}, edge);
-                kit::fill_rect(inside, {box.x + box.width - 1, y, 1, length}, edge);
-            }
+            const kit::Colour plus_ink = game ? (lit ? game_amber : caption_colour) : lit ? caption_lit_colour : caption_colour;
             const int32_t plus = std::max(box.height / 4, 8);
             const int32_t middle = box.x + box.width / 2;
             const int32_t plus_top = box.y + box.height / 2 - plus - 2;
             const int32_t thick = std::max(plus / 6, 2);
-            kit::fill_rect(inside, {middle - plus / 2, plus_top + plus / 2 - thick / 2, plus, thick},
-                           lit ? caption_lit_colour : caption_colour);
-            kit::fill_rect(inside, {middle - thick / 2, plus_top, thick, plus},
-                           lit ? caption_lit_colour : caption_colour);
-            outlined_text(inside, kit::FontRole::regular, kit::fit(shown.add, box.width - 8, regular),
-                          {box.x, box.y + box.height / 2, box.width, box.height / 2 - 4}, kit::Align::centre,
-                          lit ? caption_lit_colour : caption_colour, strip_tracking);
+            kit::fill_rect(inside, {middle - plus / 2, plus_top + plus / 2 - thick / 2, plus, thick}, plus_ink);
+            kit::fill_rect(inside, {middle - thick / 2, plus_top, thick, plus}, plus_ink);
+            const kit::Rect words{box.x, box.y + box.height / 2, box.width, box.height / 2 - 4};
+            if (game)
+                painter_.draw_text_at(inside, words, shown.add, kit::Align::centre, lit ? Ink::lit : Ink::plain, game_square());
+            else
+                outlined_text(inside, kit::FontRole::regular, kit::fit(shown.add, box.width - 8, regular), words,
+                              kit::Align::centre, lit ? caption_lit_colour : caption_colour, strip_tracking);
         }
         // The note on review, and a refusal over it.
         const kit::Rect note = note_rect();
         kit::WrapRules rules;
         rules.most_lines = 2;
         if (!shown.notice.empty())
-            kit::box_text(canvas, kit::FontRole::small, kit::fit(shown.notice, note.width, small),
-                          {note.x, note.y - layout_.strip, note.width, layout_.strip}, kit::Align::left,
-                          warn_colour);
-        kit::fill_rect(canvas, note, row_colour);
-        kit::outline_rect(canvas, note, row_edge_colour);
+            write(canvas, kit::FontRole::small, kit::fit(shown.notice, note.width, small),
+                  {note.x, note.y - layout_.strip, note.width, layout_.strip}, kit::Align::left, warn_colour);
+        draw_row_box(canvas, note);
         const int32_t shield = std::min(note.height - 2 * layout_.pad, layout_.mark);
         draw_shield(canvas, {note.x + layout_.pad, note.y + (note.height - shield) / 2, shield, shield}, caption_colour);
         const int32_t left = note.x + 2 * layout_.pad + shield;
         const int32_t width = std::max(note.x + note.width - layout_.pad - left, 1);
         const auto lines = kit::wrap(shown.note, width, small, rules);
         int32_t y = note.y + (note.height - static_cast<int32_t>(lines.size()) * small_line) / 2;
-        for (const std::string& line : lines) {
-            kit::box_text(canvas, kit::FontRole::small, line, {left, y, width, small_line}, kit::Align::left,
-                          plate_text_colour);
+        for (const std::string& text : lines) {
+            write(canvas, kit::FontRole::small, text, {left, y, width, small_line}, kit::Align::left, plate_text_colour);
             y += small_line;
         }
     }
 
-    /// Draws the scroll bar: its arrows, its well and its thumb.
+    /// Draws the scroll bar: its arrows, its well and its thumb; the game's
+    /// over its art.
     ///
     /// @param canvas where it draws
     void draw_scroll_bar(const kit::Canvas& canvas) const {
+        if (painter_.content()) {
+            const auto held = [this](bool up) {
+                const Hit hit{up ? Part::scroll_up : Part::scroll_down, 0};
+                return hovered_ == hit && pressed_ == hit;
+            };
+            painter_.draw_scroll_bar(
+                canvas, scroll_bar_, scroll_arrow_rect(true), scroll_arrow_rect(false), well_rect(), thumb_rect(),
+                held(true), held(false)
+            );
+            return;
+        }
         for (const bool up : {true, false}) {
             const Hit hit{up ? Part::scroll_up : Part::scroll_down, 0};
             const kit::Rect rect = scroll_arrow_rect(up);
@@ -3157,16 +3538,19 @@ class LibraryMenuScreen final : public LayerScreen {
     }
 
     /// Draws TAGS' open list over everything: every tag, then the item that
-    /// shows them all.
+    /// shows them all; in the game's list box over its art.
     ///
     /// @param canvas where it draws
     void draw_tags_menu(const kit::Canvas& canvas) const {
         const kit::Rect menu = tags_menu_rect();
-        kit::fill_rect(canvas, menu, well_colour);
-        kit::outline_rect(canvas, menu, steel_light_colour);
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
+        const bool game = painter_.content();
+        if (game) {
+            painter_.draw_box(canvas, menu);
+        } else {
+            kit::fill_rect(canvas, menu, well_colour);
+            kit::outline_rect(canvas, menu, steel_light_colour);
+        }
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
         const std::size_t count = facts_now_.list.tags.size() + 1;
         for (std::size_t item = static_cast<std::size_t>(tags_first_);
              item < count && item < static_cast<std::size_t>(tags_first_) + most_menu_items; ++item) {
@@ -3174,10 +3558,10 @@ class LibraryMenuScreen final : public LayerScreen {
             const Hit hit{Part::tag_item, item};
             const bool chosen = item < facts_now_.list.tags.size() && facts_now_.list.tags[item].chosen;
             if (hovered_ == hit)
-                kit::blend_rect(canvas, rect, chosen_colour, row_light_opacity * 2);
+                kit::blend_rect(canvas, rect, game ? game_amber : chosen_colour, row_light_opacity * 2);
             const std::string caption = item < facts_now_.list.tags.size() ? facts_now_.list.tags[item].caption
                                                                             : worded("Every tag");
-            kit::box_text(
+            write(
                 canvas, kit::FontRole::small, kit::fit(caption, rect.width - 2 * layout_.pad, small),
                 {rect.x + layout_.pad, rect.y, rect.width - 2 * layout_.pad, rect.height}, kit::Align::left,
                 chosen ? chosen_text_colour : hovered_ == hit ? caption_lit_colour : caption_colour
@@ -3191,18 +3575,15 @@ class LibraryMenuScreen final : public LayerScreen {
     ///
     /// @param canvas where it draws
     void draw_details(const kit::Canvas& canvas) const {
-        draw_panel_frame(canvas, layout_.details, layout_.rim);
+        draw_frame(canvas, layout_.details);
         draw_label(canvas, layout_.details, worded("DETAILS"));
         details_tags_.clear();
+        const bool game = painter_.content();
         const kit::Rect& about = layout_.about;
-        const kit::Measure regular = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::regular, line);
-        };
-        const kit::Measure small = [&canvas](std::string_view line) {
-            return kit::measure_text(canvas, kit::FontRole::small, line);
-        };
-        const int32_t regular_line = kit::smooth_text_points(kit::FontRole::regular) + 8;
-        const int32_t small_line = kit::smooth_text_points(kit::FontRole::small) + 6;
+        const kit::Measure regular = measure(canvas, kit::FontRole::regular);
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
+        const int32_t regular_line = line(kit::FontRole::regular, 8);
+        const int32_t small_line = line(kit::FontRole::small, 6);
         const LibraryMenuDetails* told = told_details();
         // The Active tab's note stands in a box at the foot.
         int32_t bottom = told != nullptr && !told->buttons.empty() ? details_buttons_top() - layout_.gap
@@ -3213,13 +3594,12 @@ class LibraryMenuScreen final : public LayerScreen {
             const auto lines = kit::wrap(facts_now_.active.note, about.width - 2 * layout_.pad, small, rules);
             const int32_t height = static_cast<int32_t>(lines.size()) * small_line + 2 * layout_.pad;
             const kit::Rect box{about.x, about.y + about.height - height, about.width, height};
-            kit::fill_rect(canvas, box, well_colour);
-            draw_sunk_edge(canvas, box);
+            draw_sunk_box(canvas, box);
             int32_t y = box.y + layout_.pad;
-            for (const std::string& line : lines) {
-                kit::box_text(canvas, kit::FontRole::small, line,
-                              {box.x + layout_.pad, y, box.width - 2 * layout_.pad, small_line},
-                              kit::Align::left, plate_text_colour);
+            for (const std::string& text : lines) {
+                write(canvas, kit::FontRole::small, text,
+                      {box.x + layout_.pad, y, box.width - 2 * layout_.pad, small_line},
+                      kit::Align::left, plate_text_colour);
                 y += small_line;
             }
             bottom = box.y - layout_.gap;
@@ -3230,9 +3610,9 @@ class LibraryMenuScreen final : public LayerScreen {
             const auto lines = kit::wrap(facts_now_.notice, about.width, small, rules);
             bottom -= static_cast<int32_t>(lines.size()) * small_line;
             int32_t y = bottom;
-            for (const std::string& line : lines) {
-                kit::box_text(canvas, kit::FontRole::small, line, {about.x, y, about.width, small_line},
-                              kit::Align::left, warn_colour);
+            for (const std::string& text : lines) {
+                write(canvas, kit::FontRole::small, text, {about.x, y, about.width, small_line},
+                      kit::Align::left, warn_colour);
                 y += small_line;
             }
             bottom -= layout_.gap;
@@ -3257,9 +3637,9 @@ class LibraryMenuScreen final : public LayerScreen {
             }
             kit::WrapRules rules;
             int32_t y = about.y;
-            for (const std::string& line : kit::wrap(hint, about.width, small, rules)) {
-                kit::box_text(canvas, kit::FontRole::small, line, {about.x, y, about.width, small_line},
-                              kit::Align::left, note_colour);
+            for (const std::string& text : kit::wrap(hint, about.width, small, rules)) {
+                write(canvas, kit::FontRole::small, text, {about.x, y, about.width, small_line},
+                      kit::Align::left, game ? plate_text_colour : note_colour);
                 y += small_line;
             }
             return;
@@ -3279,16 +3659,16 @@ class LibraryMenuScreen final : public LayerScreen {
         kit::WrapRules title_rules;
         title_rules.most_lines = 2;
         int32_t text_y = about.y;
-        for (const std::string& line : kit::wrap(told->title, text_width, regular, title_rules)) {
-            outlined_text(clip, kit::FontRole::regular, line, {text_left, text_y, text_width, regular_line},
-                          kit::Align::left, caption_lit_colour);
+        for (const std::string& text : kit::wrap(told->title, text_width, regular, title_rules)) {
+            write(clip, kit::FontRole::regular, text, {text_left, text_y, text_width, regular_line},
+                  kit::Align::left, caption_lit_colour, true);
             text_y += regular_line;
         }
         kit::WrapRules status_rules;
         status_rules.most_lines = 2;
-        for (const std::string& line : kit::wrap(told->status, text_width, small, status_rules)) {
-            kit::box_text(clip, kit::FontRole::small, line, {text_left, text_y, text_width, small_line},
-                          kit::Align::left, told->status_warns ? warn_colour : chosen_text_colour);
+        for (const std::string& text : kit::wrap(told->status, text_width, small, status_rules)) {
+            write(clip, kit::FontRole::small, text, {text_left, text_y, text_width, small_line},
+                  kit::Align::left, told->status_warns ? warn_colour : chosen_text_colour);
             text_y += small_line;
         }
         y = std::max(about.y + head, text_y) + layout_.gap;
@@ -3296,12 +3676,12 @@ class LibraryMenuScreen final : public LayerScreen {
         kit::WrapRules summary_rules;
         summary_rules.most_lines = most_summary_lines;
         summary_rules.newlines = true;
-        for (const std::string& line : kit::wrap(told->summary, about.width, small, summary_rules)) {
-            kit::box_text(clip, kit::FontRole::small, line, {about.x, y, about.width, small_line},
-                          kit::Align::left, plate_text_colour);
+        for (const std::string& text : kit::wrap(told->summary, about.width, small, summary_rules)) {
+            write(clip, kit::FontRole::small, text, {about.x, y, about.width, small_line},
+                  kit::Align::left, plate_text_colour);
             y += small_line;
         }
-        // The tags, as plates that wrap.
+        // The tags, as plates that wrap; the game's plain buttons over its art.
         if (!told->tags.empty()) {
             y += layout_.gap / 2;
             int32_t x = about.x;
@@ -3314,20 +3694,34 @@ class LibraryMenuScreen final : public LayerScreen {
                 const kit::Rect plate{x, y, width, layout_.tag_height};
                 details_tags_.push_back(plate);
                 const Hit hit{Part::details_tag, tag};
-                draw_steel(clip, plate, cell_steel_colour);
-                if (hovered_ == hit)
-                    kit::outline_rect(clip, plate, hover_edge_colour);
-                kit::box_text(clip, kit::FontRole::small, kit::fit(told->tags[tag], width - 4, small), plate,
-                              kit::Align::centre, hovered_ == hit ? caption_lit_colour : caption_colour);
+                if (game) {
+                    painter_.draw_plain_button(clip, plate, hovered_ == hit && pressed_ == hit ? 1 : 0);
+                    painter_.draw_text_at(clip, plate, told->tags[tag], kit::Align::centre,
+                                          hovered_ == hit ? Ink::lit : Ink::plain, game_square(),
+                                          TextEdge::smoothed);
+                } else {
+                    draw_steel(clip, plate, cell_steel_colour);
+                    if (hovered_ == hit)
+                        kit::outline_rect(clip, plate, hover_edge_colour);
+                    kit::box_text(clip, kit::FontRole::small, kit::fit(told->tags[tag], width - 4, small), plate,
+                                  kit::Align::centre, hovered_ == hit ? caption_lit_colour : caption_colour);
+                }
                 x += width + layout_.button_gap;
             }
             y += layout_.tag_height + layout_.gap;
         }
         // The facts: a label, a bar, the value.
         if (!told->facts.empty()) {
-            kit::fill_rect(clip, {about.x, y, about.width, 1}, steel_dark_colour);
-            kit::fill_rect(clip, {about.x, y + 1, about.width, 1}, sunk_light_colour);
-            y += layout_.gap;
+            // Over the game's art the facts stand under its frame's tube,
+            // across the panel from its left tube to its right.
+            const int32_t tube = game ? std::max(nearest(painter_.picture_scale() * painter_.art().rule.height), 1) : 0;
+            if (game) {
+                painter_.draw_rule(canvas, layout_.details, y + tube / 2);
+            } else {
+                kit::fill_rect(clip, {about.x, y, about.width, 1}, steel_dark_colour);
+                kit::fill_rect(clip, {about.x, y + 1, about.width, 1}, sunk_light_colour);
+            }
+            y += tube + layout_.gap;
             const int32_t label_width = about.width * 36 / 100;
             const int32_t value_left = about.x + label_width + layout_.pad;
             const int32_t value_width = std::max(about.x + about.width - value_left, 1);
@@ -3338,45 +3732,42 @@ class LibraryMenuScreen final : public LayerScreen {
                 const int32_t height = std::max(static_cast<int32_t>(lines.size()), 1) * small_line;
                 if (y + small_line > bottom)
                     break;
-                kit::box_text(clip, kit::FontRole::small, kit::fit(fact.label, label_width, small),
-                              {about.x, y, label_width, small_line}, kit::Align::left, note_colour);
-                kit::fill_rect(clip, {about.x + label_width, y + 3, 1, height - 6}, row_edge_colour);
+                write(clip, kit::FontRole::small, kit::fit(fact.label, label_width, small),
+                      {about.x, y, label_width, small_line}, kit::Align::left, note_colour);
+                if (!game)
+                    kit::fill_rect(clip, {about.x + label_width, y + 3, 1, height - 6}, row_edge_colour);
                 int32_t line_y = y;
-                for (const std::string& line : lines) {
-                    kit::box_text(clip, kit::FontRole::small, line, {value_left, line_y, value_width, small_line},
-                                  kit::Align::left, fact.warns ? warn_colour : caption_colour);
+                for (const std::string& text : lines) {
+                    write(clip, kit::FontRole::small, text, {value_left, line_y, value_width, small_line},
+                          kit::Align::left, fact.warns ? warn_colour : caption_colour);
                     line_y += small_line;
                 }
                 y += height + 2;
-                kit::fill_rect(clip, {about.x, y - 1, about.width, 1}, rule_line_colour);
+                if (!game)
+                    kit::fill_rect(clip, {about.x, y - 1, about.width, 1}, rule_line_colour);
             }
         }
         // A section under its strip, such as the signing keys.
         if (!told->section.empty()) {
             y += layout_.gap;
-            const kit::Rect strip{about.x, y, about.width, layout_.strip};
-            draw_steel_button(clip, strip, strip_steel_colour);
-            outlined_text(clip, kit::FontRole::small, kit::fit(told->section, strip.width - 2 * layout_.pad, small),
-                          {strip.x + layout_.pad, strip.y, strip.width - 2 * layout_.pad, strip.height},
-                          kit::Align::left, caption_colour, strip_tracking);
-            y += strip.height + layout_.gap / 2;
+            draw_strip(clip, {about.x, y, about.width, layout_.strip}, told->section);
+            y += layout_.strip + layout_.gap / 2;
             if (!told->section_lines.empty()) {
                 const int32_t height = static_cast<int32_t>(told->section_lines.size()) * small_line + layout_.pad;
                 const kit::Rect box{about.x, y, about.width, height};
-                kit::fill_rect(clip, box, well_colour);
-                draw_sunk_edge(clip, box);
+                draw_sunk_box(clip, box);
                 int32_t line_y = y + layout_.pad / 2;
-                for (const std::string& line : told->section_lines) {
-                    kit::box_text(clip, kit::FontRole::small, kit::fit(line, box.width - 2 * layout_.pad, small),
-                                  {box.x + layout_.pad, line_y, box.width - 2 * layout_.pad, small_line},
-                                  kit::Align::left, caption_colour);
+                for (const std::string& text : told->section_lines) {
+                    write(clip, kit::FontRole::small, kit::fit(text, box.width - 2 * layout_.pad, small),
+                          {box.x + layout_.pad, line_y, box.width - 2 * layout_.pad, small_line},
+                          kit::Align::left, caption_colour);
                     line_y += small_line;
                 }
                 y += height + layout_.gap / 2;
             }
             if (!told->section_note.empty()) {
-                kit::box_text(clip, kit::FontRole::small, kit::fit(told->section_note, about.width, small),
-                              {about.x, y, about.width, small_line}, kit::Align::centre, note_colour);
+                write(clip, kit::FontRole::small, kit::fit(told->section_note, about.width, small),
+                      {about.x, y, about.width, small_line}, kit::Align::centre, note_colour);
                 y += small_line;
             }
         }
@@ -3387,9 +3778,9 @@ class LibraryMenuScreen final : public LayerScreen {
             const auto lines = kit::wrap(told->note, about.width, small, rules);
             int32_t line_y = bottom - static_cast<int32_t>(lines.size()) * small_line;
             line_y = std::max(line_y, y + layout_.gap);
-            for (const std::string& line : lines) {
-                kit::box_text(canvas, kit::FontRole::small, line, {about.x, line_y, about.width, small_line},
-                              kit::Align::left, warn_colour);
+            for (const std::string& text : lines) {
+                write(canvas, kit::FontRole::small, text, {about.x, line_y, about.width, small_line},
+                      kit::Align::left, warn_colour);
                 line_y += small_line;
             }
         }
@@ -3398,8 +3789,9 @@ class LibraryMenuScreen final : public LayerScreen {
                               told->buttons[button].caption);
     }
 
-    /// Draws one of the big buttons with the main menu's button faces, its
-    /// caption outlined.
+    /// Draws one of the big buttons: the game's big button on its plate,
+    /// as the Options screen's, over its art; the main menu's button faces,
+    /// the caption outlined, otherwise.
     ///
     /// @param canvas where it draws
     /// @param hit its part
@@ -3413,6 +3805,10 @@ class LibraryMenuScreen final : public LayerScreen {
     ) const {
         const bool lit = usable && hovered_ == hit;
         const bool held = lit && pressed_ == hit;
+        if (painter_.content()) {
+            painter_.draw_big_button(canvas, rect, caption, usable, lit, held);
+            return;
+        }
         const Face face = !usable ? Face::disabled : held ? Face::pressed : lit ? Face::hover : Face::normal;
         fitted_.draw(canvas, rect, art.faces[static_cast<std::size_t>(face)]);
         kit::Rect box = rect;
@@ -3452,6 +3848,7 @@ class LibraryMenuScreen final : public LayerScreen {
     mutable std::vector<kit::Rect> details_tags_{};   ///< the details' tags as last drawn
     std::optional<LibraryMenuView> told_view_{};      ///< what the host was last told is in view
     bool closed_{};                              ///< the host was told the Library left
+    GameMenuPainter painter_;                    ///< draws with the game's art, where it is given
     FittedArt fitted_{};                         ///< the title and the faces, filtered
     uint64_t revision_{1};                       ///< counts the changes to what it draws
 };
@@ -3459,9 +3856,12 @@ class LibraryMenuScreen final : public LayerScreen {
 } // namespace
 
 std::unique_ptr<LayerScreen> make_library_menu(
-    std::string_view name, std::function<LibraryMenuFacts()> facts, LibraryMenuActions actions
+    std::string_view name,
+    std::function<LibraryMenuFacts()> facts,
+    LibraryMenuActions actions,
+    std::optional<GameMenuArt> game_art
 ) {
-    return std::make_unique<LibraryMenuScreen>(name, std::move(facts), std::move(actions));
+    return std::make_unique<LibraryMenuScreen>(name, std::move(facts), std::move(actions), std::move(game_art));
 }
 
 } // namespace oa::app

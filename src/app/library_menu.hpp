@@ -6,8 +6,8 @@
 // whole window with the main menu's art (menu_paint.hpp): under a smaller
 // OPEN ANNIHILATION title and a LIBRARY heading with the refresh button at
 // its right, a LIBRARY panel of tabs, the chosen tab's panel and a DETAILS
-// panel, then the tab's buttons on the left and SETTINGS and CLOSE on the
-// right, and the version plate.
+// panel, then the tab's buttons on the left and CLOSE on the right, and the
+// version plate.
 //
 // The tabs are Active, then Mods, Maps and Updates, then Registries. Active
 // shows the player's setup in five tiles: BASE GAME, LANGUAGE, EXPANSIONS,
@@ -18,11 +18,27 @@
 // switch and REFRESH, ADD REGISTRY… and the note on review; DETAILS tells
 // of the card chosen.
 //
+// Given the game's own art, as over the game's own main menu, the screen
+// stands on the bare picture the game's menus stand on, a LIBRARY title in
+// the game's font, unsmoothed, where the Options screen has its OPTIONS,
+// stands in place of the title and the heading, and the refresh button, the
+// game's square button, stands right of it. The three panels stand in the
+// frame the game draws round its score board, labelled in the game's font,
+// and the tube of its frame parts the tabs. The tabs, the filters, the
+// switches and the small buttons are the game's plain buttons, held while
+// chosen; the rows, the cards, the tiles, the badges and the boxes are its
+// list box; the strips, the foot and the pills its sunk bar; the search its
+// text field; the expansions' and base games' marks its check box; and the
+// scroll bar its own. The big buttons stand on the Options screen's plates.
+// Every text is in the game's font, amber for what lies under the pointer
+// and what to heed.
+//
 // The screen is modal and draws nothing that moves on its own. What the
 // presses do is its host's: the screen asks for a press (LibraryMenuPress)
 // and reads what the Library shows again after it.
 #pragma once
 
+#include "game_menu_art.hpp"
 #include "oa_layer.hpp"
 
 #include <cstddef>
@@ -309,7 +325,6 @@ enum class LibraryMenuCommand : uint8_t {
     details_button,   ///< a button of the details, by its place
     left_button,      ///< a button left of the version plate, by its place
     refresh,          ///< the header's refresh
-    settings,         ///< SETTINGS
     close,            ///< CLOSE
     change_base,      ///< CHANGE… on the base game tile
     language,         ///< SETTINGS on the language tile
@@ -361,11 +376,13 @@ struct LibraryMenuActions {
 /// @param name the screen's name on the OA layer
 /// @param facts reads what the Library shows now
 /// @param actions what its presses do
+/// @param game_art the game's art it is drawn with; none for the main menu's
 /// @return the screen
 [[nodiscard]] std::unique_ptr<LayerScreen> make_library_menu(
     std::string_view name,
     std::function<LibraryMenuFacts()> facts,
-    LibraryMenuActions actions
+    LibraryMenuActions actions,
+    std::optional<GameMenuArt> game_art = std::nullopt
 );
 
 } // namespace oa::app
