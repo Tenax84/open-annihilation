@@ -4007,6 +4007,16 @@ void Runtime::reopen_kept_library() {
         if (screen_ != Screen::main_menu)
             return;
         library_return_since_ = now;
+        // The mod UNINSTALL switched off is played no more: its folder goes
+        // before the feed lists what is installed, and a refusal's notice
+        // shows over the Library as it opens.
+        if (const auto& uninstall = library_return_->uninstall)
+            if (std::optional<oa::ui::kit::Question> told = remove_package_folder(
+                    uninstall->entry, uninstall->title, uninstall->folder, uninstall->expected
+                )) {
+                host.menu_question = std::move(*told);
+                host.menu_answer = {};
+            }
         host.look_again(*this);
     }
     const bool waited = now - *library_return_since_ >= kept_library_wait_ms;
@@ -4052,6 +4062,13 @@ void Runtime::reopen_kept_library() {
         layer.close(work);
     if (layer.find(library_screen_name) == nullptr)
         return;
+    // A notice left for the Library is asked over it as it shows.
+    if (host.menu_question && !main_menu_opens_oa_screens()) {
+        oa::ui::kit::Question told = std::move(*host.menu_question);
+        host.menu_question.reset();
+        ask_over_library(std::move(told), std::move(host.menu_answer));
+        host.menu_answer = {};
+    }
     // The window as the switch began goes on showing over the Library while
     // the pictures of its rows arrive, so that they do not appear one by
     // one. The Library asks for them as it is first drawn under it, and

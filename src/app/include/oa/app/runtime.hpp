@@ -359,6 +359,7 @@ struct MissionMoveGoal {
 };
 
 namespace package_install {
+struct InstalledPackage;
 struct PackageKind;
 struct PackageOptions;
 } // namespace package_install
@@ -6587,8 +6588,12 @@ class Runtime final : public menu::Host,
     /// hands here. For the mod being played, or the language pack the game
     /// shows its words from, as the Library's model or this run says
     /// (package_target_in_use, language_pack_in_use), it shows the notice of
-    /// what comes first over the Library and removes nothing. Otherwise it
-    /// asks the Uninstall question (oa::ui::library::uninstall_question),
+    /// what comes first over the Library and removes nothing. The mod being
+    /// played, where the player could switch it off, is asked about instead
+    /// (oa::ui::library::uninstall_playing_question): its UNINSTALL switches
+    /// it off, the game starting again with no mod, and the next run removes
+    /// its folder as the Library opens again (LibraryReturn::uninstall).
+    /// Otherwise it asks the Uninstall question (oa::ui::library::uninstall_question),
     /// whose UNINSTALL looks again and removes the package's folder in the
     /// player's Mods, Maps or Languages folder, with the copy ROLL BACK
     /// keeps (package_install::uninstall_package), the folders it drops
@@ -6598,6 +6603,52 @@ class Runtime final : public menu::Host,
     ///
     /// @param entry the entry
     void library_uninstall(const oa::ui::library::EntryId& entry);
+
+    /// UNINSTALL's answer for the mod being played: keeps the Library for
+    /// the next run (keep_library_for_restart) with the mod's folder to
+    /// remove (LibraryReturn::uninstall), and switches to no mod, the switch's
+    /// line "Uninstalling {name}…". A refusal shows in the status line and in
+    /// a notice over the Library, and nothing is removed.
+    ///
+    /// @param entry the mod's entry
+    /// @param title its name as the player sees it
+    /// @param folder its folder
+    /// @param expected what the folder held as the question was asked
+    void switch_off_to_uninstall(
+        const oa::ui::library::EntryId& entry,
+        std::string_view title,
+        const std::filesystem::path& folder,
+        const package_install::InstalledPackage& expected
+    );
+
+    /// Removes an installed package's folder, as UNINSTALL's answer does:
+    /// only a folder in the player's own folder for its kind that still
+    /// holds what the question named; the folders it drops deleted a step a
+    /// frame. What reads the kind's folder reads it again, and the Library's
+    /// feed lists what is installed again.
+    ///
+    /// @param entry the package's entry
+    /// @param title its name as the player sees it
+    /// @param folder its folder
+    /// @param expected what the folder held as the question was asked
+    /// @return the notice of a refusal, which removed nothing; none when the
+    ///     folder was removed
+    std::optional<oa::ui::kit::Question> remove_package_folder(
+        const oa::ui::library::EntryId& entry,
+        std::string_view title,
+        const std::filesystem::path& folder,
+        const package_install::InstalledPackage& expected
+    );
+
+    /// Asks a question, or tells a notice, over the Library: in the
+    /// Library's own panel while the Library in the main menu's look shows
+    /// (LibraryMenuQuestion), in the kit's prompt over the screen otherwise.
+    /// It goes with the main menu, as the Library does.
+    ///
+    /// @param asked the question, or a notice of one button
+    /// @param answer what an answer does, given the button pressed from 0;
+    ///     unset for nothing
+    void ask_over_library(oa::ui::kit::Question asked, std::function<void(int32_t)> answer = {});
 
     /// Tells whether a language pack's folder is one the game shows its words
     /// from now: the language shown's, or one of its fallbacks'

@@ -9560,6 +9560,14 @@
 	it=Attivazione di {name}…;
 	}
 
+[Uninstalling {name}…]
+	{
+	de={name} wird deinstalliert…;
+	fr=Désinstallation de {name}…;
+	es=Desinstalando {name}…;
+	it=Disinstallazione di {name}…;
+	}
+
 [Switching to {name} restarts the game's files, then loads this save.]
 	{
 	de=Der Wechsel zu {name} lädt die Spieldateien neu und dann diesen Spielstand.;
@@ -12188,6 +12196,14 @@
 	fr=Tu joues {name}. Désactive-le d'abord avec DÉSACTIVER, puis désinstalle-le.;
 	es=Estás jugando {name}. Apágalo primero con DESACTIVAR y luego desinstálalo.;
 	it=Stai giocando {name}. Disattivalo prima con DISATTIVA, poi disinstallalo.;
+	}
+
+[You are playing {name}. UNINSTALL switches it off first, and the game starts again with no mod.]
+	{
+	de=Du spielst {name}. DEINSTALLIEREN schaltet es zuerst aus, und das Spiel startet ohne Mod neu.;
+	fr=Tu joues {name}. DÉSINSTALLER le désactive d'abord, et le jeu redémarre sans mod.;
+	es=Estás jugando {name}. DESINSTALAR lo apaga primero y el juego se reinicia sin mod.;
+	it=Stai giocando {name}. DISINSTALLA lo disattiva prima, e il gioco riparte senza mod.;
 	}
 
 [You are playing {playing}. Updating {name} doesn't restart the game.]

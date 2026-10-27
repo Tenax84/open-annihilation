@@ -239,6 +239,7 @@ inline constexpr std::string_view interface_words[] = {
     "Stay on",
     "Switching off {name}…",
     "Switching on {name}…",
+    "Uninstalling {name}…",
     "TAP A TARGET · ✕ TAKES IT BACK",
     "TAP POINTS · QUEUE KEEPS ADDING",
     "TRY AGAIN",

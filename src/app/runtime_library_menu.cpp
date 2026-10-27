@@ -269,6 +269,24 @@ struct Runtime::LibraryMenuHost {
         }
         made_.switching =
             runtime_.soft_restart_requested_ ? runtime_.restart_line_ : std::string();
+        made_.question.reset();
+        if (host.menu_question) {
+            const oa::ui::kit::Question& asked = *host.menu_question;
+            LibraryMenuQuestion& shown = made_.question.emplace();
+            shown.title = asked.title;
+            for (const oa::ui::kit::Paragraph& paragraph : asked.paragraphs)
+                shown.paragraphs.push_back(paragraph.text);
+            for (const oa::ui::kit::QuestionButton& button : asked.buttons)
+                shown.buttons.push_back({button.id, button.caption, true});
+            const auto place = [&shown](int32_t button) {
+                return static_cast<std::size_t>(std::clamp<int32_t>(
+                    button, 0, std::max(static_cast<int32_t>(shown.buttons.size()) - 1, 0)
+                ));
+            };
+            shown.cancel = place(asked.cancel_button);
+            shown.primary = place(asked.primary_button);
+            shown.marked = place(static_cast<int32_t>(asked.marked));
+        }
         return made_;
     }
 
@@ -405,6 +423,15 @@ struct Runtime::LibraryMenuHost {
         case LibraryMenuCommand::add_registry:
             result.action = library::Action::add_registry;
             return runtime_.library_act(result);
+        case LibraryMenuCommand::question_button: {
+            // The question closes before its answer acts, which may ask another.
+            const std::function<void(int32_t)> answer = std::move(host.menu_answer);
+            host.menu_question.reset();
+            host.menu_answer = {};
+            if (answer)
+                answer(static_cast<int32_t>(asked.index));
+            return false;
+        }
         }
         return false;
     }
@@ -418,7 +445,13 @@ struct Runtime::LibraryMenuHost {
     }
 
     /// Does what the Library's leaving does.
-    void closed() { runtime_.library_screen_closed(); }
+    void closed() {
+        // A question over the Library goes with it.
+        LibraryHost& host = runtime_.library_host();
+        host.menu_question.reset();
+        host.menu_answer = {};
+        runtime_.library_screen_closed();
+    }
 
   private:
 

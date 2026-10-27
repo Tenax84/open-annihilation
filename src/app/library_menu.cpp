@@ -152,6 +152,10 @@ constexpr uint32_t row_light_opacity = 26;
 constexpr uint32_t dim_opacity = 110;
 /// How strongly the screen is shaded under a switch's line, in 256ths.
 constexpr uint32_t switching_dim_opacity = 128;
+/// How strongly the screen is shaded under a question, in 256ths.
+constexpr uint32_t question_dim_opacity = 128;
+/// The most lines a question's paragraph takes.
+constexpr std::size_t most_question_lines = 6;
 /// A tab's picture on the game's buttons, and the magnifier on its text
 /// field: dark, as their bevel's shade.
 constexpr kit::Colour game_icon_colour{40, 44, 40};
@@ -196,6 +200,7 @@ enum class Part : uint8_t {
     card_on,        ///< its switch's ON half
     card_refresh,   ///< its REFRESH
     add_registry,   ///< the ADD REGISTRY… box
+    question_button, ///< a button of the question, by its place
 };
 
 /// A part, and which of its kind.
@@ -887,6 +892,10 @@ class LibraryMenuScreen final : public LayerScreen {
         );
         if (tags_open_)
             draw_tags_menu(canvas);
+        if (facts_now_.question)
+            draw_question(canvas);
+        else
+            question_buttons_.clear();
         if (!facts_now_.switching.empty())
             draw_switching(canvas);
     }
@@ -1025,6 +1034,9 @@ class LibraryMenuScreen final : public LayerScreen {
 #else
         constexpr uint16_t command_modifier = SDL_KMOD_CTRL;
 #endif
+        // A question takes every key: they go on to key.
+        if (facts_now_.question)
+            return LayerAnswer::pass;
         if (sdl_key == SDLK_F5) {
             if (!facts_now_.refresh_enabled)
                 return LayerAnswer::none;
@@ -1054,7 +1066,9 @@ class LibraryMenuScreen final : public LayerScreen {
     ///
     /// @param pressed the key
     /// @return close when the Library closes; redraw when it acted; none otherwise
-    LayerAnswer key(kit::Key pressed, uint32_t /*sdl_key*/) override {
+    LayerAnswer key(kit::Key pressed, uint32_t sdl_key) override {
+        if (facts_now_.question)
+            return question_key(pressed, sdl_key);
         switch (pressed) {
         case kit::Key::escape:
             if (tags_open_) {
@@ -1134,6 +1148,8 @@ class LibraryMenuScreen final : public LayerScreen {
     /// @param utf8 the text
     /// @return redraw when it searched; pass otherwise
     LayerAnswer text(std::string_view utf8) override {
+        if (facts_now_.question)
+            return LayerAnswer::none;
         if (!search_focused_ || facts_now_.page != LibraryMenuPage::list)
             return LayerAnswer::pass;
         std::string words = facts_now_.list.search;
@@ -1157,6 +1173,8 @@ class LibraryMenuScreen final : public LayerScreen {
     /// @param notches how far the wheel turned, positive away from the player
     /// @return redraw when something scrolled; none otherwise
     LayerAnswer wheel(kit::Point at, float notches) override {
+        if (facts_now_.question)
+            return LayerAnswer::none;
         if (tags_open_ && kit::contains(tags_menu_rect(), at)) {
             const auto count = static_cast<int32_t>(facts_now_.list.tags.size() + 1);
             const int32_t limit = std::max(count - static_cast<int32_t>(most_menu_items), 0);
@@ -1207,6 +1225,16 @@ class LibraryMenuScreen final : public LayerScreen {
             list.controls.push_back(std::move(control));
             list.tab_order.push_back(control_id(hit));
         };
+        // A question's buttons are all a press reaches while it shows.
+        if (facts_now_.question) {
+            const LibraryMenuQuestion& asked = *facts_now_.question;
+            for (std::size_t button = 0; button < asked.buttons.size() && button < question_buttons_.size();
+                 ++button)
+                add({Part::question_button, button}, question_buttons_[button],
+                    "prompt." + word_of(asked.buttons[button].id), asked.buttons[button].caption, false,
+                    kit::ControlKind::button);
+            return list;
+        }
         if (tags_open_) {
             const std::size_t count = facts_now_.list.tags.size() + 1;
             for (std::size_t item = static_cast<std::size_t>(tags_first_);
@@ -1346,7 +1374,10 @@ class LibraryMenuScreen final : public LayerScreen {
         kit::Interaction shown;
         shown.hovered = hovered_.part != Part::none ? control_id(hovered_) : kit::no_control;
         shown.pressed = pressed_.part != Part::none ? control_id(pressed_) : kit::no_control;
-        if (search_focused_) {
+        if (facts_now_.question) {
+            shown.focused = control_id({Part::question_button, question_marked_});
+            shown.focus_shown = true;
+        } else if (search_focused_) {
             shown.focused = control_id({Part::search, 0});
             shown.focus_shown = true;
         }
@@ -1446,7 +1477,18 @@ class LibraryMenuScreen final : public LayerScreen {
         const bool other_rows = now.list.rows.size() != facts_now_.list.rows.size() ||
                                 now.list.search != facts_now_.list.search;
         const std::optional<std::size_t> was_selected = facts_now_.list.selected;
+        const bool other_question = now.question != facts_now_.question;
         facts_now_ = std::move(now);
+        // A question asked anew takes the pointer and the keys from what
+        // lies under it, its button marked at first the one Enter answers.
+        if (other_question) {
+            tags_open_ = false;
+            search_focused_ = false;
+            dragging_thumb_ = false;
+            hovered_ = {};
+            pressed_ = {};
+            question_marked_ = facts_now_.question ? facts_now_.question->marked : 0;
+        }
         if (other_tab) {
             scroll_ = 0;
             tags_open_ = false;
@@ -2033,6 +2075,12 @@ class LibraryMenuScreen final : public LayerScreen {
     /// @param at the point, in the screen's points
     /// @return the part; none when nothing a press reaches is there
     [[nodiscard]] Hit hit_at(kit::Point at) const noexcept {
+        if (facts_now_.question) {
+            for (std::size_t button = 0; button < question_buttons_.size(); ++button)
+                if (kit::contains(question_buttons_[button], at))
+                    return {Part::question_button, button};
+            return {};
+        }
         if (tags_open_) {
             if (kit::contains(tags_menu_rect(), at)) {
                 const std::size_t count = facts_now_.list.tags.size() + 1;
@@ -2254,6 +2302,9 @@ class LibraryMenuScreen final : public LayerScreen {
                    registries.cards[hit.index].refresh_enabled;
         case Part::add_registry:
             return facts_now_.page == LibraryMenuPage::registries;
+        case Part::question_button:
+            return facts_now_.question && hit.index < facts_now_.question->buttons.size() &&
+                   facts_now_.question->buttons[hit.index].enabled;
         }
         return false;
     }
@@ -2331,6 +2382,8 @@ class LibraryMenuScreen final : public LayerScreen {
             return plain(LibraryMenuCommand::registry_refresh);
         case Part::add_registry:
             return plain(LibraryMenuCommand::add_registry);
+        case Part::question_button:
+            return plain(LibraryMenuCommand::question_button);
         default:
             return false;
         }
@@ -3541,6 +3594,111 @@ class LibraryMenuScreen final : public LayerScreen {
         );
     }
 
+    /// Takes a key while a question shows: Escape and N answer its cancel
+    /// button, Y its primary one, Enter and Space the button marked, and
+    /// Left, Right, Tab and Shift+Tab move the mark.
+    ///
+    /// @param pressed the key
+    /// @param sdl_key the key's SDL keycode
+    /// @return close when the answer closed the Library; redraw when it acted; none otherwise
+    LayerAnswer question_key(kit::Key pressed, uint32_t sdl_key) {
+        const LibraryMenuQuestion& asked = *facts_now_.question;
+        const std::size_t count = asked.buttons.size();
+        if (count == 0)
+            return LayerAnswer::none;
+        const auto answer = [this](std::size_t button) {
+            return press({Part::question_button, button}) ? LayerAnswer::close : LayerAnswer::redraw;
+        };
+        if (pressed == kit::Key::escape || sdl_key == SDLK_N)
+            return answer(asked.cancel);
+        if (sdl_key == SDLK_Y)
+            return answer(asked.primary);
+        switch (pressed) {
+        case kit::Key::enter:
+        case kit::Key::space:
+            return answer(std::min(question_marked_, count - 1));
+        case kit::Key::left:
+        case kit::Key::back_tab:
+            question_marked_ = (std::min(question_marked_, count - 1) + count - 1) % count;
+            ++revision_;
+            return LayerAnswer::redraw;
+        case kit::Key::right:
+        case kit::Key::tab:
+            question_marked_ = (std::min(question_marked_, count - 1) + 1) % count;
+            ++revision_;
+            return LayerAnswer::redraw;
+        default:
+            return LayerAnswer::none;
+        }
+    }
+
+    /// Draws the question over everything: the screen shaded, and a panel
+    /// in its middle, framed and labelled as the others, its paragraphs
+    /// under the label as DETAILS' text, and its buttons, the big buttons
+    /// of the screen's foot, in a row at its foot, right-aligned, an amber
+    /// ring round the one marked. It keeps where the buttons were drawn for
+    /// the presses.
+    ///
+    /// @param canvas where it draws
+    void draw_question(const kit::Canvas& canvas) const {
+        const LibraryMenuQuestion& asked = *facts_now_.question;
+        kit::blend_rect(canvas, {0, 0, size_.x, size_.y}, well_colour, question_dim_opacity);
+        // Its text stands as far within its frame as DETAILS' does.
+        const int32_t side = layout_.about.x - layout_.details.x;
+        const int32_t top = layout_.about.y - layout_.details.y;
+        const kit::Rect stage = game_menu_stage(size_.x, size_.y);
+        const auto count = static_cast<int32_t>(asked.buttons.size());
+        const int32_t buttons_width =
+            count * layout_.left_width + std::max(count - 1, 0) * layout_.footer_gap;
+        const int32_t width = std::min(
+            std::max({stage.width * 9 / 20, buttons_width + 2 * side, 1}), std::max(size_.x - 2 * side, 1)
+        );
+        const int32_t text_width = std::max(width - 2 * side, 1);
+        const kit::Measure small = measure(canvas, kit::FontRole::small);
+        const int32_t small_line = line(kit::FontRole::small, 6);
+        kit::WrapRules rules;
+        rules.most_lines = most_question_lines;
+        rules.newlines = true;
+        std::vector<std::vector<std::string>> paragraphs;
+        int32_t text_height = 0;
+        for (const std::string& paragraph : asked.paragraphs) {
+            if (!paragraphs.empty())
+                text_height += layout_.gap;
+            paragraphs.push_back(kit::wrap(paragraph, text_width, small, rules));
+            text_height += static_cast<int32_t>(paragraphs.back().size()) * small_line;
+        }
+        const int32_t height = top + text_height + 2 * layout_.gap + layout_.button_height + side;
+        const kit::Rect panel{(size_.x - width) / 2, (size_.y - height) / 2, width, height};
+        if (!painter_.content())
+            kit::fill_rect(canvas, panel, plate_colour);
+        draw_frame(canvas, panel);
+        draw_label(canvas, panel, asked.title);
+        int32_t y = panel.y + top;
+        for (std::size_t at = 0; at < paragraphs.size(); ++at) {
+            if (at > 0)
+                y += layout_.gap;
+            for (const std::string& text : paragraphs[at]) {
+                write(canvas, kit::FontRole::small, text, {panel.x + side, y, text_width, small_line},
+                      kit::Align::left, plate_text_colour);
+                y += small_line;
+            }
+        }
+        const MenuArt& art = menu_art();
+        question_buttons_.clear();
+        int32_t x = panel.x + panel.width - side - buttons_width;
+        const int32_t buttons_y = panel.y + panel.height - side - layout_.button_height;
+        for (std::size_t button = 0; button < asked.buttons.size(); ++button) {
+            const kit::Rect rect{x, buttons_y, layout_.left_width, layout_.button_height};
+            question_buttons_.push_back(rect);
+            const Hit hit{Part::question_button, button};
+            draw_footer(canvas, hit, rect, asked.buttons[button].caption, enabled(hit), art);
+            if (button == question_marked_)
+                draw_ring(canvas, rect, std::max(painter_.content() ? game_square() : 2, 1),
+                          painter_.content() ? game_amber : chosen_colour);
+            x += layout_.left_width + layout_.footer_gap;
+        }
+    }
+
     /// Draws the line a switch of the mod shows while the game starts again
     /// over everything: the screen shaded, and the line in a panel's frame
     /// in its middle, at most three lines of it, in the game's font as large
@@ -3891,6 +4049,8 @@ class LibraryMenuScreen final : public LayerScreen {
     int32_t tags_first_{};                       ///< its first item shown
     LibraryMenuTile told_tile_{LibraryMenuTile::mod}; ///< the Active tile DETAILS tells of
     mutable std::vector<kit::Rect> details_tags_{};   ///< the details' tags as last drawn
+    mutable std::vector<kit::Rect> question_buttons_{}; ///< the question's buttons as last drawn
+    std::size_t question_marked_{};              ///< the question's button Enter answers
     std::optional<LibraryMenuView> told_view_{};      ///< what the host was last told is in view
     bool closed_{};                              ///< the host was told the Library left
     GameMenuPainter painter_;                    ///< draws with the game's art, where it is given

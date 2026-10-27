@@ -15,9 +15,11 @@
 #include "oa/app/content/service.hpp"
 #include "oa/app/content/updates.hpp"
 #include "oa/app/mod_summary.hpp"
+#include "oa/app/package_install.hpp"
 #include "oa/app/runtime.hpp"
 #include "oa/base/threads.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
+#include "oa/ui/kit/components_more.hpp"
 #include "oa/data/brain_library/library.hpp"
 #include "oa/data/catalogue/catalogue.hpp"
 #include "oa/data/mutator_library/library.hpp"
@@ -315,6 +317,15 @@ struct Runtime::LibraryReturn {
     int32_t list_scroll{};    ///< how far the list was scrolled, in points
     bool details_open{};      ///< the selected entry's details were open
     bool details_page{};      ///< they showed as their own page
+    /// The mod UNINSTALL switched off, whose folder the next run removes as
+    /// the Library opens again; none for none.
+    struct Uninstall {
+        oa::ui::library::EntryId entry{};               ///< its entry
+        std::string title{};                            ///< its name as the player sees it
+        std::filesystem::path folder{};                 ///< its folder
+        package_install::InstalledPackage expected{};   ///< what it held as UNINSTALL was answered
+    };
+    std::optional<Uninstall> uninstall{};               ///< the mod to remove; none for none
 };
 
 /// The Library's host: its model and screen state, its feed, the pictures
@@ -359,6 +370,11 @@ struct Runtime::LibraryHost {
     /// packages no longer lets that item hide its update.
     std::map<uint64_t, uint64_t> finished_scans{};
     LibraryWork work{}; ///< the worker and what it found
+    /// The question the Library in the main menu's look asks over itself
+    /// (Runtime::ask_over_library); none for none.
+    std::optional<oa::ui::kit::Question> menu_question{};
+    /// What its answer does, given the button pressed from 0; may be unset.
+    std::function<void(int32_t)> menu_answer{};
     /// The package whose check is running. Empty when none is.
     std::string checking_id{};
     /// Which kind `checking_id` names. A mutator and a brain may share an id.

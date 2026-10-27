@@ -288,6 +288,21 @@ struct LibraryMenuRegistries {
     friend bool operator==(const LibraryMenuRegistries&, const LibraryMenuRegistries&) = default;
 };
 
+/// A question the Library asks over itself, and a notice of one button: in a
+/// panel's frame over the dimmed screen, its title over a divider, its
+/// paragraphs and its buttons in a row at its foot, right-aligned. It takes
+/// every press and key while it shows.
+struct LibraryMenuQuestion {
+    std::string title{};                      ///< its title
+    std::vector<std::string> paragraphs{};    ///< its text, top to bottom
+    std::vector<LibraryMenuButton> buttons{}; ///< its buttons, left to right
+    std::size_t cancel{};                     ///< the button Escape and N answer
+    std::size_t primary{};                    ///< the button Y answers
+    std::size_t marked{};                     ///< the button Enter answers at first
+
+    friend bool operator==(const LibraryMenuQuestion&, const LibraryMenuQuestion&) = default;
+};
+
 /// Which kind of tab is shown.
 enum class LibraryMenuPage : uint8_t { active, list, registries };
 
@@ -312,6 +327,8 @@ struct LibraryMenuFacts {
     /// The line a switch of the mod made here shows while the game starts
     /// again, in a frame over the dimmed screen; empty for none.
     std::string switching{};
+    /// The question asked over the screen; none for none.
+    std::optional<LibraryMenuQuestion> question{};
 
     friend bool operator==(const LibraryMenuFacts&, const LibraryMenuFacts&) = default;
 };
@@ -342,6 +359,7 @@ enum class LibraryMenuCommand : uint8_t {
     registry_switch,  ///< a registry's switch, by its place; on says which half
     registry_refresh, ///< a registry's REFRESH, by its place
     add_registry,     ///< ADD REGISTRY…
+    question_button,  ///< a button of the question, by its place
 };
 
 /// One press of the Library screen.
