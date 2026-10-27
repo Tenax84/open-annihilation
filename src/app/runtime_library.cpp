@@ -4052,6 +4052,31 @@ void Runtime::reopen_kept_library() {
         layer.close(work);
     if (layer.find(library_screen_name) == nullptr)
         return;
+    // The window as the switch began goes on showing over the Library while
+    // the pictures of its rows arrive, so that they do not appear one by
+    // one. The Library asks for them as it is first drawn under it, and
+    // takes each as it is rebuilt.
+    if (options_.restart_picture) {
+        WorkScreen::Host arriving;
+        arriving.tick = [this, began = now, frames = 0]() mutable {
+            ++frames;
+            if (oa_layer().find(library_screen_name) == nullptr ||
+                oa::platform::tick_ms() - began >= kept_library_pictures_wait_ms)
+                return true;
+            const auto& pictures = library_host().work.pictures;
+            return frames > 2 && (pictures == nullptr || !pictures->holding());
+        };
+        layer.push(
+            std::make_unique<WorkScreen>(
+                layer,
+                Screen::main_menu,
+                std::string(oa::data::languages::interface_text("Open Annihilation")),
+                options_.restart_line,
+                arriving,
+                options_.restart_picture
+            )
+        );
+    }
     for (std::size_t index = 0; index < library::tab_total; ++index) {
         library::set_tab(host.model, static_cast<library::Tab>(index));
         library::set_filter(host.model, shown.filters[index]);

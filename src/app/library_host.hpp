@@ -297,6 +297,11 @@ struct KeptUpdate {
 /// opened by then is dropped.
 inline constexpr uint32_t kept_library_wait_ms = 5000;
 
+/// The longest the window as a switch of the mod began goes on showing over
+/// the Library opened again while the pictures it asked for arrive, in
+/// milliseconds.
+inline constexpr uint32_t kept_library_pictures_wait_ms = 1500;
+
 /// What the Library showed when a switch of the mod from it ended a run.
 /// The next run opens it again with them.
 struct Runtime::LibraryReturn {

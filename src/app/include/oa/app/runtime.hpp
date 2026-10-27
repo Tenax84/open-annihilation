@@ -6662,7 +6662,9 @@ class Runtime final : public menu::Host,
     /// could: the window as the switch began where the run before kept it
     /// (Options::restart_picture). The wait is kept_library_wait_ms from the first frame on the
     /// main menu: then the Library opens unlisted if it can, and is dropped
-    /// if it cannot, on whichever screen shows.
+    /// if it cannot, on whichever screen shows. That picture goes on showing
+    /// over the Library opened again until the pictures of its rows have
+    /// arrived, for at most kept_library_pictures_wait_ms.
     void reopen_kept_library();
 
     /// Tells whether open_library opens the Library now.
