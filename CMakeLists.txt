@@ -1301,7 +1301,7 @@ set(oa_game_sources src/app/main.cpp src/app/full_screen.cpp src/app/runtime_win
   src/app/library_menu.cpp src/app/runtime_library_menu.cpp
   src/app/game_menu_art.cpp src/app/runtime_game_menu_art.cpp
   src/app/runtime_mod_install.cpp src/app/runtime_content.cpp src/app/runtime_challenge.cpp
-  src/app/runtime_registries.cpp
+  src/app/runtime_registries.cpp src/app/add_registry_menu.cpp
   src/app/runtime_package_kinds.cpp
   src/app/runtime_mutator_library.cpp
   src/app/runtime_brain_library.cpp
