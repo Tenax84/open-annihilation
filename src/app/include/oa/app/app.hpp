@@ -833,6 +833,11 @@ struct Options {
     // mod made in the Library, in the language shown, such as "Switching on
     // Ridge…"; empty says "Applying your changes".
     std::string restart_line;
+    // The window as the run before last showed it as that switch began: the
+    // Library with the switch's line over it. The window shows it, with no
+    // progress dialog over it, until the Library opens again; null shows the
+    // progress dialog over the quiet colour.
+    std::shared_ptr<const renderer::Surface> restart_picture;
     // Forces each renderer failure the game handles while it runs, on the
     // renderer the start made, and checks that it goes on presenting: the
     // walk of the render drivers, a present error on a menu, match or

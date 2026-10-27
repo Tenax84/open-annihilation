@@ -3942,6 +3942,53 @@ void Runtime::keep_library_for_restart() {
     library_kept_ = std::move(shown);
 }
 
+void Runtime::keep_switch_picture() {
+    switch_picture_.reset();
+    if (!soft_restart_requested_ || restart_line_.empty() || !library_kept_)
+        return;
+    if (options_.headless_check || sdl_.window == nullptr || sdl_.renderer == nullptr ||
+        screen_ != Screen::main_menu)
+        return;
+    OaLayer& layer = oa_layer();
+    if (layer.find(library_screen_name) == nullptr)
+        return;
+    // Over Open Annihilation's menus the Library's own screen has no frame of
+    // the game's art: the switch's work dialog says it there.
+    if (!main_menu_opens_oa_screens())
+        layer.push(
+            std::make_unique<WorkScreen>(
+                layer,
+                Screen::main_menu,
+                std::string(oa::data::languages::interface_text("Open Annihilation")),
+                restart_line_,
+                WorkScreen::Host{}
+            )
+        );
+    // The Library reads the switch's line now (LibraryMenuFacts::switching).
+    layer.tick();
+    // The whole window, without the cursor, drawn even where it would show
+    // what it showed already.
+    auto picture = std::make_shared<renderer::Surface>();
+    const bool whole_window = layer.reads_whole_window();
+    const bool without_cursor = frame_without_cursor_;
+    layer.read_whole_window(true);
+    frame_without_cursor_ = true;
+    covered_shown_.reset();
+    capture_frame_ = picture.get();
+    try {
+        render();
+    } catch (const std::exception& error) {
+        std::cerr << "open-annihilation: the window as the switch began was not kept: "
+                  << error.what() << '\n';
+        picture->rgb.clear();
+    }
+    capture_frame_ = nullptr;
+    frame_without_cursor_ = without_cursor;
+    layer.read_whole_window(whole_window);
+    if (picture->width > 0 && picture->height > 0 && !picture->rgb.empty())
+        switch_picture_ = std::move(picture);
+}
+
 bool Runtime::kept_library_may_show() {
     // Where the player could open it, and over no other screen of the layer.
     if (!library_can_open())
@@ -3975,8 +4022,9 @@ void Runtime::reopen_kept_library() {
     const bool listed =
         host.feed.installed_listed == nullptr || host.feed.installed_listed(host.feed.context);
     if (!listed && !waited) {
-        // The switch's work dialog says what is being done meanwhile. It
-        // gives way to whatever the Library would not open over.
+        // The switch's work dialog says what is being done meanwhile, or
+        // the window as the switch began goes on showing it. It gives way to
+        // whatever the Library would not open over.
         if (!options_.restart_line.empty() && layer.top() == nullptr) {
             WorkScreen::Host waiting;
             waiting.tick = [this] { return !library_return_ || !kept_library_may_show(); };
@@ -3986,7 +4034,8 @@ void Runtime::reopen_kept_library() {
                     Screen::main_menu,
                     std::string(oa::data::languages::interface_text("Open Annihilation")),
                     options_.restart_line,
-                    waiting
+                    waiting,
+                    options_.restart_picture
                 )
             );
         }
@@ -4066,6 +4115,10 @@ void Runtime::tick_library() {
     // the main menu, or drops it once the wait is over on any screen.
     if (library_return_ && !soft_restart_requested_)
         reopen_kept_library();
+    // The window as the switch began shows no more once the Library opened
+    // again or was dropped: later work shows the progress dialog.
+    if (!library_return_)
+        options_.restart_picture.reset();
     // The Library and its dot are the main menu's.
     if (screen_ != Screen::main_menu)
         return;

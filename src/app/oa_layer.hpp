@@ -23,6 +23,7 @@
 
 #include "oa/app/automation_host.hpp"
 #include "oa/app/runtime.hpp"
+#include "oa/app/window_icon.hpp"
 #include "oa/platform/text_font.hpp"
 #include "oa/ui/display_layout.hpp"
 #include "oa/ui/engine_settings/dialog.hpp"
@@ -1653,6 +1654,10 @@ class NoticeScreen final : public LayerScreen {
 /// the OA layer: modal over a backdrop, centred in the window at its scale
 /// over one screen of the game, its spinner turning. It has no buttons and
 /// takes every input, doing nothing with it, until its host closes it.
+///
+/// Given a picture of the window, such as the one a switch of the mod in
+/// the Library began with, it shows that picture over the whole room
+/// instead, opaque, with no dialog over it.
 class WorkScreen final : public LayerScreen {
   public:
 
@@ -1673,8 +1678,14 @@ class WorkScreen final : public LayerScreen {
     /// @param title the header, as shown
     /// @param line the one line, as shown
     /// @param answers what its host does
+    /// @param picture the window it shows instead of the dialog; null for the dialog
     WorkScreen(
-        OaLayer& layer, Screen shown_over, std::string title, std::string line, Host answers
+        OaLayer& layer,
+        Screen shown_over,
+        std::string title,
+        std::string line,
+        Host answers,
+        std::shared_ptr<const renderer::Surface> picture = nullptr
     );
 
     /// Returns the dialog's name.
@@ -1684,7 +1695,8 @@ class WorkScreen final : public LayerScreen {
 
     /// Returns where the dialog shows: centred in the view's room at its
     /// scale, its size class's notice width wide and as tall as its line
-    /// makes it, over its own screen of the game.
+    /// makes it, over its own screen of the game; with a picture, the whole
+    /// room, a point a window pixel.
     ///
     /// @param view what the screen is placed on
     /// @return its place; empty in a match, over another screen, or without fonts
@@ -1700,12 +1712,13 @@ class WorkScreen final : public LayerScreen {
     /// @return true
     [[nodiscard]] bool modal() const override { return true; }
 
-    /// Tells that what lies under the dialog darkens.
+    /// Tells that what lies under the dialog darkens; a picture covers it.
     ///
-    /// @return true
-    [[nodiscard]] bool backdrop() const override { return true; }
+    /// @return true without a picture
+    [[nodiscard]] bool backdrop() const override { return picture_.pixels.empty(); }
 
-    /// Draws the dialog (kit::draw_work_dialog).
+    /// Draws the dialog (kit::draw_work_dialog), or the picture over the
+    /// whole screen.
     ///
     /// @param canvas where it draws
     void draw(const oa::ui::kit::Canvas& canvas) const override;
@@ -1768,6 +1781,8 @@ class WorkScreen final : public LayerScreen {
     Host host_;                      ///< what its host does
     uint32_t began_ms_{};            ///< when it was made, on the platform's clock
     uint64_t revision_{};            ///< counts the changes to its look
+    WindowIcon picture_{};           ///< the window shown instead of the dialog; empty for none
+    oa::ui::kit::Point room_{};      ///< the room the picture covers, in points
 };
 
 /// A question of Open Annihilation's own (kit::Question) as a screen of the

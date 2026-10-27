@@ -256,15 +256,19 @@ struct Runtime::LibraryMenuHost {
         if (host.model.tab == library::Tab::languages)
             library::set_tab(host.model, library::Tab::active);
         const std::string language = worded("LIBRARY");
-        if (built_ && host.model_revision == seen_model_ && revision_ == seen_revision_ &&
-            language == seen_language_)
-            return made_;
-        seen_model_ = host.model_revision;
-        seen_revision_ = revision_;
-        seen_language_ = language;
-        built_ = true;
-        made_ = make(host);
-        ask_pictures();
+        // A switch of the mod made here ends the run: its line shows over
+        // the screen as the window is kept for the next (keep_switch_picture).
+        if (!built_ || host.model_revision != seen_model_ || revision_ != seen_revision_ ||
+            language != seen_language_) {
+            seen_model_ = host.model_revision;
+            seen_revision_ = revision_;
+            seen_language_ = language;
+            built_ = true;
+            made_ = make(host);
+            ask_pictures();
+        }
+        made_.switching =
+            runtime_.soft_restart_requested_ ? runtime_.restart_line_ : std::string();
         return made_;
     }
 

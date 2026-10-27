@@ -309,6 +309,9 @@ struct LibraryMenuFacts {
     std::string queue{};   ///< the download queue's line, over the buttons; empty for none
     std::string notice{};  ///< an amber line in DETAILS, such as a folder that did not open
     std::string version{}; ///< the version label; empty for no plate
+    /// The line a switch of the mod made here shows while the game starts
+    /// again, in a frame over the dimmed screen; empty for none.
+    std::string switching{};
 
     friend bool operator==(const LibraryMenuFacts&, const LibraryMenuFacts&) = default;
 };

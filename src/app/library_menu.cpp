@@ -150,6 +150,8 @@ constexpr kit::Colour dash_colour{96, 104, 106};         ///< ADD REGISTRY…'s 
 constexpr uint32_t row_light_opacity = 26;
 /// How strongly a dimmed row is shaded, in 256ths.
 constexpr uint32_t dim_opacity = 110;
+/// How strongly the screen is shaded under a switch's line, in 256ths.
+constexpr uint32_t switching_dim_opacity = 128;
 /// A tab's picture on the game's buttons, and the magnifier on its text
 /// field: dark, as their bevel's shade.
 constexpr kit::Colour game_icon_colour{40, 44, 40};
@@ -885,6 +887,8 @@ class LibraryMenuScreen final : public LayerScreen {
         );
         if (tags_open_)
             draw_tags_menu(canvas);
+        if (!facts_now_.switching.empty())
+            draw_switching(canvas);
     }
 
     /// Follows the view: the room's size in the layer's points.
@@ -3535,6 +3539,47 @@ class LibraryMenuScreen final : public LayerScreen {
             canvas, {thumb.x + 2, thumb.y, thumb.width - 4, thumb.height},
             lit ? thumb_lit_colour : cell_steel_colour
         );
+    }
+
+    /// Draws the line a switch of the mod shows while the game starts again
+    /// over everything: the screen shaded, and the line in a panel's frame
+    /// in its middle, at most three lines of it, in the game's font as large
+    /// as the panels' labels over its art.
+    ///
+    /// @param canvas where it draws
+    void draw_switching(const kit::Canvas& canvas) const {
+        kit::blend_rect(canvas, {0, 0, size_.x, size_.y}, well_colour, switching_dim_opacity);
+        const bool game = painter_.content();
+        const int32_t square = game ? painter_.text_square(layout_.label_height) : 1;
+        const kit::Measure measured =
+            game ? kit::Measure(painter_.measure(square)) : measure(canvas, kit::FontRole::regular);
+        const int32_t line_height =
+            game ? painter_.line_height(square) : line(kit::FontRole::regular, 8);
+        // As wide as the line, between a quarter and a half of the stage.
+        const kit::Rect stage = game_menu_stage(size_.x, size_.y);
+        const int32_t margin = layout_.rim + layout_.inset + layout_.pad;
+        kit::WrapRules rules;
+        rules.most_lines = 3;
+        const auto lines =
+            kit::wrap(facts_now_.switching, std::max(stage.width / 2 - 2 * margin, 1), measured, rules);
+        int32_t widest = stage.width / 4;
+        for (const std::string& text : lines)
+            widest = std::max(widest, measured(text));
+        const int32_t width = widest + 2 * margin;
+        const int32_t height = static_cast<int32_t>(lines.size()) * line_height + 2 * margin;
+        const kit::Rect panel{(size_.x - width) / 2, (size_.y - height) / 2, width, height};
+        if (!game)
+            kit::fill_rect(canvas, panel, plate_colour);
+        draw_frame(canvas, panel);
+        int32_t y = panel.y + margin;
+        for (const std::string& text : lines) {
+            const kit::Rect box{panel.x + margin, y, panel.width - 2 * margin, line_height};
+            if (game)
+                painter_.draw_text_at(canvas, box, text, kit::Align::centre, Ink::plain, square);
+            else
+                write(canvas, kit::FontRole::regular, text, box, kit::Align::centre, caption_colour);
+            y += line_height;
+        }
     }
 
     /// Draws TAGS' open list over everything: every tag, then the item that

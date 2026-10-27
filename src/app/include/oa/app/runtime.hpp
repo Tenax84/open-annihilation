@@ -641,6 +641,17 @@ class Runtime final : public menu::Host,
     ///     did not end for such a switch
     [[nodiscard]] const std::string& restart_line() const noexcept { return restart_line_; }
 
+    /// Returns the window as the switch of the mod in the Library that ended
+    /// the run began: the Library with the switch's line over it, which the
+    /// next run shows until the Library opens again
+    /// (Options::restart_picture).
+    ///
+    /// @return the picture, read back from the window; null when the run did
+    ///     not end for such a switch, or no window showed it
+    [[nodiscard]] std::shared_ptr<const renderer::Surface> switch_picture() const {
+        return switch_picture_;
+    }
+
     /// Frees what the runtime made on the renderer it borrows: its streamed
     /// textures and the match's layers. A runtime that ends for a soft
     /// restart calls it, so that the next one on the same renderer starts
@@ -6634,13 +6645,22 @@ class Runtime final : public menu::Host,
     /// (library_return). Without the Library on the OA layer, nothing.
     void keep_library_for_restart();
 
+    /// Draws the window once more as a switch of the mod in the Library ends
+    /// the run, the switch's line over the Library, and keeps what it shows
+    /// (switch_picture). Over the game's own main menu the Library writes the
+    /// line in a frame of the game's art; over Open Annihilation's menus the
+    /// switch's work dialog (WorkScreen) says it. Without such a switch, a
+    /// window or the Library on the OA layer, nothing is kept.
+    void keep_switch_picture();
+
     /// Opens the Library again as the run before left it
     /// (take_library_return), once the main menu lets it open
     /// (kept_library_may_show) and its feed lists the installed packages
     /// (LibraryFeed::installed_listed), so that no entry moves as they
     /// arrive; the chosen entry's row is in view. Until then the switch's
     /// work dialog (WorkScreen) shows over the main menu where the Library
-    /// could. The wait is kept_library_wait_ms from the first frame on the
+    /// could: the window as the switch began where the run before kept it
+    /// (Options::restart_picture). The wait is kept_library_wait_ms from the first frame on the
     /// main menu: then the Library opens unlisted if it can, and is dropped
     /// if it cannot, on whichever screen shows.
     void reopen_kept_library();
@@ -19789,6 +19809,10 @@ class Runtime final : public menu::Host,
     // What the progress dialog says while a switch of the mod in the Library
     // applies (restart_line); empty for none.
     std::string restart_line_{};
+    // The window as a switch of the mod in the Library that ends this run
+    // began (keep_switch_picture), for the next (switch_picture); null for
+    // none.
+    std::shared_ptr<const renderer::Surface> switch_picture_{};
     // The player's own folder for this run (start_user_folder); empty
     // before it is chosen.
     fs::path user_folder_;

@@ -1195,16 +1195,42 @@ void Runtime::take_settings_screen_action(settings::DialogAction action) {
 // A work dialog as a screen of the layer
 
 WorkScreen::WorkScreen(
-    OaLayer& layer, Screen shown_over, std::string title, std::string line, Host answers
+    OaLayer& layer,
+    Screen shown_over,
+    std::string title,
+    std::string line,
+    Host answers,
+    std::shared_ptr<const renderer::Surface> picture
 )
     : layer_(layer), over_(shown_over), host_(std::move(answers)),
       began_ms_(oa::platform::tick_ms()) {
     dialog_.title = std::move(title);
     dialog_.line = std::move(line);
+    // The picture's RGB, opaque, as the kit draws pictures.
+    if (picture && picture->width > 0 && picture->height > 0 &&
+        picture->rgb.size() / 3 >= std::size_t{picture->width} * picture->height) {
+        const std::size_t pixels = std::size_t{picture->width} * picture->height;
+        picture_.width = picture->width;
+        picture_.height = picture->height;
+        picture_.pixels.resize(pixels * 4);
+        for (std::size_t at = 0; at < pixels; ++at) {
+            picture_.pixels[at * 4] = picture->rgb[at * 3];
+            picture_.pixels[at * 4 + 1] = picture->rgb[at * 3 + 1];
+            picture_.pixels[at * 4 + 2] = picture->rgb[at * 3 + 2];
+            picture_.pixels[at * 4 + 3] = 255;
+        }
+    }
 }
 
 LayerPlacement WorkScreen::placement(const LayerView& view) const {
-    if (view.match || layer_.screen_fonts() == nullptr || view.game_screen != over_)
+    if (view.match || view.game_screen != over_)
+        return {};
+    if (!picture_.pixels.empty()) {
+        if (view.room.width <= 0 || view.room.height <= 0)
+            return {};
+        return {view.room, view.room.width, view.room.height, 100};
+    }
+    if (layer_.screen_fonts() == nullptr)
         return {};
     kit::WorkDialog sized = dialog_;
     sized.size_class = front_class(view);
@@ -1212,6 +1238,10 @@ LayerPlacement WorkScreen::placement(const LayerView& view) const {
 }
 
 void WorkScreen::lay_out(const LayerView& view) {
+    if (view.room.width != room_.x || view.room.height != room_.y) {
+        room_ = {view.room.width, view.room.height};
+        ++revision_;
+    }
     const kit::SizeClass size_class = front_class(view);
     if (dialog_.size_class == size_class)
         return;
@@ -1220,6 +1250,12 @@ void WorkScreen::lay_out(const LayerView& view) {
 }
 
 void WorkScreen::draw(const kit::Canvas& canvas) const {
+    if (!picture_.pixels.empty()) {
+        kit::draw_picture(
+            canvas, {0, 0, room_.x, room_.y}, {picture_.width, picture_.height, picture_.pixels}
+        );
+        return;
+    }
     if (!kit::can_draw(canvas) || canvas.fonts == nullptr)
         return;
     kit::draw_work_dialog(canvas, dialog_);
